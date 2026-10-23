@@ -39,7 +39,10 @@ class _RoundScrollState extends State<RoundScroll> {
   }
 
   void _turned(double delta) {
-    if (!_controller.hasClients) return;
+    // Only the screen on top turns; the ones under it keep their place.
+    if (!_controller.hasClients || ModalRoute.isCurrentOf(context) == false) {
+      return;
+    }
     final p = _controller.position;
     // Turns that come quickly add up to one move.
     final from = _controller.position.isScrollingNotifier.value

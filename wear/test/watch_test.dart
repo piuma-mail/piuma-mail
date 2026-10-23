@@ -186,6 +186,23 @@ void main() {
     expect(find.text('Giulia Romano'), findsNothing);
   });
 
+  testWidgets('the crown turns only the screen on top', (tester) async {
+    await _pump(tester, <MethodCall>[]);
+    final inbox = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    await tester.tap(find.text('Giulia Romano'));
+    await tester.pumpAndSettle();
+    await _fromPhone('rotary', 300.0);
+    await tester.pumpAndSettle();
+    // The inbox under the email waits for its turn: back on it, it is
+    // still at the top.
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+    expect(inbox.maxScrollExtent, greaterThan(0));
+    expect(inbox.pixels, 0);
+  });
+
   testWidgets('reply with a template, and snooze', (tester) async {
     final asked = <MethodCall>[];
     await _pump(tester, asked);
