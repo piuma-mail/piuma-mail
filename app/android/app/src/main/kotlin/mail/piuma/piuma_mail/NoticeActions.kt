@@ -35,6 +35,7 @@ class NoticeActions : BroadcastReceiver() {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.cancel(id)
             if (!done) failed(context, manager, id)
+            WatchLink.publishNow(context.applicationContext)
             pending.finish()
         }.start()
     }

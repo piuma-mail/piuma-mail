@@ -30,6 +30,7 @@ cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 python3 tools/gen_tokens.py --check
 python3 tools/gen_rust_licenses.py --check   # after changing Cargo.lock
 cd app && dart format lib test && flutter analyze && flutter test
+cd ../wear && dart format lib test && flutter analyze && flutter test   # the watch app
 ```
 
 - Engine tests against a real IMAP server: start `tools/test-imap-server.sh` (Dovecot) in another terminal, then `PIUMA_TEST_IMAP=127.0.0.1:31143 cargo test`. The 50,000-message check: add `--release -- --ignored --nocapture`.
@@ -42,6 +43,7 @@ cd app && dart format lib test && flutter analyze && flutter test
 - **Windows desktop:** Visual Studio 2022 (or its Build Tools) with "Desktop development with C++" **and** the "C++ ATL for latest v143 build tools" component; the notifications plugin needs ATL.
 - **macOS and iOS:** Xcode.
 - **Windows release:** `powershell -File tools\windows-release.ps1` builds the installer and the update packages with Velopack (`dotnet tool install -g vpk --version 1.2.161`) and uploads them to the update feed. The feed's address goes in `PIUMA_UPDATE_URL` and its keys in `PIUMA_S3_ENDPOINT`, `PIUMA_S3_KEY_ID` and `PIUMA_S3_SECRET`, never in the repository. The changelog comes from `-Notes notes.md`, or from the pull requests merged since the last release. The app checks the feed every few hours and downloads in the background (`app/lib/updates/`). A Cloudflare R2 bucket while the repository is private, GitHub Releases after: give a `https://github.com/...` address and the app reads the repository's releases.
+- **Wear OS watch:** `wear/` is a small Flutter app with no engine of its own: the phone app sends it the inbox over the watch connection (`WatchLink.kt`, `app/rust/src/watch.rs`) and does what its buttons ask. It shares the phone app's application id and key, as Wear OS requires. `cd wear && flutter test`; to try it, start a Wear OS emulator (Round, API 33 or later), pair it with a phone or phone emulator through the Wear OS app, then `flutter run -d <watch>` with the phone app installed on the phone. Its icons and tokens come from `tools/gen_icons.py` and `tools/gen_tokens.py`, like the phone's.
 - **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without them, release builds keep the local debug key.
 
 ## License and DCO sign-off

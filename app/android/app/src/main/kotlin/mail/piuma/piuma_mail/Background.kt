@@ -49,6 +49,12 @@ object MailNative {
 
     /** The accounts whose password was refused, as JSON, each given once. */
     @JvmStatic external fun signInNotices(): String
+
+    /** The inbox as a paired watch shows it, as JSON (`watch.rs`). */
+    @JvmStatic external fun watchSummary(): String
+
+    /** The words of the email [payload] names, for the watch, as JSON. */
+    @JvmStatic external fun watchText(payload: String, offsetMinutes: Int): String
 }
 
 /**
@@ -247,6 +253,8 @@ object Background {
                 // Notifications not allowed: the mail is still there.
             }
         }
+        // A paired watch lists the new mail too (`WatchWearOS`).
+        WatchLink.publish(context)
     }
 
     /** "12 emails, 3 from people: Sara Conti, Luca Bianchi, Dad". */

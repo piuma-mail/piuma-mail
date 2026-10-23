@@ -14,6 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "design" / "tokens.json"
 DART = ROOT / "app" / "lib" / "design" / "tokens.g.dart"
+# The Wear OS app (`wear/`) draws with the same tokens.
+WEAR_DART = ROOT / "wear" / "lib" / "design" / "tokens.g.dart"
 CSS = ROOT / "design" / "tokens.css"
 RUST = ROOT / "core" / "src" / "tokens_g.rs"
 
@@ -246,7 +248,7 @@ def gen_rust(t: dict) -> str:
 
 def main() -> int:
     tokens = json.loads(SRC.read_text(encoding="utf-8"))
-    outputs = {DART: gen_dart(tokens), CSS: gen_css(tokens), RUST: gen_rust(tokens)}
+    outputs = {DART: gen_dart(tokens), WEAR_DART: gen_dart(tokens), CSS: gen_css(tokens), RUST: gen_rust(tokens)}
     if "--check" in sys.argv:
         stale = [p for p, text in outputs.items()
                  if not p.exists() or p.read_text(encoding="utf-8") != text]

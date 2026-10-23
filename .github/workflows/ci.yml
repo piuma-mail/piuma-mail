@@ -67,6 +67,23 @@ jobs:
           path: app/test/failures/
           retention-days: 3
 
+  wear:
+    name: Wear OS app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wear
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test
+
   # Builds cost many minutes (macOS counts 10x, Windows 2x): they run only
   # on main or by hand, not on every PR.
   build:
