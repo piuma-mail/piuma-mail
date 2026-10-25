@@ -1,0 +1,63 @@
+[package]
+name = "piuma-core"
+version = "0.0.1"
+description = "Piuma Mail engine: protocols, sync, local database and search."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
+base64 = "0.22.1"
+futures = "0.3.34"
+hickory-resolver = "0.26.3"
+hayro = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "gif", "webp", "bmp", "tiff"] }
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1-rustls", "aws-lc-rs"] }
+mail-parser = "0.11.9"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "system-proxy", "json", "multipart"] }
+roxmltree = "0.21.1"
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+rustls-platform-verifier = "0.7.1"
+scraper = "0.27.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+tokio-rustls = "0.26.6"
+url = "2.5.8"
+whatlang = "0.18.0"
+# Firefox's translation models, where the system has no translation.
+# Portable kernel: the SIMD one is built for i8mm/AVX2 without a runtime
+# check, which would crash older phones and PCs.
+fxtranslate = { version = "0.5.0", default-features = false, features = ["download", "gemmology", "lean-embed", "mmap"] }
+chacha20poly1305 = "0.10.1"
+spake2 = "0.4.0"
+hkdf = "0.12.4"
+sha2 = "0.10.9"
+getrandom = "0.2.17"
+zeroize = "1.9.1"
+bip39 = { version = "2.1.0", default-features = false, features = ["std"] }
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+resvg = { version = "0.45", default-features = false }
+# The preview saved inside office documents, for the Attachments board.
+zip = { version = "7.3.0", default-features = false, features = ["deflate-flate2"] }
+qrcode = { version = "0.14.1", default-features = false }
+rqrr = "0.10.1"
+
+# The system's certificate check everywhere but Android, where lettre can't
+# use it yet (no `new_with_extra_roots` there): Mozilla's roots instead.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+lettre = { version = "0.11.23", default-features = false, features = ["rustls-platform-verifier"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+lettre = { version = "0.11.23", default-features = false, features = ["webpki-roots"] }
+webpki-roots = "1.0.9"
+
+[dev-dependencies]
+# As on Windows, where Velopack brings rustls with `ring`: see tls.rs.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }

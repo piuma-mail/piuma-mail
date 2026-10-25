@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["core", "app/rust"]
+exclude = ["third_party/fxtranslate"]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/piuma-mail/piuma-mail"
+rust-version = "1.85"
+
+# Our copy of fxtranslate: plain NEON kernel on arm64 and byte-fallback
+# decoding (see third_party/fxtranslate/PIUMA.md).
+[patch.crates-io]
+fxtranslate = { path = "third_party/fxtranslate" }

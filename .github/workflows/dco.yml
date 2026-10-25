@@ -1,0 +1,33 @@
+name: DCO
+
+# Checks the sign-off of every commit in a pull request. Skipped while the
+# repository is private (no Actions minutes used); see CONTRIBUTING.md.
+on:
+  pull_request:
+
+jobs:
+  dco:
+    name: DCO sign-off
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit has Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! git log -1 --format=%B "$c" | grep -qE '^Signed-off-by: .+ <.+>$'; then
+              echo "::error::Commit $(git log -1 --format='%h %s' "$c") has no Signed-off-by line."
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "Add the sign-off with: git commit --amend -s (or git rebase --signoff $BASE)."
+            echo "See DCO.txt."
+            exit 1
+          fi

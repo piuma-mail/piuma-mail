@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notice_channel">Nuova posta</string>
+    <string name="notice_quiet_channel">Nuova posta, ore di silenzio</string>
+    <plurals name="notice_title_many">
+        <item quantity="one">%1$s · %2$d email</item>
+        <item quantity="other">%1$s · %2$d email</item>
+    </plurals>
+    <string name="notice_reply">Rispondi</string>
+    <string name="notice_reply_hint">Rispondi a %s</string>
+    <string name="notice_archive">Archivia</string>
+    <string name="notice_snooze">Posticipa</string>
+    <string name="notice_failed">Non è stato possibile farlo dalla notifica. Apri Piuma Mail per riprovare.</string>
+    <string name="notice_sign_in_title">%1$s non riesce ad accedere</string>
+    <string name="notice_sign_in_body">Il server ha rifiutato la password. È cambiata?</string>
+    <string name="vault_notice_label">Caveau</string>
+    <string name="vault_notice_parcel">Il tuo pacco arriva oggi</string>
+    <string name="vault_notice_due_today">Scade oggi</string>
+    <string name="vault_notice_due_tomorrow">Scade domani</string>
+    <plurals name="vault_notice_due_in">
+        <item quantity="one">Scade tra %d giorno</item>
+        <item quantity="other">Scade tra %d giorni</item>
+    </plurals>
+    <string name="vault_notice_around">verso le %s</string>
+    <string name="background_channel">Posta sempre aggiornata</string>
+    <plurals name="background_title">
+        <item quantity="one">Tengo aggiornato %d account</item>
+        <item quantity="other">Tengo aggiornati %d account</item>
+    </plurals>
+    <string name="background_detail">La posta nuova compare qui appena arriva</string>
+    <string name="notice_away_title">Mentre eri via</string>
+    <plurals name="notice_away_emails">
+        <item quantity="one">%d email</item>
+        <item quantity="other">%d email</item>
+    </plurals>
+    <plurals name="notice_away_people">
+        <item quantity="one">%d da una persona</item>
+        <item quantity="other">%d da persone</item>
+    </plurals>
+    <string name="remind_no_reply">Nessuna risposta da %s</string>
+    <string name="remind_sent_today">inviata oggi</string>
+    <string name="remind_sent_yesterday">inviata ieri</string>
+    <plurals name="remind_sent_days_ago">
+        <item quantity="one">inviata %d giorno fa</item>
+        <item quantity="other">inviata %d giorni fa</item>
+    </plurals>
+</resources>

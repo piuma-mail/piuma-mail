@@ -1,0 +1,11 @@
+# Rust
+/target/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Failed golden tests
+app/test/failures/

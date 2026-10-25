@@ -1,0 +1,55 @@
+name: piuma_mail
+description: "Piuma Mail: mail, made light."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  camera: ^0.12.1
+  desktop_drop: ^0.8.0
+  desktop_multi_window: ^0.3.1
+  file_selector: ^1.1.0
+  flutter:
+    sdk: flutter
+  flutter_contacts: ^2.6.0
+  flutter_local_notifications: ^22.3.2
+  flutter_localizations:
+    sdk: flutter
+  flutter_rust_bridge: 2.13.0
+  intl: any
+  path_parsing: ^1.1.0
+  path_provider: ^2.1.6
+  pdf: ^3.13.1
+  piuma_bridge:
+    path: rust_builder
+  printing: ^5.15.1
+  url_launcher: ^6.3.3
+  webview_flutter: ^4.14.1
+  webview_windows: ^0.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/fonts/OFL-Geist.txt
+  fonts:
+    - family: Geist
+      fonts:
+        - asset: assets/fonts/Geist-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Geist-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Geist-SemiBold.ttf
+          weight: 600
+    - family: Geist Mono
+      fonts:
+        - asset: assets/fonts/GeistMono-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/GeistMono-Medium.ttf
+          weight: 500

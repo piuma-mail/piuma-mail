@@ -1,0 +1,37 @@
+[package]
+name = "piuma_bridge"
+version = "0.0.1"
+description = "Bridge between the Piuma Mail engine and the Flutter app."
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+flutter_rust_bridge = "=2.13.0"
+log = "0.4"
+piuma-core = { path = "../../core" }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+[target.'cfg(target_os = "ios")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+# libc 0.2.190 limits the dyld functions to macOS, but backtrace 0.3.76 (through
+# flutter_rust_bridge) still calls them on iOS. Lift this once backtrace is fixed.
+libc = "<0.2.190"
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+velopack = "=1.2.161"
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.22.4", default-features = false }
+ndk-context = "0.1.1"
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

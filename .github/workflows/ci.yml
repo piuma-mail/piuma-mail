@@ -1,0 +1,102 @@
+name: CI
+
+# Runs on every pull request and on main once the repository is public, where
+# Actions minutes are free. While it is private the jobs are skipped (no
+# minutes used) unless started by hand; checks run locally before each push
+# (see CONTRIBUTING.md).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tokens:
+    name: Design tokens
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generated files up to date
+        run: python3 tools/gen_tokens.py --check
+
+  core:
+    name: Rust engine
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --all -- --check
+      - name: Rust license list up to date
+        run: python3 tools/gen_rust_licenses.py --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  app:
+    name: Flutter app
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib/catalog lib/widgets lib/main.dart lib/legal.dart lib/design/theme.dart lib/design/motion.dart test
+      - run: flutter analyze
+      - run: flutter test
+      - name: Screenshots of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-failures
+          path: app/test/failures/
+          retention-days: 3
+
+  # Builds cost many minutes (macOS counts 10x, Windows 2x): they run only
+  # on main or by hand, not on every PR.
+  build:
+    name: Build ${{ matrix.target }}
+    needs: app
+    if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || !github.event.repository.private)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux, os: ubuntu-latest }
+          - { target: windows, os: windows-latest }
+          - { target: macos, os: macos-latest }
+          - { target: apk, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+      - if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev
+      - if: matrix.target == 'apk'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: flutter build ${{ matrix.target }} --debug
