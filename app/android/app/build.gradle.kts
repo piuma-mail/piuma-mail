@@ -74,4 +74,6 @@ dependencies {
     // Gemini Nano through AICore, for "In short" (Model.kt).
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // A paired Wear OS watch (WatchLink.kt): the Data Layer.
+    implementation("com.google.android.gms:play-services-wearable:19.0.0")
 }

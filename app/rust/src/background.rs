@@ -243,7 +243,7 @@ pub enum NoticeAction {
     Reply(String),
 }
 
-fn message_of(payload: &str) -> Option<engine::MessageRef> {
+pub(crate) fn message_of(payload: &str) -> Option<engine::MessageRef> {
     let mut parts = payload.splitn(3, '\n');
     let account_id = parts.next()?.parse().ok()?;
     let mailbox = parts.next()?.to_owned();
@@ -438,7 +438,7 @@ fn notice_id(n: &MailNotice) -> i32 {
 }
 
 /// A JSON string.
-fn quote(s: &str) -> String {
+pub(crate) fn quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

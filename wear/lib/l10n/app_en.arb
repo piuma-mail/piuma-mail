@@ -1,0 +1,39 @@
+{
+  "@@locale": "en",
+  "appName": "Piuma Mail",
+  "inbox": "Inbox",
+  "newCount": "{count} new",
+  "@newCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "nothingHere": "Nothing new in the inbox",
+  "openOnPhone": "Open Piuma Mail on your phone, near the watch",
+  "reaching": "Reaching your phone…",
+  "restOnPhone": "The rest is on your phone",
+  "archive": "Archive",
+  "snooze": "Snooze",
+  "reply": "Reply",
+  "replyTo": "Reply to {name}",
+  "@replyTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "speakOrType": "Speak or type",
+  "yourTemplates": "Your templates",
+  "snoozeUntil": "Snooze until…",
+  "snoozeEvening": "This evening",
+  "snoozeMorning": "Tomorrow morning",
+  "snoozeWeekend": "Weekend",
+  "snoozeNextWeek": "Next week",
+  "archived": "Archived",
+  "snoozed": "Snoozed",
+  "sent": "Sent",
+  "undo": "Undo"
+}

@@ -188,3 +188,38 @@ pub fn sign_in_notices<'caller>(
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
+
+// A paired watch (`WatchLink.kt`, `WatchWearOS`).
+
+/// The inbox as the watch shows it, as JSON; "" when the engine can't say.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn watch_summary<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Error> {
+            JString::from_str(env, crate::watch::summary().unwrap_or_default())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// The words of the email `payload` names, for the watch, as JSON; ""
+/// when it can't be read. `offset_minutes` is the local time zone.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn watch_text<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    payload: JString<'caller>,
+    offset_minutes: jint,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Error> {
+            let payload = payload.try_to_string(env)?;
+            JString::from_str(
+                env,
+                crate::watch::text(&payload, offset_minutes).unwrap_or_default(),
+            )
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
