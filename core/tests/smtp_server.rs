@@ -22,8 +22,9 @@ struct Received {
     data: String,
 }
 
-/// A one-connection-at-a-time SMTP server. Password "test" logs in.
-async fn smtp_sink() -> (u16, Arc<Mutex<Vec<Received>>>) {
+/// A one-connection-at-a-time SMTP server. Password "test" logs in. With
+/// `defer` it answers DATA with a 451 (a greylist), so it takes nothing.
+async fn smtp_sink(defer: bool) -> (u16, Arc<Mutex<Vec<Received>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let inbox = Arc::new(Mutex::new(Vec::new()));
@@ -31,13 +32,13 @@ async fn smtp_sink() -> (u16, Arc<Mutex<Vec<Received>>>) {
     tokio::spawn(async move {
         while let Ok((tcp, _)) = listener.accept().await {
             let seen = seen.clone();
-            tokio::spawn(async move { serve(tcp, seen).await });
+            tokio::spawn(async move { serve(tcp, seen, defer).await });
         }
     });
     (port, inbox)
 }
 
-async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>) {
+async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, defer: bool) {
     let (r, mut w) = tcp.into_split();
     let mut lines = BufReader::new(r).lines();
     w.write_all(b"220 sink ESMTP\r\n").await.unwrap();
@@ -68,8 +69,14 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>) {
                 current.data.push_str(&l);
                 current.data.push('\n');
             }
-            seen.lock().unwrap().push(std::mem::take(&mut current));
-            b"250 queued\r\n"
+            if defer {
+                // A greylist: not a refusal, just not now. It takes nothing.
+                current = Received::default();
+                b"451 4.3.2 try again later\r\n"
+            } else {
+                seen.lock().unwrap().push(std::mem::take(&mut current));
+                b"250 queued\r\n"
+            }
         } else if upper == "QUIT" {
             w.write_all(b"221 bye\r\n").await.ok();
             return;
@@ -104,7 +111,7 @@ fn draft() -> Draft {
 
 #[tokio::test]
 async fn sends_to_every_recipient() {
-    let (port, inbox) = smtp_sink().await;
+    let (port, inbox) = smtp_sink(false).await;
     let message = ready(&draft()).unwrap();
     send(&smtp(port, "test"), &message).await.unwrap();
 
@@ -117,7 +124,7 @@ async fn sends_to_every_recipient() {
 
 #[tokio::test]
 async fn wrong_password_is_an_auth_error() {
-    let (port, inbox) = smtp_sink().await;
+    let (port, inbox) = smtp_sink(false).await;
     let message = ready(&draft()).unwrap();
     let err = send(&smtp(port, "nope"), &message).await.unwrap_err();
     assert!(matches!(err, SendError::Auth), "{err:?}");
@@ -151,7 +158,7 @@ async fn files_a_copy_in_sent() {
         username: format!("sender-{stamp}"),
         password: "test".into(),
     };
-    let (port, inbox) = smtp_sink().await;
+    let (port, inbox) = smtp_sink(false).await;
 
     let report = send_and_file(&smtp(port, "test"), &imap, &ready(&draft()).unwrap())
         .await
@@ -244,7 +251,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     assert_eq!(waiting[0].error, None);
 
     // A refused password keeps it waiting, without a reason.
-    let (port, inbox) = smtp_sink().await;
+    let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
     assert!(outbox::send(&store, &online, "nope")
         .await
@@ -253,6 +260,50 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     assert_eq!(store.lock().unwrap().outbox(None).unwrap()[0].error, None);
 
     // Back online: it goes as it was built, and leaves the outbox.
+    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].id, queued);
+    assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
+    assert!(!sent[0].filed);
+    assert!(store.lock().unwrap().outbox(None).unwrap().is_empty());
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].rcpt, ["<luca@example.org>", "<sara@example.org>"]);
+    assert!(got[0].data.contains(&out.ready.message_id));
+}
+
+#[tokio::test]
+async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
+    let store = Store::open_in_memory().unwrap();
+    let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
+    let store = Mutex::new(store);
+    let no_imap = closed_port();
+
+    let out = Outgoing {
+        account: id,
+        draft: draft(),
+        ready: ready(&draft()).unwrap(),
+        saved: Some(("Drafts".into(), 7)),
+        send_at: None,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
+
+    // A 451 (a greylist): the server is not refusing the message, it is
+    // just not taking it now. It stays in the outbox, without a reason.
+    let (port, _deferred) = smtp_sink(true).await;
+    let deferring = account(id, port, no_imap);
+    assert!(outbox::send(&store, &deferring, "test")
+        .await
+        .unwrap()
+        .is_empty());
+    let waiting = store.lock().unwrap().outbox(None).unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].id, queued);
+    assert_eq!(waiting[0].error, None);
+
+    // A server that takes it: it goes as it was built, and leaves.
+    let (port, inbox) = smtp_sink(false).await;
+    let online = account(id, port, no_imap);
     let sent = outbox::send(&store, &online, "test").await.unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
@@ -304,7 +355,7 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
     );
 
     // Only the one whose time has come goes.
-    let (port, inbox) = smtp_sink().await;
+    let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, closed_port());
     let sent = outbox::send(&store, &online, "test").await.unwrap();
     assert_eq!(sent.iter().map(|s| s.id).collect::<Vec<_>>(), [due]);

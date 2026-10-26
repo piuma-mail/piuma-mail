@@ -174,6 +174,9 @@ impl From<SendError> for EngineError {
             SendError::Auth => EngineError::new(ErrorKind::WrongPassword, e.to_string()),
             SendError::Connect { .. } => EngineError::new(ErrorKind::Unreachable, e.to_string()),
             SendError::Rejected(_) => EngineError::new(ErrorKind::Rejected, e.to_string()),
+            // The server will take it later; the outbox retries, so no
+            // user action is implied.
+            SendError::Deferred(_) => EngineError::new(ErrorKind::Other, e.to_string()),
             SendError::Build(_) => EngineError::new(ErrorKind::Other, e.to_string()),
         }
     }

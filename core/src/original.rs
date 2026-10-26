@@ -120,7 +120,7 @@ pub fn original(
         cleaned: 0,
     };
     w.buf.push_str("<!DOCTYPE html>");
-    w.element(doc.root_element());
+    w.element(doc.root_element(), 1);
     w.out.html = std::mem::take(&mut w.buf);
     w.out
 }
@@ -141,13 +141,16 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    fn element(&mut self, el: ElementRef) {
+    fn element(&mut self, el: ElementRef, depth: usize) {
+        if depth > reading::MAX_DEPTH {
+            return;
+        }
         let name = el.value().name().to_ascii_lowercase();
         if DROPPED.contains(&name.as_str()) || name.contains(':') {
             return;
         }
         if UNWRAPPED.contains(&name.as_str()) {
-            self.children(el);
+            self.children(el, depth);
             return;
         }
         if name == "img" {
@@ -176,18 +179,18 @@ impl Writer<'_> {
             let css = self.css(&css);
             self.buf.push_str(&css.replace("</", "<\\/"));
         } else {
-            self.children(el);
+            self.children(el, depth);
         }
         let _ = write!(self.buf, "</{name}>");
     }
 
-    fn children(&mut self, el: ElementRef) {
+    fn children(&mut self, el: ElementRef, depth: usize) {
         for child in el.children() {
             match child.value() {
                 Node::Text(t) => self.buf.push_str(&escape(t)),
                 Node::Element(_) => {
                     if let Some(c) = ElementRef::wrap(child) {
-                        self.element(c);
+                        self.element(c, depth + 1);
                     }
                 }
                 _ => {}
@@ -386,9 +389,14 @@ fn sharpest(srcset: &str) -> Option<String> {
     best.map(|(_, url)| url.to_owned())
 }
 
-/// A `data:` image of a kind the web view draws without running anything.
+/// A `data:` image of a kind the web view draws without running
+/// anything, whose payload fits the cap.
 fn raster(data: &str) -> bool {
     let meta = data.split(',').next().unwrap_or("").to_ascii_lowercase();
+    let payload = data.split_once(',').map(|(_, p)| p).unwrap_or("");
+    if payload.len() > reading::DATA_URI_MAX {
+        return false;
+    }
     [
         "image/png",
         "image/jpeg",
@@ -589,5 +597,32 @@ mod tests {
             &Loaded::new(),
         );
         assert!(!o.html.to_ascii_lowercase().contains("<script"));
+    }
+
+    #[test]
+    fn a_pathological_nesting_stops_before_the_stack_does() {
+        let mut deep = String::new();
+        for _ in 0..200 {
+            deep.push('<');
+            deep.push_str("div>");
+        }
+        deep.push_str("innermost");
+        for _ in 0..200 {
+            deep.push_str("</div>");
+        }
+        let o = original(&deep, Options::default(), &|_| None, &Loaded::new());
+        assert!(!o.html.contains("innermost"));
+
+        let mut ok = String::new();
+        for _ in 0..50 {
+            ok.push('<');
+            ok.push_str("div>");
+        }
+        ok.push_str("innermost");
+        for _ in 0..50 {
+            ok.push_str("</div>");
+        }
+        let o = original(&ok, Options::default(), &|_| None, &Loaded::new());
+        assert!(o.html.contains("innermost"));
     }
 }

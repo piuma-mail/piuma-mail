@@ -52,6 +52,13 @@ impl Default for Options {
     }
 }
 
+/// The longest base64 payload, before decoding, that an inline `data:`
+/// image may hold: beyond that it is storage, not an image.
+pub const DATA_URI_MAX: usize = 2_000_000;
+/// How deep the walkers may descend: hostile markup is stopped before
+/// it can overflow the stack, and its deeper content is left out.
+pub const MAX_DEPTH: usize = 128;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Paragraph,
@@ -479,7 +486,7 @@ fn from_html_with(html: &str, options: Options) -> Readable {
             }
         }
     }
-    w.walk(doc.root_element(), Style::default());
+    w.walk(doc.root_element(), Style::default(), 1);
     w.flush();
     // Keep the blocks tidy: no empty ones, no two rules in a row.
     let mut blocks: Vec<Block> = Vec::with_capacity(w.out.blocks.len());
@@ -786,7 +793,7 @@ impl Walker {
             ]
             .iter()
             .any(|t| meta.starts_with(t));
-            if !supported || !meta.ends_with(";base64") || payload.len() > 2_000_000 {
+            if !supported || !meta.ends_with(";base64") || payload.len() > DATA_URI_MAX {
                 return;
             }
             let Ok(bytes) = base64::engine::general_purpose::STANDARD
@@ -826,7 +833,10 @@ impl Walker {
         self.out.blocks.push(block);
     }
 
-    fn walk(&mut self, el: ElementRef, inherited: Style) {
+    fn walk(&mut self, el: ElementRef, inherited: Style, depth: usize) {
+        if depth > MAX_DEPTH {
+            return;
+        }
         let name = el.value().name();
         if SKIPPED.contains(&name) {
             return;
@@ -944,7 +954,7 @@ impl Walker {
                 Node::Text(t) => self.push_text(t, style),
                 Node::Element(_) => {
                     if let Some(c) = ElementRef::wrap(child) {
-                        self.walk(c, style);
+                        self.walk(c, style, depth + 1);
                     }
                 }
                 _ => {}
@@ -1228,5 +1238,32 @@ mod tests {
         );
         assert_eq!(r.remote_images, 0);
         assert_eq!(plain_text(&r), "Logo\n\nBye");
+    }
+
+    #[test]
+    fn a_pathological_nesting_stops_before_the_stack_does() {
+        // 200 levels of divs: deep content is dropped, nothing overflows.
+        let mut html = String::new();
+        for _ in 0..200 {
+            html.push('<');
+            html.push_str("div>");
+        }
+        html.push_str("innermost");
+        for _ in 0..200 {
+            html.push_str("</div>");
+        }
+        let before = from_html(&html);
+        assert_eq!(plain_text(&before), "");
+        // Below the cap the text survives.
+        let mut ok = String::new();
+        for _ in 0..50 {
+            ok.push('<');
+            ok.push_str("div>");
+        }
+        ok.push_str("innermost");
+        for _ in 0..50 {
+            ok.push_str("</div>");
+        }
+        assert_eq!(plain_text(&from_html(&ok)), "innermost");
     }
 }

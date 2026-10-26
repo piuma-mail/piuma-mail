@@ -127,6 +127,11 @@ pub enum SendError {
     Auth,
     #[error("the server refused the message: {0}")]
     Rejected(String),
+    /// The server did not take the message now (a 4xx: greylisting, an
+    /// overload); it may well take it later, so the outbox keeps it and
+    /// tries again in a later batch.
+    #[error("the server deferred the message: {0}")]
+    Deferred(String),
 }
 
 impl SendError {
@@ -440,6 +445,8 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
 fn classify(host: &str, e: lettre::transport::smtp::Error) -> SendError {
     match e.status().map(|c| c.to_string()) {
         Some(code) if code == "535" || code == "534" || code == "530" => SendError::Auth,
+        // A 4xx refusal is temporary, from greylisting to a busy server.
+        Some(code) if code.starts_with('4') => SendError::Deferred(e.to_string()),
         Some(_) => SendError::Rejected(e.to_string()),
         None => SendError::Connect {
             host: host.to_owned(),
