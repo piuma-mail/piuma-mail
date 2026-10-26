@@ -77,6 +77,8 @@ pub enum ImapError {
     Tls(String),
     #[error("the server rejected the user name or password")]
     Auth,
+    #[error("the server is busy and will not accept the login just now: {0}")]
+    Throttled(String),
     #[error("the server does not keep stable message ids in this folder")]
     NoUidValidity,
     #[error("IMAP: {0}")]
@@ -90,11 +92,13 @@ pub enum ImapError {
 }
 
 impl ImapError {
-    /// The connection could not be made or was lost, rather than refused.
+    /// The connection could not be made or was lost, or the server is busy
+    /// for now, rather than the login being refused for good.
     pub fn is_offline(&self) -> bool {
         matches!(
             self,
             ImapError::Connect { .. }
+                | ImapError::Throttled(_)
                 | ImapError::Protocol(
                     async_imap::error::Error::Io(_) | async_imap::error::Error::ConnectionLost
                 )
@@ -183,14 +187,10 @@ impl Connection {
         if cfg.security != Security::StartTls {
             greeting(&mut client).await?;
         }
-        let mut session =
-            client
-                .login(&cfg.username, &cfg.password)
-                .await
-                .map_err(|(e, _)| match e {
-                    async_imap::error::Error::No(_) => ImapError::Auth,
-                    e => ImapError::Protocol(e),
-                })?;
+        let mut session = client
+            .login(&cfg.username, &cfg.password)
+            .await
+            .map_err(|(e, _)| classify_login(e))?;
         let caps = session.capabilities().await?;
         // For reports: which of the capabilities that matter it has, by a
         // number, never its name.
@@ -1597,6 +1597,56 @@ where
         .map_err(|e| ImapError::Tls(e.to_string()))
 }
 
+/// Words that say the login failed because the credentials are wrong, the
+/// only `NO` that may end the account for good.
+const LOGIN_DENIED: &[&str] = &[
+    "authenticationfailed",
+    "authentication failed",
+    "authentication failure",
+    "authentication error",
+    "invalid credentials",
+    "invalid username or password",
+    "invalid user or password",
+    "wrong password",
+    "bad password",
+    "incorrect password",
+    "no such user",
+    "user not found",
+    "unknown user",
+];
+
+/// Words that say the server will take the login again later: throttling,
+/// maintenance, or plain busyness.
+const LOGIN_BUSY: &[&str] = &[
+    "throttl",
+    "rate limit",
+    "too many",
+    "try again",
+    "try later",
+    "temporar",
+    "maintenance",
+    "unavailable",
+    "overload",
+    "busy",
+];
+
+/// A `NO` to LOGIN is either a final refusal of the credentials or a
+/// temporary one: only the first one ends the account, the other keeps the
+/// watcher alive to try again.
+fn classify_login(e: async_imap::error::Error) -> ImapError {
+    let async_imap::error::Error::No(text) = e else {
+        return ImapError::Protocol(e);
+    };
+    let lowered = text.to_ascii_lowercase();
+    if LOGIN_DENIED.iter().any(|w| lowered.contains(w)) {
+        ImapError::Auth
+    } else if LOGIN_BUSY.iter().any(|w| lowered.contains(w)) {
+        ImapError::Throttled(text)
+    } else {
+        ImapError::Protocol(async_imap::error::Error::No(text))
+    }
+}
+
 /// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
 fn uid_set(uids: &[u32]) -> String {
     let mut sorted = uids.to_vec();
@@ -1791,12 +1841,44 @@ fn close_parts(mut raw: Vec<u8>) -> Vec<u8> {
     }
     for b in boundaries.iter().rev() {
         let closer = format!("\r\n--{b}--\r\n");
-        let open = format!("--{b}--");
-        if !raw.windows(open.len()).any(|w| w == open.as_bytes()) {
+        if !contains(&raw, format!("--{b}--").as_bytes()) {
             raw.extend_from_slice(closer.as_bytes());
         }
     }
     raw
+}
+
+/// True when `marker` occurs in `raw`. Every marker here begins with
+/// `--`, so the scan jumps over any byte that cannot start one and
+/// checks the full marker only where two dashes already matched: one
+/// pass over the message, instead of a sliding window at every offset.
+fn contains(raw: &[u8], marker: &[u8]) -> bool {
+    if marker.is_empty() {
+        return true;
+    }
+    if raw.len() < marker.len() {
+        return false;
+    }
+    let last = raw.len() - marker.len();
+    let mut at = 0;
+    while at <= last {
+        if raw[at] != b'-' || raw[at + 1] != b'-' {
+            at += 1;
+            continue;
+        }
+        let mut matched = true;
+        for (j, &want) in marker.iter().enumerate() {
+            if raw[at + j] != want {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return true;
+        }
+        at += 1;
+    }
+    false
 }
 
 /// Every multipart boundary declared in the message, outermost first.
@@ -2987,5 +3069,151 @@ mod tests {
         let preview = clean_preview(&m.body_preview(usize::MAX).unwrap());
         assert!(preview.starts_with("7% di sconto parola"), "{preview}");
         assert!(!preview.contains("..."), "{preview}");
+    }
+
+    #[test]
+    fn a_throttled_login_is_offline_not_a_rejection() {
+        assert!(ImapError::Throttled("busy".into()).is_offline());
+        assert!(!ImapError::Auth.is_offline());
+        assert_eq!(
+            ImapError::Throttled("try again later".into()).to_string(),
+            "the server is busy and will not accept the login just now: try again later"
+        );
+    }
+
+    #[test]
+    fn the_login_reply_says_denied_or_busy() {
+        let no = |t: &str| async_imap::error::Error::No(t.to_owned());
+        // Only wrong credentials end the account for good.
+        for t in [
+            "AUTHENTICATIONFAILED",
+            "Invalid username or password",
+            "No such user",
+            "wrong password",
+            "Authentication failed (temporary error)",
+            "Unknown user",
+        ] {
+            assert!(matches!(classify_login(no(t)), ImapError::Auth), "{t}");
+        }
+        // A server that will take the login again later.
+        for t in [
+            "Too many login attempts. Please try again in a few minutes.",
+            "Rate limit exceeded, try later",
+            "Server is down for maintenance",
+            "Service temporarily unavailable",
+            "Internal error: overload",
+            "System busy",
+        ] {
+            assert!(
+                matches!(classify_login(no(t)), ImapError::Throttled(_)),
+                "{t}"
+            );
+        }
+        // Anything else stays a protocol problem, as does any non-NO error.
+        assert!(matches!(
+            classify_login(no("Bogus reason")),
+            ImapError::Protocol(_)
+        ));
+        assert!(matches!(
+            classify_login(async_imap::error::Error::ConnectionLost),
+            ImapError::Protocol(_)
+        ));
+    }
+
+    /// The quadratic pass, as it used to be, to prove the linear one does
+    /// the same byte for byte.
+    fn close_parts_slow(mut raw: Vec<u8>) -> Vec<u8> {
+        let boundaries = boundaries(&raw);
+        if boundaries.is_empty() {
+            return raw;
+        }
+        if let Some(end) = raw.iter().rposition(|&b| b == b'\n') {
+            raw.truncate(end + 1);
+        }
+        for b in boundaries.iter().rev() {
+            let closer = format!("\r\n--{b}--\r\n");
+            let open = format!("--{b}--");
+            if !raw.windows(open.len()).any(|w| w == open.as_bytes()) {
+                raw.extend_from_slice(closer.as_bytes());
+            }
+        }
+        raw
+    }
+
+    #[test]
+    fn the_marker_scan_is_byte_identical_to_the_old_window() {
+        let raw = b"no dashes here at all";
+        assert!(!contains(raw, b"--aa--"));
+        assert!(contains(b"x--aa--y", b"--aa--"));
+        // Near misses do not count, and the marker must fit whole.
+        assert!(!contains(b"x--aa-x", b"--aa--"));
+        assert!(!contains(b"--aa-", b"--aa--"));
+        assert!(contains(b"--aa--", b"--aa--"));
+        assert!(contains(b"anything", b""));
+    }
+
+    #[test]
+    fn the_boundary_scan_keeps_the_old_output() {
+        // Nested parts, cut in the middle of a line: both boundaries are
+        // still open.
+        let nested = format!(
+            concat!(
+                "From: Shop <shop@example.com>\r\n",
+                "Subject: Hi\r\n",
+                "Content-Type: multipart/mixed; boundary=\"aa\"\r\n\r\n",
+                "--aa\r\n",
+                "Content-Type: multipart/alternative; boundary=bb\r\n\r\n",
+                "--bb\r\nContent-Type: text/plain\r\n\r\nPlain text part\r\n",
+                "--bb\r\nContent-Type: text/html\r\n\r\n",
+                "<html><body><p>first line</p>\r\n",
+                "<p>second line with a long run {}",
+            ),
+            "word ".repeat(2000)
+        );
+        // One boundary already closed, the other not: only the open one
+        // gets a closer, and the one appended earlier is seen by the
+        // later check.
+        let half_closed = format!(
+            concat!(
+                "Subject: a\r\n",
+                "Content-Type: multipart/mixed; boundary=aa\r\n\r\n",
+                "--aa\r\n",
+                "Content-Type: multipart/alternative; boundary=bb\r\n\r\n",
+                "--bb\r\nContent-Type: text/plain\r\n\r\nHi\r\n--bb--\r\n",
+                "--aa\r\nContent-Type: text/html\r\n\r\n",
+                "<html><body><p>line</p>\r\n",
+                "<p>cut mid {}",
+            ),
+            "dash ".repeat(2000)
+        );
+        // Dashes that only look like a boundary: the closer is still due.
+        let lookalike = format!(
+            concat!(
+                "Subject: a\r\n",
+                "Content-Type: multipart/mixed; boundary=aa\r\n\r\n",
+                "--aa\r\n",
+                "Content-Type: multipart/alternative; boundary=bb\r\n\r\n",
+                "--bb\r\nContent-Type: text/plain\r\n\r\n",
+                "dashes --bb- and --bb-x here {}\r\n",
+                "--aa\r\nsecond part, cut",
+            ),
+            "filler ".repeat(2000)
+        );
+        for body in [nested, half_closed, lookalike] {
+            let raw = body.into_bytes();
+            assert_eq!(close_parts_slow(raw.clone()), close_parts(raw));
+        }
+        // And the nested one does get both closers, inner first.
+        let whole = format!(
+            concat!(
+                "Subject: a\r\nContent-Type: multipart/mixed; boundary=aa\r\n\r\n",
+                "--aa\r\nContent-Type: multipart/alternative; boundary=bb\r\n\r\n",
+                "--bb\r\nContent-Type: text/plain\r\n\r\nHi\r\n--bb--\r\n",
+                "--aa\r\nContent-Type: text/html\r\n\r\n<html><body><p>line</p>\r\n",
+                "<p>open {}",
+            ),
+            "filler ".repeat(2000)
+        );
+        assert!(close_parts(whole.into_bytes()).ends_with(b"\r\n--aa--\r\n"));
     }
 }

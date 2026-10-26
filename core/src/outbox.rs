@@ -51,7 +51,8 @@ pub struct Sent {
 /// Mail sent later waits for its time. Stops at the first
 /// message that can't reach the server, or a refused password, and keeps
 /// the rest; a message the server refuses keeps its reason and waits for
-/// the person.
+/// the person; one it defers (a 4xx) keeps waiting without a reason and
+/// goes with a later batch.
 pub async fn send(
     store: &Mutex<Store>,
     account: &Account,
@@ -77,6 +78,9 @@ pub async fn send(
                 });
             }
             Err(e) if e.is_offline() || matches!(e, SendError::Auth) => break,
+            // A 4xx: the server may take it later, so the message keeps
+            // waiting, without an error, for a later batch.
+            Err(SendError::Deferred(_)) => continue,
             // What the server said, as the row shows it.
             Err(SendError::Rejected(reason)) => lock(store).refused_outgoing(w.id, &reason)?,
             Err(e) => lock(store).refused_outgoing(w.id, &e.to_string())?,

@@ -40,6 +40,12 @@ pub const VACATION: &str = "urn:ietf:params:jmap:vacationresponse";
 const BATCH: usize = 250;
 /// Ids asked for per Email/query page.
 const QUERY_PAGE: usize = 1000;
+/// The most pages one Email/query may take, so a lying `total` cannot
+/// page forever: past it, the ids gathered so far stand.
+const QUERY_PAGES_MAX: usize = 1000;
+/// The most JSON a server response may hold: beyond this the response
+/// is a protocol failure, not something to keep buffering.
+const RESPONSE_MAX: usize = 32 * 1024 * 1024;
 /// How long to wait for a push before looking anyway.
 pub const POLL_EVERY: Duration = Duration::from_secs(5 * 60);
 
@@ -1136,10 +1142,12 @@ impl Client {
             .ok_or_else(|| JmapError::Protocol("no identity to send as".into()))
     }
 
-    /// Every message id in one folder, newest first.
+    /// Every message id in one folder, newest first; past the page cap
+    /// the ids gathered so far stand, in case the server lies about
+    /// its `total`.
     async fn query_ids(&mut self, mailbox: &str) -> Result<Vec<String>> {
         let mut ids = Vec::new();
-        loop {
+        for _ in 0..QUERY_PAGES_MAX {
             let [page] = self
                 .call([(
                     "Email/query",
@@ -1168,6 +1176,7 @@ impl Client {
                 return Ok(ids);
             }
         }
+        Ok(ids)
     }
 
     async fn get_emails(&mut self, ids: &[String], properties: &[&str]) -> Result<Vec<Value>> {
@@ -1685,12 +1694,26 @@ fn check_status(response: &reqwest::Response) -> Result<()> {
     }
 }
 
+/// A response body above the cap is refused before it is parsed.
+fn check_size(bytes: &[u8]) -> Result<()> {
+    if bytes.len() > RESPONSE_MAX {
+        Err(JmapError::Protocol(format!(
+            "body of {} bytes exceeds the {}-byte limit",
+            bytes.len(),
+            RESPONSE_MAX
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 async fn read_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     check_status(&response)?;
     let bytes = response
         .bytes()
         .await
         .map_err(|e| JmapError::Protocol(e.to_string()))?;
+    check_size(&bytes)?;
     serde_json::from_slice(&bytes).map_err(|e| JmapError::Protocol(e.to_string()))
 }
 
@@ -1782,5 +1805,25 @@ mod tests {
         let list = json!({ "from": [{ "email": "news@shop.it" }],
                            "header:List-Unsubscribe": " <mailto:u@shop.it>" });
         assert!(automated(&list));
+    }
+
+    #[test]
+    fn refuses_a_body_over_the_limit() {
+        // At the limit the body still passes, and so does a small one.
+        assert!(check_size(b"{}").is_ok());
+        assert!(check_size(&vec![0u8; RESPONSE_MAX]).is_ok());
+
+        // One byte over is a protocol failure, naming the limit.
+        let over = vec![0u8; RESPONSE_MAX + 1];
+        let err = check_size(&over).unwrap_err();
+        assert!(matches!(
+            err,
+            JmapError::Protocol(msg)
+                if msg == format!(
+                    "body of {} bytes exceeds the {}-byte limit",
+                    RESPONSE_MAX + 1,
+                    RESPONSE_MAX
+                )
+        ));
     }
 }
