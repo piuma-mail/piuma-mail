@@ -289,21 +289,25 @@ impl CalDav {
     ) -> Result<(String, String)> {
         let method = Method::from_bytes(method.as_bytes())
             .map_err(|e| CalendarError::Protocol(e.to_string()))?;
+        let origin = Url::parse(url)
+            .map_err(|e| CalendarError::Protocol(e.to_string()))?
+            .origin();
+        let mut send_authorization = true;
         let mut url = url.to_owned();
         for _ in 0..6 {
-            let response = self
+            let mut request = self
                 .http
                 .request(method.clone(), &url)
-                .header(reqwest::header::AUTHORIZATION, &self.authorization)
                 .header("Depth", depth)
                 .header(
                     reqwest::header::CONTENT_TYPE,
                     "application/xml; charset=utf-8",
                 )
-                .body(body.to_owned())
-                .send()
-                .await
-                .map_err(|e| connect(&url, e))?;
+                .body(body.to_owned());
+            if send_authorization {
+                request = request.header(reqwest::header::AUTHORIZATION, &self.authorization);
+            }
+            let response = request.send().await.map_err(|e| connect(&url, e))?;
             let status = response.status();
             if status.is_redirection() {
                 let Some(next) = response
@@ -313,7 +317,14 @@ impl CalDav {
                 else {
                     break;
                 };
-                url = join(&url, next);
+                let next = response
+                    .url()
+                    .join(next)
+                    .map_err(|e| CalendarError::Protocol(e.to_string()))?;
+                // Never forward credentials across a change of scheme,
+                // host or port, or restore them later in the chain.
+                send_authorization &= next.origin() == origin;
+                url = next.into();
                 continue;
             }
             return match status {
@@ -530,6 +541,116 @@ mod tests {
             }
         });
         (base, seen)
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirects_keep_authorization_and_method() {
+        let (base, seen) = server(vec![
+            ("PROPFIND", "/start", 301, "/calendar".into()),
+            ("PROPFIND", "/calendar", 207, "calendar".into()),
+        ])
+        .await;
+        let dav = CalDav::new("user", "password").unwrap();
+        let result = dav
+            .dav("PROPFIND", &format!("{base}/start"), "1", "body")
+            .await;
+        assert_eq!(
+            result.unwrap(),
+            (format!("{base}/calendar"), "calendar".into())
+        );
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            assert!(request.starts_with("PROPFIND "));
+            assert!(request.contains(&format!("authorization: {}", dav.authorization)));
+            assert!(request.contains("depth: 1"));
+            assert!(request.ends_with("body"));
+        }
+    }
+
+    #[tokio::test]
+    async fn cross_origin_redirects_strip_authorization_for_the_entire_chain() {
+        for change_host in [false, true] {
+            // A different port is a different origin, even on the same host.
+            let (target, target_seen) = server(vec![
+                ("REPORT", "/redirect", 301, "/calendar".into()),
+                ("REPORT", "/calendar", 207, "calendar".into()),
+            ])
+            .await;
+            let target = if change_host {
+                target.replace("127.0.0.1", "localhost")
+            } else {
+                target
+            };
+            let (base, seen) = server(vec![(
+                "REPORT",
+                "/start",
+                301,
+                format!("{target}/redirect"),
+            )])
+            .await;
+            let dav = CalDav::new("user", "password").unwrap();
+            let result = dav
+                .dav("REPORT", &format!("{base}/start"), "1", "body")
+                .await;
+            assert_eq!(
+                result.unwrap(),
+                (format!("{target}/calendar"), "calendar".into())
+            );
+            assert!(seen.lock().unwrap()[0].contains("authorization: Basic "));
+            let requests = target_seen.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            for request in requests.iter() {
+                assert!(!request.to_ascii_lowercase().contains("authorization:"));
+                assert!(request.starts_with("REPORT "));
+                assert!(request.ends_with("body"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn returning_to_the_original_origin_does_not_restore_authorization() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let destination = format!("{base}/return");
+        let task = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for location in [
+                Some(format!("http://localhost:{port}/redirect")),
+                Some(destination),
+                None,
+            ] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                loop {
+                    let mut chunk = [0; 4096];
+                    let n = socket.read(&mut chunk).await.unwrap();
+                    assert_ne!(n, 0);
+                    request.extend_from_slice(&chunk[..n]);
+                    if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                let response = match location {
+                    Some(url) => format!("HTTP/1.1 301 X\r\nLocation: {url}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    None => "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+                };
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        let dav = CalDav::new("user", "password").unwrap();
+        let result = dav
+            .dav("PROPFIND", &format!("{base}/start"), "0", "")
+            .await
+            .unwrap();
+        assert_eq!(result, (format!("{base}/return"), String::new()));
+        let requests = task.await.unwrap();
+        assert!(requests[0].contains("authorization: Basic "));
+        assert!(!requests[1].contains("authorization:"));
+        assert!(!requests[2].contains("authorization:"));
     }
 
     #[tokio::test]

@@ -1321,7 +1321,11 @@ fn functions(conn: &Connection) -> rusqlite::Result<()> {
 impl Store {
     /// Opens (or creates) the database in a file.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::init(Connection::open(path)?)
+        let conn = Connection::open(path)?;
+        // Other connections may hold the write lock briefly, including
+        // while this connection initializes or runs migrations.
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        Self::init(conn)
     }
 
     /// A second connection to the file [`Self::open`] opened, for reading
@@ -4942,17 +4946,19 @@ impl Store {
             for id in gone {
                 tx.execute("DELETE FROM calendar WHERE id = ?1", params![id])?;
             }
-            let sources: Vec<String> = rows("calendar_source")
+            let sources: Vec<i64> = rows("calendar_source")
                 .iter()
-                .filter_map(|r| Some(r.get("id")?.as_i64()?.to_string()))
+                .filter_map(|r| r.get("id")?.as_i64())
                 .collect();
-            tx.execute(
-                &format!(
-                    "DELETE FROM calendar_source WHERE id NOT IN ({})",
-                    sources.join(",")
-                ),
-                [],
-            )?;
+            if sources.is_empty() {
+                tx.execute("DELETE FROM calendar_source", [])?;
+            } else {
+                let marks = vec!["?"; sources.len()].join(",");
+                tx.execute(
+                    &format!("DELETE FROM calendar_source WHERE id NOT IN ({marks})"),
+                    rusqlite::params_from_iter(&sources),
+                )?;
+            }
             for table in ["calendar_source", "calendar"] {
                 let cols = columns(table)?;
                 for mut row in rows(table) {
@@ -7997,6 +8003,36 @@ From: <help@bank.example>\r\n\r\nHi";
     }
 
     #[test]
+    fn file_connections_wait_for_brief_write_contention() {
+        let dir = std::env::temp_dir().join(format!("piuma-contention-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("piuma.db");
+        let first = Store::open(&path).unwrap();
+        let second = Store::open(&path).unwrap();
+        let reader = Store::open_reader(&path).unwrap();
+        for store in [&first, &second, &reader] {
+            let timeout: i64 = store
+                .conn
+                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+                .unwrap();
+            assert_eq!(timeout, 2000);
+        }
+        first.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (started, waiting) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            second.add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+        });
+        waiting.recv().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        first.conn.execute_batch("COMMIT").unwrap();
+        writer.join().unwrap().unwrap();
+        assert_eq!(reader.accounts().unwrap().len(), 1);
+        drop((first, reader));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn migrations_are_idempotent_on_reopen() {
         let dir = std::env::temp_dir().join(format!("piuma-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -10784,5 +10820,54 @@ From: <help@bank.example>\r\n\r\nHi";
             .query_row("SELECT COUNT(*) FROM calendar_event", [], |r| r.get(0))
             .unwrap();
         assert_eq!(events, 1);
+    }
+
+    #[test]
+    fn syncing_an_empty_calendar_source_list_removes_sources_and_cached_events() {
+        let mut store = Store::open_in_memory().unwrap();
+        let source = store
+            .add_calendar_source("ics", "Holidays", "https://h/", "", None)
+            .unwrap();
+        store
+            .set_calendars(
+                source,
+                &[crate::calendar::RemoteCalendar {
+                    url: "https://h/calendar".into(),
+                    name: "Holidays".into(),
+                    color: None,
+                    read_only: true,
+                }],
+            )
+            .unwrap();
+        let calendar = store.calendars().unwrap()[0].id;
+        store
+            .conn
+            .execute(
+                "INSERT INTO calendar_event (calendar, uid, start, end, all_day, floating, summary)
+             VALUES (?1, 'holiday', 10, 20, 0, 0, 'Holiday')",
+                params![calendar],
+            )
+            .unwrap();
+        store.set_calendar_refresh(source, Some(3600)).unwrap();
+        let mut tables = store.space_tables().unwrap();
+        // Older snapshots without calendar tables must leave local data alone.
+        tables.remove("calendar_source");
+        tables.remove("calendar");
+        store.take_space_tables(&tables).unwrap();
+        assert_eq!(store.calendar_sources().unwrap().len(), 1);
+        tables.insert("calendar_source".into(), serde_json::json!([]));
+        tables.insert("calendar".into(), serde_json::json!([]));
+        store.take_space_tables(&tables).unwrap();
+        assert!(store.calendar_sources().unwrap().is_empty());
+        assert!(store.calendars().unwrap().is_empty());
+        for table in ["calendar_event", "calendar_refresh"] {
+            let count: i64 = store
+                .conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+        // Repeating an empty snapshot remains safe.
+        store.take_space_tables(&tables).unwrap();
     }
 }

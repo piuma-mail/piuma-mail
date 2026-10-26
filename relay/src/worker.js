@@ -79,10 +79,12 @@ async function challenge(request, env) {
   // First report: a few seconds (the user is still typing). Each further one in a day doubles it,
   // up to MAX_WAIT: enough to stop a flood, short enough for someone testing all day.
   const wait = waitAfter(sent);
+  const bits = Math.min(Math.max(Number(env.POW_BITS ?? 16), 0), 32);
+  if (!Number.isInteger(bits)) throw new HttpError(500, 'invalid POW_BITS');
   const payload = {
     ih,
     seed: randomHex(16),
-    bits: Number(env.POW_BITS ?? 16),
+    bits,
     nbf: now + wait,
     exp: now + wait + TICKET_TTL,
   };
@@ -97,7 +99,7 @@ async function report(request, env) {
   await rateLimit(env, who);
   const length = Number(request.headers.get('content-length') ?? 0);
   if (length > MAX_FORM) throw new HttpError(413, 'too large');
-  const form = await request.formData();
+  const form = await boundedFormData(request);
   let meta;
   try {
     meta = JSON.parse(form.get('report'));
@@ -143,6 +145,34 @@ async function report(request, env) {
     labels: [r.kind === 'problem' ? 'bug' : 'enhancement'],
   });
   return json({ url: issue.html_url, number: issue.number }, 201);
+}
+
+async function boundedFormData(request) {
+  if (!request.body) throw new HttpError(400, 'form');
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      // Content-Length can be missing or inaccurate. Enforce the limit
+      // on every byte before buffering or parsing the multipart form.
+      if (size > MAX_FORM) {
+        await reader.cancel();
+        throw new HttpError(413, 'too large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return await new Response(new Blob(chunks), { headers: request.headers }).formData();
+  } catch {
+    throw new HttpError(400, 'form');
+  }
 }
 
 export function sanitizeReport(meta) {

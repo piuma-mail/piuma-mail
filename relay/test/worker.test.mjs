@@ -100,6 +100,62 @@ test('too early is refused with retry-after', async () => {
   assert.ok(Number(res.headers.get('retry-after')) > 0);
 });
 
+test('proof of work difficulty is clamped to the supported range', async () => {
+  for (const [configured, expected] of [[undefined, 16], ['-5', 0], ['0', 0], ['16', 16], ['32', 32], ['999', 32]]) {
+    const e = env();
+    e.POW_BITS = configured;
+    const t = await ticketFor(e);
+    assert.equal(t.bits, expected);
+    assert.equal((await verify(e, t.ticket)).bits, expected);
+  }
+});
+
+test('invalid proof of work configuration cannot issue unusable tickets', async () => {
+  for (const configured of ['invalid', '3.5']) {
+    const e = env();
+    e.POW_BITS = configured;
+    const response = await challengeRes(e);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'invalid POW_BITS' });
+  }
+});
+
+test('oversized forms are rejected before parsing, regardless of Content-Length', async () => {
+  const maxForm = 21 * 1024 * 1024;
+  for (const length of [undefined, '0', '1', 'not-a-number', String(maxForm + 1)]) {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+      },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    const headers = { 'cf-connecting-ip': IP, 'content-type': 'multipart/form-data; boundary=test' };
+    if (length !== undefined) headers['content-length'] = length;
+    const request = new Request('https://relay.test/report', { method: 'POST', body, headers, duplex: 'half' });
+    const response = await worker.fetch(request, env());
+    assert.equal(response.status, 413);
+    assert.deepEqual(await response.json(), { error: 'too large' });
+    if (length === String(maxForm + 1)) {
+      assert.equal(pulls, 0);
+    } else {
+      assert.equal(pulls, 22);
+      assert.equal(cancelled, true);
+    }
+  }
+});
+
+test('malformed multipart forms return a client error', async () => {
+  const response = await worker.fetch(post('/report', 'not multipart', {
+    'cf-connecting-ip': IP,
+    'content-type': 'multipart/form-data; boundary=test',
+  }), env());
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'form' });
+});
+
 test('a valid report creates the issue with its attachments, once', async () => {
   const e = env();
   const calls = mockGitHub();
