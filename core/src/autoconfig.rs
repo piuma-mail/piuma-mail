@@ -58,7 +58,11 @@ pub async fn discover(email: &str) -> Option<Settings> {
     ];
     for url in &urls {
         if let Some(s) = from_url(url, email).await {
-            return Some(s);
+            // HTTPS authenticates the autoconfig host, but a dangling
+            // subdomain may still be controlled by someone else.
+            if trusted_settings(&s, &domain) {
+                return Some(s);
+            }
         }
     }
     // Some hosts serve autoconfig only over plain HTTP: Aruba points
@@ -66,7 +70,7 @@ pub async fn discover(email: &str) -> Option<Settings> {
     // Anyone on the network could rewrite that answer, so it is kept only
     // when it names the domain's own servers or a provider the engine knows.
     if let Some(s) = from_url(&first.to_string().replacen("https://", "http://", 1), email).await {
-        if trusted_over_http(&s, &domain) {
+        if trusted_settings(&s, &domain) {
             return Some(s);
         }
     }
@@ -214,9 +218,9 @@ pub fn by_mx(host: &str) -> Option<(Server, Server)> {
     preset(provider)
 }
 
-/// Whether settings that came over plain HTTP only name servers of the
+/// Whether published settings only name servers of the
 /// address's own domain or of a provider the engine knows.
-fn trusted_over_http(s: &Settings, domain: &str) -> bool {
+fn trusted_settings(s: &Settings, domain: &str) -> bool {
     let ok = |host: &str| {
         let host = host.trim_end_matches('.').to_ascii_lowercase();
         host == domain || host.ends_with(&format!(".{domain}")) || by_mx(&host).is_some()
@@ -428,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn plain_http_settings_must_name_known_servers() {
+    fn published_settings_must_name_known_servers() {
         let aruba = parse(
             &XML.replace("imap.studio.it", "imaps.aruba.it")
                 .replace("smtp.%EMAILDOMAIN%", "smtps.aruba.it"),
@@ -436,16 +440,29 @@ mod tests {
             Source::Published,
         )
         .unwrap();
-        assert!(trusted_over_http(&aruba, "bottegalume.example"));
+        assert!(trusted_settings(&aruba, "bottegalume.example"));
         let own = parse(XML, "matteo@studio.it", Source::Published).unwrap();
-        assert!(trusted_over_http(&own, "studio.it"));
-        let elsewhere = parse(
-            &XML.replace("imap.studio.it", "imap.attacker.example"),
-            "matteo@studio.it",
-            Source::Published,
-        )
-        .unwrap();
-        assert!(!trusted_over_http(&elsewhere, "studio.it"));
+        assert!(trusted_settings(&own, "studio.it"));
+        for host in ["studio.it", "IMAP.STUDIO.IT.", "imap.eu.studio.it"] {
+            let mut settings = own.clone();
+            settings.imap.host = host.into();
+            assert!(trusted_settings(&settings, "studio.it"), "{host}");
+        }
+        for host in [
+            "imap.attacker.example",
+            "notstudio.it",
+            "studio.it.attacker.example",
+            "notaruba.it",
+        ] {
+            // Both incoming and outgoing servers must pass, even when
+            // the XML was published by an HTTPS autoconfig endpoint.
+            let mut settings = own.clone();
+            settings.imap.host = host.into();
+            assert!(!trusted_settings(&settings, "studio.it"), "{host}");
+            settings.imap = own.imap.clone();
+            settings.smtp.host = host.into();
+            assert!(!trusted_settings(&settings, "studio.it"), "{host}");
+        }
     }
 
     #[test]
