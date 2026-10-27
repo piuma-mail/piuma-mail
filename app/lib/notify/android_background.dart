@@ -25,6 +25,16 @@ class AndroidBackground {
     if (on) await _background.invokeMethod<void>('apply');
   }
 
+  /// Delivers recovery cancellations even in periodic mode, with no service.
+  static Future<void> refreshSignInNotices() async {
+    if (!on) return;
+    try {
+      await _background.invokeMethod<void>('refreshSignInNotices');
+    } on PlatformException {
+      // The background service/job can deliver the queued update later.
+    }
+  }
+
   /// Asks Android to leave the service out of battery saving.
   static Future<void> askBattery() async {
     if (on) await _background.invokeMethod<void>('askBattery');

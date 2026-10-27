@@ -1185,19 +1185,20 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         if watched.contains(&id.0) {
             return Ok(());
         }
-        let password = match credentials::load(id) {
-            Ok(p) => p,
-            Err(_) => {
-                emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-                crate::background::sign_in_failed(id);
-                return Ok(());
-            }
-        };
         watched.push(id.0);
         let store = engine.store.clone();
         let settings_store = engine.store.clone();
-        let (outbox_account, outbox_password) = (account.clone(), password.clone());
         let task = engine.runtime.spawn(async move {
+            // A locked/unavailable keychain (or Android credentials not handed
+            // over yet) is not a server refusal. Retry without asking for a new
+            // password; stop_watching aborts this wait too.
+            let password = wait_for_credentials(
+                || credentials::load(id),
+                || emit(SyncEvent::new(SyncEventKind::Offline, id.0)),
+                std::time::Duration::from_secs(5),
+            )
+            .await;
+            let (outbox_account, outbox_password) = (account.clone(), password.clone());
             let result = remote::watch(&account, &password, store, move |e| {
                 // In touch with the server again: what waits can go.
                 if let WatchEvent::Synced { .. } = &e {
@@ -1245,6 +1246,57 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         watchers.push((id.0, task.abort_handle()));
     }
     Ok(())
+}
+
+/// Local credential failures never establish that authentication failed.
+async fn wait_for_credentials(
+    mut load: impl FnMut() -> Result<String, EngineError>,
+    mut unavailable: impl FnMut(),
+    retry: std::time::Duration,
+) -> String {
+    let mut reported = false;
+    loop {
+        match load() {
+            Ok(password) => return password,
+            Err(_) => {
+                if !reported {
+                    unavailable();
+                    reported = true;
+                }
+                tokio::time::sleep(retry).await;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod credential_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_credentials_retry_until_readable_without_auth_failure() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let mut attempts = 0;
+        let mut offline = 0;
+        let password = runtime.block_on(wait_for_credentials(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(EngineError::new(ErrorKind::Keychain, "temporarily locked"))
+                } else {
+                    Ok("test credential".into())
+                }
+            },
+            || offline += 1,
+            std::time::Duration::from_millis(1),
+        ));
+        assert_eq!(password, "test credential");
+        assert_eq!(attempts, 3);
+        assert_eq!(offline, 1);
+    }
 }
 
 /// What new mail deserves a notification, by the person's settings.

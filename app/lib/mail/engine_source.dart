@@ -582,6 +582,7 @@ class EngineMailSource extends MailSource {
         _progress[id] = (e.done, e.total);
         _progressChanged();
       case engine.SyncEventKind.synced:
+        unawaited(AndroidBackground.refreshSignInNotices());
         _progress.remove(id);
         if (e.added > 0 || e.removed > 0) _changes.add(null);
         if (e.notices.isNotEmpty) {

@@ -28,6 +28,7 @@ static FAILED: Mutex<Vec<SignInNotice>> = Mutex::new(Vec::new());
 pub struct SignInNotice {
     pub account_id: i64,
     pub name: String,
+    pub cancelled: bool,
 }
 
 /// From now on notices wait for [`wait`] instead of going to the app.
@@ -80,15 +81,14 @@ pub(crate) fn sign_in_failed(account: AccountId) {
 
 fn tell(account: AccountId) {
     let Ok(engine) = engine::engine() else { return };
-    let notice = told(
-        &engine.store.lock().unwrap_or_else(|e| e.into_inner()),
-        account,
-    );
+    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let notice = told(&store, account);
     let Some(notice) = notice else { return };
     FAILED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(notice);
+    drop(store);
     // Taken while wait() looks, so the wake-up isn't lost.
     drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
     ARRIVED.notify_all();
@@ -114,6 +114,7 @@ fn told(store: &Store, account: AccountId) -> Option<SignInNotice> {
     Some(SignInNotice {
         account_id: account.0,
         name: a.name,
+        cancelled: false,
     })
 }
 
@@ -129,8 +130,24 @@ fn is_told(store: &Store, account: AccountId) -> bool {
 pub(crate) fn signed_in(account: AccountId) {
     let Ok(engine) = engine::engine() else { return };
     let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
-    if is_told(&store, account) {
+    let mut failed = FAILED.lock().unwrap_or_else(|e| e.into_inner());
+    recover_sign_in(&store, account, &mut failed);
+    drop(failed);
+    drop(store);
+    drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+    ARRIVED.notify_all();
+}
+
+fn recover_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNotice>) {
+    if is_told(store, account) {
         store.set_setting(&told_key(account), "").ok();
+        // Replace an undelivered failure, or withdraw a notice already posted.
+        pending.retain(|n| n.account_id != account.0);
+        pending.push(SignInNotice {
+            account_id: account.0,
+            name: String::new(),
+            cancelled: true,
+        });
     }
 }
 
@@ -142,6 +159,9 @@ pub fn sign_in_notices() -> String {
     let items: Vec<String> = failed
         .iter()
         .map(|n| {
+            if n.cancelled {
+                return format!(r#"{{"id":{},"cancel":true}}"#, sign_in_id(n.account_id));
+            }
             format!(
                 r#"{{"id":{},"name":{},"payload":{}}}"#,
                 sign_in_id(n.account_id),
@@ -588,7 +608,25 @@ mod tests {
         let notice = told(&store, id).unwrap();
         assert_eq!(notice.name, "Work \"W\"");
         assert_eq!(told(&store, id), None);
-        // Signed in again (what `signed_in` does), then refused again.
+        let other = SignInNotice {
+            account_id: id.0 + 1,
+            name: "Other".into(),
+            cancelled: false,
+        };
+        let mut pending = vec![notice.clone(), other.clone()];
+        recover_sign_in(&store, id, &mut pending);
+        assert_eq!(pending[0], other);
+        assert_eq!(pending[1].account_id, id.0);
+        assert!(pending[1].cancelled);
+        assert!(!is_told(&store, id));
+        recover_sign_in(&store, id, &mut pending);
+        assert_eq!(pending.len(), 2); // Repeated success is quiet.
+        assert!(told(&store, id).is_some()); // A genuine new refusal still alerts.
+        let mut delivered = Vec::new();
+        recover_sign_in(&store, id, &mut delivered);
+        // Withdraw even after the queue was drained.
+        assert!(delivered[0].cancelled);
+        // Signed in again, then refused again.
         store.set_setting(&told_key(id), "").unwrap();
         assert!(told(&store, id).is_some());
         store.set_setting(&told_key(id), "").unwrap();
@@ -610,6 +648,12 @@ mod tests {
             )
         );
         assert_ne!(sign_in_id(id.0), sign_in_id(id.0 + 1));
+        assert_eq!(sign_in_notices(), "[]");
+        FAILED.lock().unwrap().extend(delivered);
+        assert_eq!(
+            sign_in_notices(),
+            format!(r#"[{{"id":{},"cancel":true}}]"#, sign_in_id(id.0))
+        );
         assert_eq!(sign_in_notices(), "[]");
     }
 }

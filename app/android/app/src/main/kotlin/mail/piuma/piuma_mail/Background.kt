@@ -274,6 +274,7 @@ object Background {
      * "Tell me when it can't sign in" with the app closed: "Work can't
      * sign in", once, opening the account's details.
      */
+    @Synchronized
     fun showSignIn(context: Context) {
         val notices = try {
             JSONArray(MailNative.signInNotices())
@@ -285,6 +286,10 @@ object Background {
         for (i in 0 until notices.length()) {
             val n = notices.getJSONObject(i)
             val id = n.getInt("id")
+            if (n.optBoolean("cancel", false)) {
+                manager.cancel(id)
+                continue
+            }
             val body = context.getString(R.string.notice_sign_in_body)
             val tap = PendingIntent.getActivity(
                 context,
