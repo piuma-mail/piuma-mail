@@ -270,6 +270,24 @@ void main() {
         matchesGoldenFile('goldens/phone_privacy_original_light.png'),
       );
     }, tags: ['golden']);
+
+    testWidgets('phone original layout runs edge to edge', (tester) async {
+      await _pump(tester, dark: true, size: const Size(390, 844));
+      final paper = tester.getRect(
+        find
+            .descendant(
+              of: find.byType(OriginalView),
+              matching: find.byType(ColoredBox),
+            )
+            .first,
+      );
+      expect(paper.left, 0);
+      expect(paper.right, 390);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/phone_original_dark.png'),
+      );
+    }, tags: ['golden']);
   });
 
   group('images bar', () {
