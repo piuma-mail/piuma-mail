@@ -92,7 +92,7 @@ class _Row extends StatelessWidget {
   Widget build(BuildContext context) {
     const c = watchColors;
     final locale = Localizations.localeOf(context).toLanguageTag();
-    final now = DateTime.now();
+    final now = watchNow();
     final t = row.time;
     final today =
         t.year == now.year && t.month == now.month && t.day == now.day;

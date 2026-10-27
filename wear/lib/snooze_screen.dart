@@ -21,7 +21,7 @@ class SnoozeScreen extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final link = LinkScope.of(context);
     final locale = Localizations.localeOf(context).toLanguageTag();
-    final now = DateTime.now();
+    final now = watchNow();
     const c = watchColors;
     return Scaffold(
       backgroundColor: c.darkroom,
