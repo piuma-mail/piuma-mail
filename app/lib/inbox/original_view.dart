@@ -30,7 +30,8 @@ OriginalPaper? originalPaper = WebViewPlatform.instance != null
 
 /// The email as it was sent (`OriginalToApprove`, opened by default since
 /// `ImagesToApprove`): the original on white paper in the middle of the
-/// stage. The switch to the clean view sits above it, in the reader.
+/// stage, or from edge to edge on a phone. The switch to the clean view
+/// sits above it, in the reader.
 ///
 /// Once the web view measures the document's height it calls
 /// [OriginalView.setHeight], so the paper takes the email's full length
@@ -87,14 +88,41 @@ class _OriginalViewState extends State<OriginalView> {
     final c = PiumaTheme.of(context);
     final size = MediaQuery.sizeOf(context);
     final paper = originalPaper;
-    final pad = widget.phone ? 10.0 : 24.0;
     final fallback = (size.height * (widget.phone ? 0.72 : 0.78)).clamp(
       360.0,
       1400.0,
     );
+    final sheet = ColoredBox(
+      color: PiumaColors.light.page,
+      child: _OriginalPaperScope(
+        onHeight: _setHeight,
+        child: FutureBuilder<OriginalDoc>(
+          future: widget.original,
+          builder: (context, snap) {
+            final doc = snap.data;
+            if (doc == null || paper == null) {
+              return const SizedBox.expand();
+            }
+            return paper(
+              doc.html,
+              (link) => widget.onLink(link, doc.suspicious[link]),
+            );
+          },
+        ),
+      ),
+    );
+    // On a phone the paper runs from edge to edge of the screen, with no
+    // stage around it (feedback #17, variant B approved by Matteo).
+    if (widget.phone) {
+      return SizedBox(
+        height: _height ?? fallback,
+        child: _EdgeToEdge(child: sheet),
+      );
+    }
+    const pad = 24.0;
     return Container(
       height: _height != null ? _height! + pad * 2 : fallback,
-      padding: EdgeInsets.all(pad),
+      padding: const EdgeInsets.all(pad),
       decoration: BoxDecoration(
         color: c.stage,
         borderRadius: BorderRadius.circular(PiumaRadius.card),
@@ -102,30 +130,59 @@ class _OriginalViewState extends State<OriginalView> {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: OriginalView.paperWidth),
-        child: SizedBox.expand(
-          child: ColoredBox(
-            color: PiumaColors.light.page,
-            child: _OriginalPaperScope(
-              onHeight: _setHeight,
-              child: FutureBuilder<OriginalDoc>(
-                future: widget.original,
-                builder: (context, snap) {
-                  final doc = snap.data;
-                  if (doc == null || paper == null) {
-                    return const SizedBox.expand();
-                  }
-                  return paper(
-                    doc.html,
-                    (link) => widget.onLink(link, doc.suspicious[link]),
-                  );
-                },
-              ),
-            ),
-          ),
-        ),
+        child: SizedBox.expand(child: sheet),
       ),
     );
   }
+}
+
+/// Widens [child] past the reader's side margins to the edges of the
+/// scrolling view it sits in, so the email fills the phone's width.
+class _EdgeToEdge extends StatefulWidget {
+  const _EdgeToEdge({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_EdgeToEdge> createState() => _EdgeToEdgeState();
+}
+
+class _EdgeToEdgeState extends State<_EdgeToEdge> {
+  double _left = 0;
+  double _right = 0;
+
+  void _measure(Duration _) {
+    if (!mounted) return;
+    final box = context.findRenderObject();
+    final outer = Scrollable.maybeOf(context)?.context.findRenderObject();
+    if (box is! RenderBox || outer is! RenderBox) return;
+    if (!box.hasSize || !outer.hasSize) return;
+    final left = box.localToGlobal(Offset.zero, ancestor: outer).dx;
+    final right = outer.size.width - left - box.size.width;
+    if (left < 0 || right < 0) return;
+    if ((left - _left).abs() < 0.5 && (right - _right).abs() < 0.5) return;
+    setState(() {
+      _left = left;
+      _right = right;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      WidgetsBinding.instance.addPostFrameCallback(_measure);
+      final width = box.maxWidth + _left + _right;
+      return OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: width,
+        maxWidth: width,
+        child: Transform.translate(
+          offset: Offset(-_left, 0),
+          child: widget.child,
+        ),
+      );
+    },
+  );
 }
 
 class _OriginalPaperScope extends InheritedWidget {
