@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
@@ -191,10 +192,18 @@ double? paperHeight(String report, double width) {
   return height * width / viewport;
 }
 
+/// Android's web view ignores a page's viewport unless asked, so the
+/// original's 600-pixel width would be cut at the phone's width.
+WebViewController _wide(WebViewController controller) {
+  final platform = controller.platform;
+  if (platform is AndroidWebViewController) platform.setUseWideViewPort(true);
+  return controller;
+}
+
 class _WebPaperState extends State<_WebPaper> {
   double _width = 0;
 
-  late final WebViewController _controller = WebViewController()
+  late final WebViewController _controller = _wide(WebViewController())
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..addJavaScriptChannel('PiumaPaper', onMessageReceived: _onReport)
     ..setNavigationDelegate(
