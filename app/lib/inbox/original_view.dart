@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
@@ -138,7 +139,7 @@ class _OriginalPaperScope extends InheritedWidget {
 
 /// The system web view: the email's own scripts are stripped and blocked
 /// by the page's Content-Security-Policy (`default-src 'none'`), while
-/// the host measures the document height so the reader scrolls as one
+/// the host watches the document's height so the reader scrolls as one
 /// page, and every navigation is stopped and handed to the app.
 class _WebPaper extends StatefulWidget {
   const _WebPaper({required this.html, required this.onLink});
@@ -150,12 +151,64 @@ class _WebPaper extends StatefulWidget {
   State<_WebPaper> createState() => _WebPaperState();
 }
 
+/// Reports the document's height and the viewport's width, both in CSS
+/// pixels, now and whenever they change: images decoding, fonts, a
+/// layout settling after the page has finished loading (feedback #17).
+/// Scripts the host runs are not bound by the page's policy.
+const _watchHeight = '''
+(function () {
+  if (window._piumaHeight) return;
+  window._piumaHeight = true;
+  function report() {
+    var b = document.body ? document.body.scrollHeight : 0;
+    var d = document.documentElement ? document.documentElement.scrollHeight : 0;
+    var h = Math.max(b, d);
+    if (h > 0) PiumaPaper.postMessage(h + ',' + window.innerWidth);
+  }
+  report();
+  if (window.ResizeObserver) {
+    var o = new ResizeObserver(report);
+    o.observe(document.documentElement);
+    if (document.body) o.observe(document.body);
+  }
+  window.addEventListener('load', report);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+})();
+''';
+
+/// The paper's height in the app's points for a report of [_watchHeight]
+/// ("height,viewportWidth" in CSS pixels), drawn [width] points wide.
+/// The original asks for a 600-pixel viewport, so on a phone the page is
+/// scaled down to fit and its CSS pixels are not the app's points.
+@visibleForTesting
+double? paperHeight(String report, double width) {
+  final parts = report.split(',');
+  if (parts.length != 2) return null;
+  final height = double.tryParse(parts[0]);
+  final viewport = double.tryParse(parts[1]);
+  if (height == null || !height.isFinite || height <= 0) return null;
+  if (viewport == null || !viewport.isFinite || viewport <= 0) return height;
+  if (!width.isFinite || width <= 0) return height;
+  return height * width / viewport;
+}
+
+/// Android's web view ignores a page's viewport unless asked, so the
+/// original's 600-pixel width would be cut at the phone's width.
+WebViewController _wide(WebViewController controller) {
+  final platform = controller.platform;
+  if (platform is AndroidWebViewController) platform.setUseWideViewPort(true);
+  return controller;
+}
+
 class _WebPaperState extends State<_WebPaper> {
-  late final WebViewController _controller = WebViewController()
+  double _width = 0;
+
+  late final WebViewController _controller = _wide(WebViewController())
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
+    ..addJavaScriptChannel('PiumaPaper', onMessageReceived: _onReport)
     ..setNavigationDelegate(
       NavigationDelegate(
-        onPageFinished: (_) => _measure(),
+        onPageFinished: (_) => _watch(),
         onNavigationRequest: (request) {
           final url = request.url;
           // The document itself, loaded from the string.
@@ -185,31 +238,23 @@ class _WebPaperState extends State<_WebPaper> {
     if (old.html != widget.html) _controller.loadHtmlString(widget.html);
   }
 
-  Future<void> _measure() async {
-    for (final wait in const [
-      Duration.zero,
-      Duration(milliseconds: 60),
-      Duration(milliseconds: 250),
-    ]) {
-      if (wait > Duration.zero) await Future<void>.delayed(wait);
-      if (!mounted) return;
-      try {
-        final raw = await _controller.runJavaScriptReturningResult(
-          'Math.max(document.body ? document.body.scrollHeight : 0, '
-          'document.documentElement ? document.documentElement.scrollHeight : 0)',
-        );
-        final h = switch (raw) {
-          final num n => n.toDouble(),
-          final String s => double.tryParse(s.replaceAll('"', '')),
-          _ => null,
-        };
-        if (mounted && h != null && h > 0) {
-          OriginalView.setHeight(context, h);
-        }
-      } catch (_) {}
-    }
+  Future<void> _watch() async {
+    try {
+      await _controller.runJavaScript(_watchHeight);
+    } catch (_) {}
+  }
+
+  void _onReport(JavaScriptMessage message) {
+    if (!mounted) return;
+    final h = paperHeight(message.message, _width);
+    if (h != null) OriginalView.setHeight(context, h);
   }
 
   @override
-  Widget build(BuildContext context) => WebViewWidget(controller: _controller);
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      _width = constraints.maxWidth;
+      return WebViewWidget(controller: _controller);
+    },
+  );
 }
