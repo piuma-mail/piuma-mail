@@ -147,6 +147,9 @@ Color _color(String hex) {
   return v == null ? const Color(0xFF8A8D93) : Color(0xFF000000 | v);
 }
 
+/// The watch's clock; tests pin it so the screens draw the same times.
+DateTime Function() watchNow = DateTime.now;
+
 /// The times of `FeatureSnooze`, as on the phone (`app/lib/inbox/snooze.dart`).
 enum SnoozeChoice { evening, tomorrow, weekend, nextWeek }
 

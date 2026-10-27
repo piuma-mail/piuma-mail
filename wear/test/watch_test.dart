@@ -92,6 +92,10 @@ Future<void> _toEnd(WidgetTester tester) async {
 }
 
 void main() {
+  // The snooze choices and the inbox's times depend on the hour.
+  setUp(() => watchNow = () => _now);
+  tearDown(() => watchNow = DateTime.now);
+
   test('the summary reads what the phone sends', () {
     final s = Summary.parse(_summary())!;
     expect(s.unread, 3);
