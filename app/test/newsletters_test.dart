@@ -131,7 +131,7 @@ void main() {
     // The picture comes from the network: a moment later.
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
-    // Both Forma issues, nobody else's: the others keep their tint.
+    // Both Forma issues have pictures; the other rows stay text-only.
     expect(
       find.descendant(
         of: find.byType(NewsletterPicture),
@@ -140,6 +140,15 @@ void main() {
       findsNWidgets(2),
     );
     expect(source.fetched, hasLength(1));
+    await source.setTrusted('issue@forma.example', false);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(NewsletterPicture),
+        matching: find.byType(Image),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('without trust there are no covers and nothing is fetched', (
@@ -155,6 +164,30 @@ void main() {
       ),
       findsNothing,
     );
+    expect(source.fetched, isEmpty);
+    for (final picture in tester.widgetList<NewsletterPicture>(
+      find.byType(NewsletterPicture),
+    )) {
+      expect(tester.getSize(find.byWidget(picture)), Size.zero);
+    }
+  });
+
+  testWidgets('phone lead and rows are text-only without images', (
+    tester,
+  ) async {
+    final source = await _pump(tester, phone: true);
+    for (var i = 0; i < 5 && _tile.hitTestable().evaluate().isEmpty; i++) {
+      await tester.drag(find.byType(PhoneChipRow), const Offset(-120, 0));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(_tile);
+    await tester.pumpAndSettle();
+    expect(find.text(_forma), findsOneWidget);
+    for (final picture in tester.widgetList<NewsletterPicture>(
+      find.byType(NewsletterPicture),
+    )) {
+      expect(tester.getSize(find.byWidget(picture)), Size.zero);
+    }
     expect(source.fetched, isEmpty);
   });
 
