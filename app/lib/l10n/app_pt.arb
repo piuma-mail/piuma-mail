@@ -1475,5 +1475,6 @@
   "calGoogleSub": "Ler eventos e disponibilidade com um link iCal",
   "calGoogleLabel": "Endereço iCal do Google Agenda",
   "calGoogleHint": "No Google Agenda no computador: Configurações › sua agenda › Integrar agenda › Endereço secreto no formato iCal. Somente leitura; conecta diretamente.",
-  "bundledReleaseNotes": "## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante"
+  "bundledReleaseNotes": "## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante",
+  "notificationNotices": "{count, plural, =1{1 aviso} other{{count} avisos}}"
 }

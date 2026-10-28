@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../compose/remind_me.dart';
 import '../design/icons.dart';
@@ -87,11 +88,15 @@ class MessageList extends StatefulWidget {
     this.leftSwipeAs,
     this.top = const [],
     this.swipeHint = false,
+    this.onNoticeArchive,
   });
 
   /// Slivers above the rows that scroll with them: the phone's folding
   /// header and what sits under it (`HomeToApprove`, variant 2).
   final List<Widget> top;
+
+  /// Archives an entire collapsed notice run, with the usual Undo.
+  final ValueChanged<List<MailRow>>? onNoticeArchive;
 
   /// "Swipe right to archive, left to snooze" under the rows, as the
   /// tablet's list has it (`Tablet`).
@@ -159,8 +164,67 @@ class MessageList extends StatefulWidget {
   State<MessageList> createState() => MessageListState();
 }
 
+/// A grouped notice row's span, oldest to newest: times when the notices
+/// came on one day ("10:00 – 18:00"), dates otherwise ("Oct 27 – Oct 28").
+@visibleForTesting
+String noticeRange(DateTime oldest, DateTime newest, String locale) {
+  final sameDay =
+      oldest.year == newest.year &&
+      oldest.month == newest.month &&
+      oldest.day == newest.day;
+  final format = sameDay ? DateFormat.Hm(locale) : DateFormat.MMMd(locale);
+  return '${format.format(oldest)} – ${format.format(newest)}';
+}
+
 class MessageListState extends State<MessageList>
     with SingleTickerProviderStateMixin {
+  final _expandedNotices = <Object>{};
+
+  bool get _groupNotices =>
+      widget.folder == MailFolder.inbox &&
+      widget.mailbox == null &&
+      widget.tab == InboxTab.notifications;
+
+  bool _sameNotice(MailRow? a, MailRow? b) =>
+      _groupNotices &&
+      a != null &&
+      b != null &&
+      !widget.source.byPerson(a) &&
+      !widget.source.byPerson(b) &&
+      !a.isConversation &&
+      !b.isConversation &&
+      sameNotice(a, b);
+
+  /// The rows of the day section holding [index], as `[start, end)`: a run
+  /// of notices never crosses a section header.
+  (int, int) _sectionBounds(int index) {
+    var start = 0;
+    for (final section in _sections) {
+      final end = start + section.count;
+      if (index < end) return (start, end);
+      start = end;
+    }
+    return (start, start);
+  }
+
+  bool _hiddenNotice(int index) =>
+      index > _sectionBounds(index).$1 &&
+      _sameNotice(_loadedRow(index - 1), _loadedRow(index));
+
+  List<MailRow> _noticeRun(int index) {
+    final first = _loadedRow(index);
+    if (first == null) return const [];
+    final rows = [first];
+    if (!_groupNotices) return rows;
+    final end = _sectionBounds(index).$2;
+    for (var next = index + 1; next < end; next++) {
+      final row = _loadedRow(next);
+      if (!_sameNotice(first, row)) break;
+      rows.add(row!);
+    }
+    return rows;
+  }
+
   /// Asked once whether the swipe hint is still to play.
   bool _hintAsked = false;
 
@@ -770,6 +834,18 @@ class MessageListState extends State<MessageList>
             itemExtentBuilder: (index, _) {
               final item = _item(index);
               if (item.header != null) return kHeaderExtent;
+              if (_hiddenNotice(item.row)) return 0;
+              final run = _noticeRun(item.row);
+              if (run.length > 1) {
+                final extent = rowExtent(look, chip: true);
+                return extent +
+                    (_expandedNotices.contains(run.first.key)
+                        ? run.fold<double>(
+                            0,
+                            (sum, r) => sum + rowExtent(look, chip: _chips(r)),
+                          )
+                        : 0);
+              }
               final row = _loadedRow(item.row);
               final extent = rowExtent(
                 look,
@@ -785,8 +861,95 @@ class MessageListState extends State<MessageList>
               if (item.header != null) {
                 return _SectionHeader(item.header!, phone: widget.phone);
               }
+              if (_hiddenNotice(item.row)) return const SizedBox.shrink();
               final row = _row(item.row);
               if (row == null) return const _RowPlaceholder();
+              final run = _noticeRun(item.row);
+              if (_groupNotices &&
+                  run.isNotEmpty &&
+                  item.row + run.length < _sectionBounds(item.row).$2) {
+                // Ask for the boundary page too: a run may continue there.
+                _row(item.row + run.length);
+              }
+              if (run.length > 1) {
+                final expanded = _expandedNotices.contains(row.key);
+                final picked = run.every((r) => widget.picked.contains(r.key));
+                void toggle() => widget.onPick?.call(run, !picked);
+                final range = noticeRange(
+                  run.last.receivedAt,
+                  run.first.receivedAt,
+                  locale,
+                );
+                final summary = InboxRowTile(
+                  row: row.withSeen(run.every((r) => r.seen)),
+                  account: _account(row.accountId),
+                  time: rowTime(row.receivedAt, now, locale),
+                  selected: false,
+                  picked: picked,
+                  phone: widget.phone,
+                  picking: widget.phone && widget.picked.isNotEmpty,
+                  noticeCount: run.length,
+                  noticeRange: range,
+                  expandedNotices: expanded,
+                  onTap: () {
+                    if (widget.picked.isNotEmpty) {
+                      toggle();
+                      return;
+                    }
+                    setState(
+                      () => expanded
+                          ? _expandedNotices.remove(row.key)
+                          : _expandedNotices.add(row.key),
+                    );
+                  },
+                  onPick: widget.onPick == null ? null : toggle,
+                  onLongPress: widget.onPick == null ? null : toggle,
+                );
+                final archive = widget.onNoticeArchive;
+                return Column(
+                  children: [
+                    SizedBox(
+                      height: rowExtent(look, chip: true),
+                      child:
+                          archive == null ||
+                              widget.onSwipe == null ||
+                              widget.picked.isNotEmpty
+                          ? summary
+                          : SwipeToArchive(
+                              key: ValueKey(('notice', row.key)),
+                              label: l.archive,
+                              snoozeLabel: l.actionSnooze,
+                              onArchive: () => archive(run),
+                              child: summary,
+                            ),
+                    ),
+                    if (expanded)
+                      for (final notice in run)
+                        SizedBox(
+                          height: rowExtent(look, chip: _chips(notice)),
+                          child: InboxRowTile(
+                            row: notice,
+                            account: _account(notice.accountId),
+                            time: DateFormat.MMMd(locale)
+                                .add_Hm()
+                                .format(notice.receivedAt),
+                            phone: widget.phone,
+                            selected: widget.selected == notice.key,
+                            picked: widget.picked.contains(notice.key),
+                            writtenTo: _writtenTo(notice),
+                            onTap: () =>
+                                _tap(item.row + run.indexOf(notice), notice),
+                            onPick: widget.onPick == null
+                                ? null
+                                : () => _toggle(
+                                    item.row + run.indexOf(notice),
+                                    notice,
+                                  ),
+                          ),
+                        ),
+                  ],
+                );
+              }
               final tile = InboxRowTile(
                 row: row,
                 account: _account(row.accountId),
@@ -1264,10 +1427,16 @@ class InboxRowTile extends StatefulWidget {
     this.writtenTo,
     this.waiting = false,
     this.noReply,
+    this.noticeCount = 0,
+    this.noticeRange,
+    this.expandedNotices = false,
   });
 
   /// A row of Waiting: "To Luca Bianchi" and "No reply yet" in place of
   /// the preview, as on `WaitingToApprove`.
+  final int noticeCount;
+  final String? noticeRange;
+  final bool expandedNotices;
   final bool waiting;
 
   /// Sent mail back as "Remind me" asked: "To Luca Bianchi", and this
@@ -1517,6 +1686,8 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                         // A draft may have no one to go to yet.
                                         row.listName.isEmpty
                                             ? l.noRecipients
+                                            : widget.noticeCount > 1
+                                            ? '${row.listName} · ${l.notificationNotices(widget.noticeCount)}'
                                             : row.listName,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -1585,13 +1756,36 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                   overflow: TextOverflow.ellipsis,
                                   style: line.copyWith(color: c.muted),
                                 ),
-                              if (_tag(row, l, widget.phone) != null ||
+                              if (widget.noticeCount > 1 ||
+                                  _tag(row, l, widget.phone) != null ||
                                   widget.writtenTo != null ||
                                   labels.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 6),
                                   child: Row(
                                     children: [
+                                      if (widget.noticeCount > 1) ...[
+                                        _RowChip(text: '${widget.noticeCount}'),
+                                        const SizedBox(width: PiumaSpace.s8),
+                                        Expanded(
+                                          child: Text(
+                                            widget.noticeRange!,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: PiumaType.small.copyWith(
+                                              color: c.muted,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          widget.expandedNotices
+                                              ? l.hide
+                                              : l.show,
+                                          style: PiumaType.small.copyWith(
+                                            color: c.accentText,
+                                          ),
+                                        ),
+                                      ],
                                       if (labels.isNotEmpty)
                                         Flexible(
                                           child: Padding(
@@ -1872,4 +2066,16 @@ class _SwipeHint extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Consecutive automated notices retain their account and exact subject words.
+/// Case and whitespace differences do not split an otherwise identical run.
+bool sameNotice(MailRow a, MailRow b) {
+  String subject(String value) =>
+      value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  return a.accountId == b.accountId &&
+      a.mailbox == b.mailbox &&
+      a.fromEmail.trim().toLowerCase() == b.fromEmail.trim().toLowerCase() &&
+      subject(a.subject).isNotEmpty &&
+      subject(a.subject) == subject(b.subject);
 }

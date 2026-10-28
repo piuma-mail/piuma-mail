@@ -1475,5 +1475,6 @@
   "calGoogleSub": "Lire les événements et la disponibilité avec un lien iCal",
   "calGoogleLabel": "Adresse iCal de Google Agenda",
   "calGoogleHint": "Dans Google Agenda sur un ordinateur : Paramètres › votre agenda › Intégrer l’agenda › Adresse secrète au format iCal. Lecture seule ; connexion directe.",
-  "bundledReleaseNotes": "## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand"
+  "bundledReleaseNotes": "## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand",
+  "notificationNotices": "{count, plural, =1{1 avis} other{{count} avis}}"
 }

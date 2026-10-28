@@ -1485,5 +1485,6 @@
   "calGoogleSub": "Leggi eventi e disponibilità con un link iCal",
   "calGoogleLabel": "Indirizzo iCal di Google Calendar",
   "calGoogleHint": "In Google Calendar da computer: Impostazioni › il tuo calendario › Integra calendario › Indirizzo segreto in formato iCal. Sola lettura; connessione diretta.",
-  "bundledReleaseNotes": "## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore"
+  "bundledReleaseNotes": "## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore",
+  "notificationNotices": "{count, plural, =1{1 avviso} other{{count} avvisi}}"
 }

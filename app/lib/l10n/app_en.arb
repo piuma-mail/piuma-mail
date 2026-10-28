@@ -109,6 +109,8 @@
   "defaultAccountName": "Mail",
   "emailAddress": "Email address",
   "password": "Password",
+  "notificationNotices": "{count, plural, =1{1 notice} other{{count} notices}}",
+  "@notificationNotices": {"placeholders": {"count": {"type": "int"}}},
   "show": "Show",
   "hide": "Hide",
   "imapServer": "IMAP server",

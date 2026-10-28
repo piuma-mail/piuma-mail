@@ -1475,5 +1475,6 @@
   "calGoogleSub": "Termine und Verfügbarkeit über einen iCal-Link lesen",
   "calGoogleLabel": "iCal-Adresse von Google Kalender",
   "calGoogleHint": "In Google Kalender am Computer: Einstellungen › dein Kalender › Kalender integrieren › Privatadresse im iCal-Format. Schreibgeschützt; verbindet sich direkt.",
-  "bundledReleaseNotes": "## E-Mail, leicht gemacht\n- Original-Layouts mit durchgehendem Scrollen und Bildsteuerung\n- Formatierungsleiste und Wechsel zum vollständigen Editor beim Antworten\n- Bewusstere horizontale Wischgesten\n- Absenderwarnungen bei Markenimitation und ähnlichen Domains\n- Monatlicher Tresor-CSV-Export mit USt-IdNr. des Händlers"
+  "bundledReleaseNotes": "## E-Mail, leicht gemacht\n- Original-Layouts mit durchgehendem Scrollen und Bildsteuerung\n- Formatierungsleiste und Wechsel zum vollständigen Editor beim Antworten\n- Bewusstere horizontale Wischgesten\n- Absenderwarnungen bei Markenimitation und ähnlichen Domains\n- Monatlicher Tresor-CSV-Export mit USt-IdNr. des Händlers",
+  "notificationNotices": "{count, plural, =1{1 Hinweis} other{{count} Hinweise}}"
 }
