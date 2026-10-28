@@ -127,8 +127,9 @@ class ComposePane extends StatefulWidget {
 
 class _ComposePaneState extends State<ComposePane> {
   /// On the phone, the people suggested for the field being typed in,
-  /// listed under it in place of the rest of the form.
+  /// listed inline under it while the remaining fields stay visible.
   GlobalKey? _listingIn;
+  final _suggestionsKey = GlobalKey();
   List<Contact> _listed = const [];
   ValueChanged<Contact>? _pickListed;
 
@@ -136,14 +137,29 @@ class _ComposePaneState extends State<ComposePane> {
     GlobalKey field,
   ) => !widget.phone
       ? null
-      : (people, pick) => setState(() {
-          if (people.isEmpty && _listingIn != field) return;
-          _listingIn = people.isEmpty ? null : field;
-          _listed = people;
-          _pickListed = pick;
-        });
+      : (people, pick) {
+          setState(() {
+            if (people.isEmpty && _listingIn != field) return;
+            _listingIn = people.isEmpty ? null : field;
+            _listed = people;
+            _pickListed = pick;
+          });
+          if (people.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final target = _suggestionsKey.currentContext;
+              if (mounted && _listingIn == field && target != null) {
+                Scrollable.ensureVisible(target, alignment: 1);
+              }
+            });
+          }
+        };
 
-  Widget _phoneList() => Expanded(
+  Widget _phoneList() => SizedBox(
+    key: _suggestionsKey,
+    height: (_listed.length * PiumaSpace.s32 * 2).clamp(
+      0.0,
+      PiumaSpace.s24 * 7,
+    ),
     child: _PhoneSuggestions(people: _listed, onPick: _pickListed!),
   );
 
@@ -900,6 +916,19 @@ class _ComposePaneState extends State<ComposePane> {
     bool apple,
     String? error,
     String locale,
+  ) => LayoutBuilder(
+    builder: (context, box) =>
+        _composeFields(context, c, l, apple, error, locale, box.maxHeight / 2),
+  );
+
+  Widget _composeFields(
+    BuildContext context,
+    PiumaColors c,
+    AppLocalizations l,
+    bool apple,
+    String? error,
+    String locale,
+    double recipientHeight,
   ) {
     final phone = widget.phone;
     // On the phone compose grows out of what was tapped: the keyboard
@@ -912,6 +941,108 @@ class _ComposePaneState extends State<ComposePane> {
         : widget.initial.isReply
         ? l.replyTitle
         : l.newMessage;
+    final recipientFields = <Widget>[
+      _Line(
+        top: !phone,
+        label: l.from,
+        child: _FromPicker(
+          sections: senderSections(
+            widget.accounts,
+            widget.aliases,
+            widget.groups,
+          ),
+          accountId: _accountId,
+          email: _fromEmail,
+          automatic: widget.initial.isReply || widget.initial.forward
+              ? widget.initial.fromEmail
+              : null,
+          writer: widget.initial.to.firstOrNull,
+          onPick: (s) {
+            setState(() {
+              _accountId = s.account.id;
+              _fromEmail =
+                  s.email.toLowerCase() == s.account.email.toLowerCase()
+                  ? null
+                  : s.email;
+              _signaturePicked = false;
+            });
+            _edited();
+          },
+        ),
+      ),
+      _Line(
+        label: l.to,
+        onTap: () => _toKey.currentState?.focus(),
+        trailing: _showCopies
+            ? null
+            : _TextLink(
+                label: l.ccBcc,
+                onTap: () => setState(() => _showCopies = true),
+              ),
+        child: _RecipientsField(
+          key: _toKey,
+          label: l.to,
+          addresses: _to,
+          suggest: widget.suggest,
+          onListing: _listing(_toKey),
+          autofocus: widget.initial.to.isEmpty,
+          focusAfter: focusAfter,
+          onChanged: () {
+            setState(() => _localError = null);
+            _edited();
+          },
+        ),
+      ),
+      if (_listingIn == _toKey) _phoneList(),
+      if (_showCopies) ...[
+        _Line(
+          label: l.cc,
+          onTap: () => _ccKey.currentState?.focus(),
+          child: _RecipientsField(
+            key: _ccKey,
+            label: l.cc,
+            addresses: _cc,
+            suggest: widget.suggest,
+            onListing: _listing(_ccKey),
+            onChanged: () {
+              setState(() => _localError = null);
+              _edited();
+            },
+          ),
+        ),
+        if (_listingIn == _ccKey) _phoneList(),
+        _Line(
+          label: l.bcc,
+          onTap: () => _bccKey.currentState?.focus(),
+          child: _RecipientsField(
+            key: _bccKey,
+            label: l.bcc,
+            addresses: _bcc,
+            suggest: widget.suggest,
+            onListing: _listing(_bccKey),
+            onChanged: () {
+              setState(() => _localError = null);
+              _edited();
+            },
+          ),
+        ),
+        if (_listingIn == _bccKey) _phoneList(),
+      ],
+      _Line(
+        label: l.subject,
+        onTap: _subjectFocus.requestFocus,
+        child: _BareField(
+          controller: _subject,
+          focusNode: _subjectFocus,
+          label: l.subject,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: c.fg,
+          ),
+        ),
+      ),
+    ];
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send,
@@ -965,108 +1096,16 @@ class _ComposePaneState extends State<ComposePane> {
                     ],
                   ),
                 SizedBox(height: phone ? 4 : 14),
-                _Line(
-                  top: !phone,
-                  label: l.from,
-                  child: _FromPicker(
-                    sections: senderSections(
-                      widget.accounts,
-                      widget.aliases,
-                      widget.groups,
+                if (phone)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: recipientHeight),
+                    child: SingleChildScrollView(
+                      child: Column(children: recipientFields),
                     ),
-                    accountId: _accountId,
-                    email: _fromEmail,
-                    automatic: widget.initial.isReply || widget.initial.forward
-                        ? widget.initial.fromEmail
-                        : null,
-                    writer: widget.initial.to.firstOrNull,
-                    onPick: (s) {
-                      setState(() {
-                        _accountId = s.account.id;
-                        _fromEmail =
-                            s.email.toLowerCase() ==
-                                s.account.email.toLowerCase()
-                            ? null
-                            : s.email;
-                        _signaturePicked = false;
-                      });
-                      _edited();
-                    },
-                  ),
-                ),
-                _Line(
-                  label: l.to,
-                  onTap: () => _toKey.currentState?.focus(),
-                  trailing: _showCopies
-                      ? null
-                      : _TextLink(
-                          label: l.ccBcc,
-                          onTap: () => setState(() => _showCopies = true),
-                        ),
-                  child: _RecipientsField(
-                    key: _toKey,
-                    label: l.to,
-                    addresses: _to,
-                    suggest: widget.suggest,
-                    onListing: _listing(_toKey),
-                    autofocus: widget.initial.to.isEmpty,
-                    focusAfter: focusAfter,
-                    onChanged: () {
-                      setState(() => _localError = null);
-                      _edited();
-                    },
-                  ),
-                ),
-                if (_listingIn == _toKey) _phoneList(),
-                if (_showCopies) ...[
-                  _Line(
-                    label: l.cc,
-                    onTap: () => _ccKey.currentState?.focus(),
-                    child: _RecipientsField(
-                      key: _ccKey,
-                      label: l.cc,
-                      addresses: _cc,
-                      suggest: widget.suggest,
-                      onListing: _listing(_ccKey),
-                      onChanged: () {
-                        setState(() => _localError = null);
-                        _edited();
-                      },
-                    ),
-                  ),
-                  if (_listingIn == _ccKey) _phoneList(),
-                  _Line(
-                    label: l.bcc,
-                    onTap: () => _bccKey.currentState?.focus(),
-                    child: _RecipientsField(
-                      key: _bccKey,
-                      label: l.bcc,
-                      addresses: _bcc,
-                      suggest: widget.suggest,
-                      onListing: _listing(_bccKey),
-                      onChanged: () {
-                        setState(() => _localError = null);
-                        _edited();
-                      },
-                    ),
-                  ),
-                  if (_listingIn == _bccKey) _phoneList(),
-                ],
-                if (_listingIn == null) ...[
-                  _Line(
-                    label: l.subject,
-                    onTap: _subjectFocus.requestFocus,
-                    child: _BareField(
-                      controller: _subject,
-                      focusNode: _subjectFocus,
-                      label: l.subject,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: c.fg,
-                      ),
-                    ),
-                  ),
+                  )
+                else
+                  ...recipientFields,
+                ...[
                   Expanded(
                     child: SingleChildScrollView(
                       controller: _scroll,
@@ -1485,7 +1524,13 @@ class _RecipientsFieldState extends State<_RecipientsField> {
       _hide();
       return;
     }
-    final found = await suggest(typed.trim());
+    List<Contact> found;
+    try {
+      found = await suggest(typed.trim());
+    } catch (_) {
+      if (mounted && asked == _asked) _hide();
+      return;
+    }
     if (!mounted || asked != _asked) return;
     final there = {
       for (final a in widget.addresses) _bareAddress(a).toLowerCase(),
@@ -1772,12 +1817,15 @@ class _Suggestions extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(width: 12),
-                            Text(
-                              p.writtenTo
-                                  ? l.suggestWroteTo
-                                  : l.suggestWroteToYou,
-                              style: TextStyle(fontSize: 12, color: c.muted),
-                            ),
+                            if (p.accountColor case final color?)
+                              _Dot(color)
+                            else
+                              Text(
+                                p.writtenTo
+                                    ? l.suggestWroteTo
+                                    : l.suggestWroteToYou,
+                                style: TextStyle(fontSize: 12, color: c.muted),
+                              ),
                           ],
                         ),
                       ),
@@ -1805,6 +1853,7 @@ class _PhoneSuggestions extends StatelessWidget {
     final c = PiumaTheme.of(context);
     return TextFieldTapRegion(
       child: ListView(
+        itemExtent: PiumaSpace.s32 * 2,
         padding: EdgeInsets.zero,
         children: [
           for (final p in people)
@@ -1829,6 +1878,10 @@ class _PhoneSuggestions extends StatelessWidget {
                           addressSize: 13,
                         ),
                       ),
+                      if (p.accountColor case final color?) ...[
+                        const SizedBox(width: PiumaSpace.s12),
+                        _Dot(color),
+                      ],
                     ],
                   ),
                 ),

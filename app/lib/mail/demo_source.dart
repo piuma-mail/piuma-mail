@@ -9,6 +9,7 @@ import '../search/highlight.dart';
 import 'demo_images.dart';
 import 'demo_pictures.dart';
 import 'mail_source.dart';
+import 'recipient_suggestions.dart';
 
 /// The inbox of the `Main` mockup, for tests, golden screenshots and the
 /// first look before an account is added.
@@ -3562,7 +3563,7 @@ class DemoMailSource extends MailSource {
   Future<List<Contact>> suggestRecipients(String typed, {int limit = 6}) async {
     final t = typed.trim().toLowerCase();
     if (t.isEmpty) return const [];
-    return [
+    final people = [
       for (final (name, email, wrote) in const [
         ('Sara Conti', 'sara@studio.it', true),
         ('Giulia Romano', 'giulia.romano@posta.it', true),
@@ -3574,7 +3575,15 @@ class DemoMailSource extends MailSource {
         if (email.startsWith(t) ||
             name.toLowerCase().split(' ').any((w) => w.startsWith(t)))
           Contact(name: name, email: email, writtenTo: wrote),
-    ].take(limit).toList();
+    ];
+    return recipientSuggestions(
+      typed,
+      people,
+      accounts,
+      {for (final account in accounts) account.id: await aliases(account.id)},
+      limit: limit,
+      frequent: (await searchStart()).frequent,
+    );
   }
 
   /// Plain words, `from:`, `account:`, `group:`, `is:unread` and

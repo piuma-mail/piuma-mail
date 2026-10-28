@@ -139,19 +139,97 @@ void main() {
     expect(find.text('giulia.romano@posta.it'), findsNothing);
   });
 
-  testWidgets('on the phone the list takes the place of the form', (
+  testWidgets('on the phone suggestions sit inline above Subject', (
     tester,
   ) async {
     await _pumpPhone(tester);
     await tester.showKeyboard(_field(0));
     await tester.enterText(_field(0), 'gi');
     await tester.pumpAndSettle();
-    expect(find.text('Subject'), findsNothing);
+    expect(find.text('Subject'), findsOneWidget);
     expect(find.text('Wrote to'), findsNothing);
     await tester.tap(find.text('Giorgio Bassi'));
     await tester.pumpAndSettle();
     expect(find.text('Subject'), findsOneWidget);
     expect(find.text('g.bassi@studio.it'), findsNothing);
+  });
+
+  for (final phone in [false, true]) {
+    for (final dark in [false, true]) {
+      for (final field in [0, 1, 2]) {
+        testWidgets(
+          'own address suggestions ${phone ? 'phone' : 'desktop'} ${dark ? 'dark' : 'light'} field $field',
+          (tester) async {
+            phone
+                ? await _pumpPhone(tester, dark: dark)
+                : await _pump(tester, dark: dark);
+            if (field > 0) {
+              await tester.tap(find.text('Cc  Bcc'));
+              await tester.pumpAndSettle();
+            }
+            await tester.showKeyboard(_field(field));
+            await tester.enterText(_field(field), 'matteo@');
+            await tester.pumpAndSettle();
+            expect(find.text('matteo@studio.it'), findsOneWidget);
+            expect(find.text('Subject'), findsOneWidget);
+            await expectLater(
+              find.byType(MaterialApp),
+              matchesGoldenFile(
+                'goldens/compose_own_${phone ? 'phone' : 'desktop'}_${['to', 'cc', 'bcc'][field]}_${dark ? 'dark' : 'light'}.png',
+              ),
+            );
+            if (phone) {
+              await tester.tap(find.text('matteo@studio.it'));
+            } else {
+              await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+              await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+            }
+            await tester.pumpAndSettle();
+            expect(find.text('matteo@studio.it'), findsNothing);
+            // The suggestion becomes a chip in the field being edited.
+            final input = tester.widget<TextField>(_field(field));
+            expect(input.controller!.text, isEmpty);
+            expect(input.focusNode!.hasFocus, isTrue);
+            final subject = field == 0 ? 1 : 3;
+            await tester.tap(find.text('Subject'));
+            await tester.pumpAndSettle();
+            tester.testTextInput.enterText('Focus stays in Subject');
+            await tester.pumpAndSettle();
+            expect(
+              tester.widget<TextField>(_field(subject)).controller!.text,
+              'Focus stays in Subject',
+            );
+          },
+        );
+      }
+    }
+  }
+
+  testWidgets('inline Bcc suggestions fit above the phone keyboard', (
+    tester,
+  ) async {
+    await _pumpPhone(tester);
+    await tester.tap(find.text('Cc  Bcc'));
+    await tester.pumpAndSettle();
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.showKeyboard(_field(2));
+    await tester.enterText(_field(2), 'matteo@');
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Subject'), findsOneWidget);
+    expect(find.text('Personal').hitTestable(), findsOneWidget);
+    await tester.tap(find.text('Personal'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(_field(2)).controller!.text, isEmpty);
+    await tester.ensureVisible(find.text('Subject'));
+    await tester.tap(find.text('Subject'));
+    await tester.pumpAndSettle();
+    tester.testTextInput.enterText('Typing after Bcc');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(_field(3)).controller!.text,
+      'Typing after Bcc',
+    );
   });
 
   // A tap on another field turns what is typed into a chip and moves there,

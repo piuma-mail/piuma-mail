@@ -1513,6 +1513,7 @@ class Contact {
     required this.email,
     this.messages = 0,
     this.writtenTo = false,
+    this.accountColor,
   });
   final String name;
   final String email;
@@ -1523,6 +1524,9 @@ class Contact {
   /// A recipient suggestion written to from here ("Wrote to"), rather
   /// than one who only wrote ("Wrote to you").
   final bool writtenTo;
+
+  /// Known association with an account or one of its aliases.
+  final Color? accountColor;
 }
 
 /// What a search found.
