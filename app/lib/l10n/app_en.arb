@@ -1537,6 +1537,7 @@
   "backToReadingView": "Back to reading view",
   "readingView": "Reading view",
   "replyFromLabel": "Reply from",
+  "senderReadsNoReplies": "This sender doesn’t read replies",
   "replyFromSignature": "signature {name}",
   "@replyFromSignature": {"placeholders": {"name": {"type": "String"}}},
   "noticeReplyHint": "Write a reply…",

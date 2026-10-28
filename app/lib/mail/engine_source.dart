@@ -481,6 +481,15 @@ class EngineMailSource extends MailSource {
   }
 
   @override
+  bool noReplySender(MailRow row) {
+    try {
+      return engine.noReplyAddress(email: row.fromEmail);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
   bool byPerson(MailRow row) {
     try {
       return engine.messageByPerson(

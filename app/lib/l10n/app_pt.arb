@@ -1116,6 +1116,7 @@
   "backToReadingView": "Voltar à visualização de leitura",
   "readingView": "Visualização de leitura",
   "replyFromLabel": "Responder de",
+  "senderReadsNoReplies": "Este remetente não lê as respostas",
   "replyFromSignature": "assinatura {name}",
   "noticeReplyHint": "Escreva uma resposta…",
   "labelsHeading": "Marcadores",

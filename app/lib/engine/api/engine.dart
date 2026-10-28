@@ -805,6 +805,11 @@ Future<void> unsubscribe({
   uid: uid,
 );
 
+/// Whether replies to an address go unread (no-reply, bounces): the
+/// reader warns before a quick reply. Role addresses like `info@` don't.
+bool noReplyAddress({required String email}) =>
+    RustLib.instance.api.crateApiEngineNoReplyAddress(email: email);
+
 /// Whether a message's sender counts as a person: People, not
 /// Notifications.
 bool messageByPerson({

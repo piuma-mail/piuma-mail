@@ -6796,6 +6796,12 @@ abstract class AppLocalizations {
   /// **'Reply from'**
   String get replyFromLabel;
 
+  /// No description provided for @senderReadsNoReplies.
+  ///
+  /// In en, this message translates to:
+  /// **'This sender doesn’t read replies'**
+  String get senderReadsNoReplies;
+
   /// No description provided for @replyFromSignature.
   ///
   /// In en, this message translates to:
