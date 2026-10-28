@@ -810,12 +810,26 @@ class ComposeFab extends StatelessWidget {
   final VoidCallback onTap;
   final bool raised;
 
+  /// Its side.
+  static const double extent = 60;
+
+  /// From the right edge of the screen.
+  static const double right = PiumaSpace.s20;
+
+  /// From the bottom of the safe area.
+  static const double bottom = 34;
+
+  /// The room a list leaves under its last row so that row can scroll
+  /// clear of the button and its shadow.
+  static double listRoom(BuildContext context) =>
+      extent + bottom + PiumaSpace.s24 + MediaQuery.paddingOf(context).bottom;
+
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     return AnimatedSlide(
-      offset: Offset(0, raised ? -66 / 60 : 0),
+      offset: Offset(0, raised ? -66 / extent : 0),
       duration: reduceMotion(context) ? Duration.zero : PiumaMotion.move,
       curve: PiumaMotion.curve,
       // Its own node: with the header inside the list it would otherwise
@@ -832,8 +846,8 @@ class ComposeFab extends StatelessWidget {
             },
             semanticLabel: l.composeMessage,
             child: Container(
-              width: 60,
-              height: 60,
+              width: extent,
+              height: extent,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: c.accent,

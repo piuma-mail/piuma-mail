@@ -47,6 +47,8 @@ pub fn list_info(m: &Message) -> ListInfo {
         .any(|p| raw("Precedence").eq_ignore_ascii_case(p))
         || !(submitted.is_empty() || submitted.eq_ignore_ascii_case("no"))
         || (!raw("List-Id").is_empty() && !discussion)
+        || crate::automation::headers(m)
+        || crate::automation::message(m)
         || SERVICE_MARKS.iter().any(|h| m.header_raw(*h).is_some());
     let links = links(raw("List-Unsubscribe"));
     if links.is_empty() {

@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:piuma_mail/inbox/attachments.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/newsletters.dart';
 import 'package:piuma_mail/inbox/phone_parts.dart';
 import 'package:piuma_mail/inbox/reader.dart';
 import 'package:piuma_mail/inbox/vault.dart';
+import 'package:piuma_mail/l10n/app_localizations.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
@@ -319,6 +323,48 @@ void main() {
       'https://corriererapido.example/track/CR77412093IT',
     );
     expect(find.byType(Reader), findsNothing);
+  });
+
+  testWidgets('the empty Vault fits its tile on a phone in every language', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final locale in AppLocalizations.supportedLocales) {
+      // The tile at its narrowest: beside both other zones.
+      await tester.pumpWidget(
+        PiumaApp(
+          locale: locale,
+          home: (_, _) => Scaffold(
+            body: Builder(
+              builder: (context) => ZoneStrip(
+                zones: [
+                  (NewslettersTile(unread: 0, onTap: () {}), 4),
+                  (
+                    VaultTile(
+                      status: AppLocalizations.of(context).vaultAllClear,
+                      onTap: () {},
+                    ),
+                    3,
+                  ),
+                  (AttachmentsTile(fresh: 0, onTap: () {}), 4),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final l = await AppLocalizations.delegate.load(locale);
+      final line = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.byType(VaultTile),
+          matching: find.text(l.vaultAllClear),
+        ),
+      );
+      expect(line.didExceedMaxLines, isFalse, reason: '$locale');
+    }
   });
 
   testWidgets('on the phone the tile tells the first thing that needs you', (

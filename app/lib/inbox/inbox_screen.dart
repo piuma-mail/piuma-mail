@@ -2400,8 +2400,8 @@ class _InboxScreenState extends State<InboxScreen> {
                               _folder != MailFolder.vault &&
                               _folder != MailFolder.attachments)
                             Positioned(
-                              right: 20,
-                              bottom: 34,
+                              right: ComposeFab.right,
+                              bottom: ComposeFab.bottom,
                               child: ComposeFab(
                                 onTap: _openCompose,
                                 raised: _toastUp,

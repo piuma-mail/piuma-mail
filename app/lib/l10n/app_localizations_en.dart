@@ -1728,7 +1728,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get vaultNothingDue => 'Nothing due';
+  String get vaultAllClear => 'All clear';
 
   @override
   String get vaultToday => 'Today';
@@ -4705,9 +4705,6 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get vaultNothingNeeds => 'Nothing needs you';
 
   @override
   String vaultTodayKind(String kind) {

@@ -70,7 +70,8 @@ const SUMMARY_PROPERTIES: [&str; 18] = [
     "header:Precedence",
 ];
 /// What tells a newsletter, for mail cached before it was asked for.
-const LIST_PROPERTIES: [&str; 9] = [
+const LIST_PROPERTIES: [&str; 10] = [
+    "subject",
     "id",
     "from",
     "to",
@@ -1184,6 +1185,14 @@ impl Client {
         if properties.contains(&"header:Precedence") {
             properties.push(AUTO_SUBMITTED);
             properties.push(FEEDBACK_ID);
+            for name in crate::automation::HEADERS {
+                properties.push(match name {
+                    "X-Auto-Response-Suppress" => "header:X-Auto-Response-Suppress",
+                    "X-Mailer" => "header:X-Mailer",
+                    "X-WP-Notification" => "header:X-WP-Notification",
+                    _ => "header:X-WP-Email",
+                });
+            }
         }
         let [got] = self
             .call([(
@@ -1654,8 +1663,15 @@ fn automated(e: &Value) -> bool {
 /// as a message.
 fn headers(e: &Value) -> Option<mail_parser::Message<'static>> {
     let mut head = String::new();
-    let (_, from) = first_address(&e["from"]);
-    head.push_str(&format!("From: <{from}>\r\n"));
+    let (name, from) = first_address(&e["from"]);
+    head.push_str(&format!(
+        "From: {} <{from}>\r\nSubject: {}\r\n",
+        name.replace(['\r', '\n'], " "),
+        e["subject"]
+            .as_str()
+            .unwrap_or_default()
+            .replace(['\r', '\n'], " ")
+    ));
     for (name, key) in [
         ("List-Id", "header:List-Id"),
         ("List-Unsubscribe", "header:List-Unsubscribe"),
@@ -1666,6 +1682,11 @@ fn headers(e: &Value) -> Option<mail_parser::Message<'static>> {
         ("Feedback-ID", FEEDBACK_ID),
     ] {
         if let Some(v) = e[key].as_str() {
+            head.push_str(&format!("{name}:{v}\r\n"));
+        }
+    }
+    for name in crate::automation::HEADERS {
+        if let Some(v) = e[format!("header:{name}")].as_str() {
             head.push_str(&format!("{name}:{v}\r\n"));
         }
     }
@@ -1796,6 +1817,27 @@ mod tests {
         assert_eq!(own_folders(&mailboxes).len(), 1);
         mailboxes.pop();
         assert!(find_role(&mailboxes, FolderRole::Junk).is_none());
+    }
+
+    #[test]
+    fn automation_headers_and_wordpress_survive_jmap_conversion() {
+        for extra in [
+            json!({"header:X-Mailer": "WordPress/6.8"}),
+            json!({"header:X-Auto-Response-Suppress": "All"}),
+            json!({"header:X-WP-Notification": "update"}),
+            json!({"subject": "*****SPAM***** flagged message"}),
+        ] {
+            let mut e = json!({"from": [{"name": "Service", "email": "hello@example.org"}]});
+            e.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(automated(&e));
+            assert!(summary(&e, AccountId(1), "INBOX", 1).list.bulk);
+        }
+        let wp = json!({"from": [{"name": "Notifications from WP", "email": "site@example.org"}],
+            "subject": "Site needs confirmation of the admin email"});
+        assert!(automated(&wp));
+        assert!(summary(&wp, AccountId(1), "INBOX", 1).list.bulk);
     }
 
     #[test]
