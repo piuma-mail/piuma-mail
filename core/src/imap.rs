@@ -2367,13 +2367,28 @@ pub fn parse_body(raw: &[u8]) -> Body {
             Some(mail_parser::PartType::Html(h)) => Some(h.to_string()),
             _ => None,
         });
-    let has_text = m.text_body.iter().any(|&i| {
+    let text_part = m.text_body.iter().find_map(|&i| {
         m.part(i)
-            .is_some_and(|p| matches!(p.body, mail_parser::PartType::Text(_)))
+            .filter(|p| matches!(p.body, mail_parser::PartType::Text(_)))
     });
-    let text = match (&html, has_text) {
-        (Some(h), false) => crate::reading::plain_text(&crate::reading::from_html(h)),
-        _ => m.body_text(0).map(|t| t.into_owned()).unwrap_or_default(),
+    let text = match (text_part, &html) {
+        (Some(part), _) => {
+            let kind = part.content_type();
+            let parameter = |name, value| {
+                kind.and_then(|k| k.attribute(name))
+                    .is_some_and(|v| v.eq_ignore_ascii_case(value))
+            };
+            let mail_parser::PartType::Text(text) = &part.body else {
+                unreachable!()
+            };
+            crate::reading::normalize_text(
+                text,
+                parameter("format", "flowed"),
+                parameter("delsp", "yes"),
+            )
+        }
+        (None, Some(h)) => crate::reading::plain_text(&crate::reading::from_html(h)),
+        _ => String::new(),
     };
     let attachments = attachments(&m, html.as_deref());
     let inline = html
@@ -2381,7 +2396,8 @@ pub fn parse_body(raw: &[u8]) -> Body {
         .map(|h| inline_images(&m, h))
         .unwrap_or_default();
     Body {
-        text: text.trim().to_owned(),
+        // Leading spaces can protect literal quote markers in flowed text.
+        text: text.trim_matches(['\r', '\n']).to_owned(),
         html,
         attachments,
         calendar: calendar(&m),
@@ -2821,6 +2837,108 @@ mod tests {
                 row("INBOX.projects", "projects", 0, true),
             ]
         );
+    }
+
+    fn readable_plain(parameters: &str, text: &str) -> crate::reading::Readable {
+        let raw = format!("Content-Type: text/plain{parameters}\r\n\r\n{text}");
+        let body = parse_body(raw.as_bytes());
+        assert!(body.html.is_none());
+        crate::reading::readable(&body.text, body.html.as_deref())
+    }
+
+    #[test]
+    fn plain_text_lists_are_separate_from_the_intro_and_each_other() {
+        use crate::reading::BlockKind;
+        let r = readable_plain("", concat!(
+            "The following plugins were updated automatically to the latest version:\r\n",
+            "- CookieYes | GDPR Cookie Consent (from version 3.5.7 to 3.5.8) : https://wordpress.org/plugins/cookie-law-info/\r\n",
+            "* Another plugin\r\n• A third plugin\r\n1. Check the site\r\n",
+            "\r\nEverything is up to date.\r\n\r\nThanks,\r\nWordPress"
+        ));
+        assert_eq!(r.blocks.len(), 7);
+        assert_eq!(r.blocks[0].kind, BlockKind::Paragraph);
+        assert!(r.blocks[0].text().ends_with("version:"));
+        for (block, marker) in r.blocks[1..5].iter().zip(["-", "*", "•", "1."]) {
+            assert_eq!(block.kind, BlockKind::ListItem);
+            assert_eq!(block.marker, marker);
+        }
+        assert!(r.blocks[1].text().starts_with("CookieYes | GDPR"));
+        assert_eq!(
+            r.blocks[1].spans.last().unwrap().link.as_deref(),
+            Some("https://wordpress.org/plugins/cookie-law-info/")
+        );
+        assert_eq!(r.blocks[5].text(), "Everything is up to date.");
+        assert_eq!(r.blocks[6].text(), "Thanks,\nWordPress");
+    }
+
+    #[test]
+    fn plain_text_reflows_long_prose_but_preserves_short_and_blank_lines() {
+        let first = "This is ordinary hard-wrapped prose which reaches the usual mail width";
+        let r = readable_plain(
+            "",
+            &format!("{first}\r\nand continues here.\r\n\r\nShort line\r\nNext line"),
+        );
+        assert_eq!(r.blocks.len(), 2);
+        assert_eq!(r.blocks[0].text(), format!("{first} and continues here."));
+        assert_eq!(r.blocks[1].text(), "Short line\nNext line");
+    }
+
+    #[test]
+    fn flowed_text_joins_only_soft_breaks_and_keeps_fixed_lists() {
+        let r = readable_plain(
+            "; format=FLOWED",
+            "Intro \r\ncontinued:\r\n- One\r\n- Two\r\n\r\nNew paragraph\r\nFixed break",
+        );
+        assert_eq!(r.blocks.len(), 4);
+        assert_eq!(r.blocks[0].text(), "Intro continued:");
+        assert_eq!(r.blocks[1].text(), "One");
+        assert_eq!(r.blocks[2].text(), "Two");
+        assert_eq!(r.blocks[3].text(), "New paragraph\nFixed break");
+    }
+
+    #[test]
+    fn flowed_text_handles_delsp_stuffing_quotes_and_signature() {
+        let r = readable_plain(
+            "; format=flowed; delsp=yes",
+            concat!(
+                "A long wo \r\nrd\r\n From here\r\n",
+                "> quoted \r\n> words\r\n>> deeper \r\n> changed depth\r\n",
+                "-- \r\nSignature"
+            ),
+        );
+        assert_eq!(r.blocks[0].text(), "A long word\nFrom here");
+        assert_eq!(r.blocks[1].text(), "quotedwords");
+        assert_eq!(r.blocks[1].quote, 1);
+        assert_eq!(r.blocks[2].text(), "deeper");
+        assert_eq!(r.blocks[2].quote, 2);
+        assert_eq!(r.blocks[3].text(), "changed depth");
+        assert_eq!(r.blocks[4].text(), "--\nSignature");
+        let r = readable_plain("; format=flowed", "Before \r\n-- \r\nName");
+        assert_eq!(r.blocks[0].text(), "Before\n--\nName");
+    }
+
+    #[test]
+    fn flowed_stuffed_quote_markers_remain_literal_text() {
+        let r = readable_plain("; format=flowed", " >literal\r\n>  >quoted literal");
+        assert_eq!(r.blocks.len(), 2);
+        assert_eq!(r.blocks[0].quote, 0);
+        assert_eq!(r.blocks[0].text(), ">literal");
+        assert_eq!(r.blocks[1].quote, 1);
+        assert_eq!(r.blocks[1].text(), ">quoted literal");
+    }
+
+    #[test]
+    fn flowed_parameters_belong_to_the_selected_mime_part() {
+        let raw = concat!(
+            "Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\n",
+            "Content-Type: text/plain; format=flowed; delsp=yes\r\n",
+            "Content-Transfer-Encoding: quoted-printable\r\n\r\n",
+            "A wo=20\r\nrd\r\n\r\nParagraph\r\n--x--\r\n"
+        );
+        let body = parse_body(raw.as_bytes());
+        let r = crate::reading::readable(&body.text, body.html.as_deref());
+        assert_eq!(r.blocks[0].text(), "A word");
+        assert_eq!(r.blocks[1].text(), "Paragraph");
     }
 
     #[test]
