@@ -16,6 +16,7 @@ MailRow _notice(
   String subject = 'Plugins updated',
   int account = 1,
   bool seen = false,
+  int? hours,
 }) => MailRow(
   accountId: account,
   mailbox: 'INBOX',
@@ -24,7 +25,10 @@ MailRow _notice(
   fromEmail: sender,
   subject: subject,
   preview: 'Automatic plugin update completed ($uid).',
-  receivedAt: _now.subtract(Duration(hours: uid * 8)),
+  // Minutes apart, all today, unless [hours] places it on another day.
+  receivedAt: _now.subtract(
+    hours == null ? Duration(minutes: uid * 5) : Duration(hours: hours),
+  ),
   seen: seen,
 );
 
@@ -140,16 +144,20 @@ void main() {
     testWidgets('notice group collapsed and expanded golden $dark', (
       tester,
     ) async {
+      // Three today, two yesterday: one group per day section.
       final source = _Notices([
-        _notice(1, seen: true),
-        _notice(2),
-        _notice(3),
-        _notice(4, sender: 'other@example.org'),
+        _notice(1, seen: true, hours: 1),
+        _notice(2, hours: 3),
+        _notice(3, hours: 5),
+        _notice(4, hours: 14),
+        _notice(5, hours: 20),
+        _notice(6, sender: 'other@example.org', hours: 30),
       ]);
       MailRow? opened;
       await _pump(tester, source, dark: dark, open: (row) => opened = row);
       expect(find.text('WordPress · 3 notices'), findsOneWidget);
-      expect(find.byType(InboxRowTile), findsNWidgets(2));
+      expect(find.text('WordPress · 2 notices'), findsOneWidget);
+      expect(find.byType(InboxRowTile), findsNWidgets(3));
       final summary = tester
           .widgetList<InboxRowTile>(find.byType(InboxRowTile))
           .first;
@@ -160,9 +168,9 @@ void main() {
           'goldens/notice_group_${dark ? 'dark' : 'light'}.png',
         ),
       );
-      await tester.tap(find.text('Show'));
+      await tester.tap(find.text('Show').first);
       await tester.pumpAndSettle();
-      expect(find.byType(InboxRowTile), findsNWidgets(5));
+      expect(find.byType(InboxRowTile), findsNWidgets(6));
       await expectLater(
         find.byType(MaterialApp),
         matchesGoldenFile(
@@ -173,7 +181,76 @@ void main() {
       expect(opened?.uid, 2);
       await tester.tap(find.text('Hide'));
       await tester.pumpAndSettle();
-      expect(find.byType(InboxRowTile), findsNWidgets(2));
+      expect(find.byType(InboxRowTile), findsNWidgets(3));
+    });
+  }
+
+  for (final (today, yesterday) in [(3, 2), (1, 3)]) {
+    testWidgets('a run of $today today and $yesterday yesterday stays '
+        'within each day section', (tester) async {
+      final source = _Notices([
+        for (var i = 1; i <= today; i++) _notice(i, hours: i),
+        for (var i = 1; i <= yesterday; i++) _notice(today + i, hours: 12 + i),
+      ]);
+      await _pump(tester, source);
+      // Headers move as groups expand: measure them on every check.
+      String sectionOf(Finder f) {
+        final todayY = tester.getTopLeft(find.text('TODAY')).dy;
+        final yesterdayY = tester.getTopLeft(find.text('YESTERDAY')).dy;
+        final y = tester.getTopLeft(f).dy;
+        expect(y, greaterThan(todayY));
+        return y > yesterdayY ? 'yesterday' : 'today';
+      }
+
+      // Each day shows its own summary, or its single notice as a plain row.
+      String? title(int n) => n > 1 ? 'WordPress · $n notices' : null;
+      final tiles = tester
+          .widgetList<InboxRowTile>(find.byType(InboxRowTile))
+          .toList();
+      expect(tiles, hasLength(2));
+      expect(tiles.map((t) => t.noticeCount), [
+        today > 1 ? today : 0,
+        yesterday > 1 ? yesterday : 0,
+      ]);
+      expect(sectionOf(find.byWidget(tiles[0])), 'today');
+      expect(sectionOf(find.byWidget(tiles[1])), 'yesterday');
+      for (final (n, day) in [(today, 'today'), (yesterday, 'yesterday')]) {
+        if (title(n) != null) {
+          expect(sectionOf(find.text(title(n)!)), day);
+        }
+      }
+
+      // Expanding the yesterday group lists only yesterday's notices.
+      await tester.tap(find.text('Show').last);
+      await tester.pumpAndSettle();
+      expect(find.byType(InboxRowTile), findsNWidgets(2 + yesterday));
+      void eachInItsDay() {
+        for (var uid = 1; uid <= today + yesterday; uid++) {
+          final preview = find.text(
+            'Automatic plugin update completed ($uid).',
+          );
+          for (var i = 0; i < preview.evaluate().length; i++) {
+            expect(
+              sectionOf(preview.at(i)),
+              uid <= today ? 'today' : 'yesterday',
+            );
+          }
+        }
+      }
+
+      for (var uid = today + 1; uid <= today + yesterday; uid++) {
+        expect(
+          find.text('Automatic plugin update completed ($uid).'),
+          findsWidgets,
+        );
+      }
+      eachInItsDay();
+      if (today > 1) {
+        await tester.tap(find.text('Show'));
+        await tester.pumpAndSettle();
+        expect(find.byType(InboxRowTile), findsNWidgets(2 + today + yesterday));
+        eachInItsDay();
+      }
     });
   }
 

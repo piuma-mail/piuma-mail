@@ -183,35 +183,34 @@ class MessageListState extends State<MessageList>
       !b.isConversation &&
       sameNotice(a, b);
 
+  /// The rows of the day section holding [index], as `[start, end)`: a run
+  /// of notices never crosses a section header.
+  (int, int) _sectionBounds(int index) {
+    var start = 0;
+    for (final section in _sections) {
+      final end = start + section.count;
+      if (index < end) return (start, end);
+      start = end;
+    }
+    return (start, start);
+  }
+
   bool _hiddenNotice(int index) =>
-      index > 0 && _sameNotice(_loadedRow(index - 1), _loadedRow(index));
+      index > _sectionBounds(index).$1 &&
+      _sameNotice(_loadedRow(index - 1), _loadedRow(index));
 
   List<MailRow> _noticeRun(int index) {
     final first = _loadedRow(index);
     if (first == null) return const [];
     final rows = [first];
     if (!_groupNotices) return rows;
-    for (var next = index + 1; next < total; next++) {
+    final end = _sectionBounds(index).$2;
+    for (var next = index + 1; next < end; next++) {
       final row = _loadedRow(next);
       if (!_sameNotice(first, row)) break;
       rows.add(row!);
     }
     return rows;
-  }
-
-  bool _emptyNoticeSection(String label) {
-    if (!_groupNotices) return false;
-    var offset = 0;
-    for (final section in _sections) {
-      if (section.label == label) {
-        for (var index = offset; index < offset + section.count; index++) {
-          if (!_hiddenNotice(index)) return false;
-        }
-        return section.count > 0;
-      }
-      offset += section.count;
-    }
-    return false;
   }
 
   /// Asked once whether the swipe hint is still to play.
@@ -822,9 +821,7 @@ class MessageListState extends State<MessageList>
             itemCount: _itemCount,
             itemExtentBuilder: (index, _) {
               final item = _item(index);
-              if (item.header != null) {
-                return _emptyNoticeSection(item.header!) ? 0 : kHeaderExtent;
-              }
+              if (item.header != null) return kHeaderExtent;
               if (_hiddenNotice(item.row)) return 0;
               final run = _noticeRun(item.row);
               if (run.length > 1) {
@@ -850,9 +847,7 @@ class MessageListState extends State<MessageList>
             itemBuilder: (context, index) {
               final item = _item(index);
               if (item.header != null) {
-                return _emptyNoticeSection(item.header!)
-                    ? const SizedBox.shrink()
-                    : _SectionHeader(item.header!, phone: widget.phone);
+                return _SectionHeader(item.header!, phone: widget.phone);
               }
               if (_hiddenNotice(item.row)) return const SizedBox.shrink();
               final row = _row(item.row);
@@ -860,7 +855,7 @@ class MessageListState extends State<MessageList>
               final run = _noticeRun(item.row);
               if (_groupNotices &&
                   run.isNotEmpty &&
-                  item.row + run.length < total) {
+                  item.row + run.length < _sectionBounds(item.row).$2) {
                 // Ask for the boundary page too: a run may continue there.
                 _row(item.row + run.length);
               }
