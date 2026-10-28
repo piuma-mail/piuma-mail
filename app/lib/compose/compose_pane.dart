@@ -154,14 +154,19 @@ class _ComposePaneState extends State<ComposePane> {
           }
         };
 
-  Widget _phoneList() => SizedBox(
-    key: _suggestionsKey,
-    height: (_listed.length * PiumaSpace.s32 * 2).clamp(
-      0.0,
-      PiumaSpace.s24 * 7,
-    ),
-    child: _PhoneSuggestions(people: _listed, onPick: _pickListed!),
-  );
+  /// Whole rows only, at most three, and fewer when [room] (the height
+  /// of the recipient fields) can't hold them under the field typed in;
+  /// the rest scroll (issue #36).
+  Widget _phoneList(double room) {
+    const row = _PhoneSuggestions.rowHeight;
+    final fit = room.isFinite ? (room - row) ~/ row : 3;
+    final rows = _listed.length.clamp(0, fit.clamp(1, 3));
+    return SizedBox(
+      key: _suggestionsKey,
+      height: rows * row,
+      child: _PhoneSuggestions(people: _listed, onPick: _pickListed!),
+    );
+  }
 
   late int _accountId = widget.initial.accountId;
 
@@ -993,7 +998,7 @@ class _ComposePaneState extends State<ComposePane> {
           },
         ),
       ),
-      if (_listingIn == _toKey) _phoneList(),
+      if (_listingIn == _toKey) _phoneList(recipientHeight),
       if (_showCopies) ...[
         _Line(
           label: l.cc,
@@ -1010,7 +1015,7 @@ class _ComposePaneState extends State<ComposePane> {
             },
           ),
         ),
-        if (_listingIn == _ccKey) _phoneList(),
+        if (_listingIn == _ccKey) _phoneList(recipientHeight),
         _Line(
           label: l.bcc,
           onTap: () => _bccKey.currentState?.focus(),
@@ -1026,7 +1031,7 @@ class _ComposePaneState extends State<ComposePane> {
             },
           ),
         ),
-        if (_listingIn == _bccKey) _phoneList(),
+        if (_listingIn == _bccKey) _phoneList(recipientHeight),
       ],
       _Line(
         label: l.subject,
@@ -1845,6 +1850,9 @@ class _Suggestions extends StatelessWidget {
 class _PhoneSuggestions extends StatelessWidget {
   const _PhoneSuggestions({required this.people, required this.onPick});
 
+  /// Each row's height, so the list can show a whole number of them.
+  static const rowHeight = PiumaSpace.s32 * 2;
+
   final List<Contact> people;
   final ValueChanged<Contact> onPick;
 
@@ -1853,7 +1861,7 @@ class _PhoneSuggestions extends StatelessWidget {
     final c = PiumaTheme.of(context);
     return TextFieldTapRegion(
       child: ListView(
-        itemExtent: PiumaSpace.s32 * 2,
+        itemExtent: rowHeight,
         padding: EdgeInsets.zero,
         children: [
           for (final p in people)
