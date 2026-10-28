@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/engine/api/engine.dart' as engine;
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/engine_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
+import 'package:piuma_mail/notify/android_background.dart';
 import 'package:piuma_mail/notify/background_sheet.dart';
 import 'package:piuma_mail/notify/notifier.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
@@ -143,4 +147,53 @@ void main() {
       matchesGoldenFile('goldens/android_background_settings_light.png'),
     );
   }, tags: ['golden']);
+
+  group('sign-in notices', () {
+    const channel = MethodChannel('mail.piuma/background');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    engine.SyncEvent event(engine.SyncEventKind kind) => engine.SyncEvent(
+      kind: kind,
+      accountId: 1,
+      done: 0,
+      total: 0,
+      added: 0,
+      removed: 0,
+      reason: '',
+      notices: const [],
+    );
+
+    setUp(() => AndroidBackground.debugAndroid = true);
+    tearDown(() {
+      AndroidBackground.debugAndroid = null;
+      messenger.setMockMethodCallHandler(channel, null);
+    });
+
+    testWidgets('in touch again, Android withdraws its notice', (tester) async {
+      final calls = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return null;
+      });
+      refreshAndroidNotices(event(engine.SyncEventKind.offline));
+      refreshAndroidNotices(event(engine.SyncEventKind.signInFailed));
+      await tester.pump();
+      expect(calls, isEmpty);
+      refreshAndroidNotices(event(engine.SyncEventKind.synced));
+      await tester.pump();
+      expect(calls, ['refreshSignInNotices']);
+    });
+
+    testWidgets('with no Android side yet, nothing breaks', (tester) async {
+      // As with no handler registered on Android's side.
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        throw MissingPluginException();
+      });
+      await AndroidBackground.refreshSignInNotices();
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'gone');
+      });
+      await AndroidBackground.refreshSignInNotices();
+    });
+  });
 }

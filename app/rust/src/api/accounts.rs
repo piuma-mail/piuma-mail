@@ -128,6 +128,7 @@ pub async fn set_account_servers(
 pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     let id = AccountId(account_id);
     stop_watching(id);
+    crate::background::forget(id);
     let sources: Vec<i64> = store()?
         .calendar_sources()?
         .into_iter()

@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 
 /// Android's side of new mail with the app closed (`AndroidBackground`,
@@ -10,7 +11,11 @@ class AndroidBackground {
   static const _notices = MethodChannel('mail.piuma/notices');
 
   // The real system, not the one tests pretend to be.
-  static bool get on => Platform.isAndroid;
+  static bool get on => debugAndroid ?? Platform.isAndroid;
+
+  /// Tests set it to talk to a pretend Android.
+  @visibleForTesting
+  static bool? debugAndroid;
 
   /// "instant", "periodic", or null until picked.
   static Future<String?> mode() async =>
@@ -32,6 +37,8 @@ class AndroidBackground {
       await _background.invokeMethod<void>('refreshSignInNotices');
     } on PlatformException {
       // The background service/job can deliver the queued update later.
+    } on MissingPluginException {
+      // Not registered (yet): the same.
     }
   }
 

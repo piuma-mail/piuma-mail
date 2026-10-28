@@ -28,6 +28,15 @@ import 'mail_source.dart';
 import 'on_device_model.dart';
 import 'phone_files.dart';
 
+/// A sync event's part for Android's background side: in touch again, an
+/// account's sign-in notice is withdrawn even with no service running.
+@visibleForTesting
+void refreshAndroidNotices(engine.SyncEvent e) {
+  if (e.kind == engine.SyncEventKind.synced) {
+    unawaited(AndroidBackground.refreshSignInNotices());
+  }
+}
+
 /// The real thing: mail from the Rust engine.
 class EngineMailSource extends MailSource {
   EngineMailSource() {
@@ -582,7 +591,7 @@ class EngineMailSource extends MailSource {
         _progress[id] = (e.done, e.total);
         _progressChanged();
       case engine.SyncEventKind.synced:
-        unawaited(AndroidBackground.refreshSignInNotices());
+        refreshAndroidNotices(e);
         _progress.remove(id);
         if (e.added > 0 || e.removed > 0) _changes.add(null);
         if (e.notices.isNotEmpty) {
