@@ -51,6 +51,14 @@ Future<void> _write(WidgetTester tester, {bool phone = false}) async {
   await tester.pumpAndSettle();
 }
 
+/// Send later's sheet, through Send's menu (issue #14).
+Future<void> _later(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Send options'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Send later'));
+  await tester.pumpAndSettle();
+}
+
 /// Goldens draw real soft shadows, as the phone shows them.
 Future<void> _softShadows(Future<void> Function() body) async {
   debugDisableShadows = false;
@@ -80,8 +88,7 @@ void main() {
   testWidgets('send later waits in the Outbox, with Undo', (tester) async {
     final source = await _pump(tester);
     await _write(tester);
-    await tester.tap(find.byTooltip('Send later'));
-    await tester.pumpAndSettle();
+    await _later(tester);
     expect(find.text('To Luca Bianchi'), findsOneWidget);
     expect(find.text('Thursday, October 15, 8:00'), findsNothing);
     expect(find.text('Friday, October 16, 8:00'), findsOneWidget);
@@ -109,8 +116,7 @@ void main() {
   testWidgets('send later on a day picked in the month', (tester) async {
     final source = await _pump(tester);
     await _write(tester);
-    await tester.tap(find.byTooltip('Send later'));
-    await tester.pumpAndSettle();
+    await _later(tester);
     await tester.tap(find.text('Pick date & time'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('22'));
@@ -125,31 +131,69 @@ void main() {
     final source = await _pump(tester);
     await tester.tap(find.text('Compose'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Send later'));
-    await tester.pumpAndSettle();
+    await _later(tester);
     expect(find.text('Send later'), findsNothing);
     expect(find.text('Add at least one recipient.'), findsOneWidget);
     expect(source.scheduled, isEmpty);
   });
 
-  testWidgets('the phone names the first time at the foot', (tester) async {
-    final source = await _pump(tester, phone: true);
-    await _write(tester, phone: true);
-    expect(find.textContaining('You can undo send'), findsNothing);
-    await tester.tap(find.text('Send tomorrow 8:00'));
-    await tester.pumpAndSettle();
-    expect(find.text('Schedule for tomorrow at 8:00'), findsOneWidget);
-    await tester.tap(find.text('Schedule for tomorrow at 8:00'));
-    await tester.pumpAndSettle();
-    expect(source.scheduled.single.$2, DateTime(2026, 10, 16, 8));
-  });
+  for (final phone in [false, true]) {
+    final where = phone ? 'phone' : 'desktop';
+
+    testWidgets('scheduling is only in Send\'s menu: $where', (tester) async {
+      final source = await _pump(tester, phone: phone);
+      await _write(tester, phone: phone);
+      // Not in the foot any more.
+      expect(find.text('Send tomorrow 8:00'), findsNothing);
+      expect(find.byTooltip('Send later'), findsNothing);
+
+      await tester.tap(find.byTooltip('Send options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Send later'), findsOneWidget);
+      await tester.tap(find.text('Send tomorrow 8:00'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsNothing);
+      expect(source.scheduled.single.$2, DateTime(2026, 10, 16, 8));
+      expect(source.sent, isEmpty);
+    });
+
+    testWidgets('a long press on Send opens the menu: $where', (tester) async {
+      final source = await _pump(tester, phone: phone);
+      await _write(tester, phone: phone);
+      await tester.longPress(find.text('Send'));
+      await tester.pumpAndSettle();
+      expect(find.text('Send tomorrow 8:00'), findsOneWidget);
+      expect(find.byType(ComposePane), findsOneWidget);
+      expect(source.scheduled, isEmpty);
+      expect(source.sent, isEmpty);
+    });
+
+    testWidgets('one tap on Send still sends: $where', (tester) async {
+      final source = await _pump(tester, phone: phone);
+      await _write(tester, phone: phone);
+      await tester.tap(find.text('Send'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsNothing);
+      expect(find.text('Send tomorrow 8:00'), findsNothing);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(source.sent.single.subject, 'Mockups approved');
+      expect(source.scheduled, isEmpty);
+    });
+  }
 
   for (final dark in [false, true]) {
     final name = dark ? 'dark' : 'light';
     testWidgets('send later golden $name', (tester) async {
       await _pump(tester, dark: dark);
       await _write(tester);
-      await tester.tap(find.byTooltip('Send later'));
+      await tester.tap(find.byTooltip('Send options'));
+      await tester.pumpAndSettle();
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/send_menu_$name.png'),
+      );
+      await tester.tap(find.text('Send later'));
       await tester.pumpAndSettle();
       await expectLater(
         find.byType(MaterialApp),
@@ -161,7 +205,13 @@ void main() {
       await _softShadows(() async {
         await _pump(tester, dark: dark, phone: true);
         await _write(tester, phone: true);
-        await tester.tap(find.text('Send tomorrow 8:00'));
+        await tester.tap(find.byTooltip('Send options'));
+        await tester.pumpAndSettle();
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/phone_send_menu_$name.png'),
+        );
+        await tester.tap(find.text('Send later'));
         await tester.pumpAndSettle();
         await expectLater(
           find.byType(MaterialApp),

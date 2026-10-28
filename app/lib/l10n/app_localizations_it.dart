@@ -3162,6 +3162,9 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String get sendOptions => 'Opzioni di invio';
+
+  @override
   String get inboxSections => 'Sezioni della posta in arrivo';
 
   @override

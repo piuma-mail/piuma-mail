@@ -1117,6 +1117,7 @@
   "@phoneSearchSyncing": {"placeholders": {"hint": {"type": "String"}, "name": {"type": "String"}}},
   "sendTomorrowAt": "Send tomorrow {time}",
   "@sendTomorrowAt": {"placeholders": {"time": {"type": "String"}}},
+  "sendOptions": "Send options",
   "inboxSections": "Inbox sections",
   "tabPeople": "People",
   "tabNotifications": "Notifications",
