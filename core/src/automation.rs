@@ -52,7 +52,7 @@ pub(crate) fn message(m: &Message) -> bool {
 /// Whether an address looks like a machine's (no-reply, notifications,
 /// orders, bounces…, or sent from a mailing domain such as
 /// `notice.shop.com` or `e-mail.brand.com`), for local classification.
-pub(crate) fn machine_address(email: &str) -> bool {
+pub fn machine_address(email: &str) -> bool {
     let email = email.trim().to_lowercase();
     let (local, domain) = email.split_once('@').unwrap_or((&email, ""));
     let labels: Vec<&str> = domain.split('.').collect();

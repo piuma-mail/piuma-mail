@@ -1145,6 +1145,9 @@ class DemoMailSource extends MailSource {
   bool byPerson(MailRow r) =>
       sides[r.fromEmail.toLowerCase()] ?? _fromPerson(r);
 
+  @override
+  bool machineSender(MailRow row) => !_fromPerson(row);
+
   /// Senders moved to People (true) or Notifications by hand.
   final sides = <String, bool>{};
 

@@ -2477,6 +2477,10 @@ abstract class MailSource {
   /// not Notifications.
   bool byPerson(MailRow row);
 
+  /// Whether [row]'s sender looks like a machine (no-reply,
+  /// notifications, orders…), so replies likely go unread.
+  bool machineSender(MailRow row) => false;
+
   /// Puts [email]'s inbox mail in People ([people] true) or Notifications
   /// from now on, what is there already included; null lets its headers
   /// decide again.

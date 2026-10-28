@@ -1126,6 +1126,7 @@
   "backToReadingView": "Torna alla vista di lettura",
   "readingView": "Vista di lettura",
   "replyFromLabel": "Rispondi da",
+  "senderReadsNoReplies": "Questo mittente non legge le risposte",
   "replyFromSignature": "firma {name}",
   "noticeReplyHint": "Scrivi una risposta…",
   "labelsHeading": "Etichette",

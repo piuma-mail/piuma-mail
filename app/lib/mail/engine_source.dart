@@ -472,6 +472,15 @@ class EngineMailSource extends MailSource {
   }
 
   @override
+  bool machineSender(MailRow row) {
+    try {
+      return engine.machineAddress(email: row.fromEmail);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
   bool byPerson(MailRow row) {
     try {
       return engine.messageByPerson(

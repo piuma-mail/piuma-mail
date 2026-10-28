@@ -805,6 +805,11 @@ Future<void> unsubscribe({
   uid: uid,
 );
 
+/// Whether an address looks like a machine's (no-reply, notifications,
+/// orders, bounces…): the reader warns that replies go unread.
+bool machineAddress({required String email}) =>
+    RustLib.instance.api.crateApiEngineMachineAddress(email: email);
+
 /// Whether a message's sender counts as a person: People, not
 /// Notifications.
 bool messageByPerson({

@@ -4522,6 +4522,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get replyFromLabel => 'Responder desde';
 
   @override
+  String get senderReadsNoReplies => 'Este remitente no lee las respuestas';
+
+  @override
   String replyFromSignature(String name) {
     return 'firma $name';
   }
