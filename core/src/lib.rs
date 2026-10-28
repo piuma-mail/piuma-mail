@@ -4,6 +4,7 @@
 //! sync, local database and search. The Flutter app only draws.
 
 pub mod autoconfig;
+mod automation;
 pub mod away;
 pub mod brief;
 pub mod calendar;

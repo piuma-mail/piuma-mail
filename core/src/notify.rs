@@ -376,24 +376,9 @@ pub fn automated(m: &Message) -> bool {
         .and_then(|a| a.address())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let local = from.split('@').next().unwrap_or_default();
-    let squashed: String = local
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
-    [
-        "noreply",
-        "donotreply",
-        "mailerdaemon",
-        "postmaster",
-        "bounce",
-    ]
-    .iter()
-    .any(|p| squashed.starts_with(p))
-        || matches!(
-            squashed.as_str(),
-            "notifications" | "notification" | "newsletter" | "news" | "alerts" | "info"
-        )
+    crate::automation::headers(m)
+        || crate::automation::message(m)
+        || crate::automation::machine_address(&from)
 }
 
 #[cfg(test)]

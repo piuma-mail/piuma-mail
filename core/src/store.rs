@@ -5,6 +5,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::automation::machine_address;
 use crate::groups::{AddressGroup, GroupAddress, Within};
 use crate::label::Label;
 use crate::model::{
@@ -64,10 +65,12 @@ const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
     AND m.folder NOT IN ('sent', 'drafts', 'newsletters')
     AND lower(m.from_email) NOT IN (SELECT lower(email) FROM account)
     AND COALESCE((SELECT s.people FROM sender_side s WHERE s.email = lower(m.from_email)),
-    EXISTS (SELECT 1 FROM written_to w WHERE w.email = lower(m.from_email))
+    NOT automatic_content(m.from_name, m.subject, EXISTS (SELECT 1 FROM attachment a
+        WHERE a.account = m.account AND a.mailbox = m.mailbox AND a.uid = m.uid
+          AND lower(a.mime) = 'message/rfc822')) AND (EXISTS (SELECT 1 FROM written_to w WHERE w.email = lower(m.from_email))
     OR (m.unsubscribe = '' AND m.bulk = 0 AND NOT machine_address(m.from_email)
         AND (forwarded(m.subject) OR NOT EXISTS (SELECT 1 FROM vault_card v
-            WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid)))))";
+            WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid))))))";
 
 /// The SQL that keeps what a [`ListFilter`] keeps of a list of messages `m`.
 fn section_sql(filter: impl Into<ListFilter>) -> String {
@@ -877,6 +880,10 @@ const MIGRATIONS: &[&str] = &[
      WHERE EXISTS (SELECT 1 FROM vault_card c
         WHERE c.account = message.account AND c.mailbox = message.mailbox AND c.uid = message.uid);
 "#,
+    r#"
+    -- Read the small automation headers once for already cached inbox mail.
+    UPDATE message SET list_checked = 0 WHERE mailbox = 'INBOX';
+"#,
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
@@ -1312,6 +1319,13 @@ fn functions(conn: &Connection) -> rusqlite::Result<()> {
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     conn.create_scalar_function("machine_address", 1, flags, |ctx| {
         Ok(machine_address(&ctx.get::<String>(0).unwrap_or_default()))
+    })?;
+    conn.create_scalar_function("automatic_content", 3, flags, |ctx| {
+        Ok(crate::automation::content(
+            &ctx.get::<String>(0)?,
+            &ctx.get::<String>(1)?,
+            ctx.get::<bool>(2)?,
+        ))
     })?;
     conn.create_scalar_function("forwarded", 1, flags, |ctx| {
         Ok(forwarded(&ctx.get::<String>(0).unwrap_or_default()))
@@ -6024,14 +6038,14 @@ impl Store {
         let Some(expr) = query.people_fts() else {
             return Ok(Vec::new());
         };
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT MAX(m.from_name), lower(m.from_email), COUNT(*)
              FROM message m JOIN message_fts ON message_fts.rowid = m.rowid
-             WHERE message_fts MATCH ?1 AND m.hidden = 0 AND m.from_email != ''
+             WHERE message_fts MATCH ?1 AND m.hidden = 0 AND {PEOPLE}
              GROUP BY lower(m.from_email)
              ORDER BY COUNT(*) DESC, MAX(m.received_at) DESC
-             LIMIT ?2",
-        )?;
+             LIMIT ?2"
+        ))?;
         let people = stmt
             .query_map(params![expr, limit], |r| {
                 Ok(Person {
@@ -6490,103 +6504,6 @@ fn forwarded(subject: &str) -> bool {
     ["fwd:", "fw:", "i:", "inoltro:", "tr:", "wg:", "rv:", "enc:"]
         .iter()
         .any(|p| s.starts_with(p))
-}
-
-/// Whether an address looks like a machine's (no-reply, notifications,
-/// orders, bounces…, or sent from a mailing domain such as
-/// `notice.shop.com` or `e-mail.brand.com`), as [`PEOPLE`] judges senders.
-fn machine_address(email: &str) -> bool {
-    let email = email.trim().to_lowercase();
-    let (local, domain) = email.split_once('@').unwrap_or((&email, ""));
-    let labels: Vec<&str> = domain.split('.').collect();
-    // A first label a mailing service sends from, on a domain of a brand:
-    // email.brand.com, e-mail.brand.com, email2.brand.com, notice.brand.com.
-    if labels.len() >= 3 {
-        let first: String = labels[0].chars().filter(|c| *c != '-').collect();
-        let first = first.trim_end_matches(|c: char| c.is_ascii_digit());
-        if [
-            "email",
-            "emails",
-            "em",
-            "e",
-            "mailer",
-            "mailing",
-            "mailings",
-            "news",
-            "newsletter",
-            "newsletters",
-            "notice",
-            "notices",
-            "notify",
-            "notification",
-            "notifications",
-            "alerts",
-            "updates",
-            "marketing",
-            "mkt",
-            "comms",
-            "communication",
-            "communications",
-            "crm",
-            "info",
-            "reply",
-            "bounce",
-            "bounces",
-            "txn",
-            "transactional",
-            "promo",
-            "offers",
-            "deals",
-        ]
-        .contains(&first)
-        {
-            return true;
-        }
-    }
-    let local: String = local
-        .chars()
-        .filter(|c| !matches!(c, '.' | '-' | '_'))
-        .collect();
-    ["noreply", "donotreply"].iter().any(|p| local.contains(p))
-        || ["mailerdaemon", "postmaster", "bounce"]
-            .iter()
-            .any(|p| local.starts_with(p))
-        || [
-            "notifications",
-            "notification",
-            "notifiche",
-            "notifica",
-            "newsletter",
-            "news",
-            "alerts",
-            "alert",
-            "avvisi",
-            "avviso",
-            "comunicazioni",
-            "mailer",
-            "automated",
-            "info",
-            "wordpress",
-            "transaction",
-            "transactions",
-            "order",
-            "orders",
-            "booking",
-            "bookings",
-            "billing",
-            "invoice",
-            "invoices",
-            "receipts",
-            "security",
-            "account",
-            "accounts",
-            "updates",
-            "notice",
-            "marketing",
-            "promo",
-            "offers",
-        ]
-        .contains(&local.as_str())
 }
 
 /// How far back a reply without References looks for its conversation.
@@ -7976,7 +7893,12 @@ From: <help@bank.example>\r\n\r\nHi";
         for _ in 0..2 {
             store
                 .conn
-                .execute_batch(MIGRATIONS.last().unwrap())
+                .execute_batch(
+                    MIGRATIONS
+                        .iter()
+                        .find(|sql| sql.contains("-- Re-read existing Vault cards"))
+                        .unwrap(),
+                )
                 .unwrap();
             let checked: Vec<(u32, bool)> = store
                 .conn
@@ -9631,6 +9553,147 @@ From: <help@bank.example>\r\n\r\nHi";
         );
         store.delete_message_template(thanks).unwrap();
         assert_eq!(names(), ["Invoice attached"]);
+    }
+
+    #[test]
+    fn automated_senders_stay_out_of_people_and_search() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let cases = [
+            (
+                "Notifications from WP <site@example.org>",
+                "Site needs confirmation of the admin email",
+                "",
+            ),
+            (
+                "WordPress <site@example.net>",
+                "[Site] Some plugins were updated automatically",
+                "",
+            ),
+            (
+                "Provider <service@example.org>",
+                "*****SPAM***** flagged message",
+                "",
+            ),
+            (
+                "Provider <service@example.net>",
+                "[SPAM] flagged message",
+                "",
+            ),
+            (
+                "Provider <service@example.com>",
+                "***SPAM*** flagged message",
+                "",
+            ),
+            ("E-invoicing <noreply@invoice.example>", "Invoice", ""),
+            (
+                "CMS <admin@cms.example>",
+                "Site update",
+                "X-Mailer: WordPress/6.8\r\n",
+            ),
+            (
+                "CMS <admin@cms2.example>",
+                "Site update",
+                "X-WP-Notification: plugin-update\r\n",
+            ),
+            (
+                "Service <hello@service.example>",
+                "Notice",
+                "X-Auto-Response-Suppress: All\r\n",
+            ),
+            (
+                "Service <hello@service2.example>",
+                "Notice",
+                "Auto-Submitted: auto-generated\r\n",
+            ),
+            (
+                "Service <hello@service3.example>",
+                "Notice",
+                "Precedence: junk\r\n",
+            ),
+            (
+                "List <hello@list.example>",
+                "Notice",
+                "List-Id: <list.example>\r\n",
+            ),
+            (
+                "Shop <hello@shop.example>",
+                "Notice",
+                "List-Unsubscribe: <https://shop.example/leave>\r\n",
+            ),
+        ];
+        for (i, (sender, subject, headers)) in cases.iter().enumerate() {
+            let raw = format!("From: {sender}\r\nSubject: {subject}\r\n{headers}\r\nour automatic systems flagged the attached email as SPAM");
+            let parsed = mail_parser::MessageParser::default()
+                .parse(raw.as_bytes())
+                .unwrap();
+            let from = parsed.from().unwrap().first().unwrap();
+            let mut m = msg(a, i as u32 + 1, i as i64, true);
+            m.from_name = from.name().unwrap_or_default().into();
+            m.from_email = from.address().unwrap().into();
+            m.subject = subject.to_string();
+            m.list = crate::newsletter::list_info(&parsed);
+            store.upsert_messages(&[m.clone()]).unwrap();
+            assert!(!store.by_person(a, "INBOX", m.uid).unwrap(), "{sender}");
+            let query = Query::parse(&m.from_email);
+            assert!(
+                store.search_people(&query, 10).unwrap().is_empty(),
+                "{sender}"
+            );
+            assert!(crate::notify::automated(&parsed), "{sender}");
+        }
+        let mut person = msg(a, 100, 100, true);
+        person.from_name = "Giulia Rossi".into();
+        person.from_email = "giulia@example.org".into();
+        person.subject = "Can you check my WordPress plugins?".into();
+        store.upsert_messages(&[person]).unwrap();
+        assert!(store.by_person(a, "INBOX", 100).unwrap());
+        assert_eq!(
+            store
+                .search_people(&Query::parse("giulia"), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .conversations_page(Folder::Inbox, None, Section::Notifications, 0, 50)
+                .unwrap()
+                .len(),
+            // Unsubscribe mail retains the existing Newsletters destination.
+            cases.len() - 1
+        );
+    }
+
+    #[test]
+    fn attached_spam_reports_are_automatic_but_personal_forwards_are_people() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let mut m = msg(a, 1, 100, true);
+        m.from_email = "service@provider.example".into();
+        m.subject = "Spam report".into();
+        store.upsert_messages(&[m.clone()]).unwrap();
+        assert!(store.by_person(a, "INBOX", 1).unwrap());
+        store
+            .conn
+            .execute(
+                "INSERT INTO attachment (account, mailbox, uid, part, name, mime, size)
+            VALUES (?1, 'INBOX', 1, 1, 'original.eml', 'message/rfc822', 100)",
+                params![a.0],
+            )
+            .unwrap();
+        assert!(!store.by_person(a, "INBOX", 1).unwrap());
+        assert!(store
+            .search_people(&Query::parse("service"), 10)
+            .unwrap()
+            .is_empty());
+        m.subject = "Fwd: Dinner".into();
+        store.upsert_messages(&[m]).unwrap();
+        assert!(store.by_person(a, "INBOX", 1).unwrap());
     }
 
     #[test]
