@@ -4267,11 +4267,11 @@ pub async fn unsubscribe(account_id: i64, mailbox: String, uid: u32) -> Result<(
     Ok(())
 }
 
-/// Whether an address looks like a machine's (no-reply, notifications,
-/// orders, bounces…): the reader warns that replies go unread.
+/// Whether replies to an address go unread (no-reply, bounces): the
+/// reader warns before a quick reply. Role addresses like `info@` don't.
 #[frb(sync)]
-pub fn machine_address(email: String) -> bool {
-    piuma_core::automation::machine_address(&email)
+pub fn no_reply_address(email: String) -> bool {
+    piuma_core::automation::no_reply_address(&email)
 }
 
 /// Whether a message's sender counts as a person: People, not

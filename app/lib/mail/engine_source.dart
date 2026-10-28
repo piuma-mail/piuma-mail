@@ -472,9 +472,9 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  bool machineSender(MailRow row) {
+  bool noReplySender(MailRow row) {
     try {
-      return engine.machineAddress(email: row.fromEmail);
+      return engine.noReplyAddress(email: row.fromEmail);
     } catch (_) {
       return false;
     }

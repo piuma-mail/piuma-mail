@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1547466184;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -979508904;
 
 // Section: executor
 
@@ -2447,36 +2447,6 @@ fn wire__crate__api__engine__locked_archive_impl(
         },
     )
 }
-fn wire__crate__api__engine__machine_address_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "machine_address",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_email = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let output_ok = Ok::<_, ()>(crate::api::engine::machine_address(api_email))?;
-                std::result::Result::Ok(output_ok)
-            })())
-        },
-    )
-}
 fn wire__crate__api__engine__mailbox_count_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -2933,6 +2903,36 @@ fn wire__crate__api__engine__newsletters_page_impl(
                     std::result::Result::Ok(output_ok)
                 })())
             }
+        },
+    )
+}
+fn wire__crate__api__engine__no_reply_address_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "no_reply_address",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_email = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::engine::no_reply_address(api_email))?;
+                std::result::Result::Ok(output_ok)
+            })())
         },
     )
 }
@@ -10939,18 +10939,18 @@ fn pde_ffi_dispatcher_primary_impl(
         66 => wire__crate__api__labels__labelled_impl(port, ptr, rust_vec_len, data_len),
         67 => wire__crate__api__labels__labels_impl(port, ptr, rust_vec_len, data_len),
         69 => wire__crate__api__engine__locked_archive_impl(port, ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__engine__mailbox_count_impl(port, ptr, rust_vec_len, data_len),
-        72 => {
+        70 => wire__crate__api__engine__mailbox_count_impl(port, ptr, rust_vec_len, data_len),
+        71 => {
             wire__crate__api__engine__mailbox_counts_between_impl(port, ptr, rust_vec_len, data_len)
         }
-        73 => wire__crate__api__engine__mailbox_page_impl(port, ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__engine__message_body_impl(port, ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__engine__message_original_impl(port, ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__engine__message_readable_impl(port, ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__engine__message_row_impl(port, ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__engine__move_messages_to_impl(port, ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__engine__newsletter_cover_impl(port, ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__engine__newsletters_page_impl(port, ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__engine__mailbox_page_impl(port, ptr, rust_vec_len, data_len),
+        73 => wire__crate__api__engine__message_body_impl(port, ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__engine__message_original_impl(port, ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__engine__message_readable_impl(port, ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__engine__message_row_impl(port, ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__engine__move_messages_to_impl(port, ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__engine__newsletter_cover_impl(port, ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__engine__newsletters_page_impl(port, ptr, rust_vec_len, data_len),
         83 => wire__crate__api__engine__note_search_impl(port, ptr, rust_vec_len, data_len),
         87 => wire__crate__api__engine__open_draft_impl(port, ptr, rust_vec_len, data_len),
         89 => wire__crate__api__engine__outbox_impl(port, ptr, rust_vec_len, data_len),
@@ -11143,9 +11143,9 @@ fn pde_ffi_dispatcher_sync_impl(
         63 => wire__crate__api__groups__groups_impl(ptr, rust_vec_len, data_len),
         65 => wire__crate__api__engine__junk_mailbox_impl(ptr, rust_vec_len, data_len),
         68 => wire__crate__api__labels__labels_local_impl(ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__engine__machine_address_impl(ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__engine__message_by_person_impl(ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__engine__native_notices_impl(ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__engine__message_by_person_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__engine__native_notices_impl(ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__engine__no_reply_address_impl(ptr, rust_vec_len, data_len),
         84 => wire__crate__api__engine__notify_covers_impl(ptr, rust_vec_len, data_len),
         85 => wire__crate__api__engine__notify_quiet_at_impl(ptr, rust_vec_len, data_len),
         86 => wire__crate__api__engine__notify_settings_impl(ptr, rust_vec_len, data_len),
