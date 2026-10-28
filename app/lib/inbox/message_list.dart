@@ -814,6 +814,11 @@ class MessageListState extends State<MessageList>
                     key: ValueKey(('reminded', row.key)),
                     row: row,
                     account: _account(row.accountId),
+                    accountColors: [
+                      for (final id
+                          in row.actionCopies.map((c) => c.accountId).toSet())
+                        if (_account(id) case final a?) a.color,
+                    ],
                     time: rowTime(row.remindAt ?? now, now, locale),
                     noReply: noReplyLine(row, now, l),
                     selected:
@@ -883,6 +888,11 @@ class MessageListState extends State<MessageList>
                 final summary = InboxRowTile(
                   row: row.withSeen(run.every((r) => r.seen)),
                   account: _account(row.accountId),
+                  accountColors: [
+                    for (final id
+                        in row.actionCopies.map((c) => c.accountId).toSet())
+                      if (_account(id) case final a?) a.color,
+                  ],
                   time: rowTime(row.receivedAt, now, locale),
                   selected: false,
                   picked: picked,
@@ -953,6 +963,11 @@ class MessageListState extends State<MessageList>
               final tile = InboxRowTile(
                 row: row,
                 account: _account(row.accountId),
+                accountColors: [
+                  for (final id
+                      in row.actionCopies.map((c) => c.accountId).toSet())
+                    if (_account(id) case final a?) a.color,
+                ],
                 time: row.folder == MailFolder.snoozed
                     ? snoozedRowTime(row.snoozedUntil, now, l, locale)
                     : widget.folder == MailFolder.waiting
@@ -1416,6 +1431,7 @@ class InboxRowTile extends StatefulWidget {
     super.key,
     required this.row,
     required this.account,
+    this.accountColors = const [],
     required this.time,
     required this.selected,
     required this.onTap,
@@ -1459,6 +1475,7 @@ class InboxRowTile extends StatefulWidget {
   final VoidCallback? onLongPress;
 
   final MailRow row;
+  final List<Color> accountColors;
   final MailAccount? account;
   final String time;
   final bool selected;
@@ -1617,6 +1634,7 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                     // Your own mail shows who it went to.
                                     email: outgoing ? '' : row.fromEmail,
                                     dot: account?.color,
+                                    dots: widget.accountColors,
                                     ring: selected ? c.sel : c.surface,
                                     size: phone ? 42 : 38,
                                   ),
@@ -1982,6 +2000,7 @@ class _Avatar extends StatelessWidget {
     required this.initials,
     this.email = '',
     this.dot,
+    this.dots = const [],
     required this.ring,
     this.size = 38,
   });
@@ -1989,6 +2008,7 @@ class _Avatar extends StatelessWidget {
 
   /// Whose picture replaces the letters once it is on the device.
   final String email;
+  final List<Color> dots;
   final Color? dot;
   final Color ring;
   final double size;
@@ -2020,15 +2040,17 @@ class _Avatar extends StatelessWidget {
               ),
             ),
           ),
-          if (dot != null)
+          for (final (i, color)
+              in (dots.isNotEmpty ? dots : [?dot]).indexed)
             Positioned(
-              right: -1,
+              key: ValueKey('account-dot-$i'),
+              right: -1 + i * (big ? 9 : 8).toDouble(),
               bottom: -1,
               child: Container(
                 width: big ? 12 : 11,
                 height: big ? 12 : 11,
                 decoration: BoxDecoration(
-                  color: dot,
+                  color: color,
                   shape: BoxShape.circle,
                   border: Border.all(color: ring, width: 2),
                 ),

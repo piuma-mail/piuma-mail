@@ -93,14 +93,15 @@ pub async fn set_label(
 /// trash, newest first.
 pub fn labelled(keyword: String) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
-    store
+    let rows = store
         .labelled_messages(&keyword)?
         .into_iter()
         .map(|m| {
             let row = inbox_row(&store, m);
             in_conversation(&store, with_files(&store, row))
         })
-        .collect()
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    super::engine::combine_rows(&store, rows)
 }
 
 /// Whether the account's server keeps no keywords, so its labels stay on

@@ -8483,6 +8483,7 @@ impl SseDecode for i64 {
 impl SseDecode for crate::api::engine::InboxRow {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_copies = <Vec<crate::api::engine::MessageRef>>::sse_decode(deserializer);
         let mut var_accountId = <i64>::sse_decode(deserializer);
         let mut var_mailbox = <String>::sse_decode(deserializer);
         let mut var_uid = <u32>::sse_decode(deserializer);
@@ -8505,6 +8506,7 @@ impl SseDecode for crate::api::engine::InboxRow {
         let mut var_invite = <bool>::sse_decode(deserializer);
         let mut var_labels = <Vec<String>>::sse_decode(deserializer);
         return crate::api::engine::InboxRow {
+            copies: var_copies,
             account_id: var_accountId,
             mailbox: var_mailbox,
             uid: var_uid,
@@ -12084,6 +12086,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::groups::GroupUnread>
 impl flutter_rust_bridge::IntoDart for crate::api::engine::InboxRow {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
+            self.copies.into_into_dart().into_dart(),
             self.account_id.into_into_dart().into_dart(),
             self.mailbox.into_into_dart().into_dart(),
             self.uid.into_into_dart().into_dart(),
@@ -14437,6 +14440,7 @@ impl SseEncode for i64 {
 impl SseEncode for crate::api::engine::InboxRow {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::engine::MessageRef>>::sse_encode(self.copies, serializer);
         <i64>::sse_encode(self.account_id, serializer);
         <String>::sse_encode(self.mailbox, serializer);
         <u32>::sse_encode(self.uid, serializer);

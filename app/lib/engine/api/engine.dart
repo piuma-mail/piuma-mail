@@ -8,7 +8,7 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `blocking`, `body_block`, `body_marks`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `switch`, `to_core`, `to_core`, `translator`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
@@ -1552,6 +1552,8 @@ class FrequentContact {
 
 /// One row of the unified inbox.
 class InboxRow {
+  /// Server copies, populated only for a combined row across accounts.
+  final List<MessageRef> copies;
   final PlatformInt64 accountId;
   final String mailbox;
   final int uid;
@@ -1598,6 +1600,7 @@ class InboxRow {
   final List<String> labels;
 
   const InboxRow({
+    required this.copies,
     required this.accountId,
     required this.mailbox,
     required this.uid,
@@ -1623,6 +1626,7 @@ class InboxRow {
 
   @override
   int get hashCode =>
+      copies.hashCode ^
       accountId.hashCode ^
       mailbox.hashCode ^
       uid.hashCode ^
@@ -1650,6 +1654,7 @@ class InboxRow {
       identical(this, other) ||
       other is InboxRow &&
           runtimeType == other.runtimeType &&
+          copies == other.copies &&
           accountId == other.accountId &&
           mailbox == other.mailbox &&
           uid == other.uid &&
