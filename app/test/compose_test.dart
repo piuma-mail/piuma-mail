@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
+import 'package:piuma_mail/design/motion.dart' show PiumaPressable;
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/phone_parts.dart' show ComposeFab;
 import 'package:piuma_mail/mail/demo_source.dart';
@@ -33,11 +34,16 @@ Future<DemoMailSource> _pump(WidgetTester tester, {bool dark = false}) async {
 }
 
 /// Compose on the phone, as `PhoneCompose`, from Work.
-Future<void> _pumpPhone(WidgetTester tester, {bool dark = false}) async {
-  tester.view.physicalSize = const Size(390, 844);
+Future<void> _pumpPhone(
+  WidgetTester tester, {
+  bool dark = false,
+  Size size = const Size(390, 844),
+  DemoMailSource? demo,
+}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now);
+  final source = demo ?? DemoMailSource(now: _now);
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -50,6 +56,36 @@ Future<void> _pumpPhone(WidgetTester tester, {bool dark = false}) async {
   await tester.tap(find.byType(ComposeFab));
   await tester.pumpAndSettle();
   await _fromWork(tester);
+}
+
+/// The demo, suggesting [count] people for whatever is typed.
+class _ManyPeople extends DemoMailSource {
+  _ManyPeople(this.count) : super(now: _now);
+
+  final int count;
+
+  @override
+  Future<List<Contact>> suggestRecipients(
+    String typed, {
+    int limit = 6,
+  }) async => [
+    for (var i = 1; i <= count && i <= limit; i++)
+      Contact(name: 'Amme Person $i', email: 'amme$i@studio.it'),
+  ];
+}
+
+/// Types in To on a Pixel-sized phone, keyboard up, with [count] matches.
+Future<void> _suggestMany(WidgetTester tester, int count) async {
+  await _pumpPhone(
+    tester,
+    dark: true,
+    size: const Size(412, 915),
+    demo: _ManyPeople(count),
+  );
+  tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+  await tester.showKeyboard(_field(0));
+  await tester.enterText(_field(0), 'amm');
+  await tester.pumpAndSettle();
 }
 
 Finder _field(int i) => find
@@ -231,6 +267,54 @@ void main() {
       'Typing after Bcc',
     );
   });
+
+  // The suggestion list shows whole rows, never one cut by its bottom edge
+  // (issue #36).
+  for (final count in [3, 6]) {
+    testWidgets('phone: $count suggestions show only whole rows', (
+      tester,
+    ) async {
+      await _suggestMany(tester, count);
+      expect(tester.takeException(), isNull);
+      // What the list shows: its own rect, cut by every scroll view
+      // around it and by the keyboard.
+      final rows = find.ancestor(
+        of: find.text('amme1@studio.it'),
+        matching: find.byType(PiumaPressable),
+      );
+      var visible = Offset.zero & const Size(412, 915 - 320);
+      for (final view in tester.widgetList(
+        find.ancestor(of: rows.first, matching: find.byType(Scrollable)),
+      )) {
+        visible = visible.intersect(tester.getRect(find.byWidget(view)));
+      }
+      var whole = 0;
+      for (var i = 1; i <= count; i++) {
+        final row = find.ancestor(
+          of: find.text('amme$i@studio.it'),
+          matching: find.byType(PiumaPressable),
+        );
+        if (row.evaluate().isEmpty) continue;
+        final rect = tester.getRect(row.first);
+        if (!rect.overlaps(visible)) continue;
+        expect(
+          visible.expandToInclude(rect),
+          visible,
+          reason: 'row $i at $rect is cut by the list at $visible',
+        );
+        whole++;
+      }
+      expect(whole, count == 3 ? 3 : greaterThanOrEqualTo(1));
+    });
+  }
+
+  testWidgets('phone three suggestions golden', (tester) async {
+    await _suggestMany(tester, 3);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/phone_compose_suggest_three_dark.png'),
+    );
+  }, tags: ['golden']);
 
   // A tap on another field turns what is typed into a chip and moves there,
   // even though the new chip pushes that field down (issue #9).
