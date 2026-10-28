@@ -186,7 +186,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get sectionThisWeek => 'Esta semana';
 
   @override
-  String get sectionThisMonth => 'Antes este mes';
+  String get sectionThisMonth => 'Este mes';
 
   @override
   String get sectionOlder => 'Más antiguos';
@@ -1362,7 +1362,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get openSourceLine => 'Código abierto · GPL-3.0';
 
   @override
-  String get motto => 'Mail, made light.';
+  String get motto => 'El correo, más ligero.';
 
   @override
   String get appName => 'Piuma Mail';
@@ -1738,7 +1738,7 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String get vaultNothingDue => 'Nada pendiente';
+  String get vaultAllClear => 'Todo bien';
 
   @override
   String get vaultToday => 'Hoy';
@@ -4729,9 +4729,6 @@ class AppLocalizationsEs extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get vaultNothingNeeds => 'Nada te necesita';
 
   @override
   String vaultTodayKind(String kind) {

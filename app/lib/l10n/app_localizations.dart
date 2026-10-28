@@ -2746,11 +2746,11 @@ abstract class AppLocalizations {
   /// **'Due {when}'**
   String vaultArrives(String when);
 
-  /// No description provided for @vaultNothingDue.
+  /// No description provided for @vaultAllClear.
   ///
   /// In en, this message translates to:
-  /// **'Nothing due'**
-  String get vaultNothingDue;
+  /// **'All clear'**
+  String get vaultAllClear;
 
   /// No description provided for @vaultToday.
   ///
@@ -7101,12 +7101,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 thing needs you} other{{count} things need you}}'**
   String vaultNeedCount(int count);
-
-  /// No description provided for @vaultNothingNeeds.
-  ///
-  /// In en, this message translates to:
-  /// **'Nothing needs you'**
-  String get vaultNothingNeeds;
 
   /// No description provided for @vaultTodayKind.
   ///

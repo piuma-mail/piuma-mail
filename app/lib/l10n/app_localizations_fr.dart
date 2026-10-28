@@ -1367,7 +1367,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get openSourceLine => 'Open source · GPL-3.0';
 
   @override
-  String get motto => 'Mail, made light.';
+  String get motto => 'Le courrier, plus léger.';
 
   @override
   String get appName => 'Piuma Mail';
@@ -1746,7 +1746,7 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
-  String get vaultNothingDue => 'Rien à échéance';
+  String get vaultAllClear => 'À jour';
 
   @override
   String get vaultToday => 'Aujourd’hui';
@@ -4743,9 +4743,6 @@ class AppLocalizationsFr extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get vaultNothingNeeds => 'Rien à traiter';
 
   @override
   String vaultTodayKind(String kind) {
