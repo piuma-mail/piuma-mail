@@ -181,6 +181,7 @@ class _ComposePaneState extends State<ComposePane> {
   final _paneKey = GlobalKey();
   final _slashButton = GlobalKey();
   final _bodyFocus = FocusNode();
+  final _subjectFocus = FocusNode();
   final _scroll = ScrollController();
 
   /// The desktop's formatting pill, over the selected words.
@@ -655,6 +656,7 @@ class _ComposePaneState extends State<ComposePane> {
     _subject.dispose();
     _body.dispose();
     _bodyFocus.dispose();
+    _subjectFocus.dispose();
     _scroll.dispose();
     _pillAt.dispose();
     super.dispose();
@@ -963,6 +965,7 @@ class _ComposePaneState extends State<ComposePane> {
                 ),
                 _Line(
                   label: l.to,
+                  onTap: () => _toKey.currentState?.focus(),
                   trailing: _showCopies
                       ? null
                       : _TextLink(
@@ -987,6 +990,7 @@ class _ComposePaneState extends State<ComposePane> {
                 if (_showCopies) ...[
                   _Line(
                     label: l.cc,
+                    onTap: () => _ccKey.currentState?.focus(),
                     child: _RecipientsField(
                       key: _ccKey,
                       label: l.cc,
@@ -1002,6 +1006,7 @@ class _ComposePaneState extends State<ComposePane> {
                   if (_listingIn == _ccKey) _phoneList(),
                   _Line(
                     label: l.bcc,
+                    onTap: () => _bccKey.currentState?.focus(),
                     child: _RecipientsField(
                       key: _bccKey,
                       label: l.bcc,
@@ -1019,8 +1024,10 @@ class _ComposePaneState extends State<ComposePane> {
                 if (_listingIn == null) ...[
                   _Line(
                     label: l.subject,
+                    onTap: _subjectFocus.requestFocus,
                     child: _BareField(
                       controller: _subject,
+                      focusNode: _subjectFocus,
                       label: l.subject,
                       style: TextStyle(
                         fontSize: 15,
@@ -1240,13 +1247,16 @@ class _ComposePaneState extends State<ComposePane> {
   }
 }
 
-/// One header row: label on the left, thin rule below.
+/// One header row: label on the left, thin rule below. With [onTap], a
+/// tap anywhere in the row the field itself doesn't take (the label, the
+/// empty space) goes to [onTap], so the label works as the field's own.
 class _Line extends StatelessWidget {
   const _Line({
     required this.label,
     required this.child,
     this.trailing,
     this.top = false,
+    this.onTap,
   });
 
   final String label;
@@ -1254,11 +1264,15 @@ class _Line extends StatelessWidget {
   final Widget? trailing;
   final bool top;
 
+  /// Focuses the row's field; leaving the one before commits what was
+  /// typed there, as any focus change does (issue #9).
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final rule = BorderSide(color: c.line);
-    return Container(
+    final row = Container(
       constraints: const BoxConstraints(minHeight: 52),
       decoration: BoxDecoration(
         border: Border(top: top ? rule : BorderSide.none, bottom: rule),
@@ -1278,6 +1292,18 @@ class _Line extends StatelessWidget {
           Expanded(child: child),
           if (trailing != null) ...[const SizedBox(width: 12), trailing!],
         ],
+      ),
+    );
+    if (onTap == null) return row;
+    // The field already carries the label for screen readers, so the row
+    // adds no second control of its own.
+    return MouseRegion(
+      cursor: SystemMouseCursors.text,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        excludeFromSemantics: true,
+        onTap: onTap,
+        child: row,
       ),
     );
   }
@@ -1412,7 +1438,13 @@ class _RecipientsFieldState extends State<_RecipientsField> {
     _focus.addListener(() {
       if (!_focus.hasFocus) {
         _hide();
-        commit();
+        // Only once the field has handed the keyboard to the next one:
+        // clearing it while it still holds the connection sends the
+        // keyboard an edit for the old field just as it switches, and on
+        // Android what is typed next can land back here (issue #9).
+        scheduleMicrotask(() {
+          if (mounted && !_focus.hasFocus) commit();
+        });
       }
     });
   }
@@ -1476,6 +1508,9 @@ class _RecipientsFieldState extends State<_RecipientsField> {
     widget.onChanged();
     _focus.requestFocus();
   }
+
+  /// Puts the keyboard in this field, as tapping its row's label does.
+  void focus() => _focus.requestFocus();
 
   /// Moves whatever is typed into the list.
   void commit() {
@@ -1900,12 +1935,18 @@ class _RecipientChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _display(address),
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: fg,
+            // A long address ends in an ellipsis inside the pill.
+            Flexible(
+              child: Text(
+                _display(address),
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: fg,
+                ),
               ),
             ),
             const SizedBox(width: 2),
