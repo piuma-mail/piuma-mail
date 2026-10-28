@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
@@ -150,6 +152,94 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Subject'), findsOneWidget);
     expect(find.text('g.bassi@studio.it'), findsNothing);
+  });
+
+  // A tap on another field turns what is typed into a chip and moves there,
+  // even though the new chip pushes that field down (issue #9).
+  for (final phone in [true, false]) {
+    for (final (from, to) in [
+      ('To', 'Subject'),
+      ('To', 'body'),
+      ('Cc', 'Subject'),
+      ('Bcc', 'body'),
+    ]) {
+      testWidgets('${phone ? 'phone: ' : ''}a tap on $to after typing in '
+          '$from keeps the address and writes in $to', (tester) async {
+        phone ? await _pumpPhone(tester) : await _pump(tester);
+        if (from != 'To') {
+          await tester.tap(find.text('Cc  Bcc'));
+          await tester.pumpAndSettle();
+        }
+        final input = from == 'To' ? 0 : (from == 'Cc' ? 1 : 2);
+        final subject = from == 'To' ? 1 : 3;
+        await tester.showKeyboard(_field(input));
+        await tester.pumpAndSettle();
+        tester.testTextInput.enterText('someone.with.a.long.name@example.com');
+        await tester.pumpAndSettle();
+        EditableTextState editing() => tester.state(
+          find.descendant(
+            of: _field(input),
+            matching: find.byType(EditableText),
+          ),
+        );
+        final before = editing();
+        tester.testTextInput.log.clear();
+        // A finger (a mouse on the desktop) rests for a moment: frames pass
+        // between down and up, and the chip may move the field meanwhile.
+        final finger = await tester.startGesture(
+          tester.getCenter(_field(to == 'Subject' ? subject : subject + 1)),
+          kind: phone ? PointerDeviceKind.touch : PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.pump(const Duration(milliseconds: 80));
+        await finger.up();
+        await tester.pumpAndSettle();
+        // The keyboard is handed over before the typed text leaves the
+        // field: no edit for the old field reaches it while it switches.
+        final calls = [for (final c in tester.testTextInput.log) c.method];
+        expect(calls, contains('TextInput.setClient'));
+        expect(
+          calls.takeWhile((m) => m != 'TextInput.setClient'),
+          isNot(contains('TextInput.setEditingState')),
+        );
+        tester.testTextInput.enterText('My subject');
+        await tester.pumpAndSettle();
+        expect(find.text('someone.with.a.long.name@example.com'), findsOne);
+        final fields = tester
+            .widgetList<TextField>(
+              find.descendant(
+                of: find.byType(ComposePane),
+                matching: find.byType(TextField),
+              ),
+            )
+            .toList();
+        expect(fields[input].controller!.text, isEmpty);
+        // The chip didn't rebuild the field it was typed in.
+        expect(editing(), same(before));
+        expect(
+          fields[to == 'Subject' ? subject : subject + 1].controller!.text,
+          startsWith('My subject'),
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  testWidgets('phone: a long chip ends in an ellipsis before Cc Bcc', (
+    tester,
+  ) async {
+    await _pumpPhone(tester);
+    const long = 'someone.with.a.really.long.name@example.com,';
+    await tester.enterText(_field(0), long);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final chip = find.text(long.substring(0, long.length - 1));
+    final text = tester.renderObject<RenderParagraph>(chip);
+    expect(text.didExceedMaxLines, isTrue);
+    expect(
+      tester.getRect(chip).right,
+      lessThan(tester.getRect(find.text('Cc  Bcc')).left),
+    );
   });
 
   testWidgets('a tap on a suggestion adds that person', (tester) async {

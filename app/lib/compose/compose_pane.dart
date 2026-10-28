@@ -1412,7 +1412,13 @@ class _RecipientsFieldState extends State<_RecipientsField> {
     _focus.addListener(() {
       if (!_focus.hasFocus) {
         _hide();
-        commit();
+        // Only once the field has handed the keyboard to the next one:
+        // clearing it while it still holds the connection sends the
+        // keyboard an edit for the old field just as it switches, and on
+        // Android what is typed next can land back here (issue #9).
+        scheduleMicrotask(() {
+          if (mounted && !_focus.hasFocus) commit();
+        });
       }
     });
   }
@@ -1900,12 +1906,18 @@ class _RecipientChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              _display(address),
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: fg,
+            // A long address ends in an ellipsis inside the pill.
+            Flexible(
+              child: Text(
+                _display(address),
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: fg,
+                ),
               ),
             ),
             const SizedBox(width: 2),
