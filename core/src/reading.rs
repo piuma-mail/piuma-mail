@@ -158,6 +158,89 @@ pub fn readable_with(text: &str, html: Option<&str>, options: Options) -> Readab
     }
 }
 
+/// A visible list marker at the start of a plain-text line.
+fn text_list_marker(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim_start();
+    for marker in ["-", "*", "•"] {
+        if let Some(rest) = line.strip_prefix(marker).and_then(|s| s.strip_prefix(' ')) {
+            return Some((marker, rest));
+        }
+    }
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    if digits > 0 {
+        let rest = line[digits..].strip_prefix(". ")?;
+        return Some((&line[..digits + 1], rest));
+    }
+    None
+}
+
+/// Decode text/plain line structure while MIME parameters are still available.
+/// Fixed text only reflows likely transport wrapping; flowed text follows RFC 3676.
+pub(crate) fn normalize_text(text: &str, flowed: bool, delsp: bool) -> String {
+    let mut out = String::new();
+    let mut previous: Option<(usize, bool, bool, bool)> = None;
+    for line in text.lines() {
+        let depth = line.bytes().take_while(|&b| b == b'>').count();
+        let content = if flowed || depth > 0 {
+            line[depth..].strip_prefix(' ').unwrap_or(&line[depth..])
+        } else {
+            line
+        };
+        let signature = content == "-- ";
+        let soft = flowed && content.ends_with(' ') && !signature;
+        let list = text_list_marker(content).is_some();
+        let blank = content.is_empty();
+        if let Some((old_depth, join, old_blank, old_list)) = previous {
+            if join
+                && old_depth == depth
+                && !blank
+                && !old_blank
+                && !signature
+                && (flowed || (!list && !old_list && !content.starts_with([' ', '\t'])))
+            {
+                if !flowed {
+                    out.push(' ');
+                }
+            } else {
+                out.push('\n');
+                out.push_str(&">".repeat(depth));
+                if depth > 0 {
+                    out.push(' ');
+                }
+                // Keep a stuffed literal '>' distinct from a quote prefix
+                // when the normalized text is read again.
+                if flowed && content.starts_with('>') {
+                    out.push(' ');
+                }
+            }
+        } else {
+            out.push_str(&">".repeat(depth));
+            if depth > 0 {
+                out.push(' ');
+            }
+            if flowed && content.starts_with('>') {
+                out.push(' ');
+            }
+        }
+        if soft && delsp {
+            out.push_str(&content[..content.len() - 1]);
+        } else if flowed {
+            out.push_str(content);
+        } else {
+            out.push_str(content.trim_end());
+        }
+        // Be conservative with undeclared wrapping: short lines, lists and
+        // indented content are intentional. Only long prose lines can join.
+        let width = content.chars().count();
+        let hard_wrap = !flowed
+            && (60..=80).contains(&width)
+            && !line[depth..].starts_with([' ', '\t'])
+            && !signature;
+        previous = Some((depth, soft || hard_wrap, blank, list));
+    }
+    out
+}
+
 /// Plain text: paragraphs on blank lines, `>` quotes, addresses as links.
 pub fn from_text(text: &str) -> Readable {
     from_text_with(text, Options::default())
@@ -176,7 +259,13 @@ fn from_text_with(text: &str, options: Options) -> Readable {
             .map(|(_, l)| l.trim_end())
             .collect::<Vec<_>>()
             .join("\n");
-        let mut block = Block::new(BlockKind::Paragraph);
+        let (kind, marker, joined) = match text_list_marker(joined.trim()) {
+            Some((marker, rest)) => (BlockKind::ListItem, marker, rest),
+            None => (BlockKind::Paragraph, "", joined.trim()),
+        };
+        let mut block = Block::new(kind);
+        block.marker = marker.to_owned();
+        block.level = u8::from(kind == BlockKind::ListItem);
         block.quote = quote;
         block.spans = autolink(joined.trim(), options.clean_links, &mut out.links_cleaned);
         if !block.spans.is_empty() {
@@ -187,15 +276,23 @@ fn from_text_with(text: &str, options: Options) -> Readable {
     for line in text.lines() {
         let mut rest = line;
         let mut depth = 0u8;
-        while let Some(r) = rest.trim_start().strip_prefix('>') {
+        while let Some(r) = rest.strip_prefix('>') {
             depth = depth.saturating_add(1);
-            rest = r.strip_prefix(' ').unwrap_or(r);
+            rest = r;
+        }
+        if depth > 0 {
+            rest = rest.strip_prefix(' ').unwrap_or(rest);
         }
         if rest.trim().is_empty() {
             flush(&mut lines, &mut out);
             continue;
         }
-        if lines.first().is_some_and(|(d, _)| *d != depth) {
+        if lines.first().is_some_and(|(d, _)| *d != depth)
+            || text_list_marker(rest).is_some()
+            || lines
+                .first()
+                .is_some_and(|(_, l)| text_list_marker(l).is_some())
+        {
             flush(&mut lines, &mut out);
         }
         lines.push((depth, rest));
