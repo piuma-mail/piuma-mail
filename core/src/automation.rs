@@ -49,9 +49,16 @@ pub(crate) fn message(m: &Message) -> bool {
     )
 }
 
-/// Whether an address looks like a machine's (no-reply, notifications,
-/// orders, bounces…, or sent from a mailing domain such as
-/// `notice.shop.com` or `e-mail.brand.com`), for local classification.
+/// Whether an address looks like a machine's on its own: a no-reply or
+/// bounce address ([`no_reply_address`]), a postmaster, a notifications
+/// or alerts sender, or one sent from a mailing domain such as
+/// `notice.shop.com` or `e-mail.brand.com`, for local classification.
+///
+/// A role address such as `info@`, `billing@` or `orders@` is not enough:
+/// small businesses and freelancers write real conversations from them.
+/// Their mail counts as automated only when the message says so too (list
+/// headers, bulk or automatic mail, which classify it whatever the
+/// sender), and never once the person has written to the address.
 pub(crate) fn machine_address(email: &str) -> bool {
     let email = email.trim().to_lowercase();
     let (local, domain) = email.split_once('@').unwrap_or((&email, ""));
@@ -100,48 +107,27 @@ pub(crate) fn machine_address(email: &str) -> bool {
             return true;
         }
     }
+    if no_reply_address(&email) {
+        return true;
+    }
     let local: String = local
         .chars()
         .filter(|c| !matches!(c, '.' | '-' | '_'))
         .collect();
-    ["noreply", "donotreply"].iter().any(|p| local.contains(p))
-        || ["mailerdaemon", "postmaster", "bounce"]
-            .iter()
-            .any(|p| local.starts_with(p))
+    local.starts_with("postmaster")
         || [
             "notifications",
             "notification",
             "notifiche",
             "notifica",
             "newsletter",
-            "news",
             "alerts",
             "alert",
             "avvisi",
             "avviso",
-            "comunicazioni",
             "mailer",
             "automated",
-            "info",
             "wordpress",
-            "transaction",
-            "transactions",
-            "order",
-            "orders",
-            "booking",
-            "bookings",
-            "billing",
-            "invoice",
-            "invoices",
-            "receipts",
-            "security",
-            "account",
-            "accounts",
-            "updates",
-            "notice",
-            "marketing",
-            "promo",
-            "offers",
         ]
         .contains(&local.as_str())
 }
@@ -188,6 +174,33 @@ mod tests {
     }
 
     #[test]
+    fn role_addresses_alone_are_not_machines() {
+        for local in [
+            "info",
+            "billing",
+            "orders",
+            "order",
+            "account",
+            "accounts",
+            "booking",
+            "invoice",
+            "invoices",
+            "security",
+            "updates",
+            "notice",
+            "marketing",
+        ] {
+            assert!(
+                !machine_address(&format!("{local}@smallbiz.example")),
+                "{local}"
+            );
+        }
+        // A mailing subdomain still is, whatever the local part.
+        assert!(machine_address("info@email.brand.example"));
+        assert!(machine_address("billing@notice.brand.example"));
+    }
+
+    #[test]
     fn no_reply_only_for_addresses_nobody_reads() {
         for a in [
             "no-reply@example.org",
@@ -197,6 +210,7 @@ mod tests {
             "bounces+123@mailer.example",
         ] {
             assert!(no_reply_address(a), "{a}");
+            assert!(machine_address(a), "{a}");
         }
         for a in [
             "info@studio.example",

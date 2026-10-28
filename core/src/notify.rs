@@ -299,6 +299,18 @@ pub struct Notice {
     pub people: bool,
 }
 
+/// Counts mail from the person's own addresses, from addresses they wrote
+/// to and in conversations they replied to as written by people, whatever
+/// its headers say, as the People list does ([`Store::person_wrote`]).
+pub fn known_people(store: &Store, arrivals: &mut [Arrival]) -> Result<()> {
+    for a in arrivals.iter_mut().filter(|a| a.automated) {
+        if store.person_wrote(&a.summary)? {
+            a.automated = false;
+        }
+    }
+    Ok(())
+}
+
 /// Mail older than this when it lands (catching up after a while offline)
 /// is not news.
 pub const RECENT_SECS: i64 = 24 * 60 * 60;

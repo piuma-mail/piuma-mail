@@ -1466,7 +1466,7 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
     let store = store.lock().unwrap_or_else(|e| e.into_inner());
     let settings = notify::Settings::load(&store).unwrap_or_default();
     // Groups with notices off stay quiet.
-    let arrived: Vec<notify::Arrival> = arrived
+    let mut arrived: Vec<notify::Arrival> = arrived
         .iter()
         .filter(|a| {
             store
@@ -1475,6 +1475,9 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
         })
         .cloned()
         .collect();
+    // Senders written to, conversations replied to and the person's own
+    // addresses are people.
+    let _ = notify::known_people(&store, &mut arrived);
     notify::notices(&arrived, &settings, now_secs())
         .into_iter()
         .filter(|n| !store.is_muted(&n.sender_email).unwrap_or(false))
