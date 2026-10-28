@@ -67,6 +67,43 @@ void main() {
     expect(find.byType(Reader), findsNothing);
   });
 
+  testWidgets('scrolled to the end, the last row clears the compose button', (
+    tester,
+  ) async {
+    // A large phone with a gesture bar under the screen.
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 24, bottom: 24);
+    tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 24);
+    addTearDown(tester.view.reset);
+    final source = DemoMailSource(now: _now);
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) =>
+            InboxScreen(source: source, onAddAccount: () {}, now: () => _now),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    final list = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(MessageList),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    list.position.jumpTo(list.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    final rows = find.byType(InboxRowTile);
+    expect(rows, findsWidgets);
+    final last = rows
+        .evaluate()
+        .map((e) => tester.getRect(find.byElementPredicate((x) => x == e)))
+        .reduce((a, b) => a.bottom > b.bottom ? a : b);
+    expect(last.overlaps(tester.getRect(find.byType(ComposeFab))), isFalse);
+  });
+
   testWidgets('a swipe to the right archives, Undo brings it back', (
     tester,
   ) async {
