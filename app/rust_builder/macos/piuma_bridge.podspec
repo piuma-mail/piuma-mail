@@ -24,6 +24,8 @@ A new Flutter FFI plugin project.
   s.platform = :osx, '10.11'
   # The Rust core reads the system proxy and network settings.
   s.frameworks = 'SystemConfiguration'
+  # The Rust static library includes gemmology's C++ SIMD shim.
+  s.libraries = 'c++'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
   s.swift_version = '5.0'
 

@@ -69,17 +69,16 @@ static void send_link(Paper* paper, const char* uri) {
 
 static void on_measured(GObject* object, GAsyncResult* res, gpointer data) {
   GError* error = nullptr;
-  WebKitJavascriptResult* js = webkit_web_view_run_javascript_finish(
+  JSCValue* value = webkit_web_view_evaluate_javascript_finish(
       WEBKIT_WEB_VIEW(object), res, &error);
-  if (js == nullptr) {
+  if (value == nullptr) {
     if (error != nullptr) g_error_free(error);
     return;
   }
-  JSCValue* value = webkit_javascript_result_get_js_value(js);
-  double h = (value != nullptr && jsc_value_is_number(value))
+  double h = jsc_value_is_number(value)
                  ? jsc_value_to_double(value)
                  : 0;
-  webkit_javascript_result_unref(js);
+  g_object_unref(value);
   Paper* paper = static_cast<Paper*>(
       g_object_get_data(object, kPaperKey));
   if (paper != nullptr && h > 0) {
@@ -94,11 +93,11 @@ static void on_measured(GObject* object, GAsyncResult* res, gpointer data) {
 static void on_load_changed(WebKitWebView* web, WebKitLoadEvent event,
                             gpointer data) {
   if (event != WEBKIT_LOAD_FINISHED) return;
-  webkit_web_view_run_javascript(
+  webkit_web_view_evaluate_javascript(
       web,
       "Math.max(document.body ? document.body.scrollHeight : 0, "
       "document.documentElement ? document.documentElement.scrollHeight : 0)",
-      nullptr, on_measured, nullptr);
+      -1, nullptr, nullptr, nullptr, on_measured, nullptr);
 }
 
 // Nothing opens in the web view: the email itself loads, links inside it
