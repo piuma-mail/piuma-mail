@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::automation::machine_address;
+use crate::automation::{machine_address, no_reply_address};
 use crate::groups::{AddressGroup, GroupAddress, Within};
 use crate::label::Label;
 use crate::model::{
@@ -57,9 +57,10 @@ pub const RECENT_SEARCHES_KEPT: usize = 5;
 
 /// SQL for a message `m` written by a person: not a newsletter, not sent
 /// or a draft, not from the person, and either from someone they wrote to
-/// or neither list, bulk nor automatic mail nor from a machine-looking
-/// address ([`machine_address`]), with no Vault card unless a person
-/// forwarded it. A sender the person moved to People or Notifications
+/// or in a conversation they replied to (unless it is list mail or from a
+/// no-reply or bounce address), or neither list, bulk nor automatic mail
+/// nor from a machine-looking address ([`machine_address`]), with no Vault
+/// card unless a person forwarded it. A sender the person moved to People or Notifications
 /// stays where they put it.
 const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
     AND m.folder NOT IN ('sent', 'drafts', 'newsletters')
@@ -68,6 +69,9 @@ const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
     NOT automatic_content(m.from_name, m.subject, EXISTS (SELECT 1 FROM attachment a
         WHERE a.account = m.account AND a.mailbox = m.mailbox AND a.uid = m.uid
           AND lower(a.mime) = 'message/rfc822')) AND (EXISTS (SELECT 1 FROM written_to w WHERE w.email = lower(m.from_email))
+    OR (m.unsubscribe = '' AND m.thread <> '' AND NOT no_reply_address(m.from_email)
+        AND EXISTS (SELECT 1 FROM message s
+            WHERE s.account = m.account AND s.thread = m.thread AND s.folder = 'sent'))
     OR (m.unsubscribe = '' AND m.bulk = 0 AND NOT machine_address(m.from_email)
         AND (forwarded(m.subject) OR NOT EXISTS (SELECT 1 FROM vault_card v
             WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid))))))";
@@ -1313,12 +1317,16 @@ fn clean_previews(tx: &rusqlite::Transaction) -> Result<()> {
     Ok(())
 }
 
-/// The functions the SQL here calls: [`machine_address`] and [`forwarded`].
+/// The functions the SQL here calls: [`machine_address`],
+/// [`no_reply_address`] and [`forwarded`].
 fn functions(conn: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     conn.create_scalar_function("machine_address", 1, flags, |ctx| {
         Ok(machine_address(&ctx.get::<String>(0).unwrap_or_default()))
+    })?;
+    conn.create_scalar_function("no_reply_address", 1, flags, |ctx| {
+        Ok(no_reply_address(&ctx.get::<String>(0).unwrap_or_default()))
     })?;
     conn.create_scalar_function("automatic_content", 3, flags, |ctx| {
         Ok(crate::automation::content(
@@ -2961,6 +2969,39 @@ impl Store {
             signed_by: none(signed_by),
             sent_by: none(sent_by),
         }))
+    }
+
+    /// Whether `email` is one of the person's own addresses (an account or
+    /// an alias) or one they have written to: never a machine, whatever
+    /// its mail looks like.
+    pub fn known_person(&self, email: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM written_to WHERE email = ?1)
+                 OR EXISTS (SELECT 1 FROM account WHERE lower(email) = ?1)
+                 OR EXISTS (SELECT 1 FROM account_alias WHERE lower(email) = ?1)",
+            [email.trim().to_lowercase()],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Whether a stored message counts as written by a person whatever its
+    /// headers say: from a [`Store::known_person`], or in a conversation
+    /// the person replied to, unless it is list mail or comes from a
+    /// no-reply or bounce address, as the People list does.
+    pub fn person_wrote(&self, m: &MessageSummary) -> Result<bool> {
+        if self.known_person(&m.from_email)? {
+            return Ok(true);
+        }
+        if !m.list.unsubscribe.is_empty() || no_reply_address(&m.from_email) {
+            return Ok(false);
+        }
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM message m JOIN message s
+                 ON s.account = m.account AND s.thread = m.thread AND s.folder = 'sent'
+                 WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3 AND m.thread <> '')",
+            params![m.account.0, m.mailbox, m.uid],
+            |r| r.get(0),
+        )?)
     }
 
     /// Whether the person has written to this address, or to anyone at
@@ -8875,7 +8916,7 @@ From: <help@bank.example>\r\n\r\nHi";
                     ("Giulia Romano", "giulia@posta.it"),
                     "Dinner on Friday?",
                 ),
-                written(w, 5, 500, ("Città Più", "info@citta.it"), "Perché così"),
+                written(w, 5, 500, ("Città Più", "avvisi@citta.it"), "Perché così"),
             ])
             .unwrap();
         store
@@ -9092,7 +9133,7 @@ From: <help@bank.example>\r\n\r\nHi";
             subjects(&store, "has:attachment dinner"),
             Vec::<String>::new()
         );
-        // info@ is a machine.
+        // avvisi@ (notices) is a machine.
         assert_eq!(
             subjects(&store, "from:people"),
             [
@@ -9708,8 +9749,9 @@ From: <help@bank.example>\r\n\r\nHi";
             m.from_email = email.into();
             m
         };
-        // A person writing through a group, a B&B at info@, a bank alert
-        // sent as bulk mail, an Italian notice and a plain person.
+        // A person writing through a group, a B&B at info@ (a role address
+        // alone is a person), a bank alert sent as bulk mail, an Italian
+        // notice and a plain person.
         let mut group = from(1, "anna@school.example");
         group.list.unsubscribe = "mailto:leave@school.example".into();
         let bnb = from(2, "info@bnb.example");
@@ -9730,7 +9772,7 @@ From: <help@bank.example>\r\n\r\nHi";
             uids.sort();
             uids
         };
-        assert_eq!(people(&store), [5]);
+        assert_eq!(people(&store), [2, 5]);
         // Written to (one address in mixed case): People from then on.
         let mut sent = from(20, "matteo@studio.it");
         sent.mailbox = "Sent".into();
@@ -9748,6 +9790,177 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(!store.by_person(a, "INBOX", 5).unwrap());
         store.set_sender_side("sara@example.org", None).unwrap();
         assert_eq!(people(&store), [1, 2, 3, 5]);
+    }
+
+    #[test]
+    fn role_addresses_need_another_signal() {
+        use crate::notify::{self, Arrival, Settings};
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@studio.example", "#2F8F83"))
+            .unwrap();
+        let own = store
+            .add_account(&imap_account("Studio", "info@recore.example", "#2F8F83"))
+            .unwrap();
+        store.add_alias(own, "billing@recore.example").unwrap();
+        store.set_folder_role(a, Folder::Sent, "Sent").unwrap();
+        let now = 1_000_000;
+        let arrive = |uid: u32, raw: &str| {
+            let parsed = mail_parser::MessageParser::default()
+                .parse(raw.as_bytes())
+                .unwrap();
+            let mut m = msg(a, uid, now - 60, false);
+            m.from_email = parsed
+                .from()
+                .unwrap()
+                .first()
+                .unwrap()
+                .address()
+                .unwrap()
+                .into();
+            m.subject = parsed.subject().unwrap_or_default().into();
+            m.list = crate::newsletter::list_info(&parsed);
+            Arrival {
+                summary: m,
+                automated: notify::automated(&parsed),
+            }
+        };
+        let arrivals = [
+            // A small business replying in a thread from info@.
+            arrive(
+                1,
+                "From: Small Biz <info@smallbiz.example>\r\nSubject: Re: Quote\r\nIn-Reply-To: <q@studio.example>\r\n\r\nHere it is",
+            ),
+            // A shop's newsletter from info@.
+            arrive(
+                2,
+                "From: Shop <info@shop.example>\r\nSubject: Sale\r\nList-Unsubscribe: <https://shop.example/u>\r\n\r\nSale",
+            ),
+            // An automatic bill from billing@.
+            arrive(
+                3,
+                "From: Vendor <billing@vendor.example>\r\nSubject: Invoice\r\nAuto-Submitted: auto-generated\r\n\r\nDue",
+            ),
+            arrive(
+                4,
+                "From: Vendor <no-reply@vendor.example>\r\nSubject: Receipt\r\n\r\nPaid",
+            ),
+            // The person's own other account, automatic or not.
+            arrive(
+                5,
+                "From: Recore <info@recore.example>\r\nSubject: Contact form\r\nAuto-Submitted: auto-generated\r\n\r\nNew message",
+            ),
+        ];
+        store
+            .upsert_messages(
+                &arrivals
+                    .iter()
+                    .map(|a| a.summary.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        let people = |store: &Store| -> Vec<u32> {
+            let mut uids: Vec<u32> = store
+                .conversations_page(Folder::Inbox, None, Section::People, 0, 10)
+                .unwrap()
+                .iter()
+                .map(|c| c.latest.uid)
+                .collect();
+            uids.sort();
+            uids
+        };
+        let notified = |store: &Store| -> Vec<u32> {
+            let mut arrived = arrivals.to_vec();
+            notify::known_people(store, &mut arrived).unwrap();
+            let mut uids: Vec<u32> = notify::notices(&arrived, &Settings::default(), now)
+                .iter()
+                .map(|n| n.uid)
+                .collect();
+            uids.sort();
+            uids
+        };
+        assert_eq!(people(&store), [1]);
+        assert_eq!(
+            store
+                .search_people(&Query::parse("smallbiz"), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(notified(&store), [1, 5]);
+        // Own addresses are never machines.
+        for own in [
+            "info@recore.example",
+            "Billing@Recore.example",
+            "me@studio.example",
+        ] {
+            assert!(store.known_person(own).unwrap(), "{own}");
+        }
+        assert!(!store.known_person("billing@vendor.example").unwrap());
+        // Once the person writes to billing@, it is a person.
+        let mut sent = msg(a, 20, now - 120, true);
+        sent.mailbox = "Sent".into();
+        sent.from_email = "me@studio.example".into();
+        sent.reply.recipients = "Billing@Vendor.example".into();
+        store.upsert_messages(&[sent]).unwrap();
+        assert_eq!(people(&store), [1, 3]);
+        assert_eq!(notified(&store), [1, 3, 5]);
+        // A conversation the person replied to (to the hotel's Reply-To):
+        // the automatic confirmation in it is a person's, a bounce is not.
+        let in_thread = |uid: u32, at: i64, from: &str, references: &str| {
+            let mut m = msg(a, uid, at, false);
+            m.from_email = from.into();
+            m.subject = "Room for Friday".into();
+            m.reply.message_id = format!("<m{uid}@hotel.example>");
+            m.reply.references = references.into();
+            m.list.bulk = true;
+            m
+        };
+        let request = in_thread(30, now - 600, "booking@hotel.example", "");
+        let mut reply = msg(a, 31, now - 500, true);
+        reply.mailbox = "Sent".into();
+        reply.from_email = "me@studio.example".into();
+        reply.subject = "Re: Room for Friday".into();
+        reply.reply.message_id = "<r31@studio.example>".into();
+        reply.reply.references = "<m30@hotel.example>".into();
+        reply.reply.recipients = "desk@hotel.example".into();
+        let confirmed = in_thread(
+            32,
+            now - 30,
+            "booking@hotel.example",
+            "<r31@studio.example>",
+        );
+        let bounce = in_thread(
+            33,
+            now - 20,
+            "mailer-daemon@hotel.example",
+            "<r31@studio.example>",
+        );
+        store
+            .upsert_messages(&[request, reply, confirmed.clone()])
+            .unwrap();
+        assert_eq!(
+            store.thread_of(a, "INBOX", 32).unwrap(),
+            store.thread_of(a, "INBOX", 30).unwrap()
+        );
+        assert_eq!(people(&store), [1, 3, 32]);
+        store
+            .upsert_messages(std::slice::from_ref(&bounce))
+            .unwrap();
+        assert_eq!(people(&store), [1, 3]);
+        let mut late = vec![
+            Arrival {
+                summary: confirmed,
+                automated: true,
+            },
+            Arrival {
+                summary: bounce,
+                automated: true,
+            },
+        ];
+        notify::known_people(&store, &mut late).unwrap();
+        assert!(!late[0].automated);
+        assert!(late[1].automated);
     }
 
     #[test]
