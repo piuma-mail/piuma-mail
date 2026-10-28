@@ -14,6 +14,7 @@ import '../l10n/app_localizations.dart';
 import 'service_states.dart';
 import '../mail/mail_source.dart';
 import 'labels.dart';
+import 'phone_parts.dart' show ComposeFab;
 import 'pictures.dart';
 import 'sections.dart';
 import 'snooze.dart';
@@ -880,7 +881,13 @@ class MessageListState extends State<MessageList>
             child: _SwipeHint(onSnooze: widget.onSnoozeSwipe != null),
           ),
         // Room under the last row (on the phone, for the compose button).
-        SliverToBoxAdapter(child: SizedBox(height: widget.phone ? 110 : 16)),
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: widget.phone
+                ? ComposeFab.listRoom(context)
+                : PiumaSpace.s16,
+          ),
+        ),
       ],
     );
   }
