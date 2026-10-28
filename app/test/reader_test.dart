@@ -291,6 +291,51 @@ void main() {
   });
 
   group('images bar', () {
+    // "Load images" is the filled one and comes first on every layout.
+    for (final (name, phone, width) in [
+      ('phone, stacked', true, 320.0),
+      ('phone, side by side', true, 390.0),
+      ('desktop, one line', false, 720.0),
+      ('desktop, narrow', false, 420.0),
+    ]) {
+      testWidgets('"Load images" is primary and first: $name', (tester) async {
+        tester.view.physicalSize = const Size(1000, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          PiumaApp(
+            home: (_, _) => Center(
+              child: SizedBox(
+                width: width,
+                child: ImagesBar(
+                  count: 2,
+                  sender: 'Bottega Lume',
+                  onLoad: () {},
+                  onTrust: () {},
+                  phone: phone,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        PiumaButton button(String label) =>
+            tester.widget<PiumaButton>(find.widgetWithText(PiumaButton, label));
+        expect(button('Load images').kind, PiumaButtonKind.primary);
+        expect(
+          button('Always for this sender').kind,
+          phone ? PiumaButtonKind.secondary : PiumaButtonKind.tertiary,
+        );
+        final load = tester.getRect(find.text('Load images'));
+        final trust = tester.getRect(find.text('Always for this sender'));
+        expect(
+          load.bottom <= trust.top || load.right <= trust.left,
+          isTrue,
+          reason: '"Load images" comes before "Always for this sender"',
+        );
+      });
+    }
+
     testWidgets('it asks once, and loads for this email only', (tester) async {
       final source = await _pump(tester);
       expect(
@@ -372,7 +417,7 @@ void main() {
       final load = tester.getRect(
         find.widgetWithText(PiumaButton, 'Carica immagini'),
       );
-      expect(load.top, greaterThanOrEqualTo(trust.bottom));
+      expect(trust.top, greaterThanOrEqualTo(load.bottom));
     });
   });
 
