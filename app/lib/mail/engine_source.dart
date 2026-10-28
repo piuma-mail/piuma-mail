@@ -25,6 +25,7 @@ import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
 import 'mail_source.dart';
+import 'recipient_suggestions.dart';
 import 'on_device_model.dart';
 import 'phone_files.dart';
 
@@ -1248,11 +1249,19 @@ class EngineMailSource extends MailSource {
 
   @override
   Future<List<Contact>> suggestRecipients(String typed, {int limit = 6}) async {
+    if (typed.trim().isEmpty || limit <= 0) return const [];
     final found = await engine.suggestRecipients(typed: typed, limit: limit);
-    return [
-      for (final p in found)
-        Contact(name: p.name, email: p.email, writtenTo: p.writtenTo),
-    ];
+    return recipientSuggestions(
+      typed,
+      [
+        for (final p in found)
+          Contact(name: p.name, email: p.email, writtenTo: p.writtenTo),
+      ],
+      accounts,
+      {for (final account in accounts) account.id: await aliases(account.id)},
+      limit: limit,
+      frequent: (await searchStart()).frequent,
+    );
   }
 
   @override
