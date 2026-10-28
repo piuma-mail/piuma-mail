@@ -1696,6 +1696,12 @@ class _InboxScreenState extends State<InboxScreen> {
     label: AppLocalizations.of(context).groupSheetLabel,
     builder: (sheet) => PhoneGroupSheet(
       groups: _separate,
+      accounts: widget.source.accounts,
+      account: _account,
+      onAccount: (id) {
+        Navigator.of(sheet).pop();
+        _showAccount(id);
+      },
       unread: _groupUnread,
       allUnread: _unread,
       current: _listGroup?.group,

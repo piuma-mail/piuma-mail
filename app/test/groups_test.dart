@@ -46,7 +46,11 @@ Future<DemoMailSource> _settings(
   return source;
 }
 
-Future<DemoMailSource> _inbox(WidgetTester tester, {bool phone = false}) async {
+Future<DemoMailSource> _inbox(
+  WidgetTester tester, {
+  bool phone = false,
+  bool dark = false,
+}) async {
   tester.view.physicalSize = phone
       ? const Size(390, 844)
       : const Size(1440, 900);
@@ -55,6 +59,7 @@ Future<DemoMailSource> _inbox(WidgetTester tester, {bool phone = false}) async {
   final source = DemoMailSource(now: _now, groups: true);
   await tester.pumpWidget(
     PiumaApp(
+      initialDark: dark,
       home: (_, _) =>
           InboxScreen(source: source, onAddAccount: () {}, now: () => _now),
     ),
@@ -363,7 +368,7 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Group: all. Change group'));
     await _settle(tester);
     expect(find.text('Show'), findsOneWidget);
-    expect(find.text('3 addresses · 1 group'), findsOneWidget);
+    expect(find.text('5 addresses · 1 group'), findsOneWidget);
     expect(
       find.text('matteo@studio.it · info@studio.it · fatture@studio.it'),
       findsOneWidget,
@@ -389,6 +394,26 @@ void main() {
     await _settle(tester);
     expect(find.text('Trip photos'), findsOneWidget);
   });
+
+  for (final dark in [false, true]) {
+    testWidgets('ungrouped account in Show sheet ($dark)', (tester) async {
+      await _inbox(tester, phone: true, dark: dark);
+      await tester.tap(find.bySemanticsLabel('Group: all. Change group'));
+      await _settle(tester);
+      expect(find.text('5 addresses · 1 group'), findsOneWidget);
+      expect(find.text('teo@icloud.com'), findsOneWidget);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile(
+          'goldens/phone_group_sheet_${dark ? 'dark' : 'light'}.png',
+        ),
+      );
+      await tester.tap(find.text('teo@icloud.com'));
+      await _settle(tester);
+      expect(find.text('Show'), findsNothing);
+      expect(find.text('Mockup v3 review'), findsNothing);
+    });
+  }
 
   testWidgets('a group on the phone says where rows went; search keeps to it', (
     tester,

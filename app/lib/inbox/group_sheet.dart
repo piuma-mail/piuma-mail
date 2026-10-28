@@ -15,6 +15,9 @@ class PhoneGroupSheet extends StatelessWidget {
     required this.groups,
     required this.unread,
     required this.allUnread,
+    this.accounts = const [],
+    this.account,
+    this.onAccount,
     this.current,
     required this.onGroup,
     required this.onManage,
@@ -22,6 +25,9 @@ class PhoneGroupSheet extends StatelessWidget {
 
   /// The groups with a Separate Inbox, in order.
   final List<MailGroup> groups;
+  final List<MailAccount> accounts;
+  final int? account;
+  final ValueChanged<int>? onAccount;
   final Map<int, GroupUnread> unread;
 
   /// What is unread in the unified inbox.
@@ -36,7 +42,18 @@ class PhoneGroupSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final addresses = groups.fold(0, (n, g) => n + g.addresses.length);
+    final grouped = {
+      for (final g in groups)
+        for (final a in g.addresses) (a.accountId, a.email.toLowerCase()),
+    };
+    final ungrouped = [
+      for (final a in accounts)
+        if (!grouped.contains((a.id, a.email.toLowerCase()))) a,
+    ];
+    final addresses = {
+      ...grouped,
+      for (final a in accounts) (a.id, a.email.toLowerCase()),
+    }.length;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
@@ -82,7 +99,7 @@ class PhoneGroupSheet extends StatelessWidget {
             ),
           ),
           _Choice(
-            on: current == null,
+            on: current == null && account == null,
             onTap: () => onGroup(null),
             label: l.groupsAll,
             unread: allUnread,
@@ -105,6 +122,18 @@ class PhoneGroupSheet extends StatelessWidget {
               lead: SizedBox(
                 width: 22,
                 child: Center(child: _Dot(g.color, 12)),
+              ),
+            ),
+          for (final a in ungrouped)
+            _Choice(
+              on: account == a.id,
+              onTap: () => onAccount?.call(a.id),
+              label: a.name,
+              line: a.email,
+              unread: 0,
+              lead: SizedBox(
+                width: 22,
+                child: Center(child: _Dot(a.color, 12)),
               ),
             ),
           Container(

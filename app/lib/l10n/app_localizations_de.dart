@@ -3172,6 +3172,9 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get sendOptions => 'Sendeoptionen';
+
+  @override
   String get inboxSections => 'Bereiche des Posteingangs';
 
   @override
@@ -4541,6 +4544,9 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get replyFromLabel => 'Antworten von';
+
+  @override
+  String get senderReadsNoReplies => 'Dieser Absender liest keine Antworten';
 
   @override
   String replyFromSignature(String name) {

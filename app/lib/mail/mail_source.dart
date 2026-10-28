@@ -1513,6 +1513,7 @@ class Contact {
     required this.email,
     this.messages = 0,
     this.writtenTo = false,
+    this.accountColor,
   });
   final String name;
   final String email;
@@ -1523,6 +1524,9 @@ class Contact {
   /// A recipient suggestion written to from here ("Wrote to"), rather
   /// than one who only wrote ("Wrote to you").
   final bool writtenTo;
+
+  /// Known association with an account or one of its aliases.
+  final Color? accountColor;
 }
 
 /// What a search found.
@@ -2476,6 +2480,10 @@ abstract class MailSource {
   /// Whether [row]'s sender counts as a person: its mail shows in People,
   /// not Notifications.
   bool byPerson(MailRow row);
+
+  /// Whether replies to [row]'s sender go unread (a no-reply or bounce
+  /// address; role addresses such as `info@` are read by people).
+  bool noReplySender(MailRow row) => false;
 
   /// Puts [email]'s inbox mail in People ([people] true) or Notifications
   /// from now on, what is there already included; null lets its headers
