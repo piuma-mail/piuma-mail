@@ -225,6 +225,62 @@ void main() {
     }
   }
 
+  // A tap on a row's label, not just on its field, moves there; what was
+  // typed in a recipient field still becomes a chip (issue #9).
+  for (final phone in [true, false]) {
+    for (final (from, to) in [
+      ('To', 'Subject'),
+      ('Subject', 'To'),
+      ('To', 'Cc'),
+      ('Cc', 'Bcc'),
+      ('Bcc', 'Subject'),
+    ]) {
+      testWidgets('${phone ? 'phone: ' : ''}a tap on the $to label after '
+          'typing in $from writes in $to', (tester) async {
+        phone ? await _pumpPhone(tester) : await _pump(tester);
+        final copies = {from, to}.any((f) => f == 'Cc' || f == 'Bcc');
+        if (copies) {
+          await tester.tap(find.text('Cc  Bcc'));
+          await tester.pumpAndSettle();
+        }
+        final rows = copies
+            ? ['To', 'Cc', 'Bcc', 'Subject']
+            : ['To', 'Subject'];
+        const address = 'someone@example.com';
+        await tester.showKeyboard(_field(rows.indexOf(from)));
+        await tester.pumpAndSettle();
+        tester.testTextInput.enterText(
+          from == 'Subject' ? 'My subject' : address,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(ComposePane),
+            matching: find.text(to),
+          ),
+          kind: phone ? PointerDeviceKind.touch : PointerDeviceKind.mouse,
+        );
+        await tester.pumpAndSettle();
+        tester.testTextInput.enterText(
+          to == 'Subject' ? 'My subject' : 'next@example.com',
+        );
+        await tester.pumpAndSettle();
+        String text(String row) => tester
+            .widget<TextField>(_field(rows.indexOf(row)))
+            .controller!
+            .text;
+        if (from == 'Subject') {
+          expect(text('Subject'), 'My subject');
+        } else {
+          expect(find.text(address), findsOne);
+          expect(text(from), isEmpty);
+        }
+        expect(text(to), to == 'Subject' ? 'My subject' : 'next@example.com');
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('phone: a long chip ends in an ellipsis before Cc Bcc', (
     tester,
   ) async {
