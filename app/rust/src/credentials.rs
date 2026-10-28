@@ -66,6 +66,24 @@ pub fn load(id: AccountId) -> Result<String, EngineError> {
     load_key(&account_key(id))
 }
 
+/// Why a password can't be read.
+#[derive(Debug)]
+pub enum Unreadable {
+    /// None is kept for it: only signing in again brings it back (on
+    /// Android, unless the app hands it over late).
+    Absent,
+    /// The keychain is locked or not answering; it may be later. Never on
+    /// Android, where the passwords are only held in memory.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    Unavailable(EngineError),
+}
+
+/// As [`load`], telling a missing password from a keychain that can't
+/// answer now.
+pub fn read(id: AccountId) -> Result<String, Unreadable> {
+    read_key(&account_key(id))
+}
+
 pub fn save_key(key: &str, password: &str) -> Result<(), EngineError> {
     #[cfg(debug_assertions)]
     if let Some(memory) = test_memory() {
@@ -100,6 +118,16 @@ pub fn forget_key(key: &str) {
 }
 
 pub fn load_key(key: &str) -> Result<String, EngineError> {
+    read_key(key).map_err(|e| match e {
+        Unreadable::Absent => EngineError {
+            kind: ErrorKind::Keychain,
+            detail: "no password".into(),
+        },
+        Unreadable::Unavailable(e) => e,
+    })
+}
+
+fn read_key(key: &str) -> Result<String, Unreadable> {
     #[cfg(debug_assertions)]
     if let Some(memory) = test_memory() {
         return memory
@@ -107,20 +135,23 @@ pub fn load_key(key: &str) -> Result<String, EngineError> {
             .unwrap()
             .get(key)
             .cloned()
-            .ok_or_else(|| EngineError {
-                kind: ErrorKind::Keychain,
-                detail: "no password".into(),
-            });
+            .ok_or(Unreadable::Absent);
     }
     #[cfg(target_os = "android")]
     {
-        held().lock().unwrap().get(key).cloned().ok_or(EngineError {
-            kind: ErrorKind::Keychain,
-            detail: "no password".into(),
-        })
+        held()
+            .lock()
+            .unwrap()
+            .get(key)
+            .cloned()
+            .ok_or(Unreadable::Absent)
     }
     #[cfg(not(target_os = "android"))]
-    entry(key)?.get_password().map_err(keychain)
+    match entry(key).map_err(Unreadable::Unavailable)?.get_password() {
+        Ok(password) => Ok(password),
+        Err(keyring::Error::NoEntry) => Err(Unreadable::Absent),
+        Err(e) => Err(Unreadable::Unavailable(keychain(e))),
+    }
 }
 
 /// Android: the passwords the app handed over, for this run.

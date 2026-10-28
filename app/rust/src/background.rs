@@ -28,6 +28,7 @@ static FAILED: Mutex<Vec<SignInNotice>> = Mutex::new(Vec::new());
 pub struct SignInNotice {
     pub account_id: i64,
     pub name: String,
+    pub cancelled: bool,
 }
 
 /// From now on notices wait for [`wait`] instead of going to the app.
@@ -80,15 +81,14 @@ pub(crate) fn sign_in_failed(account: AccountId) {
 
 fn tell(account: AccountId) {
     let Ok(engine) = engine::engine() else { return };
-    let notice = told(
-        &engine.store.lock().unwrap_or_else(|e| e.into_inner()),
-        account,
-    );
+    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let notice = told(&store, account);
     let Some(notice) = notice else { return };
     FAILED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(notice);
+    drop(store);
     // Taken while wait() looks, so the wake-up isn't lost.
     drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
     ARRIVED.notify_all();
@@ -114,6 +114,7 @@ fn told(store: &Store, account: AccountId) -> Option<SignInNotice> {
     Some(SignInNotice {
         account_id: account.0,
         name: a.name,
+        cancelled: false,
     })
 }
 
@@ -129,9 +130,49 @@ fn is_told(store: &Store, account: AccountId) -> bool {
 pub(crate) fn signed_in(account: AccountId) {
     let Ok(engine) = engine::engine() else { return };
     let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
-    if is_told(&store, account) {
-        store.set_setting(&told_key(account), "").ok();
+    let mut failed = FAILED.lock().unwrap_or_else(|e| e.into_inner());
+    let queued = recover_sign_in(&store, account, &mut failed);
+    drop(failed);
+    drop(store);
+    if queued {
+        drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+        ARRIVED.notify_all();
     }
+}
+
+/// Whether it queued a withdrawal, the account having been told.
+fn recover_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNotice>) -> bool {
+    if !is_told(store, account) {
+        return false;
+    }
+    store.set_setting(&told_key(account), "").ok();
+    // Replace an undelivered failure, or withdraw a notice already posted.
+    pending.retain(|n| n.account_id != account.0);
+    pending.push(SignInNotice {
+        account_id: account.0,
+        name: String::new(),
+        cancelled: true,
+    });
+    true
+}
+
+/// The account is being removed: its failure goes, waiting or shown.
+pub(crate) fn forget(account: AccountId) {
+    let Ok(engine) = engine::engine() else { return };
+    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let mut failed = FAILED.lock().unwrap_or_else(|e| e.into_inner());
+    let queued = forget_sign_in(&store, account, &mut failed);
+    drop(failed);
+    drop(store);
+    if queued {
+        drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+        ARRIVED.notify_all();
+    }
+}
+
+fn forget_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNotice>) -> bool {
+    pending.retain(|n| n.account_id != account.0);
+    recover_sign_in(store, account, pending)
 }
 
 /// The sign-in notices kept since the last call, as JSON: each with the
@@ -142,6 +183,9 @@ pub fn sign_in_notices() -> String {
     let items: Vec<String> = failed
         .iter()
         .map(|n| {
+            if n.cancelled {
+                return format!(r#"{{"id":{},"cancel":true}}"#, sign_in_id(n.account_id));
+            }
             format!(
                 r#"{{"id":{},"name":{},"payload":{}}}"#,
                 sign_in_id(n.account_id),
@@ -588,7 +632,25 @@ mod tests {
         let notice = told(&store, id).unwrap();
         assert_eq!(notice.name, "Work \"W\"");
         assert_eq!(told(&store, id), None);
-        // Signed in again (what `signed_in` does), then refused again.
+        let other = SignInNotice {
+            account_id: id.0 + 1,
+            name: "Other".into(),
+            cancelled: false,
+        };
+        let mut pending = vec![notice.clone(), other.clone()];
+        assert!(recover_sign_in(&store, id, &mut pending));
+        assert_eq!(pending[0], other);
+        assert_eq!(pending[1].account_id, id.0);
+        assert!(pending[1].cancelled);
+        assert!(!is_told(&store, id));
+        assert!(!recover_sign_in(&store, id, &mut pending));
+        assert_eq!(pending.len(), 2); // Repeated success is quiet.
+        assert!(told(&store, id).is_some()); // A genuine new refusal still alerts.
+        let mut delivered = Vec::new();
+        assert!(recover_sign_in(&store, id, &mut delivered));
+        // Withdraw even after the queue was drained.
+        assert!(delivered[0].cancelled);
+        // Signed in again, then refused again.
         store.set_setting(&told_key(id), "").unwrap();
         assert!(told(&store, id).is_some());
         store.set_setting(&told_key(id), "").unwrap();
@@ -611,5 +673,54 @@ mod tests {
         );
         assert_ne!(sign_in_id(id.0), sign_in_id(id.0 + 1));
         assert_eq!(sign_in_notices(), "[]");
+        FAILED.lock().unwrap().extend(delivered);
+        assert_eq!(
+            sign_in_notices(),
+            format!(r#"[{{"id":{},"cancel":true}}]"#, sign_in_id(id.0))
+        );
+        assert_eq!(sign_in_notices(), "[]");
+    }
+
+    #[test]
+    fn a_removed_account_takes_its_sign_in_notice_along() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .add_account(&piuma_core::Account {
+                id: AccountId(0),
+                name: "Work".into(),
+                email: "matteo@studio.it".into(),
+                sender_name: "Matteo".into(),
+                color: "#3451D1".into(),
+                kind: piuma_core::AccountKind::Jmap {
+                    session_url: "https://jmap.studio.it/session".into(),
+                    username: "matteo".into(),
+                },
+            })
+            .unwrap();
+        let other = SignInNotice {
+            account_id: id.0 + 1,
+            name: "Other".into(),
+            cancelled: false,
+        };
+        // Told, and still waiting for the service: it goes, and what may
+        // have been shown already is withdrawn.
+        let mut pending = vec![told(&store, id).unwrap(), other.clone()];
+        assert!(forget_sign_in(&store, id, &mut pending));
+        assert_eq!(pending[0], other);
+        assert_eq!(pending[1].account_id, id.0);
+        assert!(pending[1].cancelled);
+        assert_eq!(pending.len(), 2);
+        assert!(!is_told(&store, id));
+        // Never told: nothing to withdraw, and a stray failure still goes.
+        let mut pending = vec![
+            SignInNotice {
+                account_id: id.0,
+                name: "Work".into(),
+                cancelled: false,
+            },
+            other.clone(),
+        ];
+        assert!(!forget_sign_in(&store, id, &mut pending));
+        assert_eq!(pending, [other]);
     }
 }

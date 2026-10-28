@@ -86,6 +86,10 @@ class MainActivity : FlutterActivity() {
                         Background.apply(context)
                         result.success(null)
                     }
+                    "refreshSignInNotices" -> {
+                        Background.showSignIn(context)
+                        result.success(null)
+                    }
                     "askBattery" -> {
                         askBattery()
                         result.success(null)

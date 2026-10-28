@@ -2,6 +2,7 @@
 //! in Dart by flutter_rust_bridge (`lib/engine/`).
 
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use flutter_rust_bridge::frb;
 use piuma_core::autoconfig::{self, Source};
@@ -1148,6 +1149,10 @@ pub(crate) static WATCHED: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 /// How to stop each running watcher, when its account changes or goes.
 static WATCHERS: Mutex<Vec<(i64, tokio::task::AbortHandle)>> = Mutex::new(Vec::new());
 
+/// Watchers still waiting for their password, with what the app was told:
+/// told again to a new `start_sync` stream, which would miss it otherwise.
+static WAITING: Mutex<Vec<(i64, SyncEventKind)>> = Mutex::new(Vec::new());
+
 /// Stops following an account, if it was followed.
 pub(crate) fn stop_watching(id: AccountId) {
     // Always WATCHED before WATCHERS, as in watch_account.
@@ -1158,6 +1163,21 @@ pub(crate) fn stop_watching(id: AccountId) {
     }
     watchers.retain(|(a, _)| *a != id.0);
     watched.retain(|a| *a != id.0);
+    WAITING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(a, _)| *a != id.0);
+}
+
+/// Keeps what a waiting watcher told the app, or forgets it (`None`).
+fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
+    let watched = WATCHED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut waiting = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+    waiting.retain(|(a, _)| *a != id);
+    // A watcher stopped meanwhile leaves nothing behind.
+    if let Some(kind) = kind.filter(|_| watched.contains(&id)) {
+        waiting.push((id, kind));
+    }
 }
 
 fn emit(event: SyncEvent) {
@@ -1171,6 +1191,10 @@ fn emit(event: SyncEvent) {
 /// this stream from now on. Safe to call again, after adding an account.
 pub fn start_sync(sink: StreamSink<SyncEvent>) -> Result<(), EngineError> {
     *SYNC_SINK.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(sink));
+    let waiting = WAITING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for (id, kind) in waiting {
+        emit(SyncEvent::new(kind, id));
+    }
     for account in store()?.accounts()? {
         watch_account(account)?;
     }
@@ -1185,19 +1209,26 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         if watched.contains(&id.0) {
             return Ok(());
         }
-        let password = match credentials::load(id) {
-            Ok(p) => p,
-            Err(_) => {
-                emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-                crate::background::sign_in_failed(id);
-                return Ok(());
-            }
-        };
         watched.push(id.0);
         let store = engine.store.clone();
         let settings_store = engine.store.clone();
-        let (outbox_account, outbox_password) = (account.clone(), password.clone());
         let task = engine.runtime.spawn(async move {
+            // A locked/unavailable keychain (or Android credentials not handed
+            // over yet) is not a server refusal. Retry without a notification
+            // that the password stopped working; stop_watching aborts this
+            // wait too.
+            let password = wait_for_credentials(
+                || credentials::read(id),
+                |kind| {
+                    set_waiting(id.0, Some(kind));
+                    emit(SyncEvent::new(kind, id.0));
+                },
+                HANDOVER,
+                backoff(RETRY_FIRST, RETRY_MOST),
+            )
+            .await;
+            set_waiting(id.0, None);
+            let (outbox_account, outbox_password) = (account.clone(), password.clone());
             let result = remote::watch(&account, &password, store, move |e| {
                 // In touch with the server again: what waits can go.
                 if let WatchEvent::Synced { .. } = &e {
@@ -1245,6 +1276,186 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         watchers.push((id.0, task.abort_handle()));
     }
     Ok(())
+}
+
+/// How long Android's app or service may take to hand the passwords over
+/// at start, before a missing one means signing in again. Elsewhere the
+/// keychain answers at once.
+const HANDOVER: Duration = Duration::from_secs(if cfg!(target_os = "android") { 60 } else { 0 });
+
+/// Retries reading a password 5 s later, then twice as long each time up
+/// to 5 minutes, so a locked keychain doesn't ask to be unlocked every
+/// few seconds.
+const RETRY_FIRST: Duration = Duration::from_secs(5);
+const RETRY_MOST: Duration = Duration::from_secs(5 * 60);
+
+fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> {
+    std::iter::successors(Some(first), move |d| Some((*d * 2).min(most)))
+}
+
+/// Waits for an account's password, telling `report` each change: Offline
+/// while the keychain can't answer (or Android hasn't handed it over yet),
+/// SignInFailed once it is missing. Local credential failures never
+/// establish that the server refused it: the app asks to sign in again,
+/// but no notification says the password stopped working.
+async fn wait_for_credentials(
+    mut load: impl FnMut() -> Result<String, credentials::Unreadable>,
+    mut report: impl FnMut(SyncEventKind),
+    handover: Duration,
+    mut retry: impl Iterator<Item = Duration>,
+) -> String {
+    let since = tokio::time::Instant::now();
+    let mut reported = None;
+    loop {
+        let early = handover.saturating_sub(since.elapsed());
+        let (state, wait) = match load() {
+            Ok(password) => return password,
+            Err(credentials::Unreadable::Absent) if early.is_zero() => {
+                (SyncEventKind::SignInFailed, None)
+            }
+            // Look again when the handover is over, not later.
+            Err(credentials::Unreadable::Absent) => (SyncEventKind::Offline, Some(early)),
+            Err(credentials::Unreadable::Unavailable(_)) => (SyncEventKind::Offline, None),
+        };
+        if reported != Some(state) {
+            report(state);
+            reported = Some(state);
+        }
+        let next = retry.next().unwrap_or(RETRY_MOST);
+        tokio::time::sleep(wait.map_or(next, |w| next.min(w))).await;
+    }
+}
+
+#[cfg(test)]
+mod credential_recovery_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+    }
+
+    fn memory_keychain() {
+        std::env::set_var("PIUMA_TEST_MEMORY_KEYCHAIN", "1");
+    }
+
+    #[test]
+    fn unavailable_credentials_retry_until_readable_without_auth_failure() {
+        let mut attempts = 0;
+        let mut reports = Vec::new();
+        let password = runtime().block_on(wait_for_credentials(
+            || {
+                attempts += 1;
+                if attempts < 4 {
+                    Err(credentials::Unreadable::Unavailable(EngineError::new(
+                        ErrorKind::Keychain,
+                        "temporarily locked",
+                    )))
+                } else {
+                    Ok("test credential".into())
+                }
+            },
+            |kind| reports.push(kind),
+            Duration::ZERO,
+            backoff(Duration::from_millis(1), Duration::from_millis(2)),
+        ));
+        assert_eq!(password, "test credential");
+        assert_eq!(attempts, 4);
+        // A locked keychain never asks to sign in again.
+        assert_eq!(reports, [SyncEventKind::Offline]);
+    }
+
+    #[test]
+    fn a_missing_password_asks_to_sign_in_again_until_it_comes() {
+        memory_keychain();
+        let id = AccountId(9_001);
+        credentials::forget(id);
+        let asked = Cell::new(false);
+        let mut reports = Vec::new();
+        let password = runtime().block_on(wait_for_credentials(
+            || {
+                if asked.get() {
+                    // Signed in again, or handed over late.
+                    credentials::save(id, "test credential").unwrap();
+                }
+                credentials::read(id)
+            },
+            |kind| {
+                asked.set(kind == SyncEventKind::SignInFailed);
+                reports.push(kind);
+            },
+            Duration::from_millis(20),
+            backoff(Duration::from_millis(1), Duration::from_millis(4)),
+        ));
+        assert_eq!(password, "test credential");
+        // Offline while the handover may still come, then sign in again.
+        assert_eq!(
+            reports,
+            [SyncEventKind::Offline, SyncEventKind::SignInFailed]
+        );
+        credentials::forget(id);
+    }
+
+    #[test]
+    fn retries_back_off_up_to_five_minutes() {
+        let secs: Vec<u64> = backoff(RETRY_FIRST, RETRY_MOST)
+            .take(9)
+            .map(|d| d.as_secs())
+            .collect();
+        assert_eq!(secs, [5, 10, 20, 40, 80, 160, 300, 300, 300]);
+    }
+
+    #[test]
+    fn a_watcher_waiting_for_its_password_stops_cleanly() {
+        memory_keychain();
+        open_engine(":memory:".into()).unwrap();
+        let id = store()
+            .unwrap()
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Work".into(),
+                email: "matteo@studio.it".into(),
+                sender_name: "Matteo".into(),
+                color: "#3451D1".into(),
+                kind: piuma_core::AccountKind::Jmap {
+                    session_url: "https://jmap.studio.invalid/session".into(),
+                    username: "matteo".into(),
+                },
+            })
+            .unwrap();
+        let account = store()
+            .unwrap()
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap();
+        watch_account(account).unwrap();
+        let asked = || {
+            WAITING
+                .lock()
+                .unwrap()
+                .contains(&(id.0, SyncEventKind::SignInFailed))
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !asked() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(asked());
+        // Asked in the app only: not recorded as the server's refusal.
+        let told = store()
+            .unwrap()
+            .setting(&format!("sign_in.told.{}", id.0))
+            .unwrap();
+        assert!(told.is_none_or(|v| v.is_empty()));
+        stop_watching(id);
+        assert!(!WATCHED.lock().unwrap().contains(&id.0));
+        assert!(!WATCHERS.lock().unwrap().iter().any(|(a, _)| *a == id.0));
+        assert!(!WAITING.lock().unwrap().iter().any(|(a, _)| *a == id.0));
+    }
 }
 
 /// What new mail deserves a notification, by the person's settings.
@@ -1415,6 +1626,9 @@ pub async fn sign_in_again(account_id: i64, password: String) -> Result<(), Engi
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
     credentials::save(id, &password)?;
+    // A watcher still waiting for the missing password starts over now,
+    // not at its next look.
+    stop_watching(id);
     watch_account(account)
 }
 
