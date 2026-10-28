@@ -96,6 +96,35 @@ const UNREAD_IN_THREAD: &str = " AND EXISTS (SELECT 1 FROM message u
     WHERE u.account = m.account AND u.thread = m.thread AND u.folder = m.folder
       AND u.hidden = 0 AND (u.flags & 1) = 0)";
 
+/// An indexed anti-join before pagination; never merges copies within
+/// one account. Candidate eligibility is identical to the outer list.
+fn cross_account_sql(within: &Within, section: &str) -> String {
+    if within.account().is_some() {
+        return String::new();
+    }
+    let newest = NEWEST_IN_THREAD.replace("m.", "d.");
+    // Group/address SQL contains quoted user addresses; change only SQL
+    // identifiers, never a substring of an address such as team.example.
+    let section = section
+        .split('\'')
+        .enumerate()
+        .map(|(i, part)| {
+            if i % 2 == 0 {
+                part.replace("m.", "d.")
+            } else {
+                part.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("'");
+    format!(
+        " AND (m.message_id = '' OR NOT EXISTS (
+        SELECT 1 FROM message d WHERE d.message_id = m.message_id
+          AND d.folder = m.folder AND d.hidden = 0 AND d.account < m.account
+          AND {newest}{section}))"
+    )
+}
+
 /// Keeps who the person wrote to, from the Sent mail `?1`/`?2`/`?3` (an
 /// account, a mailbox and a uid; a NULL keeps them all): the senders the
 /// inbox always counts as people.
@@ -888,6 +917,7 @@ const MIGRATIONS: &[&str] = &[
     -- Read the small automation headers once for already cached inbox mail.
     UPDATE message SET list_checked = 0 WHERE mailbox = 'INBOX';
 "#,
+    "CREATE INDEX IF NOT EXISTS message_cross_account ON message(message_id, folder, account);",
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
@@ -2531,6 +2561,7 @@ impl Store {
     ) -> Result<Vec<Conversation>> {
         let within = within.into();
         let section = section_sql(section) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section);
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -2542,7 +2573,7 @@ impl Store {
                        AND t.folder <> 'drafts')
              FROM message m
              WHERE m.folder = ?1 AND m.hidden = 0 AND (?4 IS NULL OR m.account = ?4)
-               AND {NEWEST_IN_THREAD}{section}
+               AND {NEWEST_IN_THREAD}{section}{dedupe}
              ORDER BY m.received_at DESC, m.account, m.uid DESC
              LIMIT ?2 OFFSET ?3"
         ))?;
@@ -2557,6 +2588,76 @@ impl Store {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// The visible server copies of a combined row. Single-account lists
+    /// deliberately retain their existing folder/conversation semantics.
+    pub fn combined_copies(
+        &self,
+        message: &MessageSummary,
+        folder: Folder,
+        within: &Within,
+    ) -> Result<Vec<MessageSummary>> {
+        if within.account().is_some() || message.reply.message_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject,
+                    m.preview, m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list
+             FROM message m WHERE m.message_id = ?1 AND m.folder = ?2 AND m.hidden = 0 {}
+             ORDER BY m.account, m.mailbox, m.uid",
+            within.sql()
+        ))?;
+        let copies = stmt
+            .query_map(
+                params![message.reply.message_id, folder.tag()],
+                row_to_summary,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        if copies.iter().any(|c| c.account != message.account) {
+            Ok(copies)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Marks the exact copies supplied by a combined row, atomically.
+    /// Server delivery still uses the existing per-account offline queue.
+    pub fn set_copies_seen(&self, copies: &[(AccountId, String, u32)], seen: bool) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (account, mailbox, uid) in copies {
+            self.set_seen(*account, mailbox, *uid, seen)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// To then Cc are stored in recipient order by both protocol adapters.
+    pub fn reply_copy(&self, copies: &[MessageSummary]) -> Result<usize> {
+        let accounts = self.accounts()?;
+        let recipients: String = self.conn.query_row(
+            "SELECT recipients FROM message WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![copies[0].account.0, copies[0].mailbox, copies[0].uid],
+            |r| r.get(0),
+        )?;
+        for recipient in recipients.split_whitespace() {
+            for a in &accounts {
+                if a.email.eq_ignore_ascii_case(recipient)
+                    || self
+                        .aliases(a.id)?
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(recipient))
+                {
+                    if let Some(i) = copies.iter().position(|c| c.account == a.id) {
+                        return Ok(i);
+                    }
+                }
+            }
+        }
+        Ok(accounts
+            .iter()
+            .find_map(|a| copies.iter().position(|c| c.account == a.id))
+            .unwrap_or(0))
+    }
+
     /// How many conversations have a message in `folder`, of one account
     /// or of all.
     pub fn conversation_count(
@@ -2567,11 +2668,12 @@ impl Store {
     ) -> Result<u32> {
         let within = within.into();
         let section = section_sql(section) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.account = ?2)
-                   AND {NEWEST_IN_THREAD}{section}"
+                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
             ),
             params![folder.tag(), within.account()],
             |r| r.get(0),
@@ -2590,12 +2692,13 @@ impl Store {
     ) -> Result<u32> {
         let within = within.into();
         let section = section_sql(section) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND m.received_at >= ?2
                    AND m.received_at < ?3 AND (?4 IS NULL OR m.account = ?4)
-                   AND {NEWEST_IN_THREAD}{section}"
+                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
             ),
             params![folder.tag(), from, to, within.account()],
             |r| r.get(0),
@@ -4482,11 +4585,12 @@ impl Store {
     ) -> Result<u32> {
         let within = within.into();
         let section = section_sql(section) + &within.sql();
+        let dedupe = cross_account_sql(&within, &(section.clone() + " AND (m.flags & 1) = 0"));
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND (m.flags & 1) = 0
-                   AND (?2 IS NULL OR m.account = ?2){section}"
+                   AND (?2 IS NULL OR m.account = ?2){section}{dedupe}"
             ),
             params![folder.tag(), within.account()],
             |r| r.get(0),
@@ -7022,6 +7126,163 @@ From: <help@bank.example>\r\n\r\nHi";
     }
 
     #[test]
+    fn combined_rows_keep_cross_account_copies_and_fan_out_seen() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Info", "info@studio.it", "#2F8F83"))
+            .unwrap();
+        let b = store
+            .add_account(&imap_account("Video", "video@studio.it", "#E0782F"))
+            .unwrap();
+        let mut first = msg(a, 1, 100, true);
+        first.reply.message_id = "<quote@client.it>".into();
+        let mut second = first.clone();
+        second.account = b;
+        second.uid = 7;
+        second.flags.seen = false;
+        let mut different = msg(b, 8, 90, true);
+        different.reply.message_id = "<another@client.it>".into();
+        different.subject = "Another request".into();
+        store.upsert_messages(&[first, second, different]).unwrap();
+        store
+            .set_recipients(a, "INBOX", &[(1, "video@studio.it info@studio.it".into())])
+            .unwrap();
+        let rows = store
+            .conversations_page(Folder::Inbox, None, Section::All, 0, 20)
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            store
+                .conversation_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            store
+                .conversation_count_between(Folder::Inbox, None, Section::All, 0, 200)
+                .unwrap(),
+            2
+        );
+        let copies = store
+            .combined_copies(&rows[0].latest, Folder::Inbox, &Within::All)
+            .unwrap();
+        assert_eq!(copies.len(), 2);
+        assert!(!copies.iter().all(|c| c.flags.seen));
+        assert_eq!(copies[store.reply_copy(&copies).unwrap()].account, b);
+        assert_eq!(
+            store
+                .conversations_page(Folder::Inbox, Some(b), Section::All, 0, 20)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(store
+            .combined_copies(&rows[0].latest, Folder::Inbox, &Within::Account(a))
+            .unwrap()
+            .is_empty());
+        let group = store
+            .save_address_group(&AddressGroup {
+                name: "Studio".into(),
+                addresses: vec![
+                    GroupAddress {
+                        account: a,
+                        email: "info@studio.it".into(),
+                    },
+                    GroupAddress {
+                        account: b,
+                        email: "video@studio.it".into(),
+                    },
+                ],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_count(Folder::Inbox, Within::Group(group), Section::All)
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            store
+                .combined_copies(&rows[0].latest, Folder::Inbox, &Within::Group(group))
+                .unwrap()
+                .len(),
+            2
+        );
+        let page = store
+            .conversations_page(Folder::Inbox, None, Section::All, 1, 1)
+            .unwrap();
+        assert_eq!(page[0].latest.reply.message_id, "<another@client.it>");
+        store
+            .set_recipients(a, "INBOX", &[(1, String::new())])
+            .unwrap();
+        assert_eq!(copies[store.reply_copy(&copies).unwrap()].account, a);
+        let refs: Vec<_> = copies
+            .iter()
+            .map(|c| (c.account, c.mailbox.clone(), c.uid))
+            .collect();
+        for seen in [true, false] {
+            store.set_copies_seen(&refs, seen).unwrap();
+            assert_eq!(
+                store
+                    .unread_count(Folder::Inbox, None, Section::All)
+                    .unwrap(),
+                if seen { 0 } else { 1 }
+            );
+            for (account, mailbox, uid) in &refs {
+                assert_eq!(
+                    store
+                        .message(*account, mailbox, *uid)
+                        .unwrap()
+                        .unwrap()
+                        .flags
+                        .seen,
+                    seen
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn combined_rows_do_not_merge_same_account_folder_copies_or_empty_ids() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Info", "info@studio.it", "#2F8F83"))
+            .unwrap();
+        let mut first = msg(a, 1, 100, false);
+        first.reply.message_id = "<quote@client.it>".into();
+        let mut second = first.clone();
+        second.mailbox = "Other inbox".into();
+        store.upsert_messages(&[first, second]).unwrap();
+        store
+            .conn
+            .execute("UPDATE message SET folder = 'inbox'", [])
+            .unwrap();
+        let all = store
+            .conversations_page(Folder::Inbox, None, Section::All, 0, 20)
+            .unwrap();
+        let single = store
+            .conversations_page(Folder::Inbox, Some(a), Section::All, 0, 20)
+            .unwrap();
+        assert_eq!(all, single);
+        assert!(store
+            .combined_copies(&all[0].latest, Folder::Inbox, &Within::All)
+            .unwrap()
+            .is_empty());
+        store
+            .upsert_messages(&[msg(a, 4, 200, false), msg(a, 5, 210, false)])
+            .unwrap();
+        assert_eq!(
+            store
+                .conversation_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            store
+                .conversation_count(Folder::Inbox, Some(a), Section::All)
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn replies_without_references_join_by_subject_and_people() {
         let mut store = Store::open_in_memory().unwrap();
         let a = store
@@ -9455,7 +9716,11 @@ From: <help@bank.example>\r\n\r\nHi";
             .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
             .unwrap();
         let msgs: Vec<_> = (1..=50_000)
-            .map(|u| msg(a, u, (u % 9_000) as i64, false))
+            .map(|u| {
+                let mut m = msg(a, u, (u % 9_000) as i64, false);
+                m.reply.message_id = format!("<m{u}@example.org>");
+                m
+            })
             .collect();
         store.upsert_messages(&msgs).unwrap();
         let plan: String = store

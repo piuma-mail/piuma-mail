@@ -831,17 +831,7 @@ class EngineMailSource extends MailSource {
   Future<void> moveTo(List<MailRow> rows, String mailbox) async {
     if (rows.isEmpty) return;
     try {
-      await engine.moveMessagesTo(
-        messages: [
-          for (final r in rows)
-            engine.MessageRef(
-              accountId: r.accountId,
-              mailbox: r.mailbox,
-              uid: r.uid,
-            ),
-        ],
-        target: mailbox,
-      );
+      await engine.moveMessagesTo(messages: _refs(rows), target: mailbox);
     } finally {
       _changes.add(null);
     }
@@ -889,10 +879,12 @@ class EngineMailSource extends MailSource {
 
   @override
   Future<void> remindMe(MailRow row, DateTime? at) async {
-    await engine.remindMe(
-      message: _refs([row]).single,
-      at: at == null ? null : at.millisecondsSinceEpoch ~/ 1000,
-    );
+    for (final ref in _refs([row])) {
+      await engine.remindMe(
+        message: ref,
+        at: at == null ? null : at.millisecondsSinceEpoch ~/ 1000,
+      );
+    }
     _changes.add(null);
   }
 
@@ -910,7 +902,7 @@ class EngineMailSource extends MailSource {
   );
 
   static List<engine.MessageRef> _refs(List<MailRow> rows) => [
-    for (final r in rows)
+    for (final r in {for (final row in rows) ...row.actionCopies})
       engine.MessageRef(accountId: r.accountId, mailbox: r.mailbox, uid: r.uid),
   ];
 
@@ -919,6 +911,10 @@ class EngineMailSource extends MailSource {
     MailFolder folder = MailFolder.inbox,
     bool listed = true,
   ]) => MailRow(
+    copies: [
+      for (final c in r.copies)
+        (accountId: c.accountId, mailbox: c.mailbox, uid: c.uid),
+    ],
     accountId: r.accountId,
     mailbox: r.mailbox,
     uid: r.uid,
@@ -1023,7 +1019,13 @@ class EngineMailSource extends MailSource {
       accountId: row.accountId,
       thread: row.thread,
     );
-    return [for (final r in rows) _row(r, MailFolder.inbox, r.folder != null)];
+    return [
+      for (final r in rows)
+        if (r.mailbox == row.mailbox && r.uid == row.uid)
+          row
+        else
+          _row(r, MailFolder.inbox, r.folder != null),
+    ];
   }
 
   @override
@@ -1913,16 +1915,7 @@ class EngineMailSource extends MailSource {
 
   @override
   Future<List<MailRow>> pinToVault(List<MailRow> rows) async {
-    final kept = await engine.pinToVault(
-      messages: [
-        for (final r in rows)
-          engine.MessageRef(
-            accountId: r.accountId,
-            mailbox: r.mailbox,
-            uid: r.uid,
-          ),
-      ],
-    );
+    final kept = await engine.pinToVault(messages: _refs(rows));
     return [
       for (final r in rows)
         if (kept.any(
@@ -2299,12 +2292,14 @@ class EngineMailSource extends MailSource {
 
   @override
   void setHidden(MailRow row, bool hidden) {
-    engine.setMessageHidden(
-      accountId: row.accountId,
-      mailbox: row.mailbox,
-      uid: row.uid,
-      hidden: hidden,
-    );
+    for (final c in row.actionCopies) {
+      engine.setMessageHidden(
+        accountId: c.accountId,
+        mailbox: c.mailbox,
+        uid: c.uid,
+        hidden: hidden,
+      );
+    }
     _changes.add(null);
   }
 
@@ -2313,14 +2308,7 @@ class EngineMailSource extends MailSource {
     if (rows.isEmpty) return;
     try {
       await engine.applyMessageAction(
-        messages: [
-          for (final r in rows)
-            engine.MessageRef(
-              accountId: r.accountId,
-              mailbox: r.mailbox,
-              uid: r.uid,
-            ),
-        ],
+        messages: _refs(rows),
         action: switch (action) {
           MessageAction.archive => engine.MessageAction.archive,
           MessageAction.delete => engine.MessageAction.delete,
@@ -2336,14 +2324,7 @@ class EngineMailSource extends MailSource {
   @override
   Future<void> setSeen(List<MailRow> rows, bool seen) async {
     if (rows.isEmpty) return;
-    final refs = [
-      for (final r in rows)
-        engine.MessageRef(
-          accountId: r.accountId,
-          mailbox: r.mailbox,
-          uid: r.uid,
-        ),
-    ];
+    final refs = _refs(rows);
     await engine.setMessagesSeen(messages: refs, seen: seen);
     _changes.add(null);
     try {

@@ -226,6 +226,8 @@ impl From<&Account> for AccountInfo {
 /// One row of the unified inbox.
 #[derive(Debug, Clone)]
 pub struct InboxRow {
+    /// Server copies, populated only for a combined row across accounts.
+    pub copies: Vec<MessageRef>,
     pub account_id: i64,
     pub mailbox: String,
     pub uid: u32,
@@ -856,17 +858,36 @@ pub fn folder_page(
     limit: u32,
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
-    Ok(store
+    let scope = within(account, group, address);
+    store
         .conversations_page(
             folder.into(),
-            within(account, group, address),
+            scope.clone(),
             filter(tab, unread),
             offset,
             limit,
         )?
         .into_iter()
-        .map(|c| {
-            with_files(
+        .map(|mut c| {
+            let copies = store.combined_copies(&c.latest, folder.into(), &scope)?;
+            let seen = copies.iter().all(|m| m.flags.seen);
+            if !copies.is_empty() {
+                c.latest = copies[store.reply_copy(&copies)?].clone();
+                c.thread = store.thread_of(c.latest.account, &c.latest.mailbox, c.latest.uid)?;
+                c.messages = store
+                    .conversation(c.latest.account, &c.thread)?
+                    .len()
+                    .max(1) as u32;
+            }
+            let refs = copies
+                .iter()
+                .map(|m| MessageRef {
+                    account_id: m.account.0,
+                    mailbox: m.mailbox.clone(),
+                    uid: m.uid,
+                })
+                .collect();
+            let mut row = with_files(
                 &store,
                 InboxRow {
                     thread: c.thread,
@@ -874,9 +895,14 @@ pub fn folder_page(
                     folder: Some(folder),
                     ..inbox_row(&store, c.latest)
                 },
-            )
+            );
+            if !copies.is_empty() {
+                row.seen = seen;
+            }
+            row.copies = refs;
+            Ok(row)
         })
-        .collect())
+        .collect::<Result<Vec<_>, EngineError>>()
 }
 
 /// Every message of a conversation, oldest first.
@@ -1070,6 +1096,7 @@ pub(crate) fn inbox_row(store: &Store, m: MessageSummary) -> InboxRow {
         .message_labels(m.account, &m.mailbox, m.uid)
         .unwrap_or_default();
     InboxRow {
+        copies: Vec::new(),
         labels,
         account_id: m.account.0,
         mailbox: m.mailbox,
@@ -1092,6 +1119,70 @@ pub(crate) fn inbox_row(store: &Store, m: MessageSummary) -> InboxRow {
         pictures: 0,
         invite: false,
     }
+}
+
+/// Unpaged combined views (labels, snoozed and waiting) use the same
+/// identity rule; pagination for the large inbox stays in SQLite.
+pub(crate) trait CombinedRow {
+    fn row(&mut self) -> &mut InboxRow;
+}
+impl CombinedRow for InboxRow {
+    fn row(&mut self) -> &mut InboxRow {
+        self
+    }
+}
+impl CombinedRow for SnoozedRow {
+    fn row(&mut self) -> &mut InboxRow {
+        &mut self.row
+    }
+}
+impl CombinedRow for WaitingRow {
+    fn row(&mut self) -> &mut InboxRow {
+        &mut self.row
+    }
+}
+
+pub(crate) fn combine_rows<T: CombinedRow>(
+    store: &Store,
+    rows: Vec<T>,
+) -> Result<Vec<T>, EngineError> {
+    let mut rows: Vec<Option<T>> = rows.into_iter().map(Some).collect();
+    let mut groups: std::collections::HashMap<String, Vec<usize>> = Default::default();
+    for (i, item) in rows.iter_mut().enumerate() {
+        let row = item.as_mut().unwrap().row();
+        if !row.message_id.is_empty() {
+            groups.entry(row.message_id.clone()).or_default().push(i);
+        }
+    }
+    for indices in groups.values() {
+        let mut copies = Vec::new();
+        for &i in indices {
+            let row = rows[i].as_mut().unwrap().row();
+            if let Some(m) = store.message(AccountId(row.account_id), &row.mailbox, row.uid)? {
+                copies.push(m);
+            }
+        }
+        if copies.len() != indices.len() || !copies.iter().any(|m| m.account != copies[0].account) {
+            continue;
+        }
+        let chosen = indices[store.reply_copy(&copies)?];
+        let mut kept = rows[chosen].take().unwrap();
+        let row = kept.row();
+        row.seen = copies.iter().all(|m| m.flags.seen);
+        row.copies = copies
+            .iter()
+            .map(|m| MessageRef {
+                account_id: m.account.0,
+                mailbox: m.mailbox.clone(),
+                uid: m.uid,
+            })
+            .collect();
+        for &i in indices {
+            rows[i] = None;
+        }
+        rows[indices[0]] = Some(kept);
+    }
+    Ok(rows.into_iter().flatten().collect())
 }
 
 /// [row] with the files attached to its message, and its invite.
@@ -3520,9 +3611,13 @@ pub struct MessageRef {
 /// thread: opening an email never waits for a sync writing.
 pub fn set_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result<(), EngineError> {
     let store = store()?;
-    for m in &messages {
-        store.set_seen(AccountId(m.account_id), &m.mailbox, m.uid, seen)?;
-    }
+    store.set_copies_seen(
+        &messages
+            .iter()
+            .map(|m| (AccountId(m.account_id), m.mailbox.clone(), m.uid))
+            .collect::<Vec<_>>(),
+        seen,
+    )?;
     Ok(())
 }
 
@@ -3953,7 +4048,7 @@ pub struct SnoozedRow {
 /// Snoozed mail of every account (or one), the soonest back first.
 pub fn snoozed(account: Option<i64>) -> Result<Vec<SnoozedRow>, EngineError> {
     let store = store()?;
-    Ok(store
+    let rows = store
         .snoozed(account.map(AccountId))?
         .into_iter()
         .map(|(m, until)| SnoozedRow {
@@ -3963,7 +4058,12 @@ pub fn snoozed(account: Option<i64>) -> Result<Vec<SnoozedRow>, EngineError> {
             },
             until,
         })
-        .collect())
+        .collect();
+    if account.is_none() {
+        combine_rows(&store, rows)
+    } else {
+        Ok(rows)
+    }
 }
 
 /// Sent mail nobody has answered yet, and who it waits on.
@@ -3999,25 +4099,35 @@ pub fn waiting(account: Option<i64>) -> Result<Vec<WaitingRow>, EngineError> {
     let store = store()?;
     let account = account.map(AccountId);
     let times = store.reply_reminders(account)?;
-    Ok(store
+    let rows = store
         .waiting(account, now_secs())?
         .into_iter()
         .map(|m| {
             let at = times.get(&(m.account, m.reply.message_id.clone())).copied();
             waiting_row(&store, m, at)
         })
-        .collect())
+        .collect();
+    if account.is_none() {
+        combine_rows(&store, rows)
+    } else {
+        Ok(rows)
+    }
 }
 
 /// Mail of Waiting whose reminder has come: back at the top of the inbox,
 /// the latest back first, of every account (or one).
 pub fn reminded(account: Option<i64>) -> Result<Vec<WaitingRow>, EngineError> {
     let store = store()?;
-    Ok(store
+    let rows = store
         .reminded(account.map(AccountId), now_secs())?
         .into_iter()
         .map(|(m, at)| waiting_row(&store, m, Some(at)))
-        .collect())
+        .collect();
+    if account.is_none() {
+        combine_rows(&store, rows)
+    } else {
+        Ok(rows)
+    }
 }
 
 /// "Remind me if nobody replies" for sent mail: back at the top of the

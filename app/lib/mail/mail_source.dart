@@ -645,6 +645,8 @@ int waitingDays(DateTime sent, DateTime now) => DateTime.utc(
 /// What `copyWith` leaves as it is, where null is a value too.
 const Object _unchanged = Object();
 
+typedef MailCopy = ({int accountId, String mailbox, int uid});
+
 class MailRow {
   const MailRow({
     required this.accountId,
@@ -656,6 +658,7 @@ class MailRow {
     required this.preview,
     required this.receivedAt,
     required this.seen,
+    this.copies = const [],
     this.messageId = '',
     this.references = '',
     this.replyTo = '',
@@ -672,6 +675,12 @@ class MailRow {
     this.labels = const [],
     this.remindAt,
   });
+
+  /// Empty for a single-account row; otherwise every server copy.
+  final List<MailCopy> copies;
+  List<MailCopy> get actionCopies => copies.isEmpty
+      ? [(accountId: accountId, mailbox: mailbox, uid: uid)]
+      : copies;
 
   final int accountId;
   final String mailbox;
@@ -745,6 +754,7 @@ class MailRow {
     List<String>? labels,
     Object? remindAt = _unchanged,
   }) => MailRow(
+    copies: copies,
     accountId: accountId,
     mailbox: mailbox ?? this.mailbox,
     uid: uid ?? this.uid,

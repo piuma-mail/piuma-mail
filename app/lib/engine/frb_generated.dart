@@ -8608,30 +8608,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   InboxRow dco_decode_inbox_row(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 21)
-      throw Exception('unexpected arr length: expect 21 but see ${arr.length}');
+    if (arr.length != 22)
+      throw Exception('unexpected arr length: expect 22 but see ${arr.length}');
     return InboxRow(
-      accountId: dco_decode_i_64(arr[0]),
-      mailbox: dco_decode_String(arr[1]),
-      uid: dco_decode_u_32(arr[2]),
-      fromName: dco_decode_String(arr[3]),
-      fromEmail: dco_decode_String(arr[4]),
-      subject: dco_decode_String(arr[5]),
-      preview: dco_decode_String(arr[6]),
-      receivedAt: dco_decode_i_64(arr[7]),
-      seen: dco_decode_bool(arr[8]),
-      flagged: dco_decode_bool(arr[9]),
-      messageId: dco_decode_String(arr[10]),
-      references: dco_decode_String(arr[11]),
-      replyTo: dco_decode_String(arr[12]),
-      to: dco_decode_String(arr[13]),
-      thread: dco_decode_String(arr[14]),
-      messages: dco_decode_u_32(arr[15]),
-      folder: dco_decode_opt_box_autoadd_mail_folder(arr[16]),
-      files: dco_decode_u_32(arr[17]),
-      pictures: dco_decode_u_32(arr[18]),
-      invite: dco_decode_bool(arr[19]),
-      labels: dco_decode_list_String(arr[20]),
+      copies: dco_decode_list_message_ref(arr[0]),
+      accountId: dco_decode_i_64(arr[1]),
+      mailbox: dco_decode_String(arr[2]),
+      uid: dco_decode_u_32(arr[3]),
+      fromName: dco_decode_String(arr[4]),
+      fromEmail: dco_decode_String(arr[5]),
+      subject: dco_decode_String(arr[6]),
+      preview: dco_decode_String(arr[7]),
+      receivedAt: dco_decode_i_64(arr[8]),
+      seen: dco_decode_bool(arr[9]),
+      flagged: dco_decode_bool(arr[10]),
+      messageId: dco_decode_String(arr[11]),
+      references: dco_decode_String(arr[12]),
+      replyTo: dco_decode_String(arr[13]),
+      to: dco_decode_String(arr[14]),
+      thread: dco_decode_String(arr[15]),
+      messages: dco_decode_u_32(arr[16]),
+      folder: dco_decode_opt_box_autoadd_mail_folder(arr[17]),
+      files: dco_decode_u_32(arr[18]),
+      pictures: dco_decode_u_32(arr[19]),
+      invite: dco_decode_bool(arr[20]),
+      labels: dco_decode_list_String(arr[21]),
     );
   }
 
@@ -10991,6 +10992,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   InboxRow sse_decode_inbox_row(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_copies = sse_decode_list_message_ref(deserializer);
     var var_accountId = sse_decode_i_64(deserializer);
     var var_mailbox = sse_decode_String(deserializer);
     var var_uid = sse_decode_u_32(deserializer);
@@ -11013,6 +11015,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_invite = sse_decode_bool(deserializer);
     var var_labels = sse_decode_list_String(deserializer);
     return InboxRow(
+      copies: var_copies,
       accountId: var_accountId,
       mailbox: var_mailbox,
       uid: var_uid,
@@ -13940,6 +13943,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_inbox_row(InboxRow self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_message_ref(self.copies, serializer);
     sse_encode_i_64(self.accountId, serializer);
     sse_encode_String(self.mailbox, serializer);
     sse_encode_u_32(self.uid, serializer);

@@ -8,7 +8,7 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `err`, `notes_file`, `save_notes`, `saved_notes`
+// These functions are ignored because they are not marked as `pub`: `err`, `manager`, `notes_file`, `release`, `save_notes`, `saved_notes`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 /// The first thing the app runs, before the engine opens. On the
