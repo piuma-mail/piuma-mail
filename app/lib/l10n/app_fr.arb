@@ -791,6 +791,7 @@
   "syncLeftHours": "environ {n} h",
   "phoneSearchSyncing": "{hint} · synchronisation de {name}",
   "sendTomorrowAt": "Envoyer demain {time}",
+  "sendOptions": "Options d’envoi",
   "inboxSections": "Sections de la boîte",
   "tabPeople": "Personnes",
   "tabNotifications": "Notifications",

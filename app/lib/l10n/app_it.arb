@@ -801,6 +801,7 @@
   "syncLeftHours": "circa {n} h",
   "phoneSearchSyncing": "{hint} · {name} in sincronizzazione",
   "sendTomorrowAt": "Invia domani {time}",
+  "sendOptions": "Opzioni di invio",
   "inboxSections": "Sezioni della posta in arrivo",
   "tabPeople": "Persone",
   "tabNotifications": "Notifiche",

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/compose/templates.dart';
+import 'package:piuma_mail/design/icons.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/main.dart';
@@ -112,7 +113,43 @@ void main() {
     expect(templateName('', '  ', 'Untitled'), 'Untitled');
   });
 
-  testWidgets('"/" in the foot puts a template where the caret is', (
+  for (final phone in [false, true]) {
+    testWidgets(
+      'the templates button has its icon and name: ${phone ? 'phone' : 'desktop'}',
+      (tester) async {
+        await _pump(tester, phone: phone);
+        await _compose(tester, phone: phone);
+        final foot = find.descendant(
+          of: find.byType(ComposePane),
+          matching: find.text('/'),
+        );
+        expect(foot, findsNothing);
+        final button = find.byTooltip('Templates');
+        expect(button, findsOneWidget);
+        expect(
+          find.descendant(
+            of: button,
+            matching: find.byWidgetPredicate(
+              (w) => w is PiumaIconView && w.icon == PiumaIcon.template,
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          tester.getSemantics(find.bySemanticsLabel('Templates')),
+          matchesSemantics(
+            label: 'Templates',
+            isButton: true,
+            hasEnabledState: true,
+            isEnabled: true,
+            hasTapAction: true,
+          ),
+        );
+      },
+    );
+  }
+
+  testWidgets('the templates button puts a template where the caret is', (
     tester,
   ) async {
     final source = await _pump(tester);

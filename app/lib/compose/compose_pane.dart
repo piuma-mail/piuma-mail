@@ -19,7 +19,7 @@ import '../inbox/message_list.dart' show initials;
 import '../inbox/pictures.dart' show SenderPicture;
 import '../widgets/attachment_chip.dart';
 import '../widgets/button.dart';
-import '../widgets/dialog.dart' show showPiumaSheet;
+import '../widgets/dialog.dart' show showPiumaPopover, showPiumaSheet;
 import 'format_bar.dart';
 import 'remind_me.dart';
 import 'rich_body.dart';
@@ -728,16 +728,46 @@ class _ComposePaneState extends State<ComposePane> {
     widget.onSend(d.withCopy(_copy));
   }
 
-  /// Send later: the times of `FeatureSchedule`, then the same checks and
-  /// save as Send.
-  Future<void> _sendLater() async {
+  /// Send's menu, from its caret or a long press on it (issue #14): the
+  /// first time of `FeatureSchedule` at once, or all of them in Send
+  /// later's sheet. Send itself stays one tap.
+  Future<void> _sendMenu(Rect anchor) async {
+    final l = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context).languageCode;
+    final first = sendLaterTimes((widget.now ?? DateTime.now)()).first;
+    final picked = await showPiumaPopover<bool>(
+      context,
+      label: l.sendOptions,
+      anchor: anchor,
+      width: 240,
+      grow: true,
+      end: true,
+      builder: (menu) => _SendMenu(
+        phone: widget.phone,
+        items: [
+          (
+            PiumaIcon.clock,
+            l.sendTomorrowAt(DateFormat('H:mm', locale).format(first)),
+          ),
+          (PiumaIcon.calendar, l.sendLater),
+        ],
+        onPick: (i) => Navigator.of(menu).pop(i == 0),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await _sendLater(at: picked ? first : null);
+  }
+
+  /// Send later at [at], or at the time picked in the times of
+  /// `FeatureSchedule`, after the same checks and save as Send.
+  Future<void> _sendLater({DateTime? at}) async {
     final schedule = widget.onSchedule;
     final d = _draft();
     if (schedule == null || !_ready(d)) return;
     final names = d.recipients
         .map((a) => a.replaceAll(RegExp(r'\s*<.*>'), '').trim())
         .join(', ');
-    final at = await showSendLater(
+    at ??= await showSendLater(
       context,
       now: (widget.now ?? DateTime.now)(),
       to: names,
@@ -903,6 +933,7 @@ class _ComposePaneState extends State<ComposePane> {
                     saved: _noteShown ? _saved : null,
                     onCancel: _close,
                     onSend: _send,
+                    onSendMenu: widget.onSchedule == null ? null : _sendMenu,
                   )
                 else
                   Row(
@@ -1184,33 +1215,17 @@ class _ComposePaneState extends State<ComposePane> {
                               onTap: _attach,
                             ),
                             if (widget.templates != null)
-                              _SlashButton(
+                              _TemplatesButton(
                                 key: _slashButton,
                                 label: l.templatesTitle,
                                 open: _picking,
                                 onTap: _picking ? null : () => _openTemplates(),
                               ),
-                            // The phone names the first time on a button at the
-                            // end, as on `PhoneCompose`; it opens the same sheet.
-                            if (widget.onSchedule != null && phone) ...[
-                              const Spacer(),
-                              _LaterButton(
-                                label: l.sendTomorrowAt(
-                                  DateFormat('H:mm', locale).format(
-                                    sendLaterTimes(
-                                      (widget.now ?? DateTime.now)(),
-                                    ).first,
-                                  ),
-                                ),
-                                onTap: _sendLater,
-                              ),
-                            ] else ...[
+                            // Send later is in Send's menu (issue #14), so
+                            // the phone's foot keeps only attach and
+                            // templates.
+                            if (!phone) ...[
                               if (widget.onSchedule != null) ...[
-                                _IconButton(
-                                  icon: PiumaIcon.clock,
-                                  label: l.sendLater,
-                                  onTap: _sendLater,
-                                ),
                                 const SizedBox(width: 6),
                                 _remindChip(l, locale),
                                 const SizedBox(width: 6),
@@ -1227,10 +1242,17 @@ class _ComposePaneState extends State<ComposePane> {
                               ),
                             ],
                             if (!phone)
-                              PiumaButton(
-                                label: l.actionSend,
-                                shortcut: apple ? '⌘↩' : 'Ctrl ↩',
-                                onPressed: _send,
+                              _SendSplit(
+                                height: PiumaButtonSize.standard.height,
+                                radius: PiumaButtonSize.standard.radius,
+                                onMenu: widget.onSchedule == null
+                                    ? null
+                                    : _sendMenu,
+                                child: PiumaButton(
+                                  label: l.actionSend,
+                                  shortcut: apple ? '⌘↩' : 'Ctrl ↩',
+                                  onPressed: _send,
+                                ),
                               ),
                           ],
                         ),
@@ -2520,9 +2542,10 @@ class _IconButton extends StatelessWidget {
   }
 }
 
-/// "/" in the foot: the templates, soft while they are open.
-class _SlashButton extends StatelessWidget {
-  const _SlashButton({
+/// Templates in the foot, with its icon and name (issue #14), soft
+/// while they are open; typing "/" at the start of a line opens them too.
+class _TemplatesButton extends StatelessWidget {
+  const _TemplatesButton({
     super.key,
     required this.label,
     required this.open,
@@ -2552,14 +2575,10 @@ class _SlashButton extends StatelessWidget {
             color: open ? c.soft : c.soft.withValues(alpha: 0),
             borderRadius: BorderRadius.circular(PiumaRadius.button),
           ),
-          child: ExcludeSemantics(
-            child: Text(
-              '/',
-              style: PiumaType.mono.copyWith(
-                fontSize: 16,
-                color: open ? c.accentText : c.fg,
-              ),
-            ),
+          child: PiumaIconView(
+            PiumaIcon.template,
+            size: 18,
+            color: open ? c.accentText : c.fg,
           ),
         ),
       ),
@@ -2567,38 +2586,129 @@ class _SlashButton extends StatelessWidget {
   }
 }
 
-/// The phone's Send later, outlined with its clock: "Send tomorrow 8:00".
-class _LaterButton extends StatelessWidget {
-  const _LaterButton({required this.label, required this.onTap});
+/// Send with a caret segment at its end, as Gmail's: the caret and a
+/// long press on Send open its menu ([onMenu], under the whole button).
+/// Without [onMenu], Send alone.
+class _SendSplit extends StatelessWidget {
+  const _SendSplit({
+    required this.child,
+    required this.height,
+    required this.radius,
+    this.onMenu,
+  });
 
-  final String label;
-  final VoidCallback onTap;
+  final Widget child;
+  final double height;
+  final double radius;
+  final ValueChanged<Rect>? onMenu;
+
+  @override
+  Widget build(BuildContext context) {
+    final onMenu = this.onMenu;
+    if (onMenu == null) return child;
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    void open() {
+      final box = context.findRenderObject()! as RenderBox;
+      onMenu(box.localToGlobal(Offset.zero) & box.size);
+    }
+
+    return Semantics(
+      onLongPressHint: l.sendOptions,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: c.accent,
+          borderRadius: BorderRadius.circular(radius),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(onLongPress: open, child: child),
+              Container(
+                width: 1,
+                height: height * .5,
+                color: c.onAccent.withValues(alpha: .35),
+              ),
+              Tooltip(
+                message: l.sendOptions,
+                child: PiumaPressable(
+                  onTap: open,
+                  semanticLabel: l.sendOptions,
+                  child: SizedBox(
+                    width: 34,
+                    height: height,
+                    child: Center(
+                      child: PiumaIconView(
+                        PiumaIcon.chevronDown,
+                        size: 16,
+                        color: c.onAccent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Send's menu: rows with their icon, 34 high as the desktop's other
+/// menus, 44 on the phone.
+class _SendMenu extends StatelessWidget {
+  const _SendMenu({
+    required this.items,
+    required this.onPick,
+    this.phone = false,
+  });
+
+  final List<(PiumaIcon, String)> items;
+  final ValueChanged<int> onPick;
+  final bool phone;
 
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
-    return PiumaPressable(
-      onTap: onTap,
-      semanticLabel: label,
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: c.surface,
-          border: Border.all(color: c.line),
-          borderRadius: BorderRadius.circular(PiumaRadius.row),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            PiumaIconView(PiumaIcon.clock, size: 16, color: c.fg),
-            const SizedBox(width: PiumaSpace.s8),
-            ExcludeSemantics(
-              child: Text(label, style: TextStyle(fontSize: 14, color: c.fg)),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, (icon, text)) in items.indexed)
+          PiumaEnter(
+            index: i,
+            child: PiumaPressable(
+              onTap: () => onPick(i),
+              semanticLabel: text,
+              child: ExcludeSemantics(
+                child: Container(
+                  height: phone ? 44 : 34,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Row(
+                    children: [
+                      PiumaIconView(icon, size: 15, color: c.muted),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          text,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: phone ? 15 : 13,
+                            color: c.fg,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 }
@@ -2631,6 +2741,7 @@ class _PhoneHeader extends StatelessWidget {
     required this.saved,
     required this.onCancel,
     required this.onSend,
+    this.onSendMenu,
   });
 
   final String title;
@@ -2639,6 +2750,9 @@ class _PhoneHeader extends StatelessWidget {
   final bool? saved;
   final VoidCallback onCancel;
   final VoidCallback onSend;
+
+  /// Opens Send's menu under the button; null leaves Send alone.
+  final ValueChanged<Rect>? onSendMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -2701,24 +2815,32 @@ class _PhoneHeader extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              PiumaPressable(
-                onTap: onSend,
-                semanticLabel: l.actionSend,
-                child: Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: c.accent,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: ExcludeSemantics(
-                    child: Text(
-                      l.actionSend,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: c.onAccent,
+              _SendSplit(
+                height: 40,
+                radius: 999,
+                onMenu: onSendMenu,
+                child: PiumaPressable(
+                  onTap: onSend,
+                  semanticLabel: l.actionSend,
+                  child: Container(
+                    height: 40,
+                    padding: EdgeInsets.only(
+                      left: 16,
+                      right: onSendMenu == null ? 16 : 12,
+                    ),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: c.accent,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: ExcludeSemantics(
+                      child: Text(
+                        l.actionSend,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: c.onAccent,
+                        ),
                       ),
                     ),
                   ),
