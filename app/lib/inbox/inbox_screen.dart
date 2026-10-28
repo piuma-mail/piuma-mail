@@ -2325,6 +2325,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 onTotal: (n) {
                   if (n != _total) setState(() => _total = n);
                 },
+                onNoticeArchive: (rows) => _act(rows, MessageAction.archive),
                 onSwipe: picking ? null : _swipeArchive,
                 swipeAs: _swipeAs,
                 leftSwipeAs: _leftSwipeAs,
@@ -2760,6 +2761,7 @@ class _InboxScreenState extends State<InboxScreen> {
             },
             // A tablet's rows are the phone's, with its swipes.
             phone: _tablet || _tabletTall,
+            onNoticeArchive: (rows) => _act(rows, MessageAction.archive),
             onSwipe: (_tablet || _tabletTall) && !picking
                 ? _swipeArchive
                 : null,

@@ -202,6 +202,17 @@ class AppLocalizationsFr extends AppLocalizations {
   String get password => 'Mot de passe';
 
   @override
+  String notificationNotices(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count avis',
+      one: '1 avis',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get show => 'Afficher';
 
   @override

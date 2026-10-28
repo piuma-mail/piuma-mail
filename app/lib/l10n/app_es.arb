@@ -1473,5 +1473,6 @@
   "calGoogleSub": "Lee eventos y disponibilidad con un enlace iCal",
   "calGoogleLabel": "Dirección iCal de Google Calendar",
   "calGoogleHint": "En Google Calendar desde un ordenador: Configuración › tu calendario › Integrar el calendario › Dirección secreta en formato iCal. Solo lectura; conexión directa.",
-  "bundledReleaseNotes": "## El correo, hecho ligero\n- Diseños originales con desplazamiento único y control de imágenes\n- Barra de formato y acceso al editor completo en las respuestas\n- Gestos de deslizamiento horizontal más precisos\n- Avisos de remitente para marcas suplantadas y dominios similares\n- Exportación CSV mensual de la Bóveda con NIF/IVA del comercio"
+  "bundledReleaseNotes": "## El correo, hecho ligero\n- Diseños originales con desplazamiento único y control de imágenes\n- Barra de formato y acceso al editor completo en las respuestas\n- Gestos de deslizamiento horizontal más precisos\n- Avisos de remitente para marcas suplantadas y dominios similares\n- Exportación CSV mensual de la Bóveda con NIF/IVA del comercio",
+  "notificationNotices": "{count, plural, =1{1 aviso} other{{count} avisos}}"
 }

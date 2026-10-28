@@ -442,6 +442,12 @@ abstract class AppLocalizations {
   /// **'Password'**
   String get password;
 
+  /// No description provided for @notificationNotices.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 notice} other{{count} notices}}'**
+  String notificationNotices(int count);
+
   /// No description provided for @show.
   ///
   /// In en, this message translates to:
