@@ -164,6 +164,18 @@ class MessageList extends StatefulWidget {
   State<MessageList> createState() => MessageListState();
 }
 
+/// A grouped notice row's span, oldest to newest: times when the notices
+/// came on one day ("10:00 – 18:00"), dates otherwise ("Oct 27 – Oct 28").
+@visibleForTesting
+String noticeRange(DateTime oldest, DateTime newest, String locale) {
+  final sameDay =
+      oldest.year == newest.year &&
+      oldest.month == newest.month &&
+      oldest.day == newest.day;
+  final format = sameDay ? DateFormat.Hm(locale) : DateFormat.MMMd(locale);
+  return '${format.format(oldest)} – ${format.format(newest)}';
+}
+
 class MessageListState extends State<MessageList>
     with SingleTickerProviderStateMixin {
   final _expandedNotices = <Object>{};
@@ -863,9 +875,11 @@ class MessageListState extends State<MessageList>
                 final expanded = _expandedNotices.contains(row.key);
                 final picked = run.every((r) => widget.picked.contains(r.key));
                 void toggle() => widget.onPick?.call(run, !picked);
-                final range =
-                    '${DateFormat.MMMd(locale).format(run.last.receivedAt)} – '
-                    '${DateFormat.MMMd(locale).format(run.first.receivedAt)}';
+                final range = noticeRange(
+                  run.last.receivedAt,
+                  run.first.receivedAt,
+                  locale,
+                );
                 final summary = InboxRowTile(
                   row: row.withSeen(run.every((r) => r.seen)),
                   account: _account(row.accountId),

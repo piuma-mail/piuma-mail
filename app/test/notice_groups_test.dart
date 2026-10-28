@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/inbox/inbox_tabs.dart';
 import 'package:piuma_mail/inbox/swipe.dart';
@@ -124,6 +125,18 @@ Future<void> _pump(
 }
 
 void main() {
+  test('a group from one day shows times, across days dates', () async {
+    await initializeDateFormatting('en');
+    expect(
+      noticeRange(DateTime(2026, 10, 28, 10), DateTime(2026, 10, 28, 18), 'en'),
+      '10:00 – 18:00',
+    );
+    expect(
+      noticeRange(DateTime(2026, 10, 27, 10), DateTime(2026, 10, 28, 2), 'en'),
+      'Oct 27 – Oct 28',
+    );
+  });
+
   test('notice key normalizes case and whitespace but preserves account, sender and subject words', () {
     expect(
       sameNotice(_notice(1), _notice(2, subject: '  PLUGINS   updated ')),
