@@ -9,7 +9,9 @@ import '../widgets/button.dart';
 
 /// The slim bar over an email whose images wait (`ImagesToApprove`):
 /// what is off and why, "Load images" for this email, and "Always for
-/// this sender", which trusts them. It scrolls with the email.
+/// this sender", which trusts them. The one-off choice is the filled
+/// one and comes first on every layout: privacy first, the permanent
+/// choice stays quieter. It scrolls with the email.
 class ImagesBar extends StatelessWidget {
   const ImagesBar({
     super.key,
@@ -60,12 +62,12 @@ class ImagesBar extends StatelessWidget {
     );
     final load = PiumaButton(
       label: l.loadImages,
-      kind: phone ? PiumaButtonKind.secondary : PiumaButtonKind.tertiary,
       size: phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
       onPressed: onLoad,
     );
     final trust = PiumaButton(
       label: l.alwaysForSender,
+      kind: phone ? PiumaButtonKind.secondary : PiumaButtonKind.tertiary,
       size: phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
       onPressed: onTrust,
     );
@@ -95,9 +97,9 @@ class ImagesBar extends StatelessWidget {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          trust,
-                          const SizedBox(height: PiumaSpace.s8),
                           load,
+                          const SizedBox(height: PiumaSpace.s8),
+                          trust,
                         ],
                       );
                     }
@@ -146,7 +148,7 @@ class ImagesBar extends StatelessWidget {
                           Wrap(
                             spacing: PiumaSpace.s4,
                             runSpacing: PiumaSpace.s4,
-                            children: [trust, load],
+                            children: [load, trust],
                           ),
                         ],
                       ),
