@@ -644,6 +644,7 @@ class _ReaderState extends State<Reader> {
                               controller: _replyText,
                               to: _firstName(row),
                               from: widget.replyFrom?.call(row),
+                              machine: widget.source.noReplySender(row),
                               onSend: (text) => _quickReply(row, text),
                               onExpand: onReply,
                             ),
@@ -663,6 +664,7 @@ class _ReaderState extends State<Reader> {
             phone: true,
             to: _firstName(row),
             from: widget.replyFrom?.call(row),
+            machine: widget.source.noReplySender(row),
             onSend: (text) => _quickReply(row, text),
             onExpand: onReply,
           ),
@@ -3267,7 +3269,8 @@ typedef ReplyFrom = ({String address, String? signature});
 
 /// "Reply to Giulia…": a few words go out at once, with the usual Undo.
 /// At the foot of `PhoneRead` on the phone; under the message on the
-/// desktop, as in `Main`, where ⌘↩ (Ctrl ↩) sends.
+/// desktop, as in `Main`, where ⌘↩ (Ctrl ↩) sends. Over a machine's
+/// address it says replies likely go unread, and still lets you reply.
 class _QuickReply extends StatefulWidget {
   const _QuickReply({
     super.key,
@@ -3276,6 +3279,7 @@ class _QuickReply extends StatefulWidget {
     this.controller,
     this.onExpand,
     this.from,
+    this.machine = false,
     this.phone = false,
   });
 
@@ -3284,6 +3288,9 @@ class _QuickReply extends StatefulWidget {
   final TextEditingController? controller;
   final VoidCallback? onExpand;
   final ReplyFrom? from;
+
+  /// The sender looks like a machine (no-reply, notifications…).
+  final bool machine;
   final bool phone;
 
   @override
@@ -3343,6 +3350,17 @@ class _QuickReplyState extends State<_QuickReply> {
     final hint = l.quickReplyHint(widget.to);
     final from = widget.from;
     final note = from == null ? null : _ReplyFromLine(from: from);
+    final machine = widget.machine
+        ? Text(
+            l.senderReadsNoReplies,
+            style: TextStyle(
+              fontFamily: PiumaFonts.sans,
+              fontSize: 12,
+              height: 1.4,
+              color: c.muted,
+            ),
+          )
+        : null;
     if (!widget.phone) {
       final apple =
           defaultTargetPlatform == TargetPlatform.macOS ||
@@ -3350,6 +3368,11 @@ class _QuickReplyState extends State<_QuickReply> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (machine != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+              child: machine,
+            ),
           Container(
             padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
             decoration: BoxDecoration(
@@ -3463,6 +3486,11 @@ class _QuickReplyState extends State<_QuickReply> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (machine != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+              child: machine,
+            ),
           Container(
             padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
             decoration: BoxDecoration(

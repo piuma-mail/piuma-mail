@@ -3156,6 +3156,9 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get sendOptions => 'Opciones de envío';
+
+  @override
   String get inboxSections => 'Secciones de la bandeja';
 
   @override
@@ -4520,6 +4523,9 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get replyFromLabel => 'Responder desde';
+
+  @override
+  String get senderReadsNoReplies => 'Este remitente no lee las respuestas';
 
   @override
   String replyFromSignature(String name) {

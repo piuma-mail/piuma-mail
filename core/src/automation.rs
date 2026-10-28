@@ -146,6 +146,23 @@ pub(crate) fn machine_address(email: &str) -> bool {
         .contains(&local.as_str())
 }
 
+/// Whether replies to an address go unread: a no-reply or bounce
+/// address, not a shared role address such as `info@` or `billing@`,
+/// which people do read. The reader warns before a quick reply.
+pub fn no_reply_address(email: &str) -> bool {
+    let email = email.trim().to_lowercase();
+    let local: String = email
+        .split_once('@')
+        .map_or(email.as_str(), |(l, _)| l)
+        .chars()
+        .filter(|c| !matches!(c, '.' | '-' | '_'))
+        .collect();
+    ["noreply", "donotreply"].iter().any(|p| local.contains(p))
+        || ["mailerdaemon", "bounce"]
+            .iter()
+            .any(|p| local.starts_with(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +185,27 @@ mod tests {
             assert!(machine_address(&format!("{local}@example.org")), "{local}");
         }
         assert!(!machine_address("giulia@example.org"));
+    }
+
+    #[test]
+    fn no_reply_only_for_addresses_nobody_reads() {
+        for a in [
+            "no-reply@example.org",
+            "noreply@shop.example",
+            "do_not_reply@bank.example",
+            "mailer-daemon@example.org",
+            "bounces+123@mailer.example",
+        ] {
+            assert!(no_reply_address(a), "{a}");
+        }
+        for a in [
+            "info@studio.example",
+            "billing@studio.example",
+            "notifications@github.example",
+            "giulia@example.org",
+        ] {
+            assert!(!no_reply_address(a), "{a}");
+        }
     }
 
     #[test]

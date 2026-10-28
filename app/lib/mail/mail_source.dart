@@ -2481,6 +2481,10 @@ abstract class MailSource {
   /// not Notifications.
   bool byPerson(MailRow row);
 
+  /// Whether replies to [row]'s sender go unread (a no-reply or bounce
+  /// address; role addresses such as `info@` are read by people).
+  bool noReplySender(MailRow row) => false;
+
   /// Puts [email]'s inbox mail in People ([people] true) or Notifications
   /// from now on, what is there already included; null lets its headers
   /// decide again.

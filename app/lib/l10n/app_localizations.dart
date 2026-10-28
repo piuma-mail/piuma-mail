@@ -4852,6 +4852,12 @@ abstract class AppLocalizations {
   /// **'Send tomorrow {time}'**
   String sendTomorrowAt(String time);
 
+  /// No description provided for @sendOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Send options'**
+  String get sendOptions;
+
   /// No description provided for @inboxSections.
   ///
   /// In en, this message translates to:
@@ -6795,6 +6801,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reply from'**
   String get replyFromLabel;
+
+  /// No description provided for @senderReadsNoReplies.
+  ///
+  /// In en, this message translates to:
+  /// **'This sender doesn’t read replies'**
+  String get senderReadsNoReplies;
 
   /// No description provided for @replyFromSignature.
   ///

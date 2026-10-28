@@ -20,19 +20,6 @@ import 'vault.dart' show ZoneTile;
 /// How many newsletters the list loads; older ones archive themselves.
 const _limit = 300;
 
-/// The quiet square a newsletter gets in place of a picture, the same for
-/// every issue of one sender.
-Color newsletterTint(BuildContext context, String email) {
-  final tints = Theme.of(context).brightness == Brightness.dark
-      ? PiumaTints.dark
-      : PiumaTints.light;
-  var hash = 0;
-  for (final unit in email.toLowerCase().codeUnits) {
-    hash = (hash * 31 + unit) & 0x7fffffff;
-  }
-  return tints[hash % tints.length];
-}
-
 /// "today", "yesterday", the weekday this week, the date before.
 String newsletterDay(
   AppLocalizations l,
@@ -281,19 +268,14 @@ class _DesktopRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
+              NewsletterPicture(
+                source: source,
+                row: row,
+                radius: PiumaRadius.button,
                 width: 52,
                 height: 52,
-                child: NewsletterPicture(
-                  source: source,
-                  row: row,
-                  radius: 10,
-                  fallback: ColoredBox(
-                    color: newsletterTint(context, row.fromEmail),
-                  ),
-                ),
+                right: PiumaSpace.s12,
               ),
-              const SizedBox(width: 12),
               Expanded(
                 child: _RowText(
                   source: row.sender,
@@ -733,7 +715,7 @@ class _PhoneNewslettersState extends State<PhoneNewsletters>
 }
 
 /// The newest unread issue, with its first photo as a cover when the
-/// sender is trusted, else one in the sender's tint.
+/// sender is trusted; text-only otherwise.
 class _Cover extends StatelessWidget {
   const _Cover({
     required this.source,
@@ -751,8 +733,6 @@ class _Cover extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final row = letter.row;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final tints = dark ? PiumaTints.dark : PiumaTints.light;
     return PiumaPressable(
       onTap: onTap,
       semanticLabel: '${row.sender}, ${row.subject}',
@@ -766,61 +746,14 @@ class _Cover extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: SizedBox(
-                  height: 190,
-                  width: double.infinity,
-                  child: NewsletterPicture(
-                    source: source,
-                    row: row,
-                    radius: 0,
-                    fallback: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            newsletterTint(context, row.fromEmail),
-                            tints[1],
-                            tints[2],
-                          ],
-                          stops: const [0, 0.45, 1],
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            left: 24,
-                            top: 30,
-                            child: Container(
-                              width: 90,
-                              height: 90,
-                              decoration: BoxDecoration(
-                                color: c.accent.withValues(alpha: 0.85),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            right: 30,
-                            bottom: 26,
-                            child: Container(
-                              width: 120,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: c.surface.withValues(alpha: 0.8),
-                                borderRadius: BorderRadius.circular(28),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              NewsletterPicture(
+                source: source,
+                row: row,
+                radius: PiumaRadius.card,
+                width: double.infinity,
+                height: 190,
+                bottom: PiumaSpace.s16,
               ),
-              const SizedBox(height: 14),
               Text(
                 row.sender.toUpperCase(),
                 style: TextStyle(
@@ -916,18 +849,13 @@ class _PhoneRow extends StatelessWidget {
                   sizes: (12, 17, 13),
                 ),
               ),
-              const SizedBox(width: 14),
-              SizedBox(
+              NewsletterPicture(
+                source: source,
+                row: row,
+                radius: PiumaRadius.row,
                 width: 64,
                 height: 64,
-                child: NewsletterPicture(
-                  source: source,
-                  row: row,
-                  radius: 12,
-                  fallback: ColoredBox(
-                    color: newsletterTint(context, row.fromEmail),
-                  ),
-                ),
+                left: PiumaSpace.s16,
               ),
             ],
           ),
@@ -1054,21 +982,29 @@ class _Unsubscribe extends StatelessWidget {
 }
 
 /// An issue's cover picture (`ImagesToApprove` section 3): its first
-/// photo, only from a sender whose images may load, fading in over
-/// [fallback]; [fallback] alone otherwise.
+/// photo, only from a sender whose images may load. No space is reserved
+/// until an image is available.
 class NewsletterPicture extends StatefulWidget {
   const NewsletterPicture({
     super.key,
     required this.source,
     required this.row,
     required this.radius,
-    required this.fallback,
+    this.width,
+    this.height,
+    this.left = 0,
+    this.right = 0,
+    this.bottom = 0,
   });
 
   final MailSource source;
   final MailRow row;
   final double radius;
-  final Widget fallback;
+  final double? width;
+  final double? height;
+  final double left;
+  final double right;
+  final double bottom;
 
   @override
   State<NewsletterPicture> createState() => _NewsletterPictureState();
@@ -1076,6 +1012,29 @@ class NewsletterPicture extends StatefulWidget {
 
 class _NewsletterPictureState extends State<NewsletterPicture> {
   late Future<Uint8List?> _bytes = _load();
+  StreamSubscription<void>? _changes;
+
+  @override
+  void initState() {
+    super.initState();
+    _listen();
+  }
+
+  void _listen() {
+    _changes = widget.source.changes.listen((_) {
+      if (mounted) {
+        setState(() {
+          _bytes = _load();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _changes?.cancel();
+    super.dispose();
+  }
 
   // Asked each time it shows, so a sender no longer trusted loses it;
   // the picture itself comes from the shared cache.
@@ -1089,40 +1048,55 @@ class _NewsletterPictureState extends State<NewsletterPicture> {
   @override
   void didUpdateWidget(NewsletterPicture old) {
     super.didUpdateWidget(old);
-    if (old.row.key != widget.row.key) _bytes = _load();
+    if (old.source != widget.source) {
+      _changes?.cancel();
+      _listen();
+    }
+    if (old.source != widget.source || old.row.key != widget.row.key) {
+      _bytes = _load();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final instant = reduceMotion(context);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(widget.radius),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          widget.fallback,
-          FutureBuilder<Uint8List?>(
-            future: _bytes,
-            builder: (context, snap) {
-              final bytes = snap.data;
-              return AnimatedOpacity(
-                opacity: bytes == null ? 0 : 1,
-                duration: instant ? Duration.zero : PiumaMotion.enter,
-                curve: PiumaMotion.curve,
-                child: bytes == null
-                    ? const SizedBox.expand()
-                    : Image.memory(
-                        bytes,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                        filterQuality: FilterQuality.medium,
-                        errorBuilder: (_, _, _) => const SizedBox.expand(),
-                      ),
-              );
-            },
-          ),
-        ],
-      ),
+    return FutureBuilder<Uint8List?>(
+      future: _bytes,
+      builder: (context, snap) {
+        final bytes = snap.data;
+        if (bytes == null) return const SizedBox.shrink();
+        return Image.memory(
+          bytes,
+          width: widget.width,
+          height: widget.height,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          frameBuilder: (context, child, frame, synchronous) {
+            if (frame == null) return const SizedBox.shrink();
+            return Padding(
+              padding: EdgeInsets.only(
+                left: widget.left,
+                right: widget.right,
+                bottom: widget.bottom,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(widget.radius),
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: 1),
+                  duration: reduceMotion(context)
+                      ? Duration.zero
+                      : PiumaMotion.enter,
+                  curve: PiumaMotion.curve,
+                  builder: (_, opacity, child) =>
+                      Opacity(opacity: opacity, child: child),
+                  child: child,
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
