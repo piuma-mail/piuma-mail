@@ -186,7 +186,7 @@ class AppLocalizationsIt extends AppLocalizations {
   String get sectionThisWeek => 'Questa settimana';
 
   @override
-  String get sectionThisMonth => 'Prima, questo mese';
+  String get sectionThisMonth => 'Questo mese';
 
   @override
   String get sectionOlder => 'Più vecchi';
@@ -1361,7 +1361,7 @@ class AppLocalizationsIt extends AppLocalizations {
   String get openSourceLine => 'Open source · GPL-3.0';
 
   @override
-  String get motto => 'Mail, made light.';
+  String get motto => 'La posta, più leggera.';
 
   @override
   String get appName => 'Piuma Mail';
@@ -1737,7 +1737,7 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
-  String get vaultNothingDue => 'Niente in sospeso';
+  String get vaultAllClear => 'Tutto ok';
 
   @override
   String get vaultToday => 'Oggi';
@@ -4740,9 +4740,6 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
-  String get vaultNothingNeeds => 'Niente da fare';
-
-  @override
   String vaultTodayKind(String kind) {
     String _temp0 = intl.Intl.selectLogic(kind, {
       'flight': 'un volo oggi',
@@ -5521,7 +5518,7 @@ class AppLocalizationsIt extends AppLocalizations {
   String get reportNone => 'Ancora nessun report.';
 
   @override
-  String get reportTitle => 'Report';
+  String get reportTitle => 'Segnalazione';
 
   @override
   String get reportKindProblem => 'Problema';
@@ -5588,7 +5585,7 @@ class AppLocalizationsIt extends AppLocalizations {
   String get reportWhatsSent => 'Cosa viene inviato';
 
   @override
-  String get reportSectionReport => 'Report';
+  String get reportSectionReport => 'Segnalazione';
 
   @override
   String get reportSectionDevice => 'Dispositivo';

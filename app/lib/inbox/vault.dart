@@ -43,7 +43,7 @@ String _short(DateTime day, String locale) =>
 String vaultSummary(AppLocalizations l, VaultView v) {
   final today = v.firstToday;
   final parts = [
-    v.needs.isEmpty ? l.vaultNothingNeeds : l.vaultNeedCount(v.needs.length),
+    v.needs.isEmpty ? l.vaultAllClear : l.vaultNeedCount(v.needs.length),
     if (today != null)
       l.vaultTodayKind(
         today.kind == VaultKind.flight
@@ -74,7 +74,7 @@ String vaultStatus(
   if (parcel != null) {
     return l.vaultArrives(vaultWhen(l, parcel.day!, now, locale, lower: true));
   }
-  return l.vaultNothingDue;
+  return l.vaultAllClear;
 }
 
 /// "Train", "Flight", "Check-in": what a leg is, for the tile.

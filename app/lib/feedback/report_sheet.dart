@@ -397,7 +397,7 @@ class _ReportSheetState extends State<ReportSheet> {
                 top: true,
                 trailing: Text(
                   l.reportAlways,
-                  style: PiumaType.mono.copyWith(fontSize: 12, color: c.muted),
+                  style: PiumaType.small.copyWith(fontSize: 12, color: c.muted),
                 ),
               ),
             ],
