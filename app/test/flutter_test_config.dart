@@ -5,11 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/notify/notifier.dart';
 
 import 'support/fake_notifier.dart';
+import 'support/linux_goldens.dart';
 
 /// Loads Geist in tests, so golden screenshots show the real font instead
 /// of the test font's boxes.
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   TestWidgetsFlutterBinding.ensureInitialized();
+  compareGoldensOnLinuxOnly();
   // Tests never reach the system's notifications.
   notifier = FakeNotifier();
   Future<void> load(String family, List<String> files) async {

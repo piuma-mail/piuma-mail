@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/inbox/attach_preview.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
@@ -52,8 +54,16 @@ void _pickReturns(List<XFile> files) {
   addTearDown(() => pickFiles = before);
 }
 
-XFile _file(String name, int size) =>
-    XFile.fromData(Uint8List(size), name: name, path: '/picked/$name');
+/// A file as the system hands it over: on the desktop the name comes from
+/// the path, split on the system's separator, so the path must be native.
+String _systemPath(String folder, String name) =>
+    p.join(Directory.systemTemp.path, folder, name);
+
+XFile _file(String name, int size) => XFile.fromData(
+  Uint8List(size),
+  name: name,
+  path: _systemPath('picked', name),
+);
 
 void main() {
   test('badges and sizes', () {
@@ -178,8 +188,11 @@ void main() {
     target.onDragDone!(
       DropDoneDetails(
         files: [
-          DropItemFile.fromData(Uint8List(318000), path: '/dropped/quote.pdf'),
-          DropItemDirectory('/dropped/folder', const []),
+          DropItemFile.fromData(
+            Uint8List(318000),
+            path: _systemPath('dropped', 'quote.pdf'),
+          ),
+          DropItemDirectory(_systemPath('dropped', 'folder'), const []),
         ],
         localPosition: at,
         globalPosition: at,
