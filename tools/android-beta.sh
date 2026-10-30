@@ -9,7 +9,9 @@
 #   PIUMA_KEY_ALIAS          the key's alias, "piuma" when unset
 #
 # Usage: sh tools/android-beta.sh [output.apk]
-# The version is 0.1.0, build number = commits on this branch.
+# The version is 0.1.0, build number = commits on this branch + 700:
+# builds made before the repository moved reached 709, and a lower
+# number would not install over them.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,7 +27,7 @@ keystore=$(mktemp)
 trap 'rm -f "$keystore"' EXIT
 printf '%s' "$PIUMA_KEYSTORE_B64" | base64 -d > "$keystore"
 
-build=$(git -C "$root" rev-list --count HEAD)
+build=$(( $(git -C "$root" rev-list --count HEAD) + 700 ))
 cd "$root/app"
 PIUMA_KEYSTORE_FILE=$keystore flutter build apk --release \
   --target-platform android-arm64 \
