@@ -940,9 +940,6 @@ pub struct ThreadBrief {
 pub fn thread_brief(account_id: i64, thread: String) -> Result<Option<ThreadBrief>, EngineError> {
     let store = store()?;
     let messages = store.conversation(AccountId(account_id), &thread)?;
-    if messages.len() < piuma_core::brief::LONG {
-        return Ok(None);
-    }
     let mine: Vec<String> = store
         .accounts()?
         .into_iter()

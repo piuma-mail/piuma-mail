@@ -124,10 +124,9 @@ Future<void> _pumpReader(
   _LongThread source, {
   bool phone = false,
   bool dark = false,
+  double width = 900,
 }) async {
-  tester.view.physicalSize = phone
-      ? const Size(390, 844)
-      : const Size(900, 2400);
+  tester.view.physicalSize = phone ? const Size(390, 844) : Size(width, 2400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -146,7 +145,52 @@ Future<void> _pumpReader(
   await tester.pumpAndSettle();
 }
 
+class _SingleBrief extends _LongThread {
+  _SingleBrief() : super(1, 1);
+
+  @override
+  Future<ThreadBrief?> threadBrief(MailRow row) async => const ThreadBrief(
+    points: ['The season budget is €2500.'],
+    yourTurn: 'Please send a quote.',
+    askedBy: 'Sara',
+  );
+}
+
 void main() {
+  for (final width in [1299.0, 1300.0, 1600.0]) {
+    testWidgets('reading follows pane width $width', (tester) async {
+      await _pumpReader(tester, _SingleBrief(), width: width);
+      // From 1300 points the column is centered and 920 wide.
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is ConstrainedBox && w.constraints.maxWidth == 920,
+        ),
+        width >= 1300 ? findsOneWidget : findsNothing,
+      );
+    });
+  }
+  for (final dark in [false, true]) {
+    testWidgets('wide reader golden, dark=$dark', (tester) async {
+      await _pumpReader(tester, _SingleBrief(), width: 1400, dark: dark);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/wide_reader_${dark ? 'dark' : 'light'}.png'),
+      );
+    }, tags: ['golden']);
+  }
+
+  for (final phone in [false, true]) {
+    testWidgets('single email summary, phone=$phone', (tester) async {
+      await _pumpReader(tester, _SingleBrief(), phone: phone);
+      expect(find.byType(InShort), phone ? findsNothing : findsOneWidget);
+      if (phone) {
+        await tester.tap(find.text('Summary'));
+        await tester.pumpAndSettle();
+        expect(find.byType(InShort), findsOneWidget);
+      }
+    });
+  }
+
   testWidgets('a conversation is one row, with how many messages it has', (
     tester,
   ) async {
