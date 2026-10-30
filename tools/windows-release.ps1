@@ -19,7 +19,9 @@
 # Usage: powershell -File tools\windows-release.ps1 [-Notes notes.md]
 # Without -Notes the changelog lists the pull requests merged since the
 # last release built here (the local tag windows-release).
-# The version is 0.1.0-beta.N, N = commits on this branch, as on Android.
+# The version is 0.1.0-beta.N, N = commits on this branch + 700, as on
+# Android: releases made before the repository moved reached beta.679,
+# and Velopack would not update to a lower number.
 param([string]$Notes = "")
 $ErrorActionPreference = "Stop"
 
@@ -27,7 +29,7 @@ $root = Resolve-Path "$PSScriptRoot\.."
 $feed = $env:PIUMA_UPDATE_URL
 if (-not $feed) { throw "PIUMA_UPDATE_URL must be set: the app checks it for updates." }
 
-$build = (git -C $root rev-list --count HEAD).Trim()
+$build = [int](git -C $root rev-list --count HEAD).Trim() + 700
 $version = "0.1.0-beta.$build"
 $out = "$root\app\build\releases"
 # Fresh each time: a package left by an earlier run of the same build
