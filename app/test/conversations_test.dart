@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/inbox/reader.dart';
-import 'package:piuma_mail/inbox/message_body.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
@@ -161,18 +160,23 @@ void main() {
   for (final width in [1299.0, 1300.0, 1600.0]) {
     testWidgets('reading follows pane width $width', (tester) async {
       await _pumpReader(tester, _SingleBrief(), width: width);
+      // From 1300 points the column is centered and 920 wide.
       expect(
-        tester.widget<WideReading>(find.byType(WideReading)).enabled,
-        width >= 1300,
+        find.byWidgetPredicate(
+          (w) => w is ConstrainedBox && w.constraints.maxWidth == 920,
+        ),
+        width >= 1300 ? findsOneWidget : findsNothing,
       );
     });
   }
   for (final dark in [false, true]) {
-    testWidgets('wide reader golden dark=$dark', (tester) async {
+    testWidgets('wide reader golden, dark=$dark', (tester) async {
       await _pumpReader(tester, _SingleBrief(), width: 1400, dark: dark);
       await expectLater(
         find.byType(MaterialApp),
-        matchesGoldenFile('goldens/wide_reader_$dark.png'),
+        matchesGoldenFile(
+          'goldens/wide_reader_${dark ? 'dark' : 'light'}.png',
+        ),
       );
     }, tags: ['golden']);
   }

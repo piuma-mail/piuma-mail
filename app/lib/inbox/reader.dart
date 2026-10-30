@@ -572,9 +572,7 @@ class _ReaderState extends State<Reader> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final wide = !phone && !tablet && constraints.maxWidth >= 1300;
-              return WideReading(
-                enabled: wide,
-                child: SingleChildScrollView(
+              return SingleChildScrollView(
                   key: ValueKey(row.key),
                   child: Align(
                     alignment: wide ? Alignment.topCenter : Alignment.topLeft,
@@ -669,8 +667,7 @@ class _ReaderState extends State<Reader> {
                       ),
                     ),
                   ),
-                ),
-              );
+                );
             },
           ),
         ),

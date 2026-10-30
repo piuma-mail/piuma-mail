@@ -262,13 +262,6 @@ abstract final class PiumaType {
     letterSpacing: 0.0,
     height: 1.45,
   );
-  static const readingWide = TextStyle(
-    fontFamily: PiumaFonts.sans,
-    fontSize: 16.0,
-    fontWeight: FontWeight.w400,
-    letterSpacing: 0.0,
-    height: 1.55,
-  );
   static const small = TextStyle(
     fontFamily: PiumaFonts.sans,
     fontSize: 13.0,

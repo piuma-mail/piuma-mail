@@ -53,7 +53,7 @@ static TOPIC: LazyLock<Regex> = LazyLock::new(|| {
 });
 static REQUEST: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?i)\b(can you|could you|would you|please|i (just )?need|we (just )?need|let me know|send me|waiting for your|puoi|potresti|mi mandi|mandami|fammi sapere|ho bisogno|mi serve|ci serve|aspetto|attendo|per favore|sarebbe bello poter collaborare|hai qualcuno cui inviare)\b",
+        r"(?i)\b(can you|could you|would you|please|i (just )?need|we (just )?need|let me know|send me|waiting for your|puoi|potresti|mi mandi|mandami|fammi sapere|ho bisogno|mi serve|ci serve|aspetto|attendo|per favore|would you like|do you know anyone|sarebbe bello|ti andrebbe|hai qualcuno)\b",
     )
 });
 static DATE: LazyLock<Regex> = LazyLock::new(|| {
