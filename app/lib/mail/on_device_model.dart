@@ -75,8 +75,8 @@ class OnDeviceModel {
   /// what matters in it.
   static String prompt(ThreadBrief brief) =>
       '''
-Summarize this email conversation in at most 3 short bullet points of under 20 words each.
-Cover what was decided and what is still open. Keep names, numbers, amounts and dates exactly as written. Add nothing that is not in the conversation.
+Summarize this email or conversation in at most 3 short bullet points of under 20 words each.
+Cover requests, decisions, amounts and dates, and what is still open. Keep names, numbers, amounts and dates exactly as written. Add nothing that is not in the conversation.
 Write in the same language as the conversation. Reply with the bullet points only, one per line, each starting with "- ".
 
 Points that stand out:

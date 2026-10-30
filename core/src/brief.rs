@@ -32,6 +32,9 @@ pub struct Brief {
 /// Conversations shorter than this read fine without a summary.
 pub const LONG: usize = 4;
 
+/// A single substantial message also benefits from a brief.
+pub const LONG_WORDS: usize = 250;
+
 fn re(pattern: &str) -> Regex {
     Regex::new(pattern).expect("brief pattern")
 }
@@ -50,7 +53,12 @@ static TOPIC: LazyLock<Regex> = LazyLock::new(|| {
 });
 static REQUEST: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?i)\b(can you|could you|would you|please|i (just )?need|we (just )?need|let me know|send me|waiting for your|puoi|potresti|mi mandi|mandami|fammi sapere|ho bisogno|mi serve|ci serve|aspetto|attendo|per favore)\b",
+        r"(?i)\b(can you|could you|would you|please|i (just )?need|we (just )?need|let me know|send me|waiting for your|puoi|potresti|mi mandi|mandami|fammi sapere|ho bisogno|mi serve|ci serve|aspetto|attendo|per favore|sarebbe bello poter collaborare|hai qualcuno cui inviare)\b",
+    )
+});
+static DATE: LazyLock<Regex> = LazyLock::new(|| {
+    re(
+        r"(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica|gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\b",
     )
 });
 static NUMBER: LazyLock<Regex> = LazyLock::new(|| re(r"\d+(?:[.,]\d+)?"));
@@ -190,7 +198,11 @@ fn request(text: &str) -> Option<String> {
 /// The gist of a conversation, oldest message first. None when it is
 /// short or nothing in it stands out.
 pub fn thread(notes: &[Note]) -> Option<Brief> {
-    if notes.len() < LONG {
+    if notes.len() < LONG
+        && !notes
+            .iter()
+            .any(|note| note.text.split_whitespace().count() > LONG_WORDS)
+    {
         return None;
     }
     // (score, message, order, text), newest first.
@@ -198,14 +210,18 @@ pub fn thread(notes: &[Note]) -> Option<Brief> {
     for (i, note) in notes.iter().enumerate().rev() {
         for (j, s) in sentences(&note.text).into_iter().enumerate() {
             let words = s.split_whitespace().count();
-            if s.ends_with('?')
+            if ((s.ends_with('?') || REQUEST.is_match(&s)) && notes.len() >= LONG)
                 || GREETING.is_match(&s)
-                || REQUEST.is_match(&s)
                 || !(3..=40).contains(&words)
             {
                 continue;
             }
-            let n = score(&s);
+            let n = score(&s)
+                + if REQUEST.is_match(&s) || (notes.len() < LONG && DATE.is_match(&s)) {
+                    3
+                } else {
+                    0
+                };
             if n >= 3 {
                 candidates.push((n, i, j, s));
             }
@@ -355,6 +371,30 @@ mod tests {
             mine,
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn long_single_italian_request() {
+        let text = format!(
+            "{}\nIl preventivo per foto e video della stagione è di €2500.\nSarebbe bello poter collaborare di nuovo, oppure hai qualcuno cui inviare questa mail?",
+            "La nostra destinazione offre paesaggi e attività per tutta la stagione. ".repeat(24)
+        );
+        let brief = thread(&[note(false, &text)]).unwrap();
+        assert!(brief.points.len() <= 3);
+        assert!(brief.points.iter().any(|p| p.contains("€2500")));
+        assert!(brief.your_turn.unwrap().contains("collaborare"));
+        assert!(thread(&[note(true, &text)]).unwrap().your_turn.is_none());
+    }
+
+    #[test]
+    fn length_is_per_message_and_excludes_quotes() {
+        let short = "background ".repeat(LONG_WORDS);
+        assert!(thread(&[note(false, &short), note(false, &short)]).is_none());
+        let quoted = format!("Please send the quote.\n\n> {}", short.repeat(2));
+        let own = own_words(&crate::reading::from_text(&quoted));
+        assert!(thread(&[note(false, &own)]).is_none());
+        let long = format!("{}\nPlease send the quote.", short);
+        assert!(thread(&[note(false, &long), note(true, "Thanks.")]).is_some());
     }
 
     #[test]

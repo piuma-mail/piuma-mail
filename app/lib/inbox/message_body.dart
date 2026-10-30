@@ -44,6 +44,20 @@ class RemoteImages {
   static void clear() => _cache.clear();
 }
 
+/// Pane-local reading typography, shared by every message in the reader.
+class WideReading extends InheritedWidget {
+  const WideReading({super.key, required this.enabled, required super.child});
+  final bool enabled;
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<WideReading>()?.enabled ??
+      false;
+
+  @override
+  bool updateShouldNotify(WideReading oldWidget) =>
+      enabled != oldWidget.enabled;
+}
+
 /// The blocks of a readable message, drawn with the app's own type.
 class MessageBody extends StatelessWidget {
   const MessageBody({
@@ -116,12 +130,15 @@ class MessageBody extends StatelessWidget {
     List<(int, int)> marks = const [],
   ]) {
     final c = PiumaTheme.of(context);
-    final base = TextStyle(
-      fontFamily: PiumaFonts.sans,
-      fontSize: article ? 18 : 16,
-      height: article ? 1.7 : 1.65,
-      color: b.quote > 0 ? c.muted : c.fg,
-    );
+    final base =
+        (!article && WideReading.of(context)
+                ? PiumaType.readingWide
+                : TextStyle(
+                    fontFamily: PiumaFonts.sans,
+                    fontSize: article ? 18 : 16,
+                    height: article ? 1.7 : 1.65,
+                  ))
+            .copyWith(color: b.quote > 0 ? c.muted : c.fg);
     Widget child = switch (b.kind) {
       BlockKind.image => _BodyImageView(
         image: b.image!,

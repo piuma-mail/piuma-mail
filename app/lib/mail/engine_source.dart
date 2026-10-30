@@ -1337,6 +1337,11 @@ class EngineMailSource extends MailSource {
   @override
   Future<ThreadBrief?> threadBrief(MailRow row) async {
     if (row.thread.isEmpty) return null;
+    // A preview can hide a long message. Wait for the selected email's
+    // body before applying the own-word threshold, also on first open.
+    if (row.messages < 4) {
+      await body(row).catchError((Object _) => '');
+    }
     final b = await engine.threadBrief(
       accountId: row.accountId,
       thread: row.thread,
