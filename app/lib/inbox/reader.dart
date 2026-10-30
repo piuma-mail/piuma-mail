@@ -573,101 +573,101 @@ class _ReaderState extends State<Reader> {
             builder: (context, constraints) {
               final wide = !phone && !tablet && constraints.maxWidth >= 1300;
               return SingleChildScrollView(
-                  key: ValueKey(row.key),
-                  child: Align(
-                    alignment: wide ? Alignment.topCenter : Alignment.topLeft,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: wide
-                            ? 920
-                            : tablet
-                            ? 680
-                            : 780,
-                      ),
-                      child: Padding(
-                        padding: phone
-                            ? const EdgeInsets.fromLTRB(20, 4, 20, 24)
-                            // Room under the text for the floating bar; in the
-                            // upright panel, the panel's own margins.
-                            : tablet && widget.onBack != null
-                            ? const EdgeInsets.fromLTRB(32, 18, 32, 110)
-                            : tablet
-                            ? const EdgeInsets.fromLTRB(48, 36, 48, 120)
-                            : const EdgeInsets.fromLTRB(48, 32, 48, 28),
-                        child: PiumaEnter(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SelectableText(
-                                _subject ??
-                                    (row.subject.isEmpty
-                                        ? l.noSubject
-                                        : row.subject),
-                                style: TextStyle(
-                                  fontSize: phone ? 26 : 30,
-                                  height: 1.15,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: phone ? -0.65 : -0.9,
-                                  color: c.fg,
+                key: ValueKey(row.key),
+                child: Align(
+                  alignment: wide ? Alignment.topCenter : Alignment.topLeft,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: wide
+                          ? 920
+                          : tablet
+                          ? 680
+                          : 780,
+                    ),
+                    child: Padding(
+                      padding: phone
+                          ? const EdgeInsets.fromLTRB(20, 4, 20, 24)
+                          // Room under the text for the floating bar; in the
+                          // upright panel, the panel's own margins.
+                          : tablet && widget.onBack != null
+                          ? const EdgeInsets.fromLTRB(32, 18, 32, 110)
+                          : tablet
+                          ? const EdgeInsets.fromLTRB(48, 36, 48, 120)
+                          : const EdgeInsets.fromLTRB(48, 32, 48, 28),
+                      child: PiumaEnter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SelectableText(
+                              _subject ??
+                                  (row.subject.isEmpty
+                                      ? l.noSubject
+                                      : row.subject),
+                              style: TextStyle(
+                                fontSize: phone ? 26 : 30,
+                                height: 1.15,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: phone ? -0.65 : -0.9,
+                                color: c.fg,
+                              ),
+                            ),
+                            // The email's labels and "+ Label", as on
+                            // `LabelsToApprove`; the phone has Label… in More.
+                            if (!phone && row.folder != MailFolder.drafts)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 14),
+                                child: ReaderLabels(
+                                  source: widget.source,
+                                  row: row,
                                 ),
                               ),
-                              // The email's labels and "+ Label", as on
-                              // `LabelsToApprove`; the phone has Label… in More.
-                              if (!phone && row.folder != MailFolder.drafts)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 14),
-                                  child: ReaderLabels(
-                                    source: widget.source,
-                                    row: row,
-                                  ),
+                            if (_thread case final thread?)
+                              FutureBuilder<List<MailRow>>(
+                                future: thread,
+                                builder: (context, snap) {
+                                  if (snap.hasError) {
+                                    return _single(row, account, locale);
+                                  }
+                                  // Read again as mail comes: the one shown
+                                  // stays until the new one is here.
+                                  final messages =
+                                      snap.data ??
+                                      (_threadShown?.$1 == row.key
+                                          ? _threadShown!.$2
+                                          : null);
+                                  if (messages == null) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  _threadShown = (row.key, messages);
+                                  return _conversation(
+                                    messages,
+                                    account,
+                                    locale,
+                                  );
+                                },
+                              )
+                            else
+                              _single(row, account, locale),
+                            if (!phone && !tablet && _replies(row))
+                              Padding(
+                                padding: const EdgeInsets.only(top: 28),
+                                child: _QuickReply(
+                                  key: ValueKey(row.key),
+                                  controller: _replyText,
+                                  to: _firstName(row),
+                                  from: widget.replyFrom?.call(row),
+                                  machine: widget.source.noReplySender(row),
+                                  onSend: (text) => _quickReply(row, text),
+                                  onExpand: onReply,
                                 ),
-                              if (_thread case final thread?)
-                                FutureBuilder<List<MailRow>>(
-                                  future: thread,
-                                  builder: (context, snap) {
-                                    if (snap.hasError) {
-                                      return _single(row, account, locale);
-                                    }
-                                    // Read again as mail comes: the one shown
-                                    // stays until the new one is here.
-                                    final messages =
-                                        snap.data ??
-                                        (_threadShown?.$1 == row.key
-                                            ? _threadShown!.$2
-                                            : null);
-                                    if (messages == null) {
-                                      return const SizedBox.shrink();
-                                    }
-                                    _threadShown = (row.key, messages);
-                                    return _conversation(
-                                      messages,
-                                      account,
-                                      locale,
-                                    );
-                                  },
-                                )
-                              else
-                                _single(row, account, locale),
-                              if (!phone && !tablet && _replies(row))
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 28),
-                                  child: _QuickReply(
-                                    key: ValueKey(row.key),
-                                    controller: _replyText,
-                                    to: _firstName(row),
-                                    from: widget.replyFrom?.call(row),
-                                    machine: widget.source.noReplySender(row),
-                                    onSend: (text) => _quickReply(row, text),
-                                    onExpand: onReply,
-                                  ),
-                                ),
-                            ],
-                          ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
                   ),
-                );
+                ),
+              );
             },
           ),
         ),

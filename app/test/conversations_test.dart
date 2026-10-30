@@ -174,9 +174,7 @@ void main() {
       await _pumpReader(tester, _SingleBrief(), width: 1400, dark: dark);
       await expectLater(
         find.byType(MaterialApp),
-        matchesGoldenFile(
-          'goldens/wide_reader_${dark ? 'dark' : 'light'}.png',
-        ),
+        matchesGoldenFile('goldens/wide_reader_${dark ? 'dark' : 'light'}.png'),
       );
     }, tags: ['golden']);
   }
