@@ -65,7 +65,8 @@ Beta builds are published as GitHub prereleases, tagged `v0.1.0-beta.N`, on the 
 
 | Platform | File | Notes |
 |---|---|---|
-| Windows | `PiumaMail-win-Setup.exe` | Installer. The installed app checks the GitHub prereleases and updates itself. The build is not code-signed, so Windows SmartScreen shows a warning on first run. |
+| Windows (x64) | `PiumaMail-win-Setup.exe` | Installer for Intel and AMD PCs. The installed app checks the GitHub prereleases and updates itself. The build is not code-signed, so Windows SmartScreen shows a warning on first run. |
+| Windows on ARM | `PiumaMail-win-arm64-Setup.exe` | Native ARM64 installer for Snapdragon PCs such as the Surface Laptop 7; it updates itself from its own ARM64 packages. The x64 installer also runs on these PCs, under Windows 11's emulation, more slowly. |
 | Android | `PiumaMail-android-arm64.apk` | 64-bit ARM phones. Signed with the project's beta key, so each beta installs over the previous one. |
 | macOS, Linux, iOS | — | No builds yet: [build from source](#build-from-source). |
 

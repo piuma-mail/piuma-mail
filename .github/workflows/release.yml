@@ -49,6 +49,35 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: powershell -File tools/windows-release.ps1
 
+  # Native build for Windows on ARM (Snapdragon PCs). Flutter builds it only
+  # on an ARM64 machine. It waits for the x64 job, which creates the
+  # release, then adds its own files to it (vpk upload --merge) in
+  # Velopack's "win-arm64" channel, which ARM64 installs follow.
+  windows-arm64:
+    name: Windows ARM64 desktop release
+    needs: windows
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/windows-arm64-tools
+        with:
+          flutter-version: 3.47.7
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version 1.2.161
+
+      - name: Build and add to the Windows release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: powershell -File tools/windows-release.ps1 -Arch arm64
+
   android:
     name: Android beta APK
     needs: windows
