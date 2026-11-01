@@ -1,0 +1,27 @@
+name: Feature idea
+description: Suggest something the app could do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Piuma Mail stays small on purpose: a feature that does not fit the minimal design does
+        not go in, or stays hidden until it is needed (see CONTRIBUTING.md). Describing the
+        problem helps more than describing a button.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: How could the app help? Sketches and examples from other apps are welcome.
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: Desktop, phone, tablet, watch, or all

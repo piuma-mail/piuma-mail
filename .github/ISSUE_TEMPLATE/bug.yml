@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tracker is public. Use invented messages and redact names, addresses and mail
+        content from screenshots and logs. For a security problem, see SECURITY.md instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version or commit
+      description: The beta tag (for example v0.1.0-beta.N) or the commit you built.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and system
+      placeholder: Windows 11, Pixel 8 with Android 16, …
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Mail provider and protocol
+      description: For example Fastmail over JMAP, or a custom IMAP/SMTP server. No account names.

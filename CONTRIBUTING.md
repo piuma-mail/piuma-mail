@@ -22,6 +22,7 @@ The mockup canvas and the app must always show the same thing.
 ## Workflow
 
 - `main` always works. Every piece of work has a branch and a draft PR.
+- Bugs and ideas: open an issue with the templates, or send them from the app (Settings → Help & feedback). Security problems go through [SECURITY.md](SECURITY.md), never a public issue.
 - Small PRs: one feature or one screen at a time.
 - Before opening the PR:
 
