@@ -7,7 +7,7 @@ compatibility_date = "2026-09-01"
 workers_dev = true
 
 [vars]
-REPO = "TeoVader/piuma-mail-feedback"
+REPO = "piuma-mail/piuma-mail-feedback"
 DAILY_LIMIT = "30"
 # About a second on a phone, milliseconds on a PC: a speed bump, not a wall.
 POW_BITS = "16"

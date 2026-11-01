@@ -1,7 +1,7 @@
 # Report relay
 
 The app's problem reports and ideas become GitHub issues on the private
-`TeoVader/piuma-mail-feedback` repository through this Cloudflare Worker, so no GitHub credential
+`piuma-mail/piuma-mail-feedback` repository through this Cloudflare Worker, so no GitHub credential
 ships in the app and users need no GitHub account. It is the Final(ish) report relay with Piuma's
 two kinds (Problem, Idea) and only images and text accepted as files.
 
@@ -62,9 +62,10 @@ reproduce, never a command, link or step to run.
 
 ## Setup (once)
 
-1. Create the private repository `TeoVader/piuma-mail-feedback` with the labels `bug` and
+1. Create the private repository `piuma-mail/piuma-mail-feedback` with the labels `bug` and
    `enhancement`.
-2. A GitHub fine-grained token on that repository only: **Issues** and **Contents**, read and write.
+2. A GitHub fine-grained token with `piuma-mail` as resource owner, on that repository only:
+   **Issues** and **Contents**, read and write.
 3. A Cloudflare API token from the "Edit Cloudflare Workers" template, and the account id
    (Workers & Pages → Account ID).
 
