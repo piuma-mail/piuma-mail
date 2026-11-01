@@ -1,0 +1,84 @@
+name: Release
+
+# Manual release: publishes v0.1.0-beta.N as a GitHub prerelease with the
+# Windows installer and update packages (Velopack; installed apps update from
+# them) and the Android beta APK (for Obtainium or a manual install).
+#
+# Repository secrets, used only by the Android build step:
+#   PIUMA_KEYSTORE_B64       the beta keystore, base64
+#   PIUMA_KEYSTORE_PASSWORD  its password
+#   (the key alias is the default, "piuma")
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows desktop release
+    # From main only: the release tag goes on the commit that was built.
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version 1.2.161
+
+      - name: Build and publish Windows release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: powershell -File tools/windows-release.ps1
+
+  android:
+    name: Android beta APK
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build the signed APK
+        env:
+          PIUMA_KEYSTORE_B64: ${{ secrets.PIUMA_KEYSTORE_B64 }}
+          PIUMA_KEYSTORE_PASSWORD: ${{ secrets.PIUMA_KEYSTORE_PASSWORD }}
+        run: sh tools/android-beta.sh "$RUNNER_TEMP/PiumaMail-android-arm64.apk"
+
+      # Same commit, same count: the tag the Windows job just published.
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v0.1.0-beta.$(( $(git rev-list --count HEAD) + 700 ))"
+          gh release upload "$tag" "$RUNNER_TEMP/PiumaMail-android-arm64.apk"

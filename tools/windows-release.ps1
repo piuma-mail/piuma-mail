@@ -1,24 +1,21 @@
-# Builds the Windows release and publishes it to the update feed: an
-# installer (PiumaMail-win-Setup.exe) for a first install, and the
-# packages the app's updater downloads, with the changelog attached.
+# Builds the Windows release and publishes it to GitHub Releases as a
+# prerelease: an installer (PiumaMail-win-Setup.exe) for a first install,
+# and the packages the app's updater downloads, with the changelog attached.
+# The "Release" workflow (.github/workflows/release.yml) runs it.
 #
 # Needs Flutter, Visual Studio (see CONTRIBUTING.md) and Velopack's CLI:
 #   dotnet tool install -g vpk --version 1.2.161
 #
-# The feed and its keys come from the environment, never the repository:
-#   PIUMA_UPDATE_URL   the feed's public address, built into the app
-#                      (e.g. https://updates.piumamail.app/windows)
-#   PIUMA_S3_ENDPOINT  the bucket's S3 endpoint
-#                      (https://<account>.r2.cloudflarestorage.com)
-#   PIUMA_S3_BUCKET    the bucket, "piuma-updates" when unset
-#   PIUMA_S3_PREFIX    the folder in the bucket, "windows" when unset
-#   PIUMA_S3_KEY_ID    an R2 API token's access key id...
-#   PIUMA_S3_SECRET    ...and its secret
-# Without the S3 variables the release is only built, into app\build\releases.
+# From the environment, never the repository:
+#   GITHUB_TOKEN       a token that can write the repository's releases;
+#                      without it the release is only built, into
+#                      app\build\releases
+#   PIUMA_UPDATE_URL   the repository the app checks for updates
+#                      (https://github.com/piuma-mail/piuma-mail when unset)
 #
 # Usage: powershell -File tools\windows-release.ps1 [-Notes notes.md]
 # Without -Notes the changelog lists the pull requests merged since the
-# last release built here (the local tag windows-release).
+# last v* tag.
 # The version is 0.1.0-beta.N, N = commits on this branch + 700, as on
 # Android: releases made before the repository moved reached beta.679,
 # and Velopack would not update to a lower number.
@@ -26,8 +23,9 @@ param([string]$Notes = "")
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path "$PSScriptRoot\.."
-$feed = $env:PIUMA_UPDATE_URL
-if (-not $feed) { throw "PIUMA_UPDATE_URL must be set: the app checks it for updates." }
+$feed = if ($env:PIUMA_UPDATE_URL) { $env:PIUMA_UPDATE_URL } else { "https://github.com/piuma-mail/piuma-mail" }
+$token = $env:GITHUB_TOKEN
+if ($env:CI -and -not $token) { throw "GITHUB_TOKEN must be set to publish the release." }
 
 $build = [int](git -C $root rev-list --count HEAD).Trim() + 700
 $version = "0.1.0-beta.$build"
@@ -39,8 +37,10 @@ New-Item -ItemType Directory -Force $out | Out-Null
 
 if (-not $Notes) {
   $Notes = "$out\notes-$build.md"
-  $since = git -C $root rev-parse -q --verify windows-release 2>$null
-  $range = if ($since) { "windows-release..HEAD" } else { "HEAD~20..HEAD" }
+  # Listed, not described: git describe writes to stderr when there is no
+  # tag yet, and Windows PowerShell stops on that.
+  $since = git -C $root tag --list "v*" --merged HEAD --sort=-creatordate | Select-Object -First 1
+  $range = if ($since) { "$since..HEAD" } else { "HEAD~20..HEAD" }
   # The pull requests merged into main, by their titles (each merge's
   # first body line); branch catch-ups, sign-offs and links stay out.
   $lines = git -C $root log --first-parent --merges --grep="^Merge pull request" --format="%H" $range |
@@ -59,15 +59,9 @@ try {
   if ($LASTEXITCODE) { throw "flutter build failed" }
 } finally { Pop-Location }
 
-$s3 = $env:PIUMA_S3_ENDPOINT -and $env:PIUMA_S3_KEY_ID -and $env:PIUMA_S3_SECRET
-$bucket = if ($env:PIUMA_S3_BUCKET) { $env:PIUMA_S3_BUCKET } else { "piuma-updates" }
-$prefix = if ($env:PIUMA_S3_PREFIX) { $env:PIUMA_S3_PREFIX } else { "windows" }
-$keys = @("--bucket", $bucket, "--prefix", $prefix, "--endpoint", $env:PIUMA_S3_ENDPOINT,
-  "--keyId", $env:PIUMA_S3_KEY_ID, "--secret", $env:PIUMA_S3_SECRET, "--region", "auto")
-
 # The last release, so the new one also ships as a small delta (the
 # first time there is none, and that is fine).
-if ($s3) { vpk download s3 -o $out @keys }
+if ($token) { vpk download github --repoUrl $feed --token $token --pre -o $out }
 
 vpk pack --packId PiumaMail --packVersion $version --packTitle "Piuma Mail" `
   --packDir "$root\app\build\windows\x64\runner\Release" --mainExe piuma_mail.exe `
@@ -76,11 +70,11 @@ vpk pack --packId PiumaMail --packVersion $version --packTitle "Piuma Mail" `
   --releaseNotes $Notes -o $out
 if ($LASTEXITCODE) { throw "vpk pack failed" }
 
-if ($s3) {
-  vpk upload s3 -o $out @keys --keepMaxReleases 10
+if ($token) {
+  vpk upload github -o $out --repoUrl $feed --token $token --publish --pre `
+    --tag "v$version" --releaseName "Piuma Mail $version"
   if ($LASTEXITCODE) { throw "vpk upload failed" }
-  git -C $root tag -f windows-release HEAD | Out-Null
-  Write-Host "Piuma Mail $version published: $feed/PiumaMail-win-Setup.exe"
+  Write-Host "Piuma Mail $version published: $feed/releases/tag/v$version"
 } else {
-  Write-Host "Piuma Mail $version built in $out (not published: no S3 keys)."
+  Write-Host "Piuma Mail $version built in $out (not published: no GITHUB_TOKEN)."
 }

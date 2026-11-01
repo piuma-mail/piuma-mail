@@ -1,7 +1,7 @@
 //! Desktop updates, through Velopack: the installer, a background check
 //! against a release feed, the download and the restart that applies it.
-//! The feed is any web folder `vpk upload` filled (a Cloudflare R2 bucket
-//! while the repository is private) or a GitHub repository's Releases.
+//! The feed is a GitHub repository's Releases, prereleases included, or
+//! any web folder `vpk upload` filled.
 //! The app draws the notice, the "What's new" sheet and the toast.
 //!
 //! Only Windows for now. Elsewhere, and in a build not installed by the
@@ -180,7 +180,7 @@ fn manager(feed: Option<&str>) -> Result<velopack::UpdateManager, velopack::Erro
     use velopack::UpdateManager;
     match feed {
         Some(f) if f.starts_with("https://github.com/") => {
-            UpdateManager::new(GithubSource::new(f, None, false), None, None)
+            UpdateManager::new(GithubSource::new(f, None, true), None, None)
         }
         Some(f) => UpdateManager::new(HttpSource::new(f), None, None),
         None => UpdateManager::new(NoneSource {}, None, None),
