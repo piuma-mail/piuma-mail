@@ -20,7 +20,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Generated files up to date
         run: python3 tools/gen_tokens.py --check
 
@@ -29,7 +29,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -52,7 +52,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -63,7 +63,7 @@ jobs:
       - run: flutter test
       - name: Screenshots of failed tests
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: golden-failures
           path: app/test/failures/
@@ -76,7 +76,7 @@ jobs:
       run:
         working-directory: wear
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -107,7 +107,7 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: runner.arch != 'ARM64' || runner.os != 'Windows'
         uses: subosito/flutter-action@v2
         with:
@@ -138,7 +138,7 @@ jobs:
       - if: matrix.target == 'linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev
       - if: matrix.target == 'apk'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
