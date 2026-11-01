@@ -1,6 +1,7 @@
 //! Desktop updates, through Velopack: the installer, a background check
 //! against a release feed, the download and the restart that applies it.
-//! The feed is GitHub Releases (or an HTTP/S3 folder like Cloudflare R2).
+//! The feed is a GitHub repository's Releases, prereleases included, or
+//! any web folder `vpk upload` filled.
 //! The app draws the notice, the "What's new" sheet and the toast.
 //!
 //! Only Windows for now. Elsewhere, and in a build not installed by the
