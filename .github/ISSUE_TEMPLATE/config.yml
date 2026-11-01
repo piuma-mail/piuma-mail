@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report from the app
+    url: https://github.com/piuma-mail/piuma-mail#contribute
+    about: Settings → Help & feedback sends a problem or an idea privately, with a preview of what is sent. No GitHub account needed.
+  - name: Security problem
+    url: https://github.com/piuma-mail/piuma-mail/security/policy
+    about: Report vulnerabilities privately, not in a public issue.
