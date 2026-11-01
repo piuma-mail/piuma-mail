@@ -1,0 +1,31 @@
+name: Flutter and Rust for Windows ARM64
+description: >
+  Installs Flutter and Rust on a Windows ARM64 runner (windows-11-arm).
+  Flutter publishes no Windows ARM64 SDK archive, so subosito/flutter-action
+  finds none: this clones the release tag instead, and its first run fetches
+  the ARM64 Dart SDK and engine. Rust comes from rustup, for the runner's own
+  target (aarch64-pc-windows-msvc), when the image has none.
+inputs:
+  flutter-version:
+    description: The Flutter release tag, as in the other jobs.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install Flutter and Rust
+      shell: pwsh
+      env:
+        FLUTTER_VERSION: ${{ inputs.flutter-version }}
+      run: |
+        git clone --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+        "$env:RUNNER_TEMP\flutter\bin" >> $env:GITHUB_PATH
+        if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+          Invoke-WebRequest https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
+          & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain stable
+          "$env:USERPROFILE\.cargo\bin" >> $env:GITHUB_PATH
+        }
+    - name: Show versions
+      shell: pwsh
+      run: |
+        flutter --version
+        rustup show
