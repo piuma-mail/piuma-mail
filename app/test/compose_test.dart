@@ -544,6 +544,38 @@ void main() {
     expect(source.drafts.single.subject, 'Mockups approved');
   });
 
+  testWidgets(
+    'discarding a brand-new never-saved draft closes compose quietly',
+    (tester) async {
+      final source = await _pump(tester);
+      expect(find.byType(ComposePane), findsOneWidget);
+      await tester.tap(find.byTooltip('Discard draft'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsNothing);
+      expect(find.text('Draft discarded'), findsNothing);
+      expect(source.drafts, isEmpty);
+    },
+  );
+
+  testWidgets('discarding a saved draft deletes it with undo', (tester) async {
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(source.drafts, isNotEmpty);
+
+    await tester.tap(find.byTooltip('Discard draft'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsNothing);
+    expect(source.drafts, isEmpty);
+    expect(find.text('Draft discarded'), findsOneWidget);
+
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+    expect(source.drafts, isNotEmpty);
+  });
+
   testWidgets('the From account brings its signature for new emails', (
     tester,
   ) async {

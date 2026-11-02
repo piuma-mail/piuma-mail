@@ -383,6 +383,7 @@
   "draftNotSavedToast": "Entwurf nicht gespeichert",
   "reopen": "Wieder öffnen",
   "discard": "Verwerfen",
+  "discardDraft": "Entwurf verwerfen",
   "noRecipients": "Keine Empfänger",
   "folderDrafts": "Entwürfe",
   "accountFolders": "Ordner von {name}",

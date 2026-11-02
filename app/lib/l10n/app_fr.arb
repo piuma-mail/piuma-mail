@@ -383,6 +383,7 @@
   "draftNotSavedToast": "Brouillon non enregistré",
   "reopen": "Rouvrir",
   "discard": "Supprimer",
+  "discardDraft": "Supprimer le brouillon",
   "noRecipients": "Aucun destinataire",
   "folderDrafts": "Brouillons",
   "accountFolders": "Dossiers de {name}",

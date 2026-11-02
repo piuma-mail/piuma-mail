@@ -383,6 +383,7 @@
   "draftNotSavedToast": "Borrador no guardado",
   "reopen": "Reabrir",
   "discard": "Descartar",
+  "discardDraft": "Descartar borrador",
   "noRecipients": "Sin destinatarios",
   "folderDrafts": "Borradores",
   "accountFolders": "Carpetas de {name}",
