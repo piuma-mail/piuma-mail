@@ -278,11 +278,7 @@ void main() {
           name: 'screen recording.mov',
           path: 'screen recording.mov',
         ),
-        XFile.fromData(
-          Uint8List(16),
-          name: 'notes.pdf',
-          path: 'notes.pdf',
-        ),
+        XFile.fromData(Uint8List(16), name: 'notes.pdf', path: 'notes.pdf'),
       ],
       [
         XFile.fromData(
@@ -313,9 +309,7 @@ void main() {
     await tester.tap(_inSheet(find.text('Attach')));
     await tester.pumpAndSettle();
     expect(
-      _inSheet(
-        find.text('huge.png is too large: images can be up to 10 MB.'),
-      ),
+      _inSheet(find.text('huge.png is too large: images can be up to 10 MB.')),
       findsOneWidget,
     );
     expect(_inSheet(find.byType(AttachmentChip)), findsOneWidget);

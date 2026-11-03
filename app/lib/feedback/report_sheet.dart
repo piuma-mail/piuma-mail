@@ -849,7 +849,10 @@ class _WhatsSentPageState extends State<WhatsSentPage> {
                             Text(device, style: mono),
                           ),
                           for (final a in widget.draft.attachments)
-                            card(l.reportSectionAttachment, Text(a.name, style: mono)),
+                            card(
+                              l.reportSectionAttachment,
+                              Text(a.name, style: mono),
+                            ),
                           if (widget.screenshot case final png?)
                             card(
                               l.reportSectionScreenshot,
