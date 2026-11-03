@@ -128,6 +128,50 @@ void main() {
     expect(source.drafts.map((d) => d.subject), ['Ideas for the trip']);
   });
 
+  testWidgets('discarding an open draft deletes it from Drafts with undo', (
+    tester,
+  ) async {
+    final source = await _pump(tester, source: await _withDrafts());
+    await tester.tap(find.text('Drafts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mockups approved'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Discard draft'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsNothing);
+    expect(find.text('Draft discarded'), findsOneWidget);
+    expect(source.drafts.map((d) => d.subject), ['Ideas for the trip']);
+
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+    expect(source.drafts.map((d) => d.subject), contains('Mockups approved'));
+  });
+
+  testWidgets('discarding an open draft on phone deletes it with undo', (
+    tester,
+  ) async {
+    final source = await _withDrafts();
+    await _pump(tester, size: _phone, source: source);
+    await tester.tap(
+      find.bySemanticsLabel('3 accounts, accounts and Settings'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Drafts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mockups approved'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Discard draft'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsNothing);
+    expect(find.text('Draft discarded'), findsOneWidget);
+    expect(source.drafts.map((d) => d.subject), ['Ideas for the trip']);
+  });
+
   testWidgets('a signature picked by hand comes back with the draft', (
     tester,
   ) async {

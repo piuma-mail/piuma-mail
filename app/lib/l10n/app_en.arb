@@ -580,6 +580,7 @@
   "draftNotSavedToast": "Draft not saved",
   "reopen": "Reopen",
   "discard": "Discard",
+  "discardDraft": "Discard draft",
   "noRecipients": "No recipients",
   "folderDrafts": "Drafts",
   "accountFolders": "{name} folders",

@@ -1512,6 +1512,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get discard => 'Supprimer';
 
   @override
+  String get discardDraft => 'Supprimer le brouillon';
+
+  @override
   String get noRecipients => 'Aucun destinataire';
 
   @override

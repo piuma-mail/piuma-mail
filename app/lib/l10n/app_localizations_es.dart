@@ -1507,6 +1507,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get discard => 'Descartar';
 
   @override
+  String get discardDraft => 'Descartar borrador';
+
+  @override
   String get noRecipients => 'Sin destinatarios';
 
   @override

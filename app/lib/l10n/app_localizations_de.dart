@@ -1508,6 +1508,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get discard => 'Verwerfen';
 
   @override
+  String get discardDraft => 'Entwurf verwerfen';
+
+  @override
   String get noRecipients => 'Keine Empfänger';
 
   @override

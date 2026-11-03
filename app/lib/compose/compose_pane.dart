@@ -59,6 +59,7 @@ class ComposePane extends StatefulWidget {
     this.phone = false,
     this.onSchedule,
     this.now,
+    this.onDiscard,
     this.templates,
     this.onSaveTemplate,
     this.onTemplateUsed,
@@ -105,6 +106,9 @@ class ComposePane extends StatefulWidget {
   /// where the copy is, or null when it could not be saved. Without
   /// [onSave] nothing is saved and the caller can offer Undo.
   final void Function(Draft draft, Future<DraftCopy?>? saved) onClose;
+
+  /// Throws away the draft and deletes any copy kept in Drafts.
+  final ValueChanged<Draft>? onDiscard;
 
   /// Keeps the draft while it is written, a moment after each change.
   final Future<DraftCopy> Function(Draft draft)? onSave;
@@ -379,6 +383,13 @@ class _ComposePaneState extends State<ComposePane> {
         ? null
         : _saves.then((_) => _copy);
     widget.onClose(d.withCopy(_copy), saved);
+  }
+
+  Future<void> _discard() async {
+    _saveTimer?.cancel();
+    await _saves;
+    final d = _draft(commit: false);
+    widget.onDiscard?.call(d.withCopy(_copy));
   }
 
   @override
@@ -1264,6 +1275,12 @@ class _ComposePaneState extends State<ComposePane> {
                                 label: l.templatesTitle,
                                 open: _picking,
                                 onTap: _picking ? null : () => _openTemplates(),
+                              ),
+                            if (widget.onDiscard != null)
+                              _IconButton(
+                                icon: PiumaIcon.trash,
+                                label: l.discardDraft,
+                                onTap: _discard,
                               ),
                             // Send later is in Send's menu (issue #14), so
                             // the phone's foot keeps only attach and
