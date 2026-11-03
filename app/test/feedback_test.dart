@@ -273,10 +273,24 @@ void main() {
   ) async {
     final picked = <List<XFile>>[
       [
-        XFile.fromData(Uint8List(2048), name: 'screen recording.mov'),
-        XFile.fromData(Uint8List(16), name: 'notes.pdf'),
+        XFile.fromData(
+          Uint8List(2048),
+          name: 'screen recording.mov',
+          path: 'screen recording.mov',
+        ),
+        XFile.fromData(
+          Uint8List(16),
+          name: 'notes.pdf',
+          path: 'notes.pdf',
+        ),
       ],
-      [XFile.fromData(Uint8List(reportMaxImage + 1), name: 'huge.png')],
+      [
+        XFile.fromData(
+          Uint8List(reportMaxImage + 1),
+          name: 'huge.png',
+          path: 'huge.png',
+        ),
+      ],
     ];
     final before = pickReportFiles;
     pickReportFiles = () async => picked.removeAt(0);

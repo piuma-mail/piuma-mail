@@ -188,7 +188,6 @@ class _ReportSheetState extends State<ReportSheet> {
   String? _attachmentError;
 
   Future<void> _attach() async {
-    print('ATTACH PRESSED');
     if (_picking || _sending) return;
     setState(() {
       _picking = true;
@@ -200,7 +199,6 @@ class _ReportSheetState extends State<ReportSheet> {
     String? problem;
     try {
       final files = await pickReportFiles();
-      print('PICKED FILES: ${files.map((f) => f.name).toList()}');
       for (final file in files) {
         if (!mounted) return;
         final kind = reportAttachmentKind(file.name);
@@ -242,11 +240,9 @@ class _ReportSheetState extends State<ReportSheet> {
               : l.reportImageTooLarge(file.name, size(limit));
           continue;
         }
-        print('ATTACHING file: ${file.name}, kind: $kind');
         setState(() => _attachments.add(ReportAttachment(file.name, bytes)));
       }
-    } catch (e, st) {
-      print('ATTACH CAUGHT ERROR: $e\n$st');
+    } catch (_) {
       problem = l.reportAttachFailed;
     } finally {
       if (mounted) {
