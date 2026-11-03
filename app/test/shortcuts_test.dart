@@ -5,6 +5,7 @@ import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/settings/shortcuts_page.dart';
 
@@ -83,6 +84,54 @@ void main() {
     expect(source.applied, isNotEmpty);
   });
 
+  testWidgets('Delete deletes the open message', (tester) async {
+    final source = await _pump(tester);
+    await _open(tester, 'Dinner on Friday?');
+    await _key(tester, LogicalKeyboardKey.delete);
+    expect(find.text('Moved to Trash'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(source.applied.single.$1.subject, 'Dinner on Friday?');
+    expect(source.applied.single.$2, MessageAction.delete);
+  });
+
+  testWidgets('Delete deletes picked rows', (tester) async {
+    final source = await _pump(tester);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(InboxRowTile),
+        matching: find.text('Dinner on Friday?'),
+      ),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(InboxRowTile),
+        matching: find.text('Re: Print quote'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _key(tester, LogicalKeyboardKey.delete);
+    expect(find.text('2 conversations moved to Trash'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(source.applied, isNotEmpty);
+    expect(source.applied.every((a) => a.$2 == MessageAction.delete), isTrue);
+  });
+
+  testWidgets('Delete in compose does not delete messages', (tester) async {
+    final source = await _pump(tester);
+    await _open(tester, 'Dinner on Friday?');
+    await _key(tester, LogicalKeyboardKey.keyR);
+    expect(find.byType(ComposePane), findsOneWidget);
+    await _key(tester, LogicalKeyboardKey.delete);
+    expect(find.text('Moved to Trash'), findsNothing);
+    expect(source.applied, isEmpty);
+  });
+
   testWidgets('Settings › Shortcuts lists the keys', (tester) async {
     await _pump(tester);
     await tester.tap(find.text('Settings'));
@@ -90,7 +139,7 @@ void main() {
     await tester.tap(find.text('Shortcuts'));
     await tester.pumpAndSettle();
     expect(find.byType(ShortcutsPage), findsOneWidget);
-    for (final key in ['C', 'E', 'H', 'Ctrl K', 'R']) {
+    for (final key in ['C', 'E', 'H', 'Ctrl K', 'R', 'Del']) {
       expect(find.text(key), findsOneWidget);
     }
     await expectLater(

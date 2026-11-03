@@ -67,6 +67,7 @@ class ShortcutsPage extends StatelessWidget {
                   (l.actionSnooze, 'H'),
                   (l.shortcutPalette, palette),
                   (l.actionReply, 'R'),
+                  (l.actionDelete, 'Del'),
                 ])
                   _Row(label: label, keys: key),
               ],

@@ -2410,6 +2410,12 @@ abstract class AppLocalizations {
   /// **'Discard'**
   String get discard;
 
+  /// No description provided for @discardDraft.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard draft'**
+  String get discardDraft;
+
   /// No description provided for @noRecipients.
   ///
   /// In en, this message translates to:

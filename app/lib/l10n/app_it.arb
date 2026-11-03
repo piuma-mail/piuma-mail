@@ -384,6 +384,7 @@
   "draftNotSavedToast": "Bozza non salvata",
   "reopen": "Riapri",
   "discard": "Elimina",
+  "discardDraft": "Elimina bozza",
   "noRecipients": "Nessun destinatario",
   "folderDrafts": "Bozze",
   "accountFolders": "Cartelle di {name}",

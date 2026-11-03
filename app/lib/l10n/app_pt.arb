@@ -383,6 +383,7 @@
   "draftNotSavedToast": "Rascunho não salvo",
   "reopen": "Reabrir",
   "discard": "Descartar",
+  "discardDraft": "Descartar rascunho",
   "noRecipients": "Sem destinatários",
   "folderDrafts": "Rascunhos",
   "accountFolders": "Pastas de {name}",

@@ -710,6 +710,35 @@ class _InboxScreenState extends State<InboxScreen> {
     );
   }
 
+  /// Discards compose. Deletes any saved draft copy and offers Undo.
+  Future<void> _discardCompose(Draft draft) async {
+    final l = AppLocalizations.of(context);
+    final source = widget.source;
+    setState(() => _composing = null);
+    final copy = draft.copy;
+    if (copy == null) return;
+    try {
+      await source.discardDraft(copy);
+    } catch (_) {
+      if (mounted) _toast(AppLocalizations.of(context).actionFailed);
+      return;
+    }
+    if (!mounted) return;
+    _toast(
+      l.draftDiscarded,
+      action: l.undo,
+      duration: undoSendWindow,
+      onAction: () async {
+        try {
+          final restored = await source.saveDraft(draft.withCopy(null));
+          if (mounted) _openCompose(draft.withCopy(restored));
+        } catch (_) {
+          if (mounted) _toast(AppLocalizations.of(context).actionFailed);
+        }
+      },
+    );
+  }
+
   /// A saved draft opens in compose, to go on writing it.
   Future<void> _openDraft(MailRow row) async {
     try {
@@ -1022,7 +1051,7 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   /// Single keys, as listed in Settings › Shortcuts: C writes a new
-  /// email; E, H, M and R work on the picked rows or the open message
+  /// email; Delete, E, H, M and R work on the picked rows or the open message
   /// (R, and F for Forward, on the open message only); Shift+U and Esc on the picked rows.
   /// A text field keeps them for itself, and compose or search stops
   /// them.
@@ -1046,6 +1075,9 @@ class _InboxScreenState extends State<InboxScreen> {
         case LogicalKeyboardKey.keyC
             when !shift && _composing == null && !_searching:
           _openCompose();
+        case LogicalKeyboardKey.delete || LogicalKeyboardKey.backspace
+            when !shift && open != null:
+          _act([open], MessageAction.delete);
         case LogicalKeyboardKey.keyE when !shift && open != null:
           if (_inArchive || open.folder == MailFolder.drafts) {
             return KeyEventResult.ignored;
@@ -1074,6 +1106,9 @@ class _InboxScreenState extends State<InboxScreen> {
     switch (event.logicalKey) {
       case LogicalKeyboardKey.escape:
         _unpickAll();
+      case LogicalKeyboardKey.delete || LogicalKeyboardKey.backspace
+          when !shift:
+        _act(rows, MessageAction.delete);
       case LogicalKeyboardKey.keyE when !shift:
         if (_folder == MailFolder.archive) return KeyEventResult.ignored;
         _act(rows, MessageAction.archive);
@@ -2252,6 +2287,7 @@ class _InboxScreenState extends State<InboxScreen> {
         onSchedule: _schedule,
         now: widget.now,
         onClose: _closeCompose,
+        onDiscard: _discardCompose,
         onSave: widget.source.saveDraft,
         templates: widget.source.templates,
         suggest: widget.source.suggestRecipients,
@@ -3017,6 +3053,7 @@ class _InboxScreenState extends State<InboxScreen> {
       onSchedule: _schedule,
       now: widget.now,
       onClose: _closeCompose,
+      onDiscard: _discardCompose,
       onSave: widget.source.saveDraft,
       templates: widget.source.templates,
       suggest: widget.source.suggestRecipients,
