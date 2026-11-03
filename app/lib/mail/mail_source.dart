@@ -1903,11 +1903,19 @@ enum ReportStatus {
 
 /// What the report sheet holds when Send or "See what's sent" is pressed.
 @immutable
+class ReportAttachment {
+  const ReportAttachment(this.name, this.bytes);
+  final String name;
+  final Uint8List bytes;
+}
+
+@immutable
 class ReportDraft {
   const ReportDraft({
     required this.kind,
     required this.title,
     this.description = '',
+    this.attachments = const [],
     this.includeScreenshot = false,
     this.includeLog = true,
     this.device = const [],
@@ -1917,6 +1925,7 @@ class ReportDraft {
   final ReportKind kind;
   final String title;
   final String description;
+  final List<ReportAttachment> attachments;
   final bool includeScreenshot;
   final bool includeLog;
 

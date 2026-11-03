@@ -2040,8 +2040,7 @@ class _Avatar extends StatelessWidget {
               ),
             ),
           ),
-          for (final (i, color)
-              in (dots.isNotEmpty ? dots : [?dot]).indexed)
+          for (final (i, color) in (dots.isNotEmpty ? dots : [?dot]).indexed)
             Positioned(
               key: ValueKey('account-dot-$i'),
               right: -1 + i * (big ? 9 : 8).toDouble(),

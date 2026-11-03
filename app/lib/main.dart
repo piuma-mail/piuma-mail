@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'design/look.dart';
@@ -13,6 +14,7 @@ import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
 import 'engine/frb_generated.dart';
 import 'feedback/report_context.dart';
+import 'feedback/report_sheet.dart';
 import 'home.dart';
 import 'l10n/app_localizations.dart';
 import 'legal.dart';
@@ -53,6 +55,7 @@ Future<void> main(List<String> args) async {
   }
   runApp(
     PiumaApp(
+      reportSource: source,
       appearance: _loadAppearance(),
       onAppearance: _saveAppearance,
       home: (_, _) => MailHome(
@@ -97,6 +100,7 @@ Future<void> _readerWindow(String argument) async {
   final self = await WindowController.fromCurrentEngine();
   runApp(
     PiumaApp(
+      reportSource: source,
       appearance: _loadAppearance(),
       home: (_, _) => ReaderWindow(
         source: source,
@@ -153,9 +157,11 @@ class PiumaApp extends StatefulWidget {
     this.appearance = const Appearance(),
     this.onAppearance,
     this.locale,
+    this.reportSource,
   });
 
   final HomeBuilder home;
+  final MailSource? reportSource;
 
   /// Light or dark from the start, over [appearance]'s theme.
   final bool? initialDark;
@@ -174,6 +180,43 @@ class PiumaApp extends StatefulWidget {
 }
 
 class _PiumaAppState extends State<PiumaApp> {
+  final _navigator = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_reportKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_reportKey);
+    super.dispose();
+  }
+
+  /// ⇧⌘R on Apple, Ctrl+Shift+R elsewhere: the report sheet, from any
+  /// screen and whatever has focus. The screen is captured before the
+  /// sheet opens, so the screenshot shows what was there.
+  bool _reportKey(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyR) {
+      return false;
+    }
+    final keys = HardwareKeyboard.instance;
+    final apple =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    final mod = apple ? keys.isMetaPressed : keys.isControlPressed;
+    final other = apple ? keys.isControlPressed : keys.isMetaPressed;
+    if (!mod || other || !keys.isShiftPressed || keys.isAltPressed) {
+      return false;
+    }
+    final source = widget.reportSource;
+    final context = _navigator.currentState?.overlay?.context;
+    if (source == null || context == null) return false;
+    unawaited(openReport(context, source: source));
+    return true;
+  }
+
   late Appearance _look = switch (widget.initialDark) {
     null => widget.appearance,
     final dark => widget.appearance.copyWith(
@@ -197,6 +240,7 @@ class _PiumaAppState extends State<PiumaApp> {
       ThemeChoice.automatic => systemDark,
     };
     return MaterialApp(
+      navigatorKey: _navigator,
       title: 'Piuma Mail',
       debugShowCheckedModeBanner: false,
       locale:

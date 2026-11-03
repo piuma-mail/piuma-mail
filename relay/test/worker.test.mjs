@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import worker, { Meter, fenced, ipPrefix, issueBody, issueTitle, powOk, leadingZeroBits, sanitizeReport, verify } from '../src/worker.js';
+import worker, { Meter, collectFiles, contentsBody, fenced, ipPrefix, issueBody, issueTitle, powOk, leadingZeroBits, sanitizeReport, verify } from '../src/worker.js';
 
 /** A Durable Object's `ctx.storage.sql`, on Node's SQLite. */
 function sqlStorage() {
@@ -45,7 +45,9 @@ async function solve(seed, bits) {
 function mockGitHub() {
   const calls = [];
   globalThis.fetch = async (url, init) => {
-    calls.push({ url, method: init.method, body: init.body ? JSON.parse(init.body) : null });
+    // File uploads arrive as a stream of JSON, everything else as a string.
+    const text = init.body == null ? null : await new Response(init.body).text();
+    calls.push({ url, method: init.method, body: text ? JSON.parse(text) : null });
     if (init.method === 'GET') return new Response('{}', { status: 404 });
     if (url.endsWith('/git/trees')) return Response.json({ sha: 'tree' }, { status: 201 });
     if (url.endsWith('/git/commits')) return Response.json({ sha: 'commit' }, { status: 201 });
@@ -121,7 +123,7 @@ test('invalid proof of work configuration cannot issue unusable tickets', async 
 });
 
 test('oversized forms are rejected before parsing, regardless of Content-Length', async () => {
-  const maxForm = 21 * 1024 * 1024;
+  const maxForm = 33 * 1024 * 1024;
   for (const length of [undefined, '0', '1', 'not-a-number', String(maxForm + 1)]) {
     let pulls = 0;
     let cancelled = false;
@@ -141,7 +143,7 @@ test('oversized forms are rejected before parsing, regardless of Content-Length'
     if (length === String(maxForm + 1)) {
       assert.equal(pulls, 0);
     } else {
-      assert.equal(pulls, 22);
+      assert.equal(pulls, 34);
       assert.equal(cancelled, true);
     }
   }
@@ -183,13 +185,14 @@ test('a valid report creates the issue with its attachments, once', async () => 
   });
 });
 
-test('an idea is labelled enhancement, and files other than images and text are dropped', async () => {
+test('an idea is labelled enhancement, and files other than images, videos and text are dropped', async () => {
   const e = env();
   const calls = mockGitHub();
   const t = await ticketFor(e);
   await later(10_000, async () => {
     const form = reportForm(t, await solve(t.seed, t.bits), { kind: 'idea', title: 'Pin conversations' });
-    form.set('recording', new Blob([new Uint8Array([0, 0, 0, 24])], { type: 'video/mp4' }), 'recording.mp4');
+    form.set('drawing', new Blob(['<svg onload="alert(1)"/>'], { type: 'image/svg+xml' }), 'drawing.svg');
+    form.set('archive', new Blob([new Uint8Array([80, 75, 3, 4])], { type: 'application/zip' }), 'all.zip');
     const res = await sendReport(e, form);
     assert.equal(res.status, 201);
     const puts = calls.filter((c) => c.method === 'PUT');
@@ -424,4 +427,91 @@ test('the report count starts over a day after the first report', async () => {
   const v = getCount(e, key);
   assert.equal(v.count, 1);
   assert.ok(v.since > twoDaysAgo);
+});
+
+test('attached images show inline and videos are linked under Attachments', async () => {
+  const e = env();
+  const calls = mockGitHub();
+  const t = await ticketFor(e);
+  await later(10_000, async () => {
+    const form = reportForm(t, await solve(t.seed, t.bits));
+    form.set('attachment-1', new Blob([new Uint8Array([71, 73, 70])], { type: 'image/gif' }), 'attachment-1.gif');
+    form.set('attachment-2', new Blob([new Uint8Array([0, 0, 0, 24, 1])], { type: 'video/mp4' }), 'attachment-2.mp4');
+    form.set('attachment-3', new Blob([new Uint8Array([26, 69, 223])], { type: 'video/webm' }), 'attachment-3.webm');
+    form.set('attachment-4', new Blob([new Uint8Array([0, 0, 0, 20])], { type: 'video/quicktime' }), 'attachment-4.mov');
+    const res = await sendReport(e, form);
+    assert.equal(res.status, 201);
+    const puts = calls.filter((c) => c.method === 'PUT');
+    assert.deepEqual(puts.map((c) => c.url.split('/').pop()).sort(), [
+      'attachment-1.gif', 'attachment-2.mp4', 'attachment-3.webm', 'attachment-4.mov', 'logs.txt', 'screenshot.png',
+    ]);
+    const mp4 = puts.find((c) => c.url.endsWith('attachment-2.mp4')).body;
+    assert.deepEqual([...Buffer.from(mp4.content, 'base64')], [0, 0, 0, 24, 1]);
+    assert.equal(mp4.branch, 'feedback-assets');
+    const body = calls.find((c) => c.url.endsWith('/issues')).body.body;
+    const [images, attachments] = body.split('### Attachments');
+    assert.match(images, /!\[attachment-1\.gif\]\(.+attachment-1\.gif\?raw=true\)/);
+    for (const name of ['attachment-2.mp4', 'attachment-3.webm', 'attachment-4.mov']) {
+      assert.match(attachments, new RegExp(`- \\[${name.replace('.', '\\.')}\\]\\(https://github\\.com/o/r/blob/feedback-assets/`));
+      assert.doesNotMatch(images, new RegExp(name.replace('.', '\\.')));
+    }
+  });
+});
+
+test('files over their limits are refused before the ticket is used', async () => {
+  const e = env();
+  const calls = mockGitHub();
+  const t = await ticketFor(e);
+  const MiB = 1024 * 1024;
+  await later(10_000, async () => {
+    const nonce = await solve(t.seed, t.bits);
+    const cases = [
+      [[['attachment-1', 'image/png', 10 * MiB + 1]], 'file too large'],
+      [[['attachment-1', 'video/mp4', 25 * MiB + 1]], 'file too large'],
+      [[['attachment-1', 'video/mp4', 25 * MiB], ['attachment-2', 'image/jpeg', 7 * MiB + 1]], 'too large'],
+      [Array.from({ length: 7 }, (_, i) => [`attachment-${i + 1}`, 'image/webp', 1]), 'too many files'],
+    ];
+    for (const [files, error] of cases) {
+      const form = reportForm(t, nonce);
+      for (const [field, type, size] of files) form.set(field, new Blob([new Uint8Array(size)], { type }), `${field}.bin`);
+      const res = await sendReport(e, form);
+      assert.equal(res.status, 413);
+      assert.deepEqual(await res.json(), { error });
+    }
+    assert.equal(calls.length, 0);
+    // The ticket is still good: the same report without the files goes.
+    assert.equal((await sendReport(e, reportForm(t, nonce))).status, 201);
+  });
+});
+
+test('a video just under its limit fits, and repeated names get their own path', async () => {
+  const form = new FormData();
+  form.append('a', new Blob([new Uint8Array(25 * 1024 * 1024)], { type: 'video/mp4' }), 'clip.mp4');
+  form.append('b', new Blob([new Uint8Array(3)], { type: 'IMAGE/PNG' }), 'clip.mp4');
+  form.append('c', new Blob([new Uint8Array(3)], { type: 'image/png' }), '../../x y.png');
+  const files = collectFiles(form);
+  assert.deepEqual(files.map((f) => [f.name, f.type]), [['clip.mp4', 'video/mp4'], ['2-clip.mp4', 'image/png'], ['.._.._x_y.png', 'image/png']]);
+});
+
+test('the contents body streams the file as base64 with its exact length', async () => {
+  for (const size of [0, 1, 2, 3, 4, 3 * 256 * 1024, 3 * 256 * 1024 + 1, 2 * 1024 * 1024 + 5]) {
+    const bytes = new Uint8Array(size).map((_, i) => (i * 31) & 255);
+    const { stream, length } = contentsBody({ message: 'Report attachment: a "b"', branch: 'feedback-assets' }, new Blob([bytes]));
+    const raw = new Uint8Array(await new Response(stream).arrayBuffer());
+    assert.equal(raw.length, length);
+    const json = JSON.parse(new TextDecoder().decode(raw));
+    assert.equal(json.message, 'Report attachment: a "b"');
+    assert.equal(json.branch, 'feedback-assets');
+    assert.deepEqual(new Uint8Array(Buffer.from(json.content, 'base64')), bytes);
+    assert.equal(json.content, Buffer.from(bytes).toString('base64'));
+  }
+});
+
+test('generated duplicate names cannot collide with another submitted name', () => {
+  const form = new FormData();
+  for (const name of ['clip.mp4', '3-clip.mp4', 'clip.mp4']) {
+    form.append('attachment', new Blob(['x'], { type: 'video/mp4' }), name);
+  }
+  const files = collectFiles(form);
+  assert.equal(new Set(files.map((f) => f.name)).size, 3);
 });

@@ -8116,6 +8116,60 @@ abstract class AppLocalizations {
   /// **'Always'**
   String get reportAlways;
 
+  /// No description provided for @reportAttachments.
+  ///
+  /// In en, this message translates to:
+  /// **'Images and videos'**
+  String get reportAttachments;
+
+  /// No description provided for @reportAttachmentsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Images up to {image}, videos up to {video}'**
+  String reportAttachmentsHint(String image, String video);
+
+  /// No description provided for @reportAttach.
+  ///
+  /// In en, this message translates to:
+  /// **'Attach'**
+  String get reportAttach;
+
+  /// No description provided for @reportAttachType.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} can’t be attached: choose a PNG, JPEG, WebP or GIF image, or an MP4, WebM or MOV video.'**
+  String reportAttachType(String name);
+
+  /// No description provided for @reportImageTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too large: images can be up to {max}.'**
+  String reportImageTooLarge(String name, String max);
+
+  /// No description provided for @reportVideoTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too large: videos can be up to {max}.'**
+  String reportVideoTooLarge(String name, String max);
+
+  /// No description provided for @reportAttachTooMany.
+  ///
+  /// In en, this message translates to:
+  /// **'A report can carry up to {count} files.'**
+  String reportAttachTooMany(int count);
+
+  /// No description provided for @reportAttachFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t open the files. Please try again.'**
+  String get reportAttachFailed;
+
+  /// No description provided for @reportSectionAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment'**
+  String get reportSectionAttachment;
+
   /// No description provided for @reportSeeSent.
   ///
   /// In en, this message translates to:

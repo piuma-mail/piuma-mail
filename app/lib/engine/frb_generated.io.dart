@@ -47,6 +47,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  CombinedRow dco_decode_TraitDef_CombinedRow(dynamic raw);
+
+  @protected
   AccountFolderInfo dco_decode_account_folder_info(dynamic raw);
 
   @protected
@@ -242,6 +245,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeatureSettings dco_decode_feature_settings(dynamic raw);
 
   @protected
+  FeedbackAttachment dco_decode_feedback_attachment(dynamic raw);
+
+  @protected
   FeedbackDraft dco_decode_feedback_draft(dynamic raw);
 
   @protected
@@ -354,6 +360,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<Contact> dco_decode_list_contact(dynamic raw);
+
+  @protected
+  List<FeedbackAttachment> dco_decode_list_feedback_attachment(dynamic raw);
 
   @protected
   List<FeedbackField> dco_decode_list_feedback_field(dynamic raw);
@@ -1041,6 +1050,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeatureSettings sse_decode_feature_settings(SseDeserializer deserializer);
 
   @protected
+  FeedbackAttachment sse_decode_feedback_attachment(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   FeedbackDraft sse_decode_feedback_draft(SseDeserializer deserializer);
 
   @protected
@@ -1165,6 +1179,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<Contact> sse_decode_list_contact(SseDeserializer deserializer);
+
+  @protected
+  List<FeedbackAttachment> sse_decode_list_feedback_attachment(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<FeedbackField> sse_decode_list_feedback_field(
@@ -2011,6 +2030,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_feedback_attachment(
+    FeedbackAttachment self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_feedback_draft(FeedbackDraft self, SseSerializer serializer);
 
   @protected
@@ -2159,6 +2184,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_contact(List<Contact> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_feedback_attachment(
+    List<FeedbackAttachment> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_feedback_field(

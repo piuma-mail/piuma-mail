@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,7 @@ import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/search/command_palette.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
+import 'package:piuma_mail/widgets/attachment_chip.dart';
 import 'package:piuma_mail/widgets/switch.dart';
 
 /// A Thursday morning.
@@ -264,6 +266,68 @@ void main() {
     expect(r.device.map((d) => d.$1), contains('App'));
     expect(find.text('Report queued'), findsOneWidget);
     expect(find.text('Crash'), findsOneWidget);
+  });
+
+  testWidgets('images and videos go with the report; a large one is refused', (
+    tester,
+  ) async {
+    final picked = <List<XFile>>[
+      [
+        XFile.fromData(
+          Uint8List(2048),
+          name: 'screen recording.mov',
+          path: 'screen recording.mov',
+        ),
+        XFile.fromData(Uint8List(16), name: 'notes.pdf', path: 'notes.pdf'),
+      ],
+      [
+        XFile.fromData(
+          Uint8List(reportMaxImage + 1),
+          name: 'huge.png',
+          path: 'huge.png',
+        ),
+      ],
+    ];
+    final before = pickReportFiles;
+    pickReportFiles = () async => picked.removeAt(0);
+    addTearDown(() => pickReportFiles = before);
+    final source = await _help(tester);
+    await _openSheet(tester, 'Report a problem');
+    expect(_inSheet(find.text('Images and videos')), findsOneWidget);
+    expect(
+      _inSheet(find.text('Images up to 10 MB, videos up to 25 MB')),
+      findsOneWidget,
+    );
+    await tester.tap(_inSheet(find.text('Attach')));
+    await tester.pumpAndSettle();
+    expect(_inSheet(find.byType(AttachmentChip)), findsOneWidget);
+    expect(_inSheet(find.text('screen recording.mov')), findsOneWidget);
+    expect(
+      _inSheet(find.textContaining('notes.pdf can’t be attached')),
+      findsOneWidget,
+    );
+    await tester.tap(_inSheet(find.text('Attach')));
+    await tester.pumpAndSettle();
+    expect(
+      _inSheet(find.text('huge.png is too large: images can be up to 10 MB.')),
+      findsOneWidget,
+    );
+    expect(_inSheet(find.byType(AttachmentChip)), findsOneWidget);
+    await tester.enterText(_inSheet(find.byType(TextField)).first, 'Crash');
+    await tester.pump();
+    await tester.tap(_inSheet(find.text('Send')));
+    await tester.pumpAndSettle();
+    final r = source.lastReport!;
+    expect(r.attachments.map((a) => a.name), ['screen recording.mov']);
+    expect(r.attachments.single.bytes.length, 2048);
+  });
+
+  test('only images and videos can be attached', () {
+    expect(reportAttachmentKind('a.PNG'), ReportAttachmentKind.image);
+    expect(reportAttachmentKind('clip.webm'), ReportAttachmentKind.video);
+    expect(reportAttachmentKind('clip.mov'), ReportAttachmentKind.video);
+    expect(reportAttachmentKind('drawing.svg'), isNull);
+    expect(reportAttachmentKind('noextension'), isNull);
   });
 
   testWidgets('a sheet closed by Esc keeps what was written; Cancel forgets', (

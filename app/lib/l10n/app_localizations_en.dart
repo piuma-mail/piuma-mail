@@ -5537,6 +5537,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportAlways => 'Always';
 
   @override
+  String get reportAttachments => 'Images and videos';
+
+  @override
+  String reportAttachmentsHint(String image, String video) {
+    return 'Images up to $image, videos up to $video';
+  }
+
+  @override
+  String get reportAttach => 'Attach';
+
+  @override
+  String reportAttachType(String name) {
+    return '$name can’t be attached: choose a PNG, JPEG, WebP or GIF image, or an MP4, WebM or MOV video.';
+  }
+
+  @override
+  String reportImageTooLarge(String name, String max) {
+    return '$name is too large: images can be up to $max.';
+  }
+
+  @override
+  String reportVideoTooLarge(String name, String max) {
+    return '$name is too large: videos can be up to $max.';
+  }
+
+  @override
+  String reportAttachTooMany(int count) {
+    return 'A report can carry up to $count files.';
+  }
+
+  @override
+  String get reportAttachFailed => 'Couldn’t open the files. Please try again.';
+
+  @override
+  String get reportSectionAttachment => 'Attachment';
+
+  @override
   String get reportSeeSent => 'See what\'s sent';
 
   @override

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -12,12 +13,65 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../settings/settings_screen.dart' show PhoneBack;
+import '../widgets/attachment_chip.dart';
 import '../widgets/button.dart';
 import '../widgets/chip.dart';
 import '../widgets/dialog.dart';
 import '../widgets/route.dart';
 import '../widgets/switch.dart';
 import 'report_context.dart';
+
+/// What a report can carry besides the screenshot and the log: the same
+/// limits as the engine's (`core/src/feedback.rs`), under the relay's.
+const reportMaxAttachments = 5;
+const reportMaxImage = 10000000;
+const reportMaxVideo = 25000000;
+const reportMaxAttachmentsTotal = 25000000;
+
+enum ReportAttachmentKind { image, video }
+
+const _imageTypes = {
+  'png': 'image/png',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'webp': 'image/webp',
+  'gif': 'image/gif',
+};
+const _videoTypes = {
+  'mp4': 'video/mp4',
+  'webm': 'video/webm',
+  'mov': 'video/quicktime',
+};
+
+/// Whether a file named [name] can go with a report, and as what.
+ReportAttachmentKind? reportAttachmentKind(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot < 0) return null;
+  final ext = name.substring(dot + 1).toLowerCase();
+  if (_imageTypes.containsKey(ext)) return ReportAttachmentKind.image;
+  if (_videoTypes.containsKey(ext)) return ReportAttachmentKind.video;
+  return null;
+}
+
+/// The system's file picker for images and videos; tests replace it.
+Future<List<XFile>> Function() pickReportFiles = () => openFiles(
+  acceptedTypeGroups: [
+    XTypeGroup(
+      label: 'Images and videos',
+      extensions: [..._imageTypes.keys, ..._videoTypes.keys],
+      mimeTypes: {..._imageTypes.values, ..._videoTypes.values}.toList(),
+      uniformTypeIdentifiers: const [
+        'public.png',
+        'public.jpeg',
+        'org.webmproject.webp',
+        'com.compuserve.gif',
+        'public.mpeg-4',
+        'org.webmproject.webm',
+        'com.apple.quicktime-movie',
+      ],
+    ),
+  ],
+);
 
 /// Opens the report sheet of `FeedbackToApprove`: a bottom sheet on the
 /// phone, a centered sheet on the desktop. The screen under it is captured
@@ -115,7 +169,7 @@ class _ReportSheetState extends State<ReportSheet> {
   /// What was written in a sheet closed by Esc, back or a tap outside,
   /// for the next one of the same kind to start from. Cancel and Send
   /// forget it.
-  static (ReportKind, String, String)? _kept;
+  static (ReportKind, String, String, List<ReportAttachment>)? _kept;
 
   late ReportKind _kind = widget.kind;
   final _title = TextEditingController();
@@ -129,6 +183,76 @@ class _ReportSheetState extends State<ReportSheet> {
   /// The screenshot as taken, before any part was hidden.
   Uint8List? _original;
   bool _sending = false;
+  bool _picking = false;
+  final _attachments = <ReportAttachment>[];
+  String? _attachmentError;
+
+  Future<void> _attach() async {
+    if (_picking || _sending) return;
+    setState(() {
+      _picking = true;
+      _attachmentError = null;
+    });
+    final l = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context).languageCode;
+    String size(int bytes) => fileSize(bytes, locale: locale);
+    String? problem;
+    try {
+      final files = await pickReportFiles();
+      for (final file in files) {
+        if (!mounted) return;
+        final kind = reportAttachmentKind(file.name);
+        if (kind == null) {
+          problem = l.reportAttachType(file.name);
+          continue;
+        }
+        final video = kind == ReportAttachmentKind.video;
+        final length = await file.length();
+        final limit = video ? reportMaxVideo : reportMaxImage;
+        if (length > limit) {
+          problem = video
+              ? l.reportVideoTooLarge(file.name, size(limit))
+              : l.reportImageTooLarge(file.name, size(limit));
+          continue;
+        }
+        if (_attachments.length >= reportMaxAttachments) {
+          problem = l.reportAttachTooMany(reportMaxAttachments);
+          break;
+        }
+        final total = _attachments.fold<int>(0, (n, a) => n + a.bytes.length);
+        if (total + length > reportMaxAttachmentsTotal) {
+          problem = l.filesTooLarge(size(reportMaxAttachmentsTotal));
+          continue;
+        }
+        final Uint8List bytes;
+        try {
+          bytes = await file.readAsBytes();
+        } catch (_) {
+          problem = l.fileNotRead(file.name);
+          continue;
+        }
+        if (!mounted) return;
+        // Checked again on the bytes: the file may have grown meanwhile.
+        if (bytes.length > limit ||
+            total + bytes.length > reportMaxAttachmentsTotal) {
+          problem = video
+              ? l.reportVideoTooLarge(file.name, size(limit))
+              : l.reportImageTooLarge(file.name, size(limit));
+          continue;
+        }
+        setState(() => _attachments.add(ReportAttachment(file.name, bytes)));
+      }
+    } catch (_) {
+      problem = l.reportAttachFailed;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _picking = false;
+          _attachmentError = problem;
+        });
+      }
+    }
+  }
 
   /// Sent or cancelled: nothing to keep.
   bool _done = false;
@@ -137,10 +261,12 @@ class _ReportSheetState extends State<ReportSheet> {
   void initState() {
     super.initState();
     _open++;
-    if (_kept case (final kind, final title, final description)?
+    if (_kept
+        case (final kind, final title, final description, final attachments)?
         when kind == widget.kind) {
       _title.text = title;
       _description.text = description;
+      _attachments.addAll(attachments);
       _kept = null;
     }
     if (_title.text.isEmpty) _title.text = widget.title ?? '';
@@ -157,8 +283,9 @@ class _ReportSheetState extends State<ReportSheet> {
     _open--;
     if (!_done &&
         (_title.text.trim().isNotEmpty ||
-            _description.text.trim().isNotEmpty)) {
-      _kept = (_kind, _title.text, _description.text);
+            _description.text.trim().isNotEmpty ||
+            _attachments.isNotEmpty)) {
+      _kept = (_kind, _title.text, _description.text, List.of(_attachments));
     }
     _title.dispose();
     _description.dispose();
@@ -166,6 +293,7 @@ class _ReportSheetState extends State<ReportSheet> {
   }
 
   ReportDraft get _draft => ReportDraft(
+    attachments: List.unmodifiable(_attachments),
     kind: _kind,
     title: _title.text,
     description: _description.text,
@@ -175,7 +303,7 @@ class _ReportSheetState extends State<ReportSheet> {
     screens: widget.screens,
   );
 
-  bool get _ready => _title.text.trim().isNotEmpty && !_sending;
+  bool get _ready => _title.text.trim().isNotEmpty && !_sending && !_picking;
 
   void _pick(ReportKind kind) => setState(() {
     _kind = kind;
@@ -238,6 +366,7 @@ class _ReportSheetState extends State<ReportSheet> {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context).languageCode;
     final phone = widget.phone;
     final shortcut = defaultTargetPlatform == TargetPlatform.macOS
         ? '⌘↵'
@@ -400,9 +529,61 @@ class _ReportSheetState extends State<ReportSheet> {
                   style: PiumaType.small.copyWith(fontSize: 12, color: c.muted),
                 ),
               ),
+              _Line(
+                label: l.reportAttachments,
+                hint: l.reportAttachmentsHint(
+                  fileSize(reportMaxImage, locale: locale),
+                  fileSize(reportMaxVideo, locale: locale),
+                ),
+                top: true,
+                trailing: PiumaPressable(
+                  onTap: _sending || _picking ? null : _attach,
+                  semanticLabel: l.reportAttach,
+                  child: Text(
+                    l.reportAttach,
+                    style: PiumaType.small.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: _sending || _picking ? c.muted : c.accentText,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
+        if (_attachments.isNotEmpty) ...[
+          const SizedBox(height: PiumaSpace.s12),
+          Wrap(
+            spacing: PiumaSpace.s8,
+            runSpacing: PiumaSpace.s8,
+            children: [
+              for (final a in _attachments)
+                AttachmentChip(
+                  key: ObjectKey(a),
+                  name: a.name,
+                  size: fileSize(a.bytes.length, locale: locale),
+                  semanticLabel: l.attachmentLabel(
+                    a.name,
+                    fileSize(a.bytes.length, locale: locale),
+                  ),
+                  removeLabel: l.removeAttachment(a.name),
+                  onRemove: _sending
+                      ? null
+                      : () => setState(() {
+                          _attachments.remove(a);
+                          _attachmentError = null;
+                        }),
+                ),
+            ],
+          ),
+        ],
+        if (_attachmentError case final error?) ...[
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            error,
+            style: PiumaType.small.copyWith(fontSize: 12, color: c.danger),
+          ),
+        ],
         const SizedBox(height: PiumaSpace.s16),
         Row(
           children: [
@@ -445,7 +626,7 @@ class _ReportSheetState extends State<ReportSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: PiumaSpace.s16),
                 child: SingleChildScrollView(child: body),
               )
-            : body,
+            : SingleChildScrollView(child: body),
       ),
     );
   }
@@ -667,6 +848,11 @@ class _WhatsSentPageState extends State<WhatsSentPage> {
                             l.reportSectionDevice,
                             Text(device, style: mono),
                           ),
+                          for (final a in widget.draft.attachments)
+                            card(
+                              l.reportSectionAttachment,
+                              Text(a.name, style: mono),
+                            ),
                           if (widget.screenshot case final png?)
                             card(
                               l.reportSectionScreenshot,

@@ -2820,7 +2820,14 @@ class EngineMailSource extends MailSource {
     ReportDraft draft,
     Uint8List? screenshot,
   ) async => _sentReport(
-    fb.feedbackSubmit(draft: _reportDraft(draft), screenshot: screenshot),
+    await fb.feedbackSubmit(
+      draft: _reportDraft(draft),
+      screenshot: screenshot,
+      attachments: [
+        for (final a in draft.attachments)
+          fb.FeedbackAttachment(name: a.name, bytes: a.bytes),
+      ],
+    ),
   );
 
   @override
