@@ -7,7 +7,7 @@
  * stores the attachments on the repository's `feedback-assets` branch and opens the issue.
  *
  *   POST /challenge  {installId}            → {ticket, seed, bits, nbf, exp}
- *   POST /report     multipart: report JSON + screenshot / logs files
+ *   POST /report     multipart: report JSON + screenshot / logs / attachment-N files
  *                                           → 201 {url, number}
  *   GET  /health                            → {ok: true}
  *
@@ -19,7 +19,7 @@
  *   per client IP (IPv6 by /64), so a fresh install id alone does not reset it;
  * - a daily cap across all installations;
  * - optionally, Cloudflare's rate limiter per client IP on /challenge and /report;
- * - attachments up to 10 MB each and 20 MB per report.
+ * - at most 8 files: images up to 10 MiB each, videos up to 25 MiB, 32 MiB per report in all.
  * Used tickets, counters and the daily total live in one Durable Object (`Meter`), so checking and
  * recording them is atomic: the same ticket sent twice in parallel opens one issue, not two.
  *
@@ -34,9 +34,26 @@
 import { DurableObject } from 'cloudflare:workers';
 
 const ASSETS_BRANCH = 'feedback-assets';
-const MAX_FILE = 10 * 1024 * 1024;
-const MAX_TOTAL = 20 * 1024 * 1024;
-const MAX_FORM = MAX_TOTAL + 1024 * 1024; // the report JSON and multipart overhead on top
+const MiB = 1024 * 1024;
+// What a report may carry. Memory sets the ceiling: a Worker has 128 MB, and parsing the form holds
+// the body and its files at once (about twice MAX_FORM). Files then go to GitHub one at a time,
+// base64-encoded as they stream, so no file is ever copied whole again.
+const MAX_IMAGE = 10 * MiB; // also the log
+const MAX_VIDEO = 25 * MiB;
+const MAX_TOTAL = 32 * MiB;
+const MAX_FILES = 8;
+const MAX_FORM = MAX_TOTAL + MiB; // the report JSON and multipart overhead on top
+/** Types kept, with each one's size limit; anything else is dropped. */
+const FILE_TYPES = {
+  'image/png': MAX_IMAGE,
+  'image/jpeg': MAX_IMAGE,
+  'image/webp': MAX_IMAGE,
+  'image/gif': MAX_IMAGE,
+  'video/mp4': MAX_VIDEO,
+  'video/webm': MAX_VIDEO,
+  'video/quicktime': MAX_VIDEO,
+  'text/plain': MAX_IMAGE,
+};
 const TICKET_TTL = 30 * 60; // seconds
 const DAY = 24 * 60 * 60;
 const MAX_WAIT = 15 * 60; // seconds
@@ -136,7 +153,7 @@ async function report(request, env) {
   if (files.length) await gh.ensureAssetsBranch();
   for (const f of files) {
     const path = `${folder}/${f.name}`;
-    await gh.putFile(path, f.bytes, `Report attachment: ${f.name}`);
+    await gh.putFile(path, f.file, `Report attachment: ${f.name}`);
     stored.push({ ...f, path, url: `https://github.com/${env.REPO}/blob/${ASSETS_BRANCH}/${encodePath(path)}` });
   }
   const issue = await gh.createIssue({
@@ -168,8 +185,16 @@ async function boundedFormData(request) {
   } finally {
     reader.releaseLock();
   }
+  // Handed over chunk by chunk, so the body isn't held twice while the form is parsed.
+  const body = new ReadableStream({
+    pull(controller) {
+      const next = chunks.shift();
+      if (next) controller.enqueue(next);
+      else controller.close();
+    },
+  });
   try {
-    return await new Response(new Blob(chunks), { headers: request.headers }).formData();
+    return await new Response(body, { headers: request.headers }).formData();
   } catch {
     throw new HttpError(400, 'form');
   }
@@ -193,18 +218,24 @@ export function sanitizeReport(meta) {
   };
 }
 
-function collectFiles(form) {
+export function collectFiles(form) {
   const out = [];
+  const names = new Set();
   let total = 0;
   for (const [field, value] of form.entries()) {
     if (field === 'report' || typeof value === 'string') continue;
-    const type = value.type || 'application/octet-stream';
-    if (!/^(image\/(png|jpeg|webp)|text\/plain)$/.test(type)) continue;
-    if (value.size > MAX_FILE) throw new HttpError(413, `${field} too large`);
+    const type = (value.type || 'application/octet-stream').toLowerCase();
+    const max = Object.hasOwn(FILE_TYPES, type) ? FILE_TYPES[type] : 0;
+    if (!max) continue;
+    if (out.length >= MAX_FILES) throw new HttpError(413, 'too many files');
+    if (value.size > max) throw new HttpError(413, 'file too large');
     total += value.size;
     if (total > MAX_TOTAL) throw new HttpError(413, 'too large');
-    const name = safeName(value.name || field);
-    out.push({ field, name, type, size: value.size, bytes: value.arrayBuffer() });
+    // One path per file: a repeated name would make GitHub refuse the second after the ticket is used.
+    let name = safeName(value.name || field);
+    if (names.has(name)) name = safeName(`${out.length + 1}-${name}`);
+    names.add(name);
+    out.push({ field, name, type, size: value.size, file: value });
   }
   return out;
 }
@@ -239,6 +270,7 @@ export function issueBody(r, files) {
   const section = (h) => lines.push(`### ${h}`, '');
   section(`${r.kind === 'problem' ? 'What happened' : 'What and why'} (reporter's words)`);
   lines.push(...quoted(noMentions(r.description || r.title)), '');
+  // Images show inline; videos and the log are links (GitHub doesn't play a video from a branch).
   const images = files.filter((f) => f.type.startsWith('image/'));
   const others = files.filter((f) => !f.type.startsWith('image/'));
   if (images.length) {
@@ -271,7 +303,9 @@ export function issueBody(r, files) {
 
 function github(env) {
   const base = `https://api.github.com/repos/${env.REPO}`;
+  // `body` is an object to send as JSON, or an already-encoded stream of JSON.
   const call = async (method, path, body) => {
+    const stream = body instanceof ReadableStream;
     const res = await fetch(base + path, {
       method,
       headers: {
@@ -281,7 +315,8 @@ function github(env) {
         'user-agent': 'piuma-report-relay',
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: stream || !body ? body : JSON.stringify(body),
+      ...(stream ? { duplex: 'half' } : {}),
     });
     if (res.status === 404 && method === 'GET') return null;
     if (!res.ok) {
@@ -300,8 +335,11 @@ function github(env) {
       const commit = await call('POST', '/git/commits', { message: 'Report attachments', tree: tree.sha, parents: [] });
       await call('POST', '/git/refs', { ref: `refs/heads/${ASSETS_BRANCH}`, sha: commit.sha });
     },
-    async putFile(path, bytes, message) {
-      await call('PUT', `/contents/${encodePath(path)}`, { message, branch: ASSETS_BRANCH, content: base64(await bytes) });
+    async putFile(path, file, message) {
+      const { stream, length } = contentsBody({ message, branch: ASSETS_BRANCH }, file);
+      // On Cloudflare a FixedLengthStream sends it with its Content-Length rather than chunked.
+      const body = typeof FixedLengthStream === 'function' ? stream.pipeThrough(new FixedLengthStream(length)) : stream;
+      await call('PUT', `/contents/${encodePath(path)}`, body);
     },
     createIssue: (issue) => call('POST', '/issues', issue),
   };
@@ -479,6 +517,36 @@ const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
 const safeName = (n) => n.replace(/[^A-Za-z0-9._-]/g, '_').slice(-80) || 'file';
 const encodePath = (p) => p.split('/').map(encodeURIComponent).join('/');
 const formatSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.ceil(b / 1024)} KB`);
+
+/** Bytes of the file read and base64-encoded per step: a multiple of 3, so the pieces join cleanly. */
+const B64_CHUNK = 3 * 256 * 1024;
+
+/**
+ * The Contents API's JSON, `fields` plus the file as `content` in base64, as a stream that reads
+ * the file a slice at a time, and its exact length in bytes.
+ */
+export function contentsBody(fields, file) {
+  const head = enc.encode(`${JSON.stringify(fields).slice(0, -1)},"content":"`);
+  const tail = enc.encode('"}');
+  const length = head.length + 4 * Math.ceil(file.size / 3) + tail.length;
+  let offset = -1;
+  const stream = new ReadableStream({
+    async pull(controller) {
+      if (offset < 0) {
+        offset = 0;
+        controller.enqueue(head);
+      } else if (offset < file.size) {
+        const part = await file.slice(offset, offset + B64_CHUNK).arrayBuffer();
+        offset += B64_CHUNK;
+        controller.enqueue(enc.encode(base64(part)));
+      } else {
+        controller.enqueue(tail);
+        controller.close();
+      }
+    },
+  });
+  return { stream, length };
+}
 
 function b64url(bytes) {
   return base64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

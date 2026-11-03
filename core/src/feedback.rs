@@ -438,6 +438,18 @@ pub fn attachment_type(name: &str) -> Option<(&'static str, &'static str, bool)>
         .map(|&(e, mime, video)| (e, mime, video))
 }
 
+/// For a saved attachment's file name, "attachment-<n>.<ext>": its form
+/// field ("attachment-<n>") and its type. None for any other name.
+fn saved_attachment(file: &str) -> Option<(String, &'static str)> {
+    let (stem, _) = file.rsplit_once('.')?;
+    let n = stem.strip_prefix("attachment-")?;
+    if n.is_empty() || n.len() > 2 || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (ext, mime, _) = attachment_type(file)?;
+    (file == format!("{stem}.{ext}")).then(|| (stem.to_string(), mime))
+}
+
 /// Why attachments can't go as they are: the sheet checks the same rules
 /// before Send.
 fn check_attachments(files: &[Attachment]) -> Result<(), FeedbackError> {
@@ -744,14 +756,15 @@ impl Reports {
         }
         if !report.attachments_dropped {
             for a in &report.attachments {
-                // Made here, but read back from disk: never a path out.
-                if !valid_id(a.file.replace('.', "-").as_str()) {
+                // Made here, but read back from disk: only names this
+                // code makes, never a path out of the folder.
+                let Some((field, mime)) = saved_attachment(&a.file) else {
                     continue;
-                }
+                };
                 out.push(ReportFile {
-                    field: a.file.split('.').next().unwrap_or("attachment").into(),
+                    field,
                     name: a.file.clone(),
-                    mime: a.mime.clone(),
+                    mime: mime.into(),
                     path: dir.join(&a.file),
                 });
             }
@@ -1488,6 +1501,175 @@ mod tests {
         assert_eq!(subject, "[Piuma problem] Inbox stops syncing");
         assert!(body.starts_with("After sleep\n\nDevice and app\nApp: 0.1.0 (120)"));
         assert_eq!(files.len(), 1);
+        let _ = std::fs::remove_dir_all(reports.dir());
+    }
+
+    fn file(name: &str, len: usize) -> Attachment {
+        Attachment {
+            name: name.into(),
+            bytes: vec![7; len],
+        }
+    }
+
+    #[test]
+    fn attachments_wait_with_the_report() {
+        let reports = Reports::new(temp_dir("attach"));
+        let files = [file("Anna's cat.JPG", 3), file("screen recording.mov", 5)];
+        let r = reports.submit(&draft(), None, &files, None).unwrap();
+        assert_eq!(
+            r.attachments,
+            vec![
+                SavedAttachment {
+                    file: "attachment-1.jpg".into(),
+                    mime: "image/jpeg".into(),
+                    size: 3,
+                },
+                SavedAttachment {
+                    file: "attachment-2.mov".into(),
+                    mime: "video/quicktime".into(),
+                    size: 5,
+                },
+            ]
+        );
+        // Kept on disk, and back after a restart.
+        let again = reports.get(&r.id).unwrap();
+        assert_eq!(again, r);
+        let sent = reports.files(&again);
+        let fields: Vec<_> = sent.iter().map(|f| f.field.as_str()).collect();
+        assert_eq!(fields, ["logs", "attachment-1", "attachment-2"]);
+        assert_eq!(std::fs::read(&sent[2].path).unwrap(), vec![7; 5]);
+        // The device's file names never leave.
+        assert!(sent.iter().all(|f| !f.name.contains("Anna")));
+        // Too large for the relay: only the report and the log go.
+        let mut dropped = again.clone();
+        dropped.attachments_dropped = true;
+        assert_eq!(reports.files(&dropped).len(), 1);
+        // A name this code didn't make is never read.
+        let mut odd = again.clone();
+        odd.attachments[0].file = "../report.json".into();
+        odd.attachments[1].file = "attachment-2.exe".into();
+        assert_eq!(reports.files(&odd).len(), 1);
+        // A report saved before attachments existed still reads.
+        let path = reports.dir().join(&r.id).join("report.json");
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("attachments");
+        std::fs::write(&path, json.to_string()).unwrap();
+        assert!(reports.get(&r.id).unwrap().attachments.is_empty());
+        let _ = std::fs::remove_dir_all(reports.dir());
+    }
+
+    #[test]
+    fn attachments_keep_to_the_limits() {
+        let reports = Reports::new(temp_dir("limits"));
+        let refused = |files: &[Attachment]| {
+            matches!(
+                reports.submit(&draft(), None, files, None),
+                Err(FeedbackError::Attachment(_))
+            )
+        };
+        assert!(refused(&[file("notes.pdf", 1)]));
+        assert!(refused(&[file("no extension", 1)]));
+        assert!(refused(&[file("big.png", MAX_IMAGE as usize + 1)]));
+        assert!(refused(&[file("long.mp4", MAX_VIDEO as usize + 1)]));
+        assert!(refused(&vec![file("a.gif", 1); MAX_ATTACHMENTS + 1]));
+        assert!(refused(&[
+            file("a.png", MAX_IMAGE as usize),
+            file("b.png", MAX_IMAGE as usize),
+            file("c.png", MAX_IMAGE as usize),
+        ]));
+        // Nothing refused is kept.
+        assert!(reports.list().is_empty());
+        assert!(!refused(&[
+            file("a.webp", MAX_IMAGE as usize),
+            file("b.webm", 1)
+        ]));
+        let _ = std::fs::remove_dir_all(reports.dir());
+    }
+
+    /// A relay on localhost that answers like an older one: 413 for a
+    /// report with attachments, an issue for one without.
+    async fn small_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = kept.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 64 * 1024];
+                    // Headers, then as much body as they announce.
+                    let (head, body_at) = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break (String::from_utf8_lossy(&buf[..i]).to_lowercase(), i + 4);
+                        }
+                    };
+                    let length: usize = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    while buf.len() < body_at + length {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let body = String::from_utf8_lossy(&buf[body_at..]).into_owned();
+                    let (status, answer) = if head.starts_with("post /challenge") {
+                        (
+                            "200 OK",
+                            r#"{"ticket":"t","seed":"s","bits":0,"nbf":0,"exp":99999999999999}"#
+                                .to_string(),
+                        )
+                    } else if body.contains("name=\"attachment-1\"") {
+                        seen.lock().unwrap().push(body);
+                        ("413 Payload Too Large", r#"{"error":"too large"}"#.into())
+                    } else {
+                        seen.lock().unwrap().push(body);
+                        ("201 Created", r#"{"url":"u","number":7}"#.into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                        answer.len()
+                    );
+                    let _ = sock.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (base, seen)
+    }
+
+    #[tokio::test]
+    async fn an_older_relay_gets_the_words_without_the_files() {
+        let (base, seen) = small_relay().await;
+        let reports = Reports::new(temp_dir("older"));
+        let r = reports
+            .submit(&draft(), None, &[file("clip.mp4", 64)], None)
+            .unwrap();
+        let relay = Relay::new(&base).unwrap();
+        assert_eq!(send_queued(&reports, &relay).await.unwrap(), 1);
+        let after = reports.get(&r.id).unwrap();
+        assert_eq!(after.status, Status::Sent);
+        assert_eq!(after.issue, Some(7));
+        assert!(after.attachments_dropped);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(!seen[1].contains("attachment-1"));
+        assert!(seen[1].contains("1 not sent: too large for the relay"));
+        drop(seen);
         let _ = std::fs::remove_dir_all(reports.dir());
     }
 

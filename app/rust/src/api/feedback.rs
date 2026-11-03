@@ -118,6 +118,14 @@ pub struct FeedbackField {
     pub value: String,
 }
 
+/// An image or a video the person attached on the sheet. Only its
+/// extension leaves the device: it goes as "attachment-1.png"…
+#[derive(Debug, Clone)]
+pub struct FeedbackAttachment {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
 /// A report in Your reports.
 #[derive(Debug, Clone)]
 pub struct FeedbackReport {
@@ -172,7 +180,7 @@ pub struct FeedbackEmail {
     pub to: String,
     pub subject: String,
     pub body: String,
-    /// Files to attach (screenshot, log).
+    /// Files to attach (screenshot, log, the images and videos picked).
     pub attachments: Vec<String>,
 }
 
@@ -320,17 +328,25 @@ pub fn feedback_preview(draft: FeedbackDraft) -> Result<FeedbackPreview, EngineE
 
 /// Send: saves the report and starts sending it. `screenshot` is the PNG
 /// with the hidden parts already blurred; it is dropped unless the switch
-/// is on.
-#[frb(sync)]
+/// is on. `attachments` are the images and videos the person picked; they
+/// wait on disk with the report. Not sync: a video takes a moment to write.
 pub fn feedback_submit(
     draft: FeedbackDraft,
     screenshot: Option<Vec<u8>>,
+    attachments: Vec<FeedbackAttachment>,
 ) -> Result<FeedbackReport, EngineError> {
     refresh_personal();
     let reports = reports()?;
+    let attachments: Vec<feedback::Attachment> = attachments
+        .into_iter()
+        .map(|a| feedback::Attachment {
+            name: a.name,
+            bytes: a.bytes,
+        })
+        .collect();
     let ticket = PREPARED.lock().unwrap_or_else(|e| e.into_inner()).take();
     let report = reports
-        .submit(&to_core(draft), screenshot.as_deref(), ticket)
+        .submit(&to_core(draft), screenshot.as_deref(), &attachments, ticket)
         .map_err(err)?;
     feedback_send_queued();
     Ok(report.into())
