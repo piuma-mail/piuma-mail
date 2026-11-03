@@ -12,7 +12,6 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
-import '../mail/readable.dart' show fileSize;
 import '../settings/settings_screen.dart' show PhoneBack;
 import '../widgets/attachment_chip.dart';
 import '../widgets/button.dart';
