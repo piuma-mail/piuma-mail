@@ -240,9 +240,11 @@ class _ReportSheetState extends State<ReportSheet> {
               : l.reportImageTooLarge(file.name, size(limit));
           continue;
         }
+        debugPrint('ATTACHING file: ${file.name}, kind: $kind');
         setState(() => _attachments.add(ReportAttachment(file.name, bytes)));
       }
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('ATTACH CAUGHT ERROR: $e\n$st');
       problem = l.reportAttachFailed;
     } finally {
       if (mounted) {
