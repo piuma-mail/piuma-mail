@@ -1053,17 +1053,24 @@ impl Relay {
             "screens": report.screens,
             "logExcerpt": log.map(log_excerpt).unwrap_or_default(),
         });
+        let mut total_bytes: usize = 0;
         let mut form = reqwest::multipart::Form::new().text("report", meta.to_string());
         for (file, bytes) in files {
+            total_bytes += bytes.len();
             let part = reqwest::multipart::Part::bytes(bytes)
                 .file_name(file.name)
                 .mime_str(&file.mime)
                 .map_err(|e| RelayError::Answer(e.to_string()))?;
             form = form.part(file.field, part);
         }
+        // Give slow connections enough time: 60s base plus 1s per 100 KB
+        // of uploaded files (capped at 5 minutes).
+        let upload_timeout =
+            Duration::from_secs(60 + (total_bytes / 100_000) as u64).min(Duration::from_secs(300));
         let res = self
             .http
             .post(format!("{}/report", self.base))
+            .timeout(upload_timeout)
             .multipart(form)
             .send()
             .await
@@ -1171,6 +1178,23 @@ pub async fn send_queued(reports: &Reports, relay: &Relay) -> Result<usize, Rela
                 log(Level::Warn, "feedback", &e.to_string());
                 report.tries += 1;
                 report.ticket = None;
+                // If repeatedly failing (e.g. upload timeouts or network issues),
+                // drop heavy attachments after half the attempts so the words still arrive.
+                if !report.attachments.is_empty()
+                    && !report.attachments_dropped
+                    && report.tries >= 3
+                {
+                    log(
+                        Level::Warn,
+                        "feedback",
+                        &format!(
+                            "repeated delivery failure (try {}); retrying without {} attachments",
+                            report.tries,
+                            report.attachments.len()
+                        ),
+                    );
+                    report.attachments_dropped = true;
+                }
                 if report.tries >= MAX_TRIES {
                     report.status = Status::Failed;
                     report.waiting = None;
@@ -1669,6 +1693,108 @@ mod tests {
         assert_eq!(seen.len(), 2);
         assert!(!seen[1].contains("attachment-1"));
         assert!(seen[1].contains("1 not sent: too large for the relay"));
+        drop(seen);
+        let _ = std::fs::remove_dir_all(reports.dir());
+    }
+
+    /// A relay on localhost that returns 500 when attachments are sent,
+    /// simulating persistent network or upload failures.
+    async fn failing_attachments_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let kept = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = kept.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 64 * 1024];
+                    let (head, body_at) = loop {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            break (String::from_utf8_lossy(&buf[..i]).to_lowercase(), i + 4);
+                        }
+                    };
+                    let length: usize = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    while buf.len() < body_at + length {
+                        let n = sock.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    let body = String::from_utf8_lossy(&buf[body_at..]).into_owned();
+                    let (status, answer) = if head.starts_with("post /challenge") {
+                        (
+                            "200 OK",
+                            r#"{"ticket":"t","seed":"s","bits":0,"nbf":0,"exp":99999999999999}"#
+                                .to_string(),
+                        )
+                    } else if body.contains("name=\"attachment-1\"") {
+                        seen.lock().unwrap().push(body);
+                        (
+                            "500 Internal Server Error",
+                            r#"{"error":"simulated failure"}"#.into(),
+                        )
+                    } else {
+                        seen.lock().unwrap().push(body);
+                        ("201 Created", r#"{"url":"u","number":8}"#.into())
+                    };
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                        answer.len()
+                    );
+                    let _ = sock.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (base, seen)
+    }
+
+    #[tokio::test]
+    async fn repeated_delivery_failures_drop_attachments_so_words_arrive() {
+        let (base, seen) = failing_attachments_relay().await;
+        let reports = Reports::new(temp_dir("repeated-failures"));
+        let r = reports
+            .submit(&draft(), None, &[file("clip.mp4", 64)], None)
+            .unwrap();
+        let relay = Relay::new(&base).unwrap();
+
+        for expected_tries in 1..=3 {
+            let _ = send_queued(&reports, &relay).await;
+            let mut rep = reports.get(&r.id).unwrap();
+            assert_eq!(rep.tries, expected_tries);
+            assert_eq!(rep.status, Status::Queued);
+            if expected_tries < 3 {
+                assert!(!rep.attachments_dropped);
+            } else {
+                assert!(rep.attachments_dropped);
+            }
+            rep.next_try = 0;
+            reports.save(&rep).unwrap();
+        }
+
+        assert_eq!(send_queued(&reports, &relay).await.unwrap(), 1);
+        let after = reports.get(&r.id).unwrap();
+        assert_eq!(after.status, Status::Sent);
+        assert_eq!(after.issue, Some(8));
+        assert!(after.attachments_dropped);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4);
+        assert!(!seen[3].contains("attachment-1"));
         drop(seen);
         let _ = std::fs::remove_dir_all(reports.dir());
     }
