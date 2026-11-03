@@ -233,7 +233,9 @@ export function collectFiles(form) {
     if (total > MAX_TOTAL) throw new HttpError(413, 'too large');
     // One path per file: a repeated name would make GitHub refuse the second after the ticket is used.
     let name = safeName(value.name || field);
-    if (names.has(name)) name = safeName(`${out.length + 1}-${name}`);
+    const original = name;
+    let suffix = out.length + 1;
+    while (names.has(name)) name = `${suffix++}-${original}`;
     names.add(name);
     out.push({ field, name, type, size: value.size, file: value });
   }

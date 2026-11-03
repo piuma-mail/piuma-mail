@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -115,7 +116,7 @@ class _ReportSheetState extends State<ReportSheet> {
   /// What was written in a sheet closed by Esc, back or a tap outside,
   /// for the next one of the same kind to start from. Cancel and Send
   /// forget it.
-  static (ReportKind, String, String)? _kept;
+  static (ReportKind, String, String, List<ReportAttachment>)? _kept;
 
   late ReportKind _kind = widget.kind;
   final _title = TextEditingController();
@@ -129,6 +130,97 @@ class _ReportSheetState extends State<ReportSheet> {
   /// The screenshot as taken, before any part was hidden.
   Uint8List? _original;
   bool _sending = false;
+  bool _picking = false;
+  final _attachments = <ReportAttachment>[];
+  String? _attachmentError;
+
+  Future<void> _attach() async {
+    if (_picking || _sending) return;
+    setState(() {
+      _picking = true;
+      _attachmentError = null;
+    });
+    try {
+      final files = await openFiles(
+        acceptedTypeGroups: [
+          const XTypeGroup(
+            label: 'Images and videos',
+            extensions: [
+              'png',
+              'jpg',
+              'jpeg',
+              'webp',
+              'gif',
+              'mp4',
+              'webm',
+              'mov',
+            ],
+            mimeTypes: [
+              'image/png',
+              'image/jpeg',
+              'image/webp',
+              'image/gif',
+              'video/mp4',
+              'video/webm',
+              'video/quicktime',
+            ],
+            uniformTypeIdentifiers: ['public.image', 'public.movie'],
+          ),
+        ],
+      );
+      for (final file in files) {
+        if (!mounted) return;
+        final ext = file.name.split('.').last.toLowerCase();
+        if (![
+          'png',
+          'jpg',
+          'jpeg',
+          'webp',
+          'gif',
+          'mp4',
+          'webm',
+          'mov',
+        ].contains(ext)) {
+          throw const FormatException(
+            'Choose a PNG, JPEG, WebP, GIF, MP4, WebM or MOV file.',
+          );
+        }
+        final video = ['mp4', 'webm', 'mov'].contains(ext);
+        final size = await file.length();
+        final limit = video ? 25000000 : 10000000;
+        if (size > limit) {
+          throw FormatException(
+            'File too large: the limit is ${video ? 25 : 10} MB per ${video ? "video" : "image"}.',
+          );
+        }
+        if (_attachments.length >= 5 ||
+            size + _attachments.fold<int>(0, (n, a) => n + a.bytes.length) >
+                25000000) {
+          throw const FormatException(
+            'Attach up to 5 files, with a total of 25 MB.',
+          );
+        }
+        final bytes = await file.readAsBytes();
+        if (bytes.length != size) {
+          throw const FormatException(
+            'The file changed. Please attach it again.',
+          );
+        }
+        if (!mounted) return;
+        setState(() => _attachments.add(ReportAttachment(file.name, bytes)));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _attachmentError = e is FormatException
+              ? e.message
+              : 'Could not read the attachment. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
 
   /// Sent or cancelled: nothing to keep.
   bool _done = false;
@@ -137,10 +229,12 @@ class _ReportSheetState extends State<ReportSheet> {
   void initState() {
     super.initState();
     _open++;
-    if (_kept case (final kind, final title, final description)?
+    if (_kept
+        case (final kind, final title, final description, final attachments)?
         when kind == widget.kind) {
       _title.text = title;
       _description.text = description;
+      _attachments.addAll(attachments);
       _kept = null;
     }
     if (_title.text.isEmpty) _title.text = widget.title ?? '';
@@ -157,8 +251,9 @@ class _ReportSheetState extends State<ReportSheet> {
     _open--;
     if (!_done &&
         (_title.text.trim().isNotEmpty ||
-            _description.text.trim().isNotEmpty)) {
-      _kept = (_kind, _title.text, _description.text);
+            _description.text.trim().isNotEmpty ||
+            _attachments.isNotEmpty)) {
+      _kept = (_kind, _title.text, _description.text, List.of(_attachments));
     }
     _title.dispose();
     _description.dispose();
@@ -166,6 +261,7 @@ class _ReportSheetState extends State<ReportSheet> {
   }
 
   ReportDraft get _draft => ReportDraft(
+    attachments: List.unmodifiable(_attachments),
     kind: _kind,
     title: _title.text,
     description: _description.text,
@@ -175,7 +271,7 @@ class _ReportSheetState extends State<ReportSheet> {
     screens: widget.screens,
   );
 
-  bool get _ready => _title.text.trim().isNotEmpty && !_sending;
+  bool get _ready => _title.text.trim().isNotEmpty && !_sending && !_picking;
 
   void _pick(ReportKind kind) => setState(() {
     _kind = kind;
@@ -403,6 +499,31 @@ class _ReportSheetState extends State<ReportSheet> {
             ],
           ),
         ),
+        const SizedBox(height: PiumaSpace.s12),
+        PiumaButton(
+          label: 'Attach',
+          onPressed: _sending || _picking ? null : _attach,
+        ),
+        for (final attachment in _attachments)
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  attachment.name,
+                  style: PiumaType.small.copyWith(color: c.fg),
+                ),
+              ),
+              PiumaPressable(
+                onTap: _sending
+                    ? null
+                    : () => setState(() => _attachments.remove(attachment)),
+                semanticLabel: 'Remove attachment',
+                child: PiumaIconView(PiumaIcon.close, size: 16, color: c.muted),
+              ),
+            ],
+          ),
+        if (_attachmentError != null)
+          Text(_attachmentError!, style: PiumaType.small.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s16),
         Row(
           children: [
@@ -445,7 +566,7 @@ class _ReportSheetState extends State<ReportSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: PiumaSpace.s16),
                 child: SingleChildScrollView(child: body),
               )
-            : body,
+            : SingleChildScrollView(child: body),
       ),
     );
   }
@@ -667,6 +788,8 @@ class _WhatsSentPageState extends State<WhatsSentPage> {
                             l.reportSectionDevice,
                             Text(device, style: mono),
                           ),
+                          for (final a in widget.draft.attachments)
+                            card('Attachment', Text(a.name, style: mono)),
                           if (widget.screenshot case final png?)
                             card(
                               l.reportSectionScreenshot,

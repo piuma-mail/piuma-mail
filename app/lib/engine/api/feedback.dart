@@ -9,7 +9,7 @@ import 'engine.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `err`, `opened`, `refresh_personal`, `reports`, `to_core`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// "Shake to report": shaking the phone opens the report sheet. Off at
 /// first.
@@ -62,13 +62,16 @@ FeedbackPreview feedbackPreview({required FeedbackDraft draft}) =>
 
 /// Send: saves the report and starts sending it. `screenshot` is the PNG
 /// with the hidden parts already blurred; it is dropped unless the switch
-/// is on.
-FeedbackReport feedbackSubmit({
+/// is on. `attachments` are the images and videos the person picked; they
+/// wait on disk with the report. Not sync: a video takes a moment to write.
+Future<FeedbackReport> feedbackSubmit({
   required FeedbackDraft draft,
   Uint8List? screenshot,
+  required List<FeedbackAttachment> attachments,
 }) => RustLib.instance.api.crateApiFeedbackFeedbackSubmit(
   draft: draft,
   screenshot: screenshot,
+  attachments: attachments,
 );
 
 /// Your reports, newest first.
@@ -94,6 +97,26 @@ FeedbackEmail feedbackEmail({required String id}) =>
 /// The email went: the report is marked so and stops waiting.
 FeedbackReport feedbackMarkEmailed({required String id}) =>
     RustLib.instance.api.crateApiFeedbackFeedbackMarkEmailed(id: id);
+
+/// An image or a video the person attached on the sheet. Only its
+/// extension leaves the device: it goes as "attachment-1.png"…
+class FeedbackAttachment {
+  final String name;
+  final Uint8List bytes;
+
+  const FeedbackAttachment({required this.name, required this.bytes});
+
+  @override
+  int get hashCode => name.hashCode ^ bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FeedbackAttachment &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          bytes == other.bytes;
+}
 
 /// What the person wrote and chose on the sheet.
 class FeedbackDraft {
@@ -151,7 +174,7 @@ class FeedbackEmail {
   final String subject;
   final String body;
 
-  /// Files to attach (screenshot, log).
+  /// Files to attach (screenshot, log, the images and videos picked).
   final List<String> attachments;
 
   const FeedbackEmail({

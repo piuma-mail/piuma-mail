@@ -468,7 +468,7 @@ test('files over their limits are refused before the ticket is used', async () =
     const cases = [
       [[['attachment-1', 'image/png', 10 * MiB + 1]], 'file too large'],
       [[['attachment-1', 'video/mp4', 25 * MiB + 1]], 'file too large'],
-      [[['attachment-1', 'video/mp4', 25 * MiB], ['attachment-2', 'image/jpeg', 8 * MiB]], 'too large'],
+      [[['attachment-1', 'video/mp4', 25 * MiB], ['attachment-2', 'image/jpeg', 7 * MiB + 1]], 'too large'],
       [Array.from({ length: 7 }, (_, i) => [`attachment-${i + 1}`, 'image/webp', 1]), 'too many files'],
     ];
     for (const [files, error] of cases) {
@@ -505,4 +505,13 @@ test('the contents body streams the file as base64 with its exact length', async
     assert.deepEqual(new Uint8Array(Buffer.from(json.content, 'base64')), bytes);
     assert.equal(json.content, Buffer.from(bytes).toString('base64'));
   }
+});
+
+test('generated duplicate names cannot collide with another submitted name', () => {
+  const form = new FormData();
+  for (const name of ['clip.mp4', '3-clip.mp4', 'clip.mp4']) {
+    form.append('attachment', new Blob(['x'], { type: 'video/mp4' }), name);
+  }
+  const files = collectFiles(form);
+  assert.equal(new Set(files.map((f) => f.name)).size, 3);
 });

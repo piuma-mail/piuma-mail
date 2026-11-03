@@ -1120,19 +1120,23 @@ pub(crate) fn inbox_row(store: &Store, m: MessageSummary) -> InboxRow {
 
 /// Unpaged combined views (labels, snoozed and waiting) use the same
 /// identity rule; pagination for the large inbox stays in SQLite.
+#[frb(ignore)]
 pub(crate) trait CombinedRow {
     fn row(&mut self) -> &mut InboxRow;
 }
+#[frb(ignore)]
 impl CombinedRow for InboxRow {
     fn row(&mut self) -> &mut InboxRow {
         self
     }
 }
+#[frb(ignore)]
 impl CombinedRow for SnoozedRow {
     fn row(&mut self) -> &mut InboxRow {
         &mut self.row
     }
 }
+#[frb(ignore)]
 impl CombinedRow for WaitingRow {
     fn row(&mut self) -> &mut InboxRow {
         &mut self.row

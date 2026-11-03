@@ -67,6 +67,7 @@ class ShortcutsPage extends StatelessWidget {
                   (l.actionSnooze, 'H'),
                   (l.shortcutPalette, palette),
                   (l.actionReply, 'R'),
+                  (l.reportTitle, apple ? '⌘⇧R' : 'Ctrl Shift R'),
                 ])
                   _Row(label: label, keys: key),
               ],

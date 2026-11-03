@@ -1,8 +1,9 @@
 import 'dart:async';
-import 'dart:ui' show PlatformDispatcher;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'design/look.dart';
@@ -13,6 +14,7 @@ import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
 import 'engine/frb_generated.dart';
 import 'feedback/report_context.dart';
+import 'feedback/report_sheet.dart';
 import 'home.dart';
 import 'l10n/app_localizations.dart';
 import 'legal.dart';
@@ -53,6 +55,7 @@ Future<void> main(List<String> args) async {
   }
   runApp(
     PiumaApp(
+      reportSource: source,
       appearance: _loadAppearance(),
       onAppearance: _saveAppearance,
       home: (_, _) => MailHome(
@@ -97,6 +100,7 @@ Future<void> _readerWindow(String argument) async {
   final self = await WindowController.fromCurrentEngine();
   runApp(
     PiumaApp(
+      reportSource: source,
       appearance: _loadAppearance(),
       home: (_, _) => ReaderWindow(
         source: source,
@@ -153,9 +157,11 @@ class PiumaApp extends StatefulWidget {
     this.appearance = const Appearance(),
     this.onAppearance,
     this.locale,
+    this.reportSource,
   });
 
   final HomeBuilder home;
+  final MailSource? reportSource;
 
   /// Light or dark from the start, over [appearance]'s theme.
   final bool? initialDark;
@@ -174,6 +180,8 @@ class PiumaApp extends StatefulWidget {
 }
 
 class _PiumaAppState extends State<PiumaApp> {
+  final _navigator = GlobalKey<NavigatorState>();
+
   late Appearance _look = switch (widget.initialDark) {
     null => widget.appearance,
     final dark => widget.appearance.copyWith(
@@ -197,6 +205,7 @@ class _PiumaAppState extends State<PiumaApp> {
       ThemeChoice.automatic => systemDark,
     };
     return MaterialApp(
+      navigatorKey: _navigator,
       title: 'Piuma Mail',
       debugShowCheckedModeBanner: false,
       locale:
@@ -220,7 +229,27 @@ class _PiumaAppState extends State<PiumaApp> {
       // Around everything, so a report can show the screen as it was.
       builder: (context, child) => RepaintBoundary(
         key: ReportContext.screen,
-        child: PiumaLook(appearance: _look, onChanged: _change, child: child!),
+        child: CallbackShortcuts(
+          bindings: {
+            SingleActivator(
+              LogicalKeyboardKey.keyR,
+              shift: true,
+              meta: defaultTargetPlatform == TargetPlatform.macOS,
+              control: defaultTargetPlatform != TargetPlatform.macOS,
+            ): () {
+              final source = widget.reportSource;
+              final context = _navigator.currentState?.overlay?.context;
+              if (source != null && context != null) {
+                unawaited(openReport(context, source: source));
+              }
+            },
+          },
+          child: PiumaLook(
+            appearance: _look,
+            onChanged: _change,
+            child: child!,
+          ),
+        ),
       ),
       home: widget.home(
         dark,
