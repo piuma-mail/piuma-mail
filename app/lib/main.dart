@@ -182,6 +182,41 @@ class PiumaApp extends StatefulWidget {
 class _PiumaAppState extends State<PiumaApp> {
   final _navigator = GlobalKey<NavigatorState>();
 
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_reportKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_reportKey);
+    super.dispose();
+  }
+
+  /// ⇧⌘R on Apple, Ctrl+Shift+R elsewhere: the report sheet, from any
+  /// screen and whatever has focus. The screen is captured before the
+  /// sheet opens, so the screenshot shows what was there.
+  bool _reportKey(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyR) {
+      return false;
+    }
+    final keys = HardwareKeyboard.instance;
+    final apple =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    final mod = apple ? keys.isMetaPressed : keys.isControlPressed;
+    final other = apple ? keys.isControlPressed : keys.isMetaPressed;
+    if (!mod || other || !keys.isShiftPressed || keys.isAltPressed) {
+      return false;
+    }
+    final source = widget.reportSource;
+    final context = _navigator.currentState?.overlay?.context;
+    if (source == null || context == null) return false;
+    unawaited(openReport(context, source: source));
+    return true;
+  }
+
   late Appearance _look = switch (widget.initialDark) {
     null => widget.appearance,
     final dark => widget.appearance.copyWith(
@@ -229,27 +264,7 @@ class _PiumaAppState extends State<PiumaApp> {
       // Around everything, so a report can show the screen as it was.
       builder: (context, child) => RepaintBoundary(
         key: ReportContext.screen,
-        child: CallbackShortcuts(
-          bindings: {
-            SingleActivator(
-              LogicalKeyboardKey.keyR,
-              shift: true,
-              meta: defaultTargetPlatform == TargetPlatform.macOS,
-              control: defaultTargetPlatform != TargetPlatform.macOS,
-            ): () {
-              final source = widget.reportSource;
-              final context = _navigator.currentState?.overlay?.context;
-              if (source != null && context != null) {
-                unawaited(openReport(context, source: source));
-              }
-            },
-          },
-          child: PiumaLook(
-            appearance: _look,
-            onChanged: _change,
-            child: child!,
-          ),
-        ),
+        child: PiumaLook(appearance: _look, onChanged: _change, child: child!),
       ),
       home: widget.home(
         dark,
