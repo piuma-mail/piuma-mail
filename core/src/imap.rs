@@ -1910,7 +1910,9 @@ fn boundaries(raw: &[u8]) -> Vec<String> {
 /// from the sender.
 fn reply_info(m: &mail_parser::Message, from_email: &str) -> ReplyInfo {
     let ids = |v: Option<mail_parser::TextList<'_>>| -> Vec<String> {
-        v.into_iter().flat_map(|v| v.iter().map(|t| format!("<{t}>")).collect::<Vec<_>>()).collect()
+        v.into_iter()
+            .flat_map(|v| v.iter().map(|t| format!("<{t}>")).collect::<Vec<_>>())
+            .collect()
     };
     let mut references = ids(m.references());
     if references.is_empty() {
@@ -1951,7 +1953,10 @@ fn preview_of(m: &mail_parser::Message) -> String {
 
 /// The message's HTML, when its start reached it.
 fn first_html(m: &mail_parser::Message) -> Option<String> {
-    m.html_body().find(|p| matches!(p.kind(), mail_parser::PartKind::Html)).and_then(|p| p.text()).map(|t| t.into_owned())
+    m.html_body()
+        .find(|p| matches!(p.kind(), mail_parser::PartKind::Html))
+        .and_then(|p| p.text())
+        .map(|t| t.into_owned())
 }
 
 /// The preview of a body as the reader draws it.
@@ -2354,7 +2359,9 @@ pub fn parse_body(raw: &[u8]) -> Body {
     // mail-parser offers text as HTML (and HTML as text) when a message
     // lacks one of them: look at what the parts really are.
     let html = first_html(&m);
-    let text_part = m.text_body().find(|p| matches!(p.kind(), mail_parser::PartKind::Text));
+    let text_part = m
+        .text_body()
+        .find(|p| matches!(p.kind(), mail_parser::PartKind::Text));
     let text = match (text_part, &html) {
         (Some(part), _) => {
             let kind = part.content_type();
@@ -2473,7 +2480,10 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
         bcc: list(m.bcc()),
         subject: m.subject().unwrap_or_default().to_owned(),
         body: m.body_text(0).map(|t| t.into_owned()).unwrap_or_default(),
-        in_reply_to: m.in_reply_to().and_then(|l| l.iter().last()).map(|t| format!("<{t}>")),
+        in_reply_to: m
+            .in_reply_to()
+            .and_then(|l| l.iter().last())
+            .map(|t| format!("<{t}>")),
         references: reply
             .references
             .split_whitespace()
@@ -2481,7 +2491,9 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
             .collect(),
         files,
         marks: m
-            .headers().get(crate::rich::HEADER).and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+            .headers()
+            .get(crate::rich::HEADER)
+            .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .map(crate::rich::decode)
             .unwrap_or_default(),
         ..Default::default()
@@ -2732,7 +2744,10 @@ pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
     // Schema migration tags historical root-local IDs rather than guessing
     // global IDs from a rendered body. Nested message parts must not count.
     let part = if part & LEGACY_PART_ID != 0 {
-        m.root().parts().nth((part & !LEGACY_PART_ID) as usize)?.id()
+        m.root()
+            .parts()
+            .nth((part & !LEGACY_PART_ID) as usize)?
+            .id()
     } else {
         part
     };
@@ -2750,11 +2765,22 @@ mod tests {
     fn forward_before_pdf_uses_global_ids_for_new_sync() {
         let raw = include_bytes!("../tests/fixtures/forward-before-pdf.eml");
         let body = parse_body(raw);
-        let pdf = body.attachments.iter().find(|a| a.name == "report.pdf").unwrap();
+        let pdf = body
+            .attachments
+            .iter()
+            .find(|a| a.name == "report.pdf")
+            .unwrap();
         assert!(pdf.part > 3, "nested parts must shift the global ID");
         assert_eq!(attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
-        assert_eq!(attachment_data(raw, LEGACY_PART_ID | 3).unwrap(), b"%PDF-OUTER");
-        let forward = body.attachments.iter().find(|a| a.name == "forward.eml").unwrap();
+        assert_eq!(
+            attachment_data(raw, LEGACY_PART_ID | 3).unwrap(),
+            b"%PDF-OUTER"
+        );
+        let forward = body
+            .attachments
+            .iter()
+            .find(|a| a.name == "forward.eml")
+            .unwrap();
         let data = attachment_data(raw, forward.part).unwrap();
         assert!(String::from_utf8_lossy(&data).contains("Subject: Forwarded"));
         assert_eq!(attachment_data(raw, LEGACY_PART_ID | 2).unwrap(), data);
@@ -2765,8 +2791,12 @@ mod tests {
     fn rfc8621_related_image_is_inline_in_both_body_lists() {
         let raw = b"Subject: inline\r\nContent-Type: multipart/related; boundary=x\r\n\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>Hello<img src=\"cid:pic\"></p>\r\n--x\r\nContent-Type: image/png\r\nContent-ID: <pic>\r\nContent-Transfer-Encoding: base64\r\n\r\naW1hZ2U=\r\n--x--\r\n";
         let m = MessageParser::default().parse(raw).unwrap();
-        assert!(m.text_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
-        assert!(m.html_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(m
+            .text_body()
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(m
+            .html_body()
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
         let body = parse_body(raw);
         assert!(body.attachments.is_empty());
         assert_eq!(body.inline.len(), 1);
@@ -2781,7 +2811,10 @@ mod tests {
         assert!(body.html.is_none());
         assert_eq!(body.attachments.len(), 1);
         assert_eq!(body.attachments[0].name, "version.html");
-        assert!(String::from_utf8_lossy(&attachment_data(raw, body.attachments[0].part).unwrap()).contains("Named HTML"));
+        assert!(
+            String::from_utf8_lossy(&attachment_data(raw, body.attachments[0].part).unwrap())
+                .contains("Named HTML")
+        );
     }
 
     #[test]
@@ -2791,7 +2824,10 @@ mod tests {
         assert_eq!(m.subject(), Some(""));
         assert_eq!(parse_draft(raw).subject, "");
         assert!(m.from().is_none());
-        assert_eq!(m.headers().value("X-Name").and_then(|v| v.as_text()), Some("Helloworld"));
+        assert_eq!(
+            m.headers().value("X-Name").and_then(|v| v.as_text()),
+            Some("Helloworld")
+        );
     }
 
     #[test]

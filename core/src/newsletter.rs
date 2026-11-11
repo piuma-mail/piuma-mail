@@ -38,7 +38,13 @@ const WORDS_A_MINUTE: u32 = 230;
 /// to many or by a machine: Precedence, Auto-Submitted, a list nobody
 /// posts to, or the marks of a mailing service.
 pub fn list_info(m: &Message) -> ListInfo {
-    let raw = |name: &'static str| m.headers().get(name).and_then(|h| std::str::from_utf8(h.raw_value()).ok()).map(str::trim).unwrap_or_default();
+    let raw = |name: &'static str| {
+        m.headers()
+            .get(name)
+            .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+            .map(str::trim)
+            .unwrap_or_default()
+    };
     let submitted = raw("Auto-Submitted");
     let post = raw("List-Post");
     let discussion = !post.is_empty() && !post.eq_ignore_ascii_case("no");
@@ -49,7 +55,12 @@ pub fn list_info(m: &Message) -> ListInfo {
         || (!raw("List-Id").is_empty() && !discussion)
         || crate::automation::headers(m)
         || crate::automation::message(m)
-        || SERVICE_MARKS.iter().any(|h| m.headers().get(*h).and_then(|h| std::str::from_utf8(h.raw_value()).ok()).is_some());
+        || SERVICE_MARKS.iter().any(|h| {
+            m.headers()
+                .get(*h)
+                .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+                .is_some()
+        });
     let links = links(raw("List-Unsubscribe"));
     if links.is_empty() {
         return ListInfo {

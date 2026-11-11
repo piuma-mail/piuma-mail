@@ -107,6 +107,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [either](https://github.com/rayon-rs/either) | 1.19.0 | MIT OR Apache-2.0 |
 | [email-encoding](https://github.com/lettre/email-encoding) | 0.4.2 | MIT OR Apache-2.0 |
 | [email_address](https://github.com/johnstonskj/rust-email_address.git) | 0.2.9 | MIT |
+| [encodify](https://github.com/stalwartlabs/encodify) | 1.0.2 | Apache-2.0 OR MIT |
 | [endi](https://github.com/zeenix/endi) | 1.1.1 | MIT |
 | [enumflags2](https://github.com/meithecatte/enumflags2) | 0.7.12 | MIT OR Apache-2.0 |
 | [enumflags2_derive](https://github.com/meithecatte/enumflags2) | 0.7.12 | MIT OR Apache-2.0 |
@@ -160,7 +161,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.14.5 | MIT OR Apache-2.0 |
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.15.5 | MIT OR Apache-2.0 |
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.17.1 | MIT OR Apache-2.0 |
-| [hashify](https://github.com/stalwartlabs/hashify) | 0.2.9 | Apache-2.0 OR MIT |
+| [hashify](https://github.com/stalwartlabs/hashify) | 0.3.2 | Apache-2.0 OR MIT |
 | [hashlink](https://github.com/djc/hashlink) | 0.12.2 | MIT OR Apache-2.0 |
 | [hayro](https://github.com/LaurenzV/hayro) | 0.8.0 | Apache-2.0 OR MIT |
 | [hayro-ccitt](https://github.com/LaurenzV/hayro) | 0.4.0 | Apache-2.0 OR MIT |
@@ -230,7 +231,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [log](https://github.com/rust-lang/log) | 0.4.34 | MIT OR Apache-2.0 |
 | [lru](https://github.com/jeromefroe/lru-rs.git) | 0.18.5 | MIT |
 | [lru-slab](https://github.com/Ralith/lru-slab) | 0.1.3 | MIT OR Apache-2.0 OR Zlib |
-| [mail-parser](https://github.com/stalwartlabs/mail-parser) | 0.11.9 | Apache-2.0 OR MIT |
+| [mail-parser](https://github.com/stalwartlabs/mail-parser) | 1.0.1 | Apache-2.0 OR MIT |
 | [markup5ever](https://github.com/servo/html5ever) | 0.40.0 | MIT OR Apache-2.0 |
 | [md-5](https://github.com/RustCrypto/hashes) | 0.10.6 | MIT OR Apache-2.0 |
 | [memchr](https://github.com/BurntSushi/memchr) | 2.8.3 | Unlicense OR MIT |

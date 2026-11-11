@@ -434,7 +434,7 @@ impl SealedSpace {
     }
 
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        serde_json::from_slice(&data).map_err(|e| SpaceError::Format(e.to_string()))
+        serde_json::from_slice(data).map_err(|e| SpaceError::Format(e.to_string()))
     }
 }
 

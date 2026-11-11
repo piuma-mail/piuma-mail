@@ -141,7 +141,9 @@ impl Server {
                 "size" => json!(e.raw.len()),
                 "attachments" => json!(attachments),
                 header if header.starts_with("header:") && self.headers => m
-                    .headers().get(&header["header:".len()..]).and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+                    .headers()
+                    .get(&header["header:".len()..])
+                    .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
                     .map_or(Value::Null, |v| json!(v)),
                 _ => all.get(p).cloned().unwrap_or(Value::Null),
             };

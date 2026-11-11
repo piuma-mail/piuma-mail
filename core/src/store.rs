@@ -6852,18 +6852,33 @@ mod tests {
     fn attachment_id_migration_preserves_cached_and_uncached_forwards() {
         let raw = include_bytes!("../tests/fixtures/forward-before-pdf.eml");
         let mut store = Store::open_in_memory().unwrap();
-        let account = store.add_account(&imap_account("Work", "me@example.org", "#2F8F83")).unwrap();
+        let account = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
         for uid in [1, 2] {
-            store.upsert_messages(&[msg(account, uid, 100, true)]).unwrap();
+            store
+                .upsert_messages(&[msg(account, uid, 100, true)])
+                .unwrap();
             if uid == 1 {
                 // Existing rendered body remains available offline.
-                store.set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw)).unwrap();
-                store.conn.execute("UPDATE attachment SET part = 3 WHERE name = 'report.pdf'", []).unwrap();
+                store
+                    .set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw))
+                    .unwrap();
+                store
+                    .conn
+                    .execute(
+                        "UPDATE attachment SET part = 3 WHERE name = 'report.pdf'",
+                        [],
+                    )
+                    .unwrap();
             } else {
                 store.conn.execute("INSERT INTO attachment (account, mailbox, uid, part, name, mime, size) VALUES (?1, 'INBOX', ?2, 3, 'report.pdf', 'application/pdf', 10)", params![account.0, uid]).unwrap();
             }
         }
-        store.conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64).unwrap();
+        store
+            .conn
+            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
         for uid in [1, 2] {
@@ -6871,11 +6886,24 @@ mod tests {
             let pdf = attachments.iter().find(|a| a.name == "report.pdf").unwrap();
             assert_eq!(pdf.part, crate::imap::LEGACY_PART_ID | 3);
             // The normal raw-body retrieval path resolves the historical ID.
-            assert_eq!(crate::imap::attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
-            store.set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw)).unwrap();
-            let pdf = store.attachments(account, "INBOX", uid).unwrap().into_iter().find(|a| a.name == "report.pdf").unwrap();
+            assert_eq!(
+                crate::imap::attachment_data(raw, pdf.part).unwrap(),
+                b"%PDF-OUTER"
+            );
+            store
+                .set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw))
+                .unwrap();
+            let pdf = store
+                .attachments(account, "INBOX", uid)
+                .unwrap()
+                .into_iter()
+                .find(|a| a.name == "report.pdf")
+                .unwrap();
             assert_eq!(pdf.part & crate::imap::LEGACY_PART_ID, 0);
-            assert_eq!(crate::imap::attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
+            assert_eq!(
+                crate::imap::attachment_data(raw, pdf.part).unwrap(),
+                b"%PDF-OUTER"
+            );
         }
     }
 

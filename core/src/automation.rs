@@ -13,9 +13,13 @@ pub(crate) const HEADERS: [&str; 4] = [
 
 /// Automation markers, excluding list headers (discussion lists have exceptions).
 pub(crate) fn headers(m: &Message) -> bool {
-    m.headers().get("X-Auto-Response-Suppress").and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+    m.headers()
+        .get("X-Auto-Response-Suppress")
+        .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
         .is_some_and(|v| !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("none"))
-        || m.headers().get("X-Mailer").and_then(|h| std::str::from_utf8(h.raw_value()).ok())
+        || m.headers()
+            .get("X-Mailer")
+            .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .is_some_and(|v| v.to_ascii_lowercase().contains("wordpress"))
         || m.headers()
             .iter()
