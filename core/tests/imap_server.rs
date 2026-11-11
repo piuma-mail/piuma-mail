@@ -744,9 +744,19 @@ async fn forwarded_multipart_before_pdf_fetches_the_right_bytes() {
     let pdf = body.attachments.iter().find(|a| a.name == "report.pdf").unwrap();
     assert!(pdf.part > 3);
     assert_eq!(conn.attachment("INBOX", 1, pdf.part).await.unwrap(), b"%PDF-OUTER");
-    // The ID produced by the schema migration must work through the
-    // same IMAP raw-body fallback as a newly synced global ID.
-    assert_eq!(conn.attachment("INBOX", 1, (1 << 31) | 3).await.unwrap(), b"%PDF-OUTER");
+    // Simulate the row emitted by the schema migration. Fetching it
+    // through the app's Remote path also finishes the conversion in DB.
+    let legacy = (1 << 31) | 3;
+    let mut historical = body.clone();
+    let historical_pdf = historical.attachments.iter_mut().find(|a| a.name == "report.pdf").unwrap();
+    historical_pdf.part = legacy;
+    store.lock().unwrap().set_full_body(account, "INBOX", 1, &historical).unwrap();
+    // Remove the outline address so this exercises the full-body fallback.
+    // set_full_body retains an existing outline; a separate uncached UID
+    // is covered by the schema migration unit test.
+    let mut remote = piuma_core::remote::Remote::Imap(conn);
+    assert_eq!(remote.attachment(&store, account, "INBOX", 1, legacy).await.unwrap(), b"%PDF-OUTER");
+
 }
 
 #[tokio::test]

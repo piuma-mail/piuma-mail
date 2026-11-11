@@ -184,6 +184,20 @@ impl Remote {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .attachment(account, mailbox, uid, part)?;
+        // Finish the deferred ID migration when a historical row needs
+        // the whole MIME body. Keep cached rendering available offline;
+        // no network request is needed merely to open the database.
+        if part & imap::LEGACY_PART_ID != 0
+            && listed.as_ref().is_some_and(|a| a.section.is_none())
+        {
+            let raw = self.raw(store, account, mailbox, uid).await?;
+            let data = imap::attachment_data(&raw, part).ok_or(ImapError::Gone)?;
+            store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .set_full_body(account, mailbox, uid, &imap::parse_body(&raw))?;
+            return Ok(data);
+        }
         Ok(match self {
             // Files listed from the outline are fetched alone.
             Remote::Imap(c) => {
