@@ -2791,7 +2791,10 @@ mod tests {
     fn rfc8621_related_image_is_inline_in_both_body_lists() {
         let raw = b"Subject: inline\r\nContent-Type: multipart/related; boundary=x\r\n\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>Hello<img src=\"cid:pic\"></p>\r\n--x\r\nContent-Type: image/png\r\nContent-ID: <pic>\r\nContent-Transfer-Encoding: base64\r\n\r\naW1hZ2U=\r\n--x--\r\n";
         let m = MessageParser::default().parse(raw).unwrap();
-        assert!(m.root().parts().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(m
+            .root()
+            .parts()
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
         // Related media stays in the parser's attachment list; Piuma
         // embeds referenced CIDs and leaves them out of the Files list.
         // In multipart/mixed, inline media shown in both body lists must
@@ -2800,8 +2803,12 @@ mod tests {
             .replace("multipart/related", "multipart/mixed")
             .replace("Content-ID:", "Content-Disposition: inline\r\nContent-ID:");
         let mixed_message = MessageParser::default().parse(mixed.as_bytes()).unwrap();
-        assert!(mixed_message.text_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
-        assert!(mixed_message.html_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(mixed_message
+            .text_body()
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(mixed_message
+            .html_body()
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
         assert_eq!(mixed_message.attachments().len(), 0);
         let body = parse_body(raw);
         assert!(body.attachments.is_empty());
@@ -2830,7 +2837,9 @@ mod tests {
         assert_eq!(m.subject(), Some(""));
         assert_eq!(parse_draft(raw).subject, "");
         assert!(m.from().is_none());
-        let encoded = MessageParser::default().parse(b"Subject: =?utf-8?Q?Hello?=  =?utf-8?Q?world?=\r\n\r\nBody").unwrap();
+        let encoded = MessageParser::default()
+            .parse(b"Subject: =?utf-8?Q?Hello?=  =?utf-8?Q?world?=\r\n\r\nBody")
+            .unwrap();
         assert_eq!(encoded.subject(), Some("Helloworld"));
     }
 
