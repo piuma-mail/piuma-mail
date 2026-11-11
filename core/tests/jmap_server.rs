@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mail_parser::MimeHeaders;
 use piuma_core::imap::FolderRole;
 use piuma_core::jmap::{discover_at, Client, JmapConfig, JmapError};
 use piuma_core::model::{Account, AccountId, AccountKind};
@@ -89,15 +88,15 @@ impl Server {
     fn part(&self, blob: &str) -> Option<Vec<u8>> {
         let (id, part) = blob.rsplit_once('-')?;
         let m = mail_parser::MessageParser::default().parse(&self.emails.get(id)?.raw)?;
-        Some(m.part(part.parse().ok()?)?.contents().to_vec())
+        Some(m.part(part.parse().ok()?)?.decoded().to_vec())
     }
 
     fn email_json(&self, id: &str, properties: &[String]) -> Value {
         let e = &self.emails[id];
         let m = mail_parser::MessageParser::default().parse(&e.raw).unwrap();
-        let addr = |list: Option<&mail_parser::Address>| -> Value {
+        let addr = |list: Option<mail_parser::AddressList<'_>>| -> Value {
             list.map(|l| {
-                l.iter()
+                l.mailboxes()
                     .map(|a| json!({ "name": a.name(), "email": a.address() }))
                     .collect::<Vec<_>>()
             })
@@ -120,10 +119,9 @@ impl Server {
             "inReplyTo": null,
         });
         let attachments: Vec<Value> = m
-            .attachments
-            .iter()
-            .map(|&i| {
-                let part = m.part(i).unwrap();
+            .attachments()
+            .map(|part| {
+                let i = part.id();
                 json!({
                     "blobId": format!("blob-{id}-{i}"),
                     "type": part.content_type().map(|t| match t.subtype() {
@@ -133,7 +131,7 @@ impl Server {
                     "name": part.attachment_name(),
                     "disposition": part.content_disposition().map(|d| d.ctype()),
                     "cid": part.content_id(),
-                    "size": part.contents().len(),
+                    "size": part.decoded().len(),
                 })
             })
             .collect();
@@ -143,7 +141,7 @@ impl Server {
                 "size" => json!(e.raw.len()),
                 "attachments" => json!(attachments),
                 header if header.starts_with("header:") && self.headers => m
-                    .header_raw(&header["header:".len()..])
+                    .headers().get(&header["header:".len()..]).and_then(|h| std::str::from_utf8(h.raw_value()).ok())
                     .map_or(Value::Null, |v| json!(v)),
                 _ => all.get(p).cloned().unwrap_or(Value::Null),
             };
