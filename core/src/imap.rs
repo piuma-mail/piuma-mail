@@ -2526,13 +2526,14 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
 fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> {
     // Only root-message parts belong to this message; forwarded contents
     // have their own namespace. RFC 8621 also puts media in body lists.
+    let candidates: HashSet<_> = m.attachments().map(|p| p.id()).chain(
+        m.text_body().chain(m.html_body()).filter(|p| {
+            matches!(p.kind(), mail_parser::PartKind::Binary | mail_parser::PartKind::InlineBinary)
+        }).map(|p| p.id())
+    ).collect();
     m.root()
         .parts()
-        .filter(|part| {
-            m.attachments().any(|a| a.id() == part.id())
-                || (matches!(part.kind(), mail_parser::PartKind::Binary | mail_parser::PartKind::InlineBinary)
-                    && m.text_body().chain(m.html_body()).any(|p| p.id() == part.id()))
-        })
+        .filter(|part| candidates.contains(&part.id()))
         .filter_map(|part| {
             let id = part.id();
             let shown = match (part.content_id(), html) {

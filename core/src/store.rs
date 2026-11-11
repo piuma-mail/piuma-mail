@@ -6937,6 +6937,7 @@ mod tests {
         store.set_full_body(a, "INBOX", 1, &body).unwrap();
         // A cache write would now fail. Downloading does not need one.
         store.conn.execute_batch("CREATE TRIGGER refuse_body BEFORE INSERT ON message_body BEGIN SELECT RAISE(FAIL, 'cache unavailable'); END;").unwrap();
+        assert!(store.set_full_body(a, "INBOX", 1, &body).is_err());
         for (file, expected) in body.attachments.iter().zip([b"one", b"two"]) {
             let held = store.attachment(a, "INBOX", 1, file.part).unwrap().unwrap();
             assert_eq!(
@@ -6979,6 +6980,9 @@ mod tests {
         assert!(store
             .attachment_unavailable(a, "INBOX", 1, body.attachments[1].part)
             .unwrap());
+        store.conn.execute_batch("DROP TRIGGER refuse_body").unwrap();
+        store.set_full_body(a, "INBOX", 1, &crate::imap::parse_body(raw)).unwrap();
+        assert!(!store.attachment_unavailable(a, "INBOX", 1, body.attachments[1].part).unwrap());
     }
 
     #[test]
@@ -7053,8 +7057,14 @@ mod tests {
         // Two forwarded messages make old local ID 4 point at the second
         // .eml in the global namespace. Vault must keep the legacy tag.
         let raw_two = b"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nBody\r\n--x\r\nContent-Type: message/rfc822\r\n\r\nSubject: First\r\n\r\nFirst\r\n--x\r\nContent-Type: message/rfc822\r\n\r\nSubject: Second\r\n\r\nSecond\r\n--x\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=invoice.pdf\r\n\r\n%PDF-INVOICE\r\n--x--\r\n";
-        assert_eq!(crate::imap::attachment_data(raw_two, card["file"].as_u64().unwrap() as u32).unwrap(), b"%PDF-INVOICE");
-        assert!(String::from_utf8_lossy(&crate::imap::attachment_data(raw_two, 4).unwrap()).contains("Subject: Second"));
+        assert_eq!(
+            crate::imap::attachment_data(raw_two, card["file"].as_u64().unwrap() as u32).unwrap(),
+            b"%PDF-INVOICE"
+        );
+        assert!(
+            String::from_utf8_lossy(&crate::imap::attachment_data(raw_two, 4).unwrap())
+                .contains("Subject: Second")
+        );
 
         for uid in [1, 2] {
             let attachments = store.attachments(account, "INBOX", uid).unwrap();
