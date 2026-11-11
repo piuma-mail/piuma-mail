@@ -1792,7 +1792,7 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
             let to = m
                 .to()
                 .map(|list| {
-                    list.iter()
+                    list.mailboxes()
                         .filter_map(|a| a.name().or(a.address()))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -2697,10 +2697,9 @@ fn decode_header_text(raw: &[u8]) -> String {
 
 /// The decoded content of a part fetched alone.
 pub fn decode_part(data: &[u8], encoding: Option<&str>) -> Option<Vec<u8>> {
-    use encodify::{base64::decode as base64_decode, qp::decode as quoted_printable_decode};
     match encoding {
-        Some("base64") => base64_decode(data),
-        Some("quoted-printable") => quoted_printable_decode(data),
+        Some("base64") => encodify::base64::MIME.decode(data).ok(),
+        Some("quoted-printable") => encodify::qp::BODY.decode(data).ok().map(|v| v.into_owned()),
         _ => Some(data.to_vec()),
     }
 }
@@ -3114,7 +3113,7 @@ mod tests {
             let raw = close_parts(raw);
             MessageParser::default()
                 .parse(&raw)
-                .and_then(|m| m.body_preview(PREVIEW_CHARS * 2))
+                .and_then(|m| m.body_preview(PREVIEW_CHARS * 2).map(|v| v.into_owned()))
                 .map(|p| clean_preview(&p))
                 .unwrap_or_default()
         };
