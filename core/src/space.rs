@@ -113,7 +113,7 @@ pub fn seal(key: &Key, plain: &[u8]) -> Vec<u8> {
     getrandom::fill(&mut nonce).expect("the system has randomness");
     let cipher = XChaCha20Poly1305::new((&key.0).into());
     let sealed = cipher
-        .encrypt(XNonce::from_slice(&nonce), plain)
+        .encrypt(&XNonce::from(nonce), plain)
         .expect("in-memory encryption doesn't fail");
     let mut out = Vec::with_capacity(4 + 24 + sealed.len());
     out.extend_from_slice(MAGIC);
@@ -126,9 +126,10 @@ pub fn open(key: &Key, sealed: &[u8]) -> Result<Vec<u8>> {
     if sealed.len() < 4 + 24 || &sealed[..4] != MAGIC {
         return Err(SpaceError::Sealed);
     }
+    let nonce = XNonce::try_from(&sealed[4..28]).map_err(|_| SpaceError::Sealed)?;
     let cipher = XChaCha20Poly1305::new((&key.0).into());
     cipher
-        .decrypt(XNonce::from_slice(&sealed[4..28]), &sealed[28..])
+        .decrypt(&nonce, &sealed[28..])
         .map_err(|_| SpaceError::Sealed)
 }
 
@@ -733,6 +734,55 @@ mod tests {
             },
             secret,
         )
+    }
+
+    fn from_hex(parts: &[&str]) -> Vec<u8> {
+        let hex = parts.concat();
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// What devices already keep must still open after a library update:
+    /// a space sealed and a key wrapped for a device by an earlier build
+    /// (chacha20poly1305 0.10, x25519-dalek 2), HKDF as RFC 5869 defines
+    /// it, and recovery phrases as BIP-39 defines them.
+    #[test]
+    fn what_earlier_builds_sealed_still_opens() {
+        let key = Key([7u8; 32]);
+        let sealed = from_hex(&[
+            "50535031090909090909090909090909090909090909090909090909ce1b97e7",
+            "1d8a0a1b9a71284f1812648e9d08f9df5b11324ff6b2ba0ae6bcf118",
+        ]);
+        assert_eq!(open(&key, &sealed).unwrap(), b"piuma sync space");
+        let wrapped = from_hex(&[
+            "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d",
+            "505350310909090909090909090909090909090909090909090909092b67b7c2",
+            "9d22840028f4948491b987126591a9efd54a0c3c274254d3ba2c92f53304ac1f",
+            "d29f2075095f63c9fda855c9",
+        ]);
+        assert_eq!(open_for(&Key([3u8; 32]), &wrapped).unwrap(), key);
+        // RFC 5869, test case 3 (no salt, no info).
+        assert_eq!(
+            derive(&[0x0b; 22], b"").to_hex(),
+            "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
+        );
+        // BIP-39 test vectors.
+        assert_eq!(
+            Key([0; 32]).phrase(),
+            format!("{}art", "abandon ".repeat(23))
+        );
+        assert_eq!(
+            Key([0x7f; 32]).phrase(),
+            "legal winner thank year wave sausage worth useful \
+             legal winner thank year wave sausage worth useful \
+             legal winner thank year wave sausage worth title"
+        );
+        assert_eq!(
+            Key::from_phrase(&Key([0x7f; 32]).phrase()).unwrap(),
+            Key([0x7f; 32])
+        );
     }
 
     #[test]

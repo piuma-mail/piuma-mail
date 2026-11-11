@@ -7,7 +7,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 |---|---|---|
 | [addr2line](https://github.com/gimli-rs/addr2line) | 0.25.1 | Apache-2.0 OR MIT |
 | [adler2](https://github.com/oyvindln/adler2) | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
-| [aead](https://github.com/RustCrypto/traits) | 0.5.2 | MIT OR Apache-2.0 |
+| [aead](https://github.com/RustCrypto/traits) | 0.6.1 | MIT OR Apache-2.0 |
 | [aes](https://github.com/RustCrypto/block-ciphers) | 0.8.4 | MIT OR Apache-2.0 |
 | [aho-corasick](https://github.com/BurntSushi/aho-corasick) | 1.1.5 | Unlicense OR MIT |
 | [allo-isolate](https://github.com/sunshine-protocol/allo-isolate) | 0.1.27 | Apache-2.0 |
@@ -36,11 +36,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [aws-lc-rs](https://github.com/aws/aws-lc-rs) | 1.18.2 | ISC AND (Apache-2.0 OR ISC) |
 | [aws-lc-sys](https://github.com/aws/aws-lc-rs) | 0.46.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) |
 | [backtrace](https://github.com/rust-lang/backtrace-rs) | 0.3.76 | MIT OR Apache-2.0 |
-| [base64](https://github.com/marshallpierce/rust-base64) | 0.22.1 | MIT OR Apache-2.0 |
 | [base64](https://github.com/marshallpierce/rust-base64) | 0.23.1 | MIT OR Apache-2.0 |
-| [bip39](https://github.com/rust-bitcoin/rust-bip39/) | 2.2.2 | CC0-1.0 |
+| [bip39](https://github.com/rust-bitcoin/rust-bip39/) | 3.0.0 | CC0-1.0 |
 | [bitcoin_hashes](https://github.com/rust-bitcoin/rust-bitcoin) | 0.14.101 | CC0-1.0 |
-| [bitflags](https://github.com/bitflags/bitflags) | 1.3.2 | MIT/Apache-2.0 |
 | [bitflags](https://github.com/bitflags/bitflags) | 2.13.2 | MIT OR Apache-2.0 |
 | [block-buffer](https://github.com/RustCrypto/utils) | 0.10.4 | MIT OR Apache-2.0 |
 | [block-buffer](https://github.com/RustCrypto/utils) | 0.12.1 | MIT OR Apache-2.0 |
@@ -57,10 +55,10 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [cbc](https://github.com/RustCrypto/block-modes) | 0.1.2 | MIT OR Apache-2.0 |
 | [cfg-if](https://github.com/rust-lang/cfg-if) | 1.0.5 | MIT OR Apache-2.0 |
 | [chacha20](https://github.com/RustCrypto/stream-ciphers) | 0.10.2 | MIT OR Apache-2.0 |
-| [chacha20](https://github.com/RustCrypto/stream-ciphers) | 0.9.1 | Apache-2.0 OR MIT |
-| [chacha20poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305) | 0.10.1 | Apache-2.0 OR MIT |
+| [chacha20poly1305](https://github.com/RustCrypto/AEADs) | 0.11.0 | Apache-2.0 OR MIT |
 | [chrono](https://github.com/chronotope/chrono) | 0.4.45 | MIT OR Apache-2.0 |
 | [cipher](https://github.com/RustCrypto/traits) | 0.4.4 | MIT OR Apache-2.0 |
+| [cipher](https://github.com/RustCrypto/traits) | 0.5.2 | MIT OR Apache-2.0 |
 | [cmov](https://github.com/RustCrypto/utils) | 0.5.4 | Apache-2.0 OR MIT |
 | [color](https://github.com/linebender/color) | 0.3.3 | Apache-2.0 OR MIT |
 | [color_quant](https://github.com/image-rs/color_quant.git) | 1.1.0 | MIT |
@@ -83,7 +81,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [crunchy](https://github.com/eira-fransham/crunchy) | 0.2.4 | MIT |
 | [crypto-common](https://github.com/RustCrypto/traits) | 0.1.7 | MIT OR Apache-2.0 |
 | [crypto-common](https://github.com/RustCrypto/traits) | 0.2.2 | MIT OR Apache-2.0 |
-| [cssparser](https://github.com/servo/rust-cssparser) | 0.37.0 | MPL-2.0 |
+| [cssparser](https://github.com/servo/rust-cssparser) | 0.38.0 | MPL-2.0 |
 | [cssparser-macros](https://github.com/servo/rust-cssparser) | 0.7.1 | MPL-2.0 |
 | [ctutils](https://github.com/RustCrypto/utils) | 0.4.8 | Apache-2.0 OR MIT |
 | [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek) | 4.1.3 | BSD-3-Clause |
@@ -183,7 +181,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [hmac](https://github.com/RustCrypto/MACs) | 0.12.1 | MIT OR Apache-2.0 |
 | [hmac](https://github.com/RustCrypto/MACs) | 0.13.0 | MIT OR Apache-2.0 |
 | [hostname](https://github.com/djc/hostname) | 0.4.2 | MIT |
-| [html5ever](https://github.com/servo/html5ever) | 0.39.0 | MIT OR Apache-2.0 |
+| [html5ever](https://github.com/servo/html5ever) | 0.40.1 | MIT OR Apache-2.0 |
 | [http](https://github.com/hyperium/http) | 1.5.0 | MIT OR Apache-2.0 |
 | [http-body](https://github.com/hyperium/http-body) | 1.1.0 | MIT |
 | [http-body-util](https://github.com/hyperium/http-body) | 0.1.5 | MIT |
@@ -204,10 +202,11 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [idna_adapter](https://github.com/hsivonen/idna_adapter) | 1.2.2 | Apache-2.0 OR MIT |
 | [image](https://github.com/image-rs/image) | 0.25.10 | MIT OR Apache-2.0 |
 | [image-webp](https://github.com/image-rs/image-webp) | 0.2.4 | MIT OR Apache-2.0 |
-| [imagesize](https://github.com/Roughsketch/imagesize) | 0.13.0 | MIT |
+| [imagesize](https://github.com/Roughsketch/imagesize) | 0.15.0 | MIT |
 | [imap-proto](https://github.com/djc/imap-proto) | 0.17.0 | MIT OR Apache-2.0 |
 | [indexmap](https://github.com/indexmap-rs/indexmap) | 2.14.2 | Apache-2.0 OR MIT |
 | [inout](https://github.com/RustCrypto/utils) | 0.1.4 | MIT OR Apache-2.0 |
+| [inout](https://github.com/RustCrypto/utils) | 0.2.5 | MIT OR Apache-2.0 |
 | [ipconfig](https://github.com/liranringel/ipconfig) | 0.3.4 | MIT/Apache-2.0 |
 | [ipnet](https://github.com/krisprice/ipnet) | 2.12.2 | MIT OR Apache-2.0 |
 | [itoa](https://github.com/dtolnay/itoa) | 1.0.18 | MIT OR Apache-2.0 |
@@ -217,7 +216,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [jni-sys-macros](https://github.com/jni-rs/jni-sys) | 0.4.1 | MIT OR Apache-2.0 |
 | [js-sys](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys) | 0.3.106 | MIT OR Apache-2.0 |
 | [keyring](https://github.com/hwchen/keyring-rs.git) | 3.6.3 | MIT OR Apache-2.0 |
-| [kurbo](https://github.com/linebender/kurbo) | 0.11.3 | Apache-2.0 OR MIT |
 | [kurbo](https://github.com/linebender/kurbo) | 0.13.1 | Apache-2.0 OR MIT |
 | [lazy_static](https://github.com/rust-lang-nursery/lazy-static.rs) | 1.5.1 | MIT OR Apache-2.0 |
 | [lettre](https://github.com/lettre/lettre) | 0.11.23 | MIT |
@@ -233,7 +231,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [lru](https://github.com/jeromefroe/lru-rs.git) | 0.18.5 | MIT |
 | [lru-slab](https://github.com/Ralith/lru-slab) | 0.1.3 | MIT OR Apache-2.0 OR Zlib |
 | [mail-parser](https://github.com/stalwartlabs/mail-parser) | 0.11.9 | Apache-2.0 OR MIT |
-| [markup5ever](https://github.com/servo/html5ever) | 0.39.0 | MIT OR Apache-2.0 |
+| [markup5ever](https://github.com/servo/html5ever) | 0.40.0 | MIT OR Apache-2.0 |
 | [md-5](https://github.com/RustCrypto/hashes) | 0.10.6 | MIT OR Apache-2.0 |
 | [memchr](https://github.com/BurntSushi/memchr) | 2.8.3 | Unlicense OR MIT |
 | [memmap2](https://github.com/RazrFalcon/memmap2-rs) | 0.9.12 | MIT OR Apache-2.0 |
@@ -261,7 +259,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [num_cpus](https://github.com/seanmonstar/num_cpus) | 1.17.0 | MIT OR Apache-2.0 |
 | [object](https://github.com/gimli-rs/object) | 0.37.3 | Apache-2.0 OR MIT |
 | [once_cell](https://github.com/matklad/once_cell) | 1.21.4 | MIT OR Apache-2.0 |
-| [opaque-debug](https://github.com/RustCrypto/utils) | 0.3.1 | MIT OR Apache-2.0 |
 | [openssl-probe](https://github.com/rustls/openssl-probe) | 0.2.1 | MIT OR Apache-2.0 |
 | [option-ext](https://github.com/soc/option-ext.git) | 0.2.0 | MPL-2.0 |
 | [ordered-stream](https://github.com/danieldg/ordered-stream) | 0.2.0 | MIT OR Apache-2.0 |
@@ -272,9 +269,13 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [peniko](https://github.com/linebender/peniko) | 0.6.1 | Apache-2.0 OR MIT |
 | [percent-encoding](https://github.com/servo/rust-url/) | 2.3.2 | MIT OR Apache-2.0 |
 | [phf](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |
+| [phf](https://github.com/rust-phf/rust-phf) | 0.14.0 | MIT |
 | [phf_generator](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |
+| [phf_generator](https://github.com/rust-phf/rust-phf) | 0.14.0 | MIT |
 | [phf_macros](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |
+| [phf_macros](https://github.com/rust-phf/rust-phf) | 0.14.0 | MIT |
 | [phf_shared](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |
+| [phf_shared](https://github.com/rust-phf/rust-phf) | 0.14.0 | MIT |
 | [pic-scale](https://github.com/awxkee/pic-scale) | 0.7.12 | BSD-3-Clause OR Apache-2.0 |
 | [pico-args](https://github.com/RazrFalcon/pico-args) | 0.5.0 | MIT |
 | [pin-project](https://github.com/taiki-e/pin-project) | 1.1.13 | Apache-2.0 OR MIT |
@@ -282,10 +283,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [pin-project-lite](https://github.com/taiki-e/pin-project-lite) | 0.2.17 | Apache-2.0 OR MIT |
 | [pin-utils](https://github.com/rust-lang/pin-utils) | 0.1.1 | MIT OR Apache-2.0 |
 | [piper](https://github.com/smol-rs/piper) | 0.2.5 | MIT OR Apache-2.0 |
-| [png](https://github.com/image-rs/image-png) | 0.17.16 | MIT OR Apache-2.0 |
 | [png](https://github.com/image-rs/image-png) | 0.18.1 | MIT OR Apache-2.0 |
 | [polling](https://github.com/smol-rs/polling) | 3.11.0 | Apache-2.0 OR MIT |
-| [poly1305](https://github.com/RustCrypto/universal-hashes) | 0.8.0 | Apache-2.0 OR MIT |
+| [poly1305](https://github.com/RustCrypto/universal-hashes) | 0.9.1 | Apache-2.0 OR MIT |
 | [polycool](https://github.com/linebender/kurbo) | 0.4.0 | MIT OR Apache-2.0 |
 | [portable-atomic](https://github.com/taiki-e/portable-atomic) | 1.15.0 | Apache-2.0 OR MIT |
 | [potential_utf](https://github.com/unicode-org/icu4x) | 0.1.6 | Unicode-3.0 |
@@ -318,10 +318,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [regex-syntax](https://github.com/rust-lang/regex) | 0.8.11 | MIT OR Apache-2.0 |
 | [reqwest](https://github.com/seanmonstar/reqwest) | 0.13.5 | MIT OR Apache-2.0 |
 | [resolv-conf](https://github.com/hickory-dns/resolv-conf) | 0.7.6 | MIT OR Apache-2.0 |
-| [resvg](https://github.com/linebender/resvg) | 0.45.1 | Apache-2.0 OR MIT |
+| [resvg](https://github.com/linebender/resvg) | 0.49.0 | Apache-2.0 OR MIT |
 | [rgb](https://github.com/kornelski/rust-rgb) | 0.8.53 | MIT |
 | [ring](https://github.com/briansmith/ring) | 0.17.14 | Apache-2.0 AND ISC |
-| [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.20.0 | MIT OR Apache-2.0 |
 | [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.21.2 | MIT OR Apache-2.0 |
 | [rqrr](https://github.com/WanzenBug/rqrr) | 0.11.0 | (MIT OR Apache-2.0) AND ISC |
 | [rusqlite](https://github.com/rusqlite/rusqlite) | 0.41.1 | MIT |
@@ -337,12 +336,12 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [ruzstd](https://github.com/KillingSpark/zstd-rs) | 0.9.1 | MIT |
 | [schannel](https://github.com/steffengy/schannel-rs) | 0.1.29 | MIT |
 | [scopeguard](https://github.com/bluss/scopeguard) | 1.2.0 | MIT OR Apache-2.0 |
-| [scraper](https://github.com/rust-scraper/scraper) | 0.27.0 | ISC |
+| [scraper](https://github.com/rust-scraper/scraper) | 0.29.0 | ISC |
 | [secret-service](https://github.com/hwchen/secret-service-rs.git) | 4.0.0 | MIT OR Apache-2.0 |
 | [security-framework](https://github.com/kornelski/rust-security-framework) | 2.11.1 | MIT OR Apache-2.0 |
 | [security-framework](https://github.com/kornelski/rust-security-framework) | 3.7.0 | MIT OR Apache-2.0 |
 | [security-framework-sys](https://github.com/kornelski/rust-security-framework) | 2.17.0 | MIT OR Apache-2.0 |
-| [selectors](https://github.com/servo/stylo) | 0.38.0 | MPL-2.0 |
+| [selectors](https://github.com/servo/stylo) | 0.41.0 | MPL-2.0 |
 | [self_cell](https://github.com/Voultapher/self_cell) | 1.3.0 | Apache-2.0 OR GPL-2.0-only |
 | [semver](https://github.com/dtolnay/semver) | 1.0.28 | MIT OR Apache-2.0 |
 | [serde](https://github.com/serde-rs/serde) | 1.0.229 | MIT OR Apache-2.0 |
@@ -350,7 +349,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [serde_derive](https://github.com/serde-rs/serde) | 1.0.229 | MIT OR Apache-2.0 |
 | [serde_json](https://github.com/serde-rs/json) | 1.0.154 | MIT OR Apache-2.0 |
 | [serde_repr](https://github.com/dtolnay/serde-repr) | 0.1.21 | MIT OR Apache-2.0 |
-| [servo_arc](https://github.com/servo/stylo) | 0.4.3 | MIT OR Apache-2.0 |
+| [servo_arc](https://github.com/servo/stylo) | 0.5.0 | MIT OR Apache-2.0 |
 | [sha1](https://github.com/RustCrypto/hashes) | 0.10.7 | MIT OR Apache-2.0 |
 | [sha1](https://github.com/RustCrypto/hashes) | 0.11.0 | MIT OR Apache-2.0 |
 | [sha2](https://github.com/RustCrypto/hashes) | 0.10.9 | MIT OR Apache-2.0 |
@@ -371,9 +370,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [static_assertions](https://github.com/nvzqz/static-assertions-rs) | 1.1.0 | MIT OR Apache-2.0 |
 | [stop-token](https://github.com/async-rs/stop-token) | 0.7.0 | MIT OR Apache-2.0 |
 | [strict-num](https://github.com/RazrFalcon/strict-num) | 0.1.1 | MIT |
-| [string_cache](https://github.com/servo/string-cache) | 0.9.0 | MIT OR Apache-2.0 |
+| [string_cache](https://github.com/servo/string-cache) | 0.11.0 | MIT OR Apache-2.0 |
 | [subtle](https://github.com/dalek-cryptography/subtle) | 2.6.1 | BSD-3-Clause |
-| [svgtypes](https://github.com/linebender/svgtypes) | 0.15.3 | Apache-2.0 OR MIT |
+| [svgtypes](https://github.com/linebender/svgtypes) | 0.16.1 | Apache-2.0 OR MIT |
 | [syn](https://github.com/dtolnay/syn) | 1.0.109 | MIT OR Apache-2.0 |
 | [syn](https://github.com/dtolnay/syn) | 2.0.119 | MIT OR Apache-2.0 |
 | [syn](https://github.com/dtolnay/syn) | 3.0.9 | MIT OR Apache-2.0 |
@@ -390,8 +389,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [thiserror-impl](https://github.com/dtolnay/thiserror) | 2.0.21 | MIT OR Apache-2.0 |
 | [threadpool](https://github.com/rust-threadpool/rust-threadpool) | 1.8.1 | MIT/Apache-2.0 |
 | [tiff](https://github.com/image-rs/image-tiff) | 0.11.3 | MIT |
-| [tiny-skia](https://github.com/RazrFalcon/tiny-skia) | 0.11.4 | BSD-3-Clause |
-| [tiny-skia-path](https://github.com/RazrFalcon/tiny-skia/tree/master/path) | 0.11.4 | BSD-3-Clause |
+| [tiny-skia](https://github.com/linebender/tiny-skia) | 0.12.0 | BSD-3-Clause |
+| [tiny-skia-path](https://github.com/linebender/tiny-skia/tree/master/path) | 0.12.0 | BSD-3-Clause |
 | [tinyjson](https://github.com/rhysd/tinyjson) | 2.5.1 | MIT |
 | [tinystr](https://github.com/unicode-org/icu4x) | 0.8.4 | Unicode-3.0 |
 | [tinyvec](https://github.com/Lokathor/tinyvec) | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
@@ -418,12 +417,12 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [unicode-ident](https://github.com/dtolnay/unicode-ident) | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | [unicode-normalization](https://github.com/unicode-rs/unicode-normalization) | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | [unicode-width](https://github.com/unicode-rs/unicode-width) | 0.2.2 | MIT OR Apache-2.0 |
-| [universal-hash](https://github.com/RustCrypto/traits) | 0.5.1 | MIT OR Apache-2.0 |
+| [universal-hash](https://github.com/RustCrypto/traits) | 0.6.1 | MIT OR Apache-2.0 |
 | [untrusted](https://github.com/briansmith/untrusted) | 0.9.0 | ISC |
 | [ureq](https://github.com/algesten/ureq) | 3.4.2 | MIT OR Apache-2.0 |
 | [ureq-proto](https://github.com/algesten/ureq-proto) | 0.6.5 | MIT OR Apache-2.0 |
 | [url](https://github.com/servo/rust-url) | 2.5.8 | MIT OR Apache-2.0 |
-| [usvg](https://github.com/linebender/resvg) | 0.45.1 | Apache-2.0 OR MIT |
+| [usvg](https://github.com/linebender/resvg) | 0.49.0 | Apache-2.0 OR MIT |
 | [utf8-zero](https://github.com/algesten/utf8-zero) | 0.8.1 | MIT OR Apache-2.0 |
 | [utf8_iter](https://github.com/hsivonen/utf8_iter) | 1.0.4 | Apache-2.0 OR MIT |
 | [uuid](https://github.com/uuid-rs/uuid) | 1.28.0 | Apache-2.0 OR MIT |
@@ -441,7 +440,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [wasm-bindgen-shared](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared) | 0.2.129 | MIT OR Apache-2.0 |
 | [web-sys](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys) | 0.3.106 | MIT OR Apache-2.0 |
 | [web-time](https://github.com/daxpedda/web-time) | 1.1.0 | MIT OR Apache-2.0 |
-| [web_atoms](https://github.com/servo/html5ever) | 0.2.6 | MIT OR Apache-2.0 |
+| [web_atoms](https://github.com/servo/html5ever) | 0.3.0 | MIT OR Apache-2.0 |
 | [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.10 | CDLA-Permissive-2.0 |
 | [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.11 | CDLA-Permissive-2.0 |
 | [weezl](https://github.com/image-rs/weezl) | 0.1.12 | MIT OR Apache-2.0 |
@@ -486,7 +485,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [x25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) | 2.0.1 | BSD-3-Clause |
 | [xdg-home](https://github.com/zeenix/xdg-home) | 1.3.0 | MIT |
 | [xml](https://github.com/kornelski/xml-rs) | 1.4.0 | MIT |
-| [xmlwriter](https://github.com/RazrFalcon/xmlwriter) | 0.1.0 | MIT |
 | [yoke](https://github.com/unicode-org/icu4x) | 0.8.3 | Unicode-3.0 |
 | [yoke-derive](https://github.com/unicode-org/icu4x) | 0.8.4 | Unicode-3.0 |
 | [zbus](https://github.com/dbus2/zbus/) | 4.4.0 | MIT |

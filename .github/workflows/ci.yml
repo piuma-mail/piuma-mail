@@ -49,7 +49,10 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - run: cargo fmt --all -- --check
+      # Dependabot doesn't regenerate THIRD_PARTY_RUST.md, so its pull
+      # requests skip this; the Dependencies workflow checks main weekly.
       - name: Rust license list up to date
+        if: github.actor != 'dependabot[bot]'
         run: python3 tools/gen_rust_licenses.py --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

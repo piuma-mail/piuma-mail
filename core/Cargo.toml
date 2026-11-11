@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 futures = "0.3.34"
 hickory-resolver = "0.26.3"
 hayro = "0.8"
@@ -22,7 +22,7 @@ roxmltree = "0.21.1"
 # No default features: they only add the WebAssembly build of SQLite.
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "functions", "cache"] }
 rustls-platform-verifier = "0.7.1"
-scraper = "0.27.0"
+scraper = "0.29.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -34,15 +34,15 @@ whatlang = "0.18.0"
 # Portable kernel: the SIMD one is built for i8mm/AVX2 without a runtime
 # check, which would crash older phones and PCs.
 fxtranslate = { version = "0.5.0", default-features = false, features = ["download", "gemmology", "lean-embed", "mmap"] }
-chacha20poly1305 = "0.10.1"
+chacha20poly1305 = "0.11.0"
 spake2 = "0.4.0"
 hkdf = "0.13.0"
 sha2 = "0.11.1"
 getrandom = "0.4.3"
 zeroize = "1.9.1"
-bip39 = { version = "2.1.0", default-features = false, features = ["std"] }
+bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.49", default-features = false }
 # The preview saved inside office documents, for the Attachments board.
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2"] }
 qrcode = { version = "0.14.1", default-features = false }

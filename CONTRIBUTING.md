@@ -35,6 +35,7 @@ cd app && dart format lib test && flutter analyze && flutter test
 cd ../wear && dart format lib test && flutter analyze && flutter test   # the watch app
 ```
 
+- Dependabot proposes dependency updates every week. Its pull requests don't regenerate `THIRD_PARTY_RUST.md`, so CI skips that check for them; after merging one that changes `Cargo.lock`, the "Dependencies" workflow on `main` fails until a follow-up PR runs `python3 tools/gen_rust_licenses.py`.
 - Engine tests against a real IMAP server: start `tools/test-imap-server.sh` (Dovecot) in another terminal, then `PIUMA_TEST_IMAP=127.0.0.1:31143 cargo test`. The 50,000-message check: add `--release -- --ignored --nocapture`.
 - If you change how a component looks, regenerate the screenshots with `flutter test --update-goldens` and check the images in the PR.
 - Golden screenshots are compared only on Linux, where the references are rendered: other systems draw text slightly differently. On Windows and macOS `flutter test` passes them without comparing (it says so once), so run the comparison and `--update-goldens` on Linux: in CI, or in WSL Ubuntu with a clone on the Linux filesystem (not under `/mnt/`). `PIUMA_GOLDENS=compare flutter test` forces the comparison elsewhere.
