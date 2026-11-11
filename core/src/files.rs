@@ -7,6 +7,23 @@ use std::path::{Path, PathBuf};
 
 use crate::imap::file_name;
 
+/// Marks a file saved from an email as come from the internet, as browsers
+/// and other mail apps do: on Windows the "Mark of the Web" (a
+/// `Zone.Identifier` stream, Internet zone), so SmartScreen checks a
+/// program before it runs and Office opens documents in Protected View.
+/// Best effort: a disk without streams (FAT, some network shares) keeps the
+/// file unmarked.
+fn mark_from_internet(path: &Path) {
+    #[cfg(windows)]
+    {
+        let mut stream = path.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let _ = std::fs::write(stream, "[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
 /// Writes `data` into `dir` as `name`, never over an existing file:
 /// "quote.pdf" becomes "quote (2).pdf" when the first is taken.
 pub fn save_new(dir: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
@@ -28,6 +45,8 @@ pub fn save_new(dir: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
         {
             Ok(mut f) => {
                 f.write_all(data)?;
+                drop(f);
+                mark_from_internet(&candidate);
                 return Ok(candidate);
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -262,6 +281,11 @@ const PROGRAMS: &[&str] = &[
     "exe", "scr", "com", "pif", "bat", "cmd", "msi", "msix", "msp", "cpl", "vbs", "vbe", "js",
     "jse", "wsf", "wsh", "hta", "ps1", "psm1", "jar", "lnk", "reg", "scf", "apk", "xapk", "appx",
     "appimage", "command", "action", "workflow",
+    // Shortcuts, help files and consoles that run what they point at.
+    "url", "website", "chm", "msc", "inf", "settingcontent-ms", "library-ms", "xll",
+    // Disk images, which open as a folder whose files lose the "from the
+    // internet" mark, and installers.
+    "iso", "img", "vhd", "vhdx", "dmg", "pkg", "deb", "rpm", "sh", "desktop",
 ];
 
 /// Office files that keep macros.
@@ -326,6 +350,9 @@ mod tests {
         assert_eq!(file_risk("photo\u{202E}gpj.exe"), Some(FileRisk::Disguised));
         assert_eq!(file_risk("Budget 2027.xlsm"), Some(FileRisk::Macros));
         assert_eq!(file_risk("v1.2.exe"), Some(FileRisk::Program));
+        assert_eq!(file_risk("Payment.URL"), Some(FileRisk::Program));
+        assert_eq!(file_risk("scan.iso"), Some(FileRisk::Program));
+        assert_eq!(file_risk("invoice.pdf.chm"), Some(FileRisk::Disguised));
         for safe in ["Quote Acme.pdf", "photo.jpg", "notes", "report.docx", "exe"] {
             assert_eq!(file_risk(safe), None, "{safe}");
         }
@@ -447,6 +474,14 @@ mod tests {
         assert_eq!(c, dir.join("notes"));
         assert_eq!(std::fs::read(&a).unwrap(), b"one");
         assert_eq!(std::fs::read(&b).unwrap(), b"two");
+        // Windows: each file carries the Internet zone mark.
+        #[cfg(windows)]
+        {
+            let mut stream = a.as_os_str().to_owned();
+            stream.push(":Zone.Identifier");
+            let mark = std::fs::read_to_string(stream).unwrap();
+            assert!(mark.contains("ZoneId=3"), "{mark}");
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
