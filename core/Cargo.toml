@@ -34,7 +34,7 @@ whatlang = "0.18.0"
 # Portable kernel: the SIMD one is built for i8mm/AVX2 without a runtime
 # check, which would crash older phones and PCs.
 fxtranslate = { version = "0.5.0", default-features = false, features = ["download", "gemmology", "lean-embed", "mmap"] }
-chacha20poly1305 = "0.10.1"
+chacha20poly1305 = "0.11.0"
 spake2 = "0.4.0"
 hkdf = "0.13.0"
 sha2 = "0.11.1"
