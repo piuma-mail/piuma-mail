@@ -2515,9 +2515,10 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
         if !ics {
             return None;
         }
-        let text = part.text().map(|t| t.into_owned()).unwrap_or_else(|| {
-            String::from_utf8_lossy(&part.decoded()).into_owned()
-        });
+        let text = part
+            .text()
+            .map(|t| t.into_owned())
+            .unwrap_or_else(|| String::from_utf8_lossy(&part.decoded()).into_owned());
         text.contains("BEGIN:VEVENT").then_some(text)
     })
 }
@@ -2525,10 +2526,12 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
 fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> {
     // Only root-message parts belong to this message; forwarded contents
     // have their own namespace. RFC 8621 also puts media in body lists.
-    m.root().parts()
+    m.root()
+        .parts()
         .filter(|part| {
             m.attachments().any(|a| a.id() == part.id())
-                || matches!(part.kind(), mail_parser::PartKind::InlineBinary)
+                || (matches!(part.kind(), mail_parser::PartKind::Binary | mail_parser::PartKind::InlineBinary)
+                    && m.text_body().chain(m.html_body()).any(|p| p.id() == part.id()))
         })
         .filter_map(|part| {
             let id = part.id();
@@ -2560,7 +2563,12 @@ fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> 
                 Some(n) if !n.trim().is_empty() => file_name(n),
                 _ => match part.nested() {
                     Some(inner) => {
-                        let subject = file_name(inner.subject().filter(|s| !s.trim().is_empty()).unwrap_or("message"));
+                        let subject = file_name(
+                            inner
+                                .subject()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or("message"),
+                        );
                         format!("{subject}.eml")
                     }
                     None => "attachment".into(),
@@ -2752,7 +2760,11 @@ pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
 }
 
 /// Historical IDs are only safe if the resolved file still matches its row.
-pub(crate) fn attachment_data_checked(raw: &[u8], part: u32, expected: Option<&Attachment>) -> Option<Vec<u8>> {
+pub(crate) fn attachment_data_checked(
+    raw: &[u8],
+    part: u32,
+    expected: Option<&Attachment>,
+) -> Option<Vec<u8>> {
     let m = MessageParser::default().parse(raw)?;
     // Schema migration tags historical root-local IDs rather than guessing
     // global IDs from a rendered body. Nested message parts must not count.
@@ -2765,7 +2777,9 @@ pub(crate) fn attachment_data_checked(raw: &[u8], part: u32, expected: Option<&A
         part
     };
     let html = first_html(&m);
-    let file = attachments(&m, html.as_deref()).into_iter().find(|a| a.part == part)?;
+    let file = attachments(&m, html.as_deref())
+        .into_iter()
+        .find(|a| a.part == part)?;
     if expected.is_some_and(|a| a.name != file.name || !a.mime.eq_ignore_ascii_case(&file.mime)) {
         return None;
     }

@@ -42,7 +42,14 @@ pub type Result<T> = std::result::Result<T, RemoteError>;
 
 /// Resolve without rewriting IDs or caching the body: a successful download
 /// must not depend on a body-cache write succeeding.
-pub(crate) fn resolve_historical_attachment(store: &Store, account: AccountId, mailbox: &str, uid: u32, file: &crate::store::Attachment, raw: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn resolve_historical_attachment(
+    store: &Store,
+    account: AccountId,
+    mailbox: &str,
+    uid: u32,
+    file: &crate::store::Attachment,
+    raw: &[u8],
+) -> Result<Vec<u8>> {
     match imap::attachment_data_checked(raw, file.part, Some(file)) {
         Some(data) => Ok(data),
         None => {
@@ -200,14 +207,21 @@ impl Remote {
         // Downloading one attachment must not replace its siblings' rows.
         if part & imap::LEGACY_PART_ID != 0 && listed.as_ref().is_some_and(|a| a.section.is_none())
         {
-            if store.lock().unwrap_or_else(|e| e.into_inner())
-                .attachment_unavailable(account, mailbox, uid, part)? {
+            if store
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .attachment_unavailable(account, mailbox, uid, part)?
+            {
                 return Err(ImapError::Gone.into());
             }
             let raw = self.raw(store, account, mailbox, uid).await?;
             return resolve_historical_attachment(
-                &store.lock().unwrap_or_else(|e| e.into_inner()), account, mailbox, uid,
-                listed.as_ref().unwrap(), &raw,
+                &store.lock().unwrap_or_else(|e| e.into_inner()),
+                account,
+                mailbox,
+                uid,
+                listed.as_ref().unwrap(),
+                &raw,
             );
         }
         Ok(match self {
