@@ -11,15 +11,20 @@ all-features = false
 unmaintained = "workspace"
 yanked = "deny"
 ignore = [
-    # velopack 1.2.161 (Windows updates) still requires zip ^8.6; no stable
-    # release has zip 9 yet. Velopack opens only the update packages of our
-    # own GitHub releases, and these advisories are about extracting
-    # attacker-made archives (symlinks, permissions, AES entries). Remove
-    # once velopack moves to zip 9.
-    { id = "RUSTSEC-2026-0367", reason = "zip 8.6 through velopack: our own update packages only" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 8.6 through velopack: our own update packages only" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 8.6 through velopack: our own update packages only" },
-    { id = "RUSTSEC-2026-0429", reason = "zip 8.6 through velopack: our own update packages only" },
+    # velopack 1.2.161 (desktop updates) still requires zip ^8.6. Only the
+    # 1.3 prerelease (1.3.39-g8d2844f) has zip 9, and we don't ship a
+    # prerelease updater. The four advisories are in zip's own extraction
+    # (`ZipArchive::extract`, `ZipStreamReader::extract`: symlinks, Unix
+    # permissions, an abort on a symlink entry), and zip 8 has no fix. Velopack
+    # never calls them: `bundle.rs` reads each entry with `by_index` and writes
+    # it itself. It also opens only the update packages of our own GitHub
+    # releases. Checked on 2026-11-11. Remove these entries when a stable
+    # velopack moves to zip 9, and bump the `vpk` tool in release.yml and
+    # tools/windows-release.ps1 with it.
+    { id = "RUSTSEC-2026-0367", reason = "zip 8.6 through velopack, which never calls zip's extract" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8.6 through velopack, which never calls zip's extract" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8.6 through velopack, which never calls zip's extract" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 8.6 through velopack, which never calls zip's extract" },
 ]
 
 [sources]
