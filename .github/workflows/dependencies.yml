@@ -3,6 +3,8 @@
 # changes and every Monday, so a new advisory shows up even when nothing
 # changed here. The app's and watch's Dart packages are covered by
 # Dependabot alerts.
+# On main it also checks the Rust license list, which Dependabot's pull
+# requests don't update.
 name: Dependencies
 
 on:
@@ -30,6 +32,22 @@ jobs:
         with:
           arguments: ""
           command: check advisories sources
+
+  # THIRD_PARTY_RUST.md lists every crate the engine ships. CI checks it on
+  # pull requests, except Dependabot's: this catches what they leave behind.
+  licenses:
+    name: Rust license list
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
+      - name: Up to date
+        run: python3 tools/gen_rust_licenses.py --check
 
   relay:
     name: Relay npm audit
