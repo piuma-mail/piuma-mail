@@ -6980,9 +6980,16 @@ mod tests {
         assert!(store
             .attachment_unavailable(a, "INBOX", 1, body.attachments[1].part)
             .unwrap());
-        store.conn.execute_batch("DROP TRIGGER refuse_body").unwrap();
-        store.set_full_body(a, "INBOX", 1, &crate::imap::parse_body(raw)).unwrap();
-        assert!(!store.attachment_unavailable(a, "INBOX", 1, body.attachments[1].part).unwrap());
+        store
+            .conn
+            .execute_batch("DROP TRIGGER refuse_body")
+            .unwrap();
+        store
+            .set_full_body(a, "INBOX", 1, &crate::imap::parse_body(raw))
+            .unwrap();
+        assert!(!store
+            .attachment_unavailable(a, "INBOX", 1, body.attachments[1].part)
+            .unwrap());
     }
 
     #[test]
