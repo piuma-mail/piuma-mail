@@ -53,7 +53,11 @@ pub(crate) fn resolve_historical_attachment(
     match imap::attachment_data_checked(raw, file.part, Some(file)) {
         Some(data) => Ok(data),
         None => {
-            store.mark_attachment_unavailable(account, mailbox, uid, file.part)?;
+            // Remembered, so later opens don't download the message again.
+            // A full-body refresh may have replaced the rows while the
+            // message downloaded, and then the foreign key refuses the mark:
+            // the file is still gone, so that is not an error to show.
+            let _ = store.mark_attachment_unavailable(account, mailbox, uid, file.part);
             Err(ImapError::Gone.into())
         }
     }
@@ -215,12 +219,18 @@ impl Remote {
                 return Err(ImapError::Gone.into());
             }
             let raw = self.raw(store, account, mailbox, uid).await?;
+            let file = listed.as_ref().unwrap();
+            // Parse without holding the store: a large message would block
+            // every other use of it meanwhile.
+            if let Some(data) = imap::attachment_data_checked(&raw, file.part, Some(file)) {
+                return Ok(data);
+            }
             return resolve_historical_attachment(
                 &store.lock().unwrap_or_else(|e| e.into_inner()),
                 account,
                 mailbox,
                 uid,
-                listed.as_ref().unwrap(),
+                file,
                 &raw,
             );
         }
