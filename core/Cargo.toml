@@ -39,7 +39,7 @@ spake2 = "0.4.0"
 hkdf = "0.13.0"
 sha2 = "0.11.1"
 getrandom = "0.4.3"
-zeroize = "1.9.1"
+zeroize = { version = "1.9.1", features = ["derive"] }
 bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 resvg = { version = "0.49", default-features = false }
