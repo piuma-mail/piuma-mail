@@ -69,7 +69,9 @@ pub async fn discover(email: &str) -> Option<Settings> {
     // autoconfig.<domain> at a server whose certificate is for aruba.it.
     // Anyone on the network could rewrite that answer, so it is kept only
     // when it names the domain's own servers or a provider the engine knows.
-    if let Some(s) = from_url(&first.to_string().replacen("https://", "http://", 1), email).await {
+    // Anyone could also read the request: it leaves the address out.
+    let plain = format!("http://autoconfig.{domain}/mail/config-v1.1.xml");
+    if let Some(s) = from_url(&plain, email).await {
         if trusted_settings(&s, &domain) {
             return Some(s);
         }

@@ -7,6 +7,47 @@ use std::path::{Path, PathBuf};
 
 use crate::imap::file_name;
 
+/// Marks a file saved from an email as come from the internet, as browsers
+/// and other mail apps do. On Windows it is the "Mark of the Web" (a
+/// `Zone.Identifier` stream, Internet zone): SmartScreen checks a program
+/// before it runs and Office opens documents in Protected View. On macOS it
+/// is the quarantine flag: Gatekeeper checks an app or script before it
+/// first opens. Best effort: a disk without streams or extended attributes
+/// (FAT, some network shares) keeps the file unmarked.
+fn mark_from_internet(path: &Path) {
+    #[cfg(windows)]
+    {
+        let mut stream = path.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let _ = std::fs::write(stream, "[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        // Flags, time (hex), the app that saved it, no download event.
+        let value = format!("0081;{now:08x};Piuma Mail;");
+        if let Ok(file) = std::ffi::CString::new(path.as_os_str().as_bytes()) {
+            // SAFETY: both names are NUL-terminated and live for the call;
+            // the value is read for its length only.
+            unsafe {
+                libc::setxattr(
+                    file.as_ptr(),
+                    c"com.apple.quarantine".as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    0,
+                );
+            }
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let _ = path;
+}
+
 /// Writes `data` into `dir` as `name`, never over an existing file:
 /// "quote.pdf" becomes "quote (2).pdf" when the first is taken.
 pub fn save_new(dir: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
@@ -28,6 +69,8 @@ pub fn save_new(dir: &Path, name: &str, data: &[u8]) -> io::Result<PathBuf> {
         {
             Ok(mut f) => {
                 f.write_all(data)?;
+                drop(f);
+                mark_from_internet(&candidate);
                 return Ok(candidate);
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -257,11 +300,59 @@ pub enum FileRisk {
     Locked,
 }
 
-/// Extensions of programs and scripts the systems run on a double click.
+/// Extensions of programs and scripts the systems run on a double click;
+/// shortcuts, help files and consoles that run what they point at; disk
+/// images, which open as a folder whose files lose the "from the internet"
+/// mark; and installers.
 const PROGRAMS: &[&str] = &[
-    "exe", "scr", "com", "pif", "bat", "cmd", "msi", "msix", "msp", "cpl", "vbs", "vbe", "js",
-    "jse", "wsf", "wsh", "hta", "ps1", "psm1", "jar", "lnk", "reg", "scf", "apk", "xapk", "appx",
-    "appimage", "command", "action", "workflow",
+    "exe",
+    "scr",
+    "com",
+    "pif",
+    "bat",
+    "cmd",
+    "msi",
+    "msix",
+    "msp",
+    "cpl",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "ps1",
+    "psm1",
+    "jar",
+    "lnk",
+    "reg",
+    "scf",
+    "apk",
+    "xapk",
+    "appx",
+    "appimage",
+    "command",
+    "action",
+    "workflow",
+    "url",
+    "website",
+    "chm",
+    "msc",
+    "inf",
+    "settingcontent-ms",
+    "library-ms",
+    "xll",
+    "iso",
+    "img",
+    "vhd",
+    "vhdx",
+    "dmg",
+    "pkg",
+    "deb",
+    "rpm",
+    "sh",
+    "desktop",
 ];
 
 /// Office files that keep macros.
@@ -326,6 +417,9 @@ mod tests {
         assert_eq!(file_risk("photo\u{202E}gpj.exe"), Some(FileRisk::Disguised));
         assert_eq!(file_risk("Budget 2027.xlsm"), Some(FileRisk::Macros));
         assert_eq!(file_risk("v1.2.exe"), Some(FileRisk::Program));
+        assert_eq!(file_risk("Payment.URL"), Some(FileRisk::Program));
+        assert_eq!(file_risk("scan.iso"), Some(FileRisk::Program));
+        assert_eq!(file_risk("invoice.pdf.chm"), Some(FileRisk::Disguised));
         for safe in ["Quote Acme.pdf", "photo.jpg", "notes", "report.docx", "exe"] {
             assert_eq!(file_risk(safe), None, "{safe}");
         }
@@ -447,6 +541,36 @@ mod tests {
         assert_eq!(c, dir.join("notes"));
         assert_eq!(std::fs::read(&a).unwrap(), b"one");
         assert_eq!(std::fs::read(&b).unwrap(), b"two");
+        // Windows: each file carries the Internet zone mark.
+        #[cfg(windows)]
+        {
+            let mut stream = a.as_os_str().to_owned();
+            stream.push(":Zone.Identifier");
+            let mark = std::fs::read_to_string(stream).unwrap();
+            assert!(mark.contains("ZoneId=3"), "{mark}");
+        }
+        // macOS: and the quarantine flag.
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let file = std::ffi::CString::new(a.as_os_str().as_bytes()).unwrap();
+            let mut buf = [0u8; 128];
+            // SAFETY: NUL-terminated names, a buffer of the length given.
+            let n = unsafe {
+                libc::getxattr(
+                    file.as_ptr(),
+                    c"com.apple.quarantine".as_ptr(),
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                    0,
+                    0,
+                )
+            };
+            assert!(n > 0, "no quarantine flag");
+            assert!(std::str::from_utf8(&buf[..n as usize])
+                .unwrap()
+                .contains("Piuma Mail"));
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

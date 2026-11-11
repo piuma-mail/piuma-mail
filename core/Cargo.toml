@@ -53,6 +53,10 @@ rqrr = "0.11.0"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 lettre = { version = "0.11.23", default-features = false, features = ["rustls-platform-verifier"] }
 
+# The quarantine flag on attachments saved on macOS (files.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "android")'.dependencies]
 lettre = { version = "0.11.23", default-features = false, features = ["webpki-roots"] }
 webpki-roots = "1.0.9"
