@@ -23,7 +23,7 @@ keyring = { version = "3", features = ["apple-native"] }
 keyring = { version = "3", features = ["apple-native"] }
 # libc 0.2.190 limits the dyld functions to macOS, but backtrace 0.3.76 (through
 # flutter_rust_bridge) still calls them on iOS. Lift this once backtrace is fixed.
-libc = "<0.2.190"
+libc = "<0.2.192"
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
 velopack = "=1.2.161"
