@@ -37,7 +37,7 @@ fxtranslate = { version = "0.5.0", default-features = false, features = ["downlo
 chacha20poly1305 = "0.10.1"
 spake2 = "0.4.0"
 hkdf = "0.12.4"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 getrandom = "0.2.17"
 zeroize = "1.9.1"
 bip39 = { version = "2.1.0", default-features = false, features = ["std"] }
