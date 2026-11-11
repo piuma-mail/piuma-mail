@@ -733,6 +733,23 @@ async fn archive_and_delete_move_messages() {
 }
 
 #[tokio::test]
+async fn forwarded_multipart_before_pdf_fetches_the_right_bytes() {
+    let Some(cfg) = config("forward-pdf") else { return };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(include_str!("fixtures/forward-before-pdf.eml"), "15-Oct-2026 09:15:00 +0200").await;
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {}).await.unwrap();
+    let body = conn.full_body(&store, account, "INBOX", 1).await.unwrap();
+    let pdf = body.attachments.iter().find(|a| a.name == "report.pdf").unwrap();
+    assert!(pdf.part > 3);
+    assert_eq!(conn.attachment("INBOX", 1, pdf.part).await.unwrap(), b"%PDF-OUTER");
+    // The ID produced by the schema migration must work through the
+    // same IMAP raw-body fallback as a newly synced global ID.
+    assert_eq!(conn.attachment("INBOX", 1, (1 << 31) | 3).await.unwrap(), b"%PDF-OUTER");
+}
+
+#[tokio::test]
 async fn attachments_are_listed_then_fetched_on_demand() {
     let Some(cfg) = config("attach") else { return };
     let draft = piuma_core::smtp::Draft {
