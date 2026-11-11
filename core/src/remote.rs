@@ -187,8 +187,7 @@ impl Remote {
         // Finish the deferred ID migration when a historical row needs
         // the whole MIME body. Keep cached rendering available offline;
         // no network request is needed merely to open the database.
-        if part & imap::LEGACY_PART_ID != 0
-            && listed.as_ref().is_some_and(|a| a.section.is_none())
+        if part & imap::LEGACY_PART_ID != 0 && listed.as_ref().is_some_and(|a| a.section.is_none())
         {
             let raw = self.raw(store, account, mailbox, uid).await?;
             let data = imap::attachment_data(&raw, part).ok_or(ImapError::Gone)?;
