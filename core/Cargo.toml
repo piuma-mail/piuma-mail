@@ -22,7 +22,7 @@ roxmltree = "0.21.1"
 # No default features: they only add the WebAssembly build of SQLite.
 rusqlite = { version = "0.41", default-features = false, features = ["bundled", "functions", "cache"] }
 rustls-platform-verifier = "0.7.1"
-scraper = "0.27.0"
+scraper = "0.29.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
