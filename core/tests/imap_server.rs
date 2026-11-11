@@ -761,7 +761,7 @@ async fn forwarded_multipart_before_pdf_fetches_the_right_bytes() {
         b"%PDF-OUTER"
     );
     // Simulate the row emitted by the schema migration. Fetching it
-    // through the app's Remote path also finishes the conversion in DB.
+    // through the app's Remote path preserves IDs held by the reader.
     let legacy = (1 << 31) | 3;
     let mut historical = body.clone();
     let historical_pdf = historical
@@ -802,7 +802,7 @@ async fn forwarded_multipart_before_pdf_fetches_the_right_bytes() {
         .attachments(legacy_account, "INBOX", 1)
         .unwrap();
     let pdf = migrated.iter().find(|a| a.name == "report.pdf").unwrap();
-    assert_eq!(pdf.part & (1 << 31), 0);
+    assert_eq!(pdf.part, legacy);
     assert_eq!(
         remote
             .attachment(&legacy_store, legacy_account, "INBOX", 1, pdf.part)

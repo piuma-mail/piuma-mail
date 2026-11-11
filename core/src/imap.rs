@@ -2515,13 +2515,21 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
         if !ics {
             return None;
         }
-        let text = String::from_utf8_lossy(&part.decoded()).into_owned();
+        let text = part.text().map(|t| t.into_owned()).unwrap_or_else(|| {
+            String::from_utf8_lossy(&part.decoded()).into_owned()
+        });
         text.contains("BEGIN:VEVENT").then_some(text)
     })
 }
 
 fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> {
-    m.attachments()
+    // Only root-message parts belong to this message; forwarded contents
+    // have their own namespace. RFC 8621 also puts media in body lists.
+    m.root().parts()
+        .filter(|part| {
+            m.attachments().any(|a| a.id() == part.id())
+                || matches!(part.kind(), mail_parser::PartKind::InlineBinary)
+        })
         .filter_map(|part| {
             let id = part.id();
             let shown = match (part.content_id(), html) {
@@ -2552,7 +2560,7 @@ fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> 
                 Some(n) if !n.trim().is_empty() => file_name(n),
                 _ => match part.nested() {
                     Some(inner) => {
-                        let subject = file_name(inner.subject().unwrap_or("message"));
+                        let subject = file_name(inner.subject().filter(|s| !s.trim().is_empty()).unwrap_or("message"));
                         format!("{subject}.eml")
                     }
                     None => "attachment".into(),
@@ -2740,6 +2748,11 @@ pub(crate) const LEGACY_PART_ID: u32 = 1 << 31;
 
 /// The decoded content of one attachment part of a whole message.
 pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
+    attachment_data_checked(raw, part, None)
+}
+
+/// Historical IDs are only safe if the resolved file still matches its row.
+pub(crate) fn attachment_data_checked(raw: &[u8], part: u32, expected: Option<&Attachment>) -> Option<Vec<u8>> {
     let m = MessageParser::default().parse(raw)?;
     // Schema migration tags historical root-local IDs rather than guessing
     // global IDs from a rendered body. Nested message parts must not count.
@@ -2751,7 +2764,9 @@ pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
     } else {
         part
     };
-    if !m.attachments().any(|p| p.id() == part) {
+    let html = first_html(&m);
+    let file = attachments(&m, html.as_deref()).into_iter().find(|a| a.part == part)?;
+    if expected.is_some_and(|a| a.name != file.name || !a.mime.eq_ignore_ascii_case(&file.mime)) {
         return None;
     }
     Some(m.part(part)?.decoded().to_vec())
@@ -2760,6 +2775,12 @@ pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_decodes_its_declared_charset() {
+        let body = parse_body(b"Content-Type: text/calendar; charset=windows-1252\r\n\r\nBEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:citt\xe0\r\nEND:VEVENT\r\nEND:VCALENDAR");
+        assert!(body.calendar.unwrap().contains("SUMMARY:città"));
+    }
 
     #[test]
     fn forward_before_pdf_uses_global_ids_for_new_sync() {

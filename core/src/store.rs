@@ -924,6 +924,13 @@ const MIGRATIONS: &[&str] = &[
     -- Resolve these local ordinals against the root message on retrieval;
     -- the next full-body sync replaces them with untagged global IDs.
     UPDATE attachment SET part = part | 2147483648;
+    UPDATE vault_card SET data = json_set(data, '$.file', json_extract(data, '$.file') | 2147483648)
+     WHERE json_type(data, '$.file') = 'integer';
+    CREATE TABLE IF NOT EXISTS attachment_unavailable (
+        account INTEGER NOT NULL, mailbox TEXT NOT NULL, uid INTEGER NOT NULL, part INTEGER NOT NULL,
+        PRIMARY KEY (account, mailbox, uid, part),
+        FOREIGN KEY (account, mailbox, uid, part) REFERENCES attachment(account, mailbox, uid, part) ON DELETE CASCADE
+    );
 "#,
 ];
 
@@ -3243,6 +3250,22 @@ impl Store {
                 |r| row_to_attachment(r, 0),
             )
             .optional()?)
+    }
+
+    /// A failed historical resolution is retried only after a full-body refresh.
+    pub(crate) fn attachment_unavailable(&self, account: AccountId, mailbox: &str, uid: u32, part: u32) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT 1 FROM attachment_unavailable WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND part = ?4",
+            params![account.0, mailbox, uid, part], |r| r.get(0),
+        ).optional()?.unwrap_or(false))
+    }
+
+    pub(crate) fn mark_attachment_unavailable(&self, account: AccountId, mailbox: &str, uid: u32, part: u32) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO attachment_unavailable (account, mailbox, uid, part) VALUES (?1, ?2, ?3, ?4)",
+            params![account.0, mailbox, uid, part],
+        )?;
+        Ok(())
     }
 
     /// Caches a plain-text body.
@@ -6848,6 +6871,71 @@ impl Store {
 #[cfg(test)]
 mod tests {
 
+
+    #[test]
+    fn body_media_remain_files_after_full_body_refresh() {
+        let image = "Content-Type: image/jpeg; name=IMG_0001.jpg\r\nContent-Disposition: inline; filename=IMG_0001.jpg\r\n\r\nphoto";
+        let unnamed = "Content-Type: image/jpeg\r\n\r\nphoto";
+        let mixed = |media: &str| format!("Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nBefore\r\n--x\r\n{media}\r\n--x\r\nContent-Type: text/plain\r\n\r\nAfter\r\n--x--\r\n");
+        for raw in [mixed(image), mixed(unnamed), "Content-Type: image/png\r\n\r\nphoto".into()] {
+            let mut store = Store::open_in_memory().unwrap();
+            let a = store.add_account(&imap_account("Work", "me@example.org", "#2F8F83")).unwrap();
+            store.upsert_messages(&[msg(a, 1, 100, true)]).unwrap();
+            let body = crate::imap::parse_body(raw.as_bytes());
+            assert_eq!(body.attachments.len(), 1, "{raw}");
+            store.set_full_body(a, "INBOX", 1, &body).unwrap();
+            let files = store.attachments(a, "INBOX", 1).unwrap();
+            assert_eq!(files, body.attachments);
+            assert_eq!(crate::imap::attachment_data(raw.as_bytes(), files[0].part).unwrap(), b"photo");
+            let legacy = crate::imap::LEGACY_PART_ID | if raw.starts_with("Content-Type: multipart") { 2 } else { 0 };
+            assert_eq!(crate::imap::attachment_data(raw.as_bytes(), legacy).unwrap(), b"photo");
+        }
+    }
+
+    #[test]
+    fn historical_download_preserves_siblings_and_remembers_gone() {
+        let raw = b"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=one.pdf\r\n\r\none\r\n--x\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=two.pdf\r\n\r\ntwo\r\n--x--\r\n";
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store.add_account(&imap_account("Work", "me@example.org", "#2F8F83")).unwrap();
+        store.upsert_messages(&[msg(a, 1, 100, true)]).unwrap();
+        let mut body = crate::imap::parse_body(raw);
+        for f in &mut body.attachments { f.part |= crate::imap::LEGACY_PART_ID; }
+        store.set_full_body(a, "INBOX", 1, &body).unwrap();
+        // A cache write would now fail. Downloading does not need one.
+        store.conn.execute_batch("CREATE TRIGGER refuse_body BEFORE INSERT ON message_body BEGIN SELECT RAISE(FAIL, 'cache unavailable'); END;").unwrap();
+        for (file, expected) in body.attachments.iter().zip([b"one", b"two"]) {
+            let held = store.attachment(a, "INBOX", 1, file.part).unwrap().unwrap();
+            assert_eq!(crate::remote::resolve_historical_attachment(&store, a, "INBOX", 1, &held, raw).unwrap(), expected);
+        }
+        assert_eq!(store.attachments(a, "INBOX", 1).unwrap(), body.attachments);
+        let mut wrong = body.attachments[0].clone();
+        wrong.name = "different.pdf".into();
+        assert!(crate::remote::resolve_historical_attachment(&store, a, "INBOX", 1, &wrong, raw).is_err());
+        assert!(store.attachment_unavailable(a, "INBOX", 1, wrong.part).unwrap());
+        let mut wrong_mime = body.attachments[1].clone();
+        wrong_mime.mime = "message/rfc822".into();
+        assert!(crate::remote::resolve_historical_attachment(&store, a, "INBOX", 1, &wrong_mime, raw).is_err());
+        // Missing parts also leave a persistent tombstone.
+        assert!(crate::remote::resolve_historical_attachment(&store, a, "INBOX", 1, &body.attachments[1], b"Subject: no files\r\n\r\ntext").is_err());
+        assert!(store.attachment_unavailable(a, "INBOX", 1, body.attachments[1].part).unwrap());
+    }
+
+    #[test]
+    fn blank_forward_subject_keeps_outline_section() {
+        let raw = b"Content-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: message/rfc822\r\n\r\nSubject:   \r\n\r\nForwarded\r\n--x--\r\n";
+        let body = crate::imap::parse_body(raw);
+        assert_eq!(body.attachments[0].name, "message.eml");
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store.add_account(&imap_account("Work", "me@example.org", "#2F8F83")).unwrap();
+        store.upsert_messages(&[msg(a, 1, 100, true)]).unwrap();
+        let mut outline = body.clone();
+        outline.attachments[0].section = Some("1".into());
+        store.set_full_body(a, "INBOX", 1, &outline).unwrap();
+        // Seed the address normally supplied by BODYSTRUCTURE.
+        store.conn.execute("UPDATE attachment SET section = '1'", []).unwrap();
+        store.set_full_body(a, "INBOX", 1, &body).unwrap();
+        assert_eq!(store.attachments(a, "INBOX", 1).unwrap()[0].section.as_deref(), Some("1"));
+    }
     #[test]
     fn attachment_id_migration_preserves_cached_and_uncached_forwards() {
         let raw = include_bytes!("../tests/fixtures/forward-before-pdf.eml");
@@ -6875,12 +6963,17 @@ mod tests {
                 store.conn.execute("INSERT INTO attachment (account, mailbox, uid, part, name, mime, size) VALUES (?1, 'INBOX', ?2, 3, 'report.pdf', 'application/pdf', 10)", params![account.0, uid]).unwrap();
             }
         }
+        store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
         store
             .conn
             .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
+        let card: String = store.conn.query_row("SELECT data FROM vault_card WHERE uid = 1", [], |r| r.get(0)).unwrap();
+        let card: serde_json::Value = serde_json::from_str(&card).unwrap();
+        assert_eq!(card["file"], crate::imap::LEGACY_PART_ID | 4);
+        assert_eq!(card["file_name"], "invoice.pdf");
         for uid in [1, 2] {
             let attachments = store.attachments(account, "INBOX", uid).unwrap();
             let pdf = attachments.iter().find(|a| a.name == "report.pdf").unwrap();
