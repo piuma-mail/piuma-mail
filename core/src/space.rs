@@ -772,9 +772,8 @@ mod tests {
             "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
         ]))
         .unwrap();
-        let bob_public = from_hex(&[
-            "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
-        ]);
+        let bob_public =
+            from_hex(&["de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"]);
         assert_eq!(
             public_key(&Key(alice)),
             from_hex(&["8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"])
