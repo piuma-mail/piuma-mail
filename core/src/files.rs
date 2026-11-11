@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use crate::imap::file_name;
 
 /// Marks a file saved from an email as come from the internet, as browsers
-/// and other mail apps do: on Windows the "Mark of the Web" (a
-/// `Zone.Identifier` stream, Internet zone), so SmartScreen checks a
-/// program before it runs and Office opens documents in Protected View.
-/// Best effort: a disk without streams (FAT, some network shares) keeps the
-/// file unmarked.
+/// and other mail apps do. On Windows it is the "Mark of the Web" (a
+/// `Zone.Identifier` stream, Internet zone): SmartScreen checks a program
+/// before it runs and Office opens documents in Protected View. On macOS it
+/// is the quarantine flag: Gatekeeper checks an app or script before it
+/// first opens. Best effort: a disk without streams or extended attributes
+/// (FAT, some network shares) keeps the file unmarked.
 fn mark_from_internet(path: &Path) {
     #[cfg(windows)]
     {
@@ -20,7 +21,30 @@ fn mark_from_internet(path: &Path) {
         stream.push(":Zone.Identifier");
         let _ = std::fs::write(stream, "[ZoneTransfer]\r\nZoneId=3\r\n");
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        // Flags, time (hex), the app that saved it, no download event.
+        let value = format!("0081;{now:08x};Piuma Mail;");
+        if let Ok(file) = std::ffi::CString::new(path.as_os_str().as_bytes()) {
+            // SAFETY: both names are NUL-terminated and live for the call;
+            // the value is read for its length only.
+            unsafe {
+                libc::setxattr(
+                    file.as_ptr(),
+                    c"com.apple.quarantine".as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                    0,
+                );
+            }
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = path;
 }
 
@@ -524,6 +548,28 @@ mod tests {
             stream.push(":Zone.Identifier");
             let mark = std::fs::read_to_string(stream).unwrap();
             assert!(mark.contains("ZoneId=3"), "{mark}");
+        }
+        // macOS: and the quarantine flag.
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let file = std::ffi::CString::new(a.as_os_str().as_bytes()).unwrap();
+            let mut buf = [0u8; 128];
+            // SAFETY: NUL-terminated names, a buffer of the length given.
+            let n = unsafe {
+                libc::getxattr(
+                    file.as_ptr(),
+                    c"com.apple.quarantine".as_ptr(),
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                    0,
+                    0,
+                )
+            };
+            assert!(n > 0, "no quarantine flag");
+            assert!(std::str::from_utf8(&buf[..n as usize])
+                .unwrap()
+                .contains("Piuma Mail"));
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
