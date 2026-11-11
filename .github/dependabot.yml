@@ -1,0 +1,59 @@
+# Weekly update proposals for every dependency set in the repository.
+# Security updates are proposed as soon as an advisory is published; version
+# updates wait two weeks after a release (cooldown), so a hijacked release
+# has time to be noticed before it reaches a pull request.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pub
+    directories: [/app, /wear]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      pub:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /relay
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      relay:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directories: [/, /.github/actions/*]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    open-pull-requests-limit: 3
