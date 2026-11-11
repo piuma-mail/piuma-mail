@@ -1,0 +1,47 @@
+# Known vulnerabilities in the dependencies: the Rust crates (cargo-deny,
+# deny.toml) and the report relay's npm packages. Runs when a lock file
+# changes and every Monday, so a new advisory shows up even when nothing
+# changed here. The app's and watch's Dart packages are covered by
+# Dependabot alerts.
+name: Dependencies
+
+on:
+  pull_request:
+    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", ".github/workflows/dependencies.yml"]
+  push:
+    branches: [main]
+    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", ".github/workflows/dependencies.yml"]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          arguments: ""
+          command: check advisories sources
+
+  relay:
+    name: Relay npm audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: npm audit --audit-level=moderate

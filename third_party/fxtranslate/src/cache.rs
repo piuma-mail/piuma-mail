@@ -21,7 +21,8 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// Decompress a zstd stream fully into memory (pure-Rust decoder).
 pub fn zstd_decode(input: &[u8]) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let mut dec = ruzstd::StreamingDecoder::new(input).map_err(|e| format!("zstd init: {e}"))?;
+    // Piuma Mail: ruzstd 0.9 keeps the decoder in `decoding`.
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(input).map_err(|e| format!("zstd init: {e}"))?;
     let mut out = Vec::new();
     dec.read_to_end(&mut out)
         .map_err(|e| format!("zstd decode: {e}"))?;

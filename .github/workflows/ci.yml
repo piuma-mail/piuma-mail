@@ -1,14 +1,19 @@
 name: CI
 
-# Runs on every pull request and on main once the repository is public, where
-# Actions minutes are free. While it is private the jobs are skipped (no
-# minutes used) unless started by hand; checks run locally before each push
-# (see CONTRIBUTING.md).
+# Runs on every pull request and on main. The jobs skip themselves if the
+# repository is ever private again (no Actions minutes used) unless started by
+# hand; the same checks run locally before each push (see CONTRIBUTING.md).
+#
+# Every action is pinned by commit (the tag in the comment); Dependabot
+# proposes the updates (.github/dependabot.yml).
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,7 +25,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Generated files up to date
         run: python3 tools/gen_tokens.py --check
 
@@ -29,11 +36,14 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install system dependencies
@@ -52,18 +62,20 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.7
       - run: flutter pub get
-      - run: dart format --output=none --set-exit-if-changed lib/catalog lib/widgets lib/main.dart lib/legal.dart lib/design/theme.dart lib/design/motion.dart test
+      - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
       - run: flutter test
       - name: Screenshots of failed tests
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: golden-failures
           path: app/test/failures/
@@ -71,13 +83,16 @@ jobs:
 
   wear:
     name: Wear OS app
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: wear
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.7
@@ -107,38 +122,25 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - if: runner.arch != 'ARM64' || runner.os != 'Windows'
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.7
           cache: true
       # Flutter publishes no Windows ARM64 SDK archive (flutter-action finds
-      # none): clone the release tag; its first run fetches the ARM64 Dart
-      # SDK and engine. Rust comes from rustup, for the runner's own target.
+      # none): the local action clones the release tag and installs Rust.
       - if: runner.arch == 'ARM64' && runner.os == 'Windows'
-        name: Install Flutter and Rust (Windows ARM64)
-        shell: pwsh
-        run: |
-          git clone --depth 1 --branch 3.47.7 https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
-          "$env:RUNNER_TEMP\flutter\bin" >> $env:GITHUB_PATH
-          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
-            Invoke-WebRequest https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe -OutFile "$env:RUNNER_TEMP\rustup-init.exe"
-            & "$env:RUNNER_TEMP\rustup-init.exe" -y --profile minimal --default-toolchain stable
-            "$env:USERPROFILE\.cargo\bin" >> $env:GITHUB_PATH
-          }
-      - if: runner.arch == 'ARM64' && runner.os == 'Windows'
-        name: Tools (Windows ARM64)
-        shell: pwsh
-        run: |
-          flutter --version
-          rustup show
-          Get-Command cmake, clang, nasm, ninja -ErrorAction SilentlyContinue | Format-Table Name, Source
+        uses: ./.github/actions/windows-arm64-tools
+        with:
+          flutter-version: 3.47.7
       - if: matrix.target == 'linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev
       - if: matrix.target == 'apk'
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 17
