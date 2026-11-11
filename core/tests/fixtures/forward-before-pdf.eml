@@ -1,0 +1,42 @@
+Subject: Forward and PDF
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: text/plain
+
+Outer body
+--outer
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename=forward.eml
+
+Subject: Forwarded
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=inner
+
+--inner
+Content-Type: multipart/alternative; boundary=alt
+
+--alt
+Content-Type: text/plain
+
+Forwarded text
+--alt
+Content-Type: text/html
+
+<p>Forwarded HTML</p>
+--alt--
+--inner
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename=nested.bin
+Content-Transfer-Encoding: base64
+
+TkVTVEVE
+--inner--
+--outer
+Content-Type: application/pdf
+Content-Disposition: attachment; filename=report.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi1PVVRFUg==
+--outer--

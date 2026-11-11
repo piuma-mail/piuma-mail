@@ -918,6 +918,13 @@ const MIGRATIONS: &[&str] = &[
     UPDATE message SET list_checked = 0 WHERE mailbox = 'INBOX';
 "#,
     "CREATE INDEX IF NOT EXISTS message_cross_account ON message(message_id, folder, account);",
+    r#"
+    -- Preserve the numbering namespace of pre-1.0 attachments. Raw MIME
+    -- bodies are not stored in this database (only rendered text/HTML).
+    -- Resolve these local ordinals against the root message on retrieval;
+    -- the next full-body sync replaces them with untagged global IDs.
+    UPDATE attachment SET part = part | 2147483648;
+"#,
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
@@ -1307,7 +1314,7 @@ pub struct InlineImage {
 /// A file attached to a message.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Attachment {
-    /// Where it is in the message (the parser's part number).
+    /// Parser part ID; the high bit marks a pre-1.0 root-local ordinal.
     pub part: u32,
     pub name: String,
     /// Content type, like "application/pdf".
@@ -6840,6 +6847,37 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn attachment_id_migration_preserves_cached_and_uncached_forwards() {
+        let raw = include_bytes!("../tests/fixtures/forward-before-pdf.eml");
+        let mut store = Store::open_in_memory().unwrap();
+        let account = store.add_account(&imap_account("Work", "me@example.org", "#2F8F83")).unwrap();
+        for uid in [1, 2] {
+            store.upsert_messages(&[msg(account, uid, 100, true)]).unwrap();
+            if uid == 1 {
+                // Existing rendered body remains available offline.
+                store.set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw)).unwrap();
+                store.conn.execute("UPDATE attachment SET part = 3 WHERE name = 'report.pdf'", []).unwrap();
+            } else {
+                store.conn.execute("INSERT INTO attachment (account, mailbox, uid, part, name, mime, size) VALUES (?1, 'INBOX', ?2, 3, 'report.pdf', 'application/pdf', 10)", params![account.0, uid]).unwrap();
+            }
+        }
+        store.conn.pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64).unwrap();
+        store.migrate().unwrap();
+        store.migrate().unwrap();
+        for uid in [1, 2] {
+            let attachments = store.attachments(account, "INBOX", uid).unwrap();
+            let pdf = attachments.iter().find(|a| a.name == "report.pdf").unwrap();
+            assert_eq!(pdf.part, crate::imap::LEGACY_PART_ID | 3);
+            // The normal raw-body retrieval path resolves the historical ID.
+            assert_eq!(crate::imap::attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
+            store.set_full_body(account, "INBOX", uid, &crate::imap::parse_body(raw)).unwrap();
+            let pdf = store.attachments(account, "INBOX", uid).unwrap().into_iter().find(|a| a.name == "report.pdf").unwrap();
+            assert_eq!(pdf.part & crate::imap::LEGACY_PART_ID, 0);
+            assert_eq!(crate::imap::attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
+        }
+    }
 
     #[test]
     fn snippets_drop_quote_marks() {

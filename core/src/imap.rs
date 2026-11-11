@@ -2550,7 +2550,7 @@ fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> 
                 part: id,
                 name,
                 mime,
-                size: part.len() as u64,
+                size: part.decoded_len() as u64,
                 ..Default::default()
             })
         })
@@ -2724,9 +2724,19 @@ pub fn file_name(name: &str) -> String {
     }
 }
 
+/// Namespace tag used by the attachment-ID schema migration.
+pub(crate) const LEGACY_PART_ID: u32 = 1 << 31;
+
 /// The decoded content of one attachment part of a whole message.
 pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
     let m = MessageParser::default().parse(raw)?;
+    // Schema migration tags historical root-local IDs rather than guessing
+    // global IDs from a rendered body. Nested message parts must not count.
+    let part = if part & LEGACY_PART_ID != 0 {
+        m.root().parts().nth((part & !LEGACY_PART_ID) as usize)?.id()
+    } else {
+        part
+    };
     if !m.attachments().any(|p| p.id() == part) {
         return None;
     }
@@ -2736,6 +2746,54 @@ pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forward_before_pdf_uses_global_ids_for_new_sync() {
+        let raw = include_bytes!("../tests/fixtures/forward-before-pdf.eml");
+        let body = parse_body(raw);
+        let pdf = body.attachments.iter().find(|a| a.name == "report.pdf").unwrap();
+        assert!(pdf.part > 3, "nested parts must shift the global ID");
+        assert_eq!(attachment_data(raw, pdf.part).unwrap(), b"%PDF-OUTER");
+        assert_eq!(attachment_data(raw, LEGACY_PART_ID | 3).unwrap(), b"%PDF-OUTER");
+        let forward = body.attachments.iter().find(|a| a.name == "forward.eml").unwrap();
+        let data = attachment_data(raw, forward.part).unwrap();
+        assert!(String::from_utf8_lossy(&data).contains("Subject: Forwarded"));
+        assert_eq!(attachment_data(raw, LEGACY_PART_ID | 2).unwrap(), data);
+        assert!(attachment_data(raw, LEGACY_PART_ID | 100).is_none());
+    }
+
+    #[test]
+    fn rfc8621_related_image_is_inline_in_both_body_lists() {
+        let raw = b"Subject: inline\r\nContent-Type: multipart/related; boundary=x\r\n\r\n--x\r\nContent-Type: text/html\r\n\r\n<p>Hello<img src=\"cid:pic\"></p>\r\n--x\r\nContent-Type: image/png\r\nContent-ID: <pic>\r\nContent-Transfer-Encoding: base64\r\n\r\naW1hZ2U=\r\n--x--\r\n";
+        let m = MessageParser::default().parse(raw).unwrap();
+        assert!(m.text_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        assert!(m.html_body().any(|p| matches!(p.kind(), mail_parser::PartKind::InlineBinary)));
+        let body = parse_body(raw);
+        assert!(body.attachments.is_empty());
+        assert_eq!(body.inline.len(), 1);
+        assert_eq!(body.inline[0].data, b"image");
+    }
+
+    #[test]
+    fn named_html_alternative_is_an_attachment() {
+        let raw = b"Subject: alternative\r\nContent-Type: multipart/alternative; boundary=x\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nPlain body\r\n--x\r\nContent-Type: text/html; name=version.html\r\n\r\n<p>Named HTML</p>\r\n--x--\r\n";
+        let body = parse_body(raw);
+        assert_eq!(body.text.trim(), "Plain body");
+        assert!(body.html.is_none());
+        assert_eq!(body.attachments.len(), 1);
+        assert_eq!(body.attachments[0].name, "version.html");
+        assert!(String::from_utf8_lossy(&attachment_data(raw, body.attachments[0].part).unwrap()).contains("Named HTML"));
+    }
+
+    #[test]
+    fn parser_header_changes_are_explicit() {
+        let raw = b"Subject:\r\nX-Name: =?utf-8?Q?Hello?=  =?utf-8?Q?world?=\r\nFr om: wrong@example.org\r\n\r\nBody";
+        let m = MessageParser::default().parse(raw).unwrap();
+        assert_eq!(m.subject(), Some(""));
+        assert_eq!(parse_draft(raw).subject, "");
+        assert!(m.from().is_none());
+        assert_eq!(m.headers().value("X-Name").and_then(|v| v.as_text()), Some("Helloworld"));
+    }
 
     #[test]
     fn folder_names_in_modified_utf7() {
