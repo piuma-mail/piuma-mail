@@ -13,13 +13,13 @@ pub(crate) const HEADERS: [&str; 4] = [
 
 /// Automation markers, excluding list headers (discussion lists have exceptions).
 pub(crate) fn headers(m: &Message) -> bool {
-    m.header_raw("X-Auto-Response-Suppress")
+    m.headers().get("X-Auto-Response-Suppress").and_then(|h| std::str::from_utf8(h.raw_value()).ok())
         .is_some_and(|v| !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("none"))
-        || m.header_raw("X-Mailer")
+        || m.headers().get("X-Mailer").and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .is_some_and(|v| v.to_ascii_lowercase().contains("wordpress"))
         || m.headers()
             .iter()
-            .any(|h| h.name.as_str().to_ascii_lowercase().starts_with("x-wp-"))
+            .any(|h| h.name().as_str().to_ascii_lowercase().starts_with("x-wp-"))
 }
 
 /// Conservative content fallbacks; merely mentioning WordPress or spam is not enough.
@@ -45,7 +45,7 @@ pub(crate) fn message(m: &Message) -> bool {
         name,
         m.subject().unwrap_or_default(),
         m.attachments()
-            .any(|p| matches!(p.body, mail_parser::PartType::Message(_))),
+            .any(|p| matches!(p.kind(), mail_parser::PartKind::Message(_))),
     )
 }
 

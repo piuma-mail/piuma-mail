@@ -85,8 +85,8 @@ pub struct Receipt {
 
 /// The receipt `m` is, if it is one.
 pub fn receipt(m: &Message) -> Option<Receipt> {
-    let kind = Kind::from_header(m.header_raw("X-Ricevuta")?)?;
-    let refers = m.header_raw("X-Riferimento-Message-ID")?.trim();
+    let kind = Kind::from_header(m.headers().get("X-Ricevuta").and_then(|h| std::str::from_utf8(h.raw_value()).ok())?)?;
+    let refers = m.headers().get("X-Riferimento-Message-ID").and_then(|h| std::str::from_utf8(h.raw_value()).ok())?.trim();
     if refers.is_empty() {
         return None;
     }

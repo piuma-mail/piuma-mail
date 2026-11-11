@@ -15,7 +15,7 @@ use async_imap::extensions::idle::IdleResponse;
 use async_imap::imap_proto::{BodyContentCommon, BodyStructure, ContentEncoding, SectionPath};
 use async_imap::types::{Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
-use mail_parser::{MessageParser, MimeHeaders};
+use mail_parser::MessageParser;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::pki_types::ServerName;
@@ -1909,12 +1909,8 @@ fn boundaries(raw: &[u8]) -> Vec<String> {
 /// Message-ID, References (or In-Reply-To) and a Reply-To that differs
 /// from the sender.
 fn reply_info(m: &mail_parser::Message, from_email: &str) -> ReplyInfo {
-    let ids = |v: &mail_parser::HeaderValue| -> Vec<String> {
-        match v {
-            mail_parser::HeaderValue::Text(t) => vec![format!("<{t}>")],
-            mail_parser::HeaderValue::TextList(l) => l.iter().map(|t| format!("<{t}>")).collect(),
-            _ => Vec::new(),
-        }
+    let ids = |v: Option<mail_parser::TextList<'_>>| -> Vec<String> {
+        v.into_iter().flat_map(|v| v.iter().map(|t| format!("<{t}>")).collect::<Vec<_>>()).collect()
     };
     let mut references = ids(m.references());
     if references.is_empty() {
@@ -1943,7 +1939,7 @@ fn reply_info(m: &mail_parser::Message, from_email: &str) -> ReplyInfo {
 /// together ("accountIf this") and keep its markup.
 fn preview_of(m: &mail_parser::Message) -> String {
     match first_html(m) {
-        Some(h) => reader_preview("", Some(h)),
+        Some(h) => reader_preview("", Some(&h)),
         // Whole, not cut by the parser: its cut ends in "...", which
         // would show as a word.
         None => m
@@ -1954,13 +1950,8 @@ fn preview_of(m: &mail_parser::Message) -> String {
 }
 
 /// The message's HTML, when its start reached it.
-fn first_html<'a>(m: &'a mail_parser::Message) -> Option<&'a str> {
-    m.html_body
-        .iter()
-        .find_map(|&i| match m.part(i).map(|p| &p.body) {
-            Some(mail_parser::PartType::Html(h)) => Some(h.as_ref()),
-            _ => None,
-        })
+fn first_html(m: &mail_parser::Message) -> Option<String> {
+    m.html_body().find(|p| matches!(p.kind(), mail_parser::PartKind::Html)).and_then(|p| p.text()).map(|t| t.into_owned())
 }
 
 /// The preview of a body as the reader draws it.
@@ -2362,17 +2353,8 @@ pub fn parse_body(raw: &[u8]) -> Body {
     };
     // mail-parser offers text as HTML (and HTML as text) when a message
     // lacks one of them: look at what the parts really are.
-    let html = m
-        .html_body
-        .iter()
-        .find_map(|&i| match m.part(i).map(|p| &p.body) {
-            Some(mail_parser::PartType::Html(h)) => Some(h.to_string()),
-            _ => None,
-        });
-    let text_part = m.text_body.iter().find_map(|&i| {
-        m.part(i)
-            .filter(|p| matches!(p.body, mail_parser::PartType::Text(_)))
-    });
+    let html = first_html(&m);
+    let text_part = m.text_body().find(|p| matches!(p.kind(), mail_parser::PartKind::Text));
     let text = match (text_part, &html) {
         (Some(part), _) => {
             let kind = part.content_type();
@@ -2380,11 +2362,9 @@ pub fn parse_body(raw: &[u8]) -> Body {
                 kind.and_then(|k| k.attribute(name))
                     .is_some_and(|v| v.eq_ignore_ascii_case(value))
             };
-            let mail_parser::PartType::Text(text) = &part.body else {
-                unreachable!()
-            };
+            let text = part.text().unwrap_or_default();
             crate::reading::normalize_text(
-                text,
+                &text,
                 parameter("format", "flowed"),
                 parameter("delsp", "yes"),
             )
@@ -2417,7 +2397,7 @@ const INLINE_TOTAL: usize = 8_000_000;
 fn inline_images(m: &mail_parser::Message, html: &str) -> Vec<InlineImage> {
     let mut out = Vec::new();
     let mut total = 0;
-    for part in &m.parts {
+    for part in m.root().parts() {
         let Some(cid) = part.content_id().map(|c| c.trim_matches(['<', '>']).trim()) else {
             continue;
         };
@@ -2430,7 +2410,7 @@ fn inline_images(m: &mail_parser::Message, html: &str) -> Vec<InlineImage> {
         if !kind.ctype().eq_ignore_ascii_case("image") {
             continue;
         }
-        let data = part.contents();
+        let data = part.decoded();
         if data.is_empty() || data.len() > INLINE_MAX || total + data.len() > INLINE_TOTAL {
             continue;
         }
@@ -2454,9 +2434,9 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
     let Some(m) = MessageParser::default().parse(raw) else {
         return crate::smtp::Draft::default();
     };
-    let list = |a: Option<&mail_parser::Address>| -> Vec<String> {
+    let list = |a: Option<mail_parser::AddressList<'_>>| -> Vec<String> {
         a.map(|a| {
-            a.iter()
+            a.mailboxes()
                 .filter_map(|addr| {
                     let email = addr.address()?;
                     Some(match addr.name().filter(|n| !n.trim().is_empty()) {
@@ -2477,7 +2457,7 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
             Some(crate::smtp::OutgoingFile {
                 name: a.name.clone(),
                 mime: a.mime.clone(),
-                data: m.part(a.part)?.contents().to_vec(),
+                data: m.part(a.part)?.decoded().to_vec(),
             })
         })
         .collect();
@@ -2493,11 +2473,7 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
         bcc: list(m.bcc()),
         subject: m.subject().unwrap_or_default().to_owned(),
         body: m.body_text(0).map(|t| t.into_owned()).unwrap_or_default(),
-        in_reply_to: match m.in_reply_to() {
-            mail_parser::HeaderValue::Text(t) => Some(format!("<{t}>")),
-            mail_parser::HeaderValue::TextList(l) => l.last().map(|t| format!("<{t}>")),
-            _ => None,
-        },
+        in_reply_to: m.in_reply_to().and_then(|l| l.iter().last()).map(|t| format!("<{t}>")),
         references: reply
             .references
             .split_whitespace()
@@ -2517,7 +2493,7 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
 /// The invite a message carries: its first `text/calendar` part (inline,
 /// as calendars send it, or as an .ics file) that holds an event.
 fn calendar(m: &mail_parser::Message) -> Option<String> {
-    m.parts.iter().find_map(|part| {
+    m.root().parts().find_map(|part| {
         let kind = part.content_type()?;
         let sub = kind.subtype().unwrap_or_default();
         let ics = (kind.ctype().eq_ignore_ascii_case("text")
@@ -2527,16 +2503,15 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
         if !ics {
             return None;
         }
-        let text = String::from_utf8_lossy(part.contents()).into_owned();
+        let text = String::from_utf8_lossy(part.decoded()).into_owned();
         text.contains("BEGIN:VEVENT").then_some(text)
     })
 }
 
 fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> {
-    m.attachments
-        .iter()
-        .filter_map(|&id| {
-            let part = m.part(id)?;
+    m.attachments()
+        .filter_map(|part| {
+            let id = part.id();
             let shown = match (part.content_id(), html) {
                 (Some(cid), Some(html)) => {
                     html.contains(&format!("cid:{}", cid.trim_matches(['<', '>'])))
@@ -2563,7 +2538,7 @@ fn attachments(m: &mail_parser::Message, html: Option<&str>) -> Vec<Attachment> 
             }
             let name = match part.attachment_name() {
                 Some(n) if !n.trim().is_empty() => file_name(n),
-                _ => match part.message() {
+                _ => match part.nested() {
                     Some(inner) => {
                         let subject = file_name(inner.subject().unwrap_or("message"));
                         format!("{subject}.eml")
@@ -2722,7 +2697,7 @@ fn decode_header_text(raw: &[u8]) -> String {
 
 /// The decoded content of a part fetched alone.
 pub fn decode_part(data: &[u8], encoding: Option<&str>) -> Option<Vec<u8>> {
-    use mail_parser::decoders::{base64::base64_decode, quoted_printable::quoted_printable_decode};
+    use encodify::{base64::decode as base64_decode, qp::decode as quoted_printable_decode};
     match encoding {
         Some("base64") => base64_decode(data),
         Some("quoted-printable") => quoted_printable_decode(data),
@@ -2752,10 +2727,10 @@ pub fn file_name(name: &str) -> String {
 /// The decoded content of one attachment part of a whole message.
 pub fn attachment_data(raw: &[u8], part: u32) -> Option<Vec<u8>> {
     let m = MessageParser::default().parse(raw)?;
-    if !m.attachments.contains(&part) {
+    if !m.attachments().any(|p| p.id() == part) {
         return None;
     }
-    Some(m.part(part)?.contents().to_vec())
+    Some(m.part(part)?.decoded().to_vec())
 }
 
 #[cfg(test)]

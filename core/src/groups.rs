@@ -113,7 +113,7 @@ pub fn recipients(m: &mail_parser::Message) -> String {
         }
     };
     for list in [m.to(), m.cc()].into_iter().flatten() {
-        for a in list.iter() {
+        for a in list.mailboxes() {
             if let Some(address) = a.address() {
                 add(address);
             }

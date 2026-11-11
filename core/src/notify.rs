@@ -366,9 +366,9 @@ pub const HEADER_FIELDS: &str = "LIST-ID LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMIT
 /// Whether a message was sent by a machine: a mailing list or newsletter,
 /// bulk mail, an automatic reply, or a no-reply address.
 pub fn automated(m: &Message) -> bool {
-    let has = |name: HeaderName| m.header(name).is_some();
+    let has = |name: HeaderName| m.headers().value(name).is_some();
     let text = |name: &str| {
-        m.header_raw(name)
+        m.headers().get(name).and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .map(|v| v.trim().to_ascii_lowercase())
             .unwrap_or_default()
     };

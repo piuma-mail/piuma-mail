@@ -128,7 +128,7 @@ pub fn trail(m: &Message, raw: &[u8]) -> Trail {
         .unwrap_or_default();
     let mut steps = Vec::new();
     for h in m.headers() {
-        let name = h.name.as_str();
+        let name = h.name().as_str();
         let value = raw
             .get(h.offset_start as usize..h.offset_end as usize)
             .map(|v| String::from_utf8_lossy(v).replace(['\r', '\n'], " "))
