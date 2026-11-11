@@ -64,7 +64,7 @@ impl std::fmt::Debug for Key {
 impl Key {
     pub fn generate() -> Self {
         let mut k = [0u8; 32];
-        getrandom::getrandom(&mut k).expect("the system has randomness");
+        getrandom::fill(&mut k).expect("the system has randomness");
         Key(k)
     }
 
@@ -110,7 +110,7 @@ impl Key {
 /// Seals `plain` with `key`: a fresh 24-byte nonce, then the ciphertext.
 pub fn seal(key: &Key, plain: &[u8]) -> Vec<u8> {
     let mut nonce = [0u8; 24];
-    getrandom::getrandom(&mut nonce).expect("the system has randomness");
+    getrandom::fill(&mut nonce).expect("the system has randomness");
     let cipher = XChaCha20Poly1305::new((&key.0).into());
     let sealed = cipher
         .encrypt(XNonce::from_slice(&nonce), plain)
@@ -498,7 +498,7 @@ pub struct Pairing {
 /// Six random digits, as "482615".
 pub fn pair_code() -> String {
     let mut b = [0u8; 4];
-    getrandom::getrandom(&mut b).expect("the system has randomness");
+    getrandom::fill(&mut b).expect("the system has randomness");
     format!("{:06}", u32::from_le_bytes(b) % 1_000_000)
 }
 
@@ -510,7 +510,7 @@ pub fn pair_start(code: &str, device: &Device) -> Pairing {
         &Identity::new(PAIR_ID),
     );
     let mut id = [0u8; 12];
-    getrandom::getrandom(&mut id).expect("the system has randomness");
+    getrandom::fill(&mut id).expect("the system has randomness");
     Pairing {
         state,
         request: PairRequest {
@@ -697,7 +697,7 @@ pub fn now() -> i64 {
 /// A random id for this device, made once.
 pub fn new_device_id() -> String {
     let mut b = [0u8; 9];
-    getrandom::getrandom(&mut b).expect("the system has randomness");
+    getrandom::fill(&mut b).expect("the system has randomness");
     b.iter().map(|b| format!("{b:02x}")).collect()
 }
 

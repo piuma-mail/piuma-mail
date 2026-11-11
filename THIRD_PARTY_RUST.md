@@ -23,7 +23,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [async-channel](https://github.com/smol-rs/async-channel) | 1.9.0 | Apache-2.0 OR MIT |
 | [async-channel](https://github.com/smol-rs/async-channel) | 2.5.0 | Apache-2.0 OR MIT |
 | [async-compression](https://github.com/Nullus157/async-compression) | 0.4.50 | MIT OR Apache-2.0 |
-| [async-imap](https://github.com/async-email/async-imap) | 0.11.3 | MIT OR Apache-2.0 |
+| [async-imap](https://github.com/async-email/async-imap) | 0.12.0 | MIT OR Apache-2.0 |
 | [async-io](https://github.com/smol-rs/async-io) | 2.6.0 | Apache-2.0 OR MIT |
 | [async-lock](https://github.com/smol-rs/async-lock) | 3.4.2 | Apache-2.0 OR MIT |
 | [async-process](https://github.com/smol-rs/async-process) | 2.5.0 | Apache-2.0 OR MIT |
@@ -61,6 +61,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [chacha20poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305) | 0.10.1 | Apache-2.0 OR MIT |
 | [chrono](https://github.com/chronotope/chrono) | 0.4.45 | MIT OR Apache-2.0 |
 | [cipher](https://github.com/RustCrypto/traits) | 0.4.4 | MIT OR Apache-2.0 |
+| [cmov](https://github.com/RustCrypto/utils) | 0.5.4 | Apache-2.0 OR MIT |
 | [color](https://github.com/linebender/color) | 0.3.3 | Apache-2.0 OR MIT |
 | [color_quant](https://github.com/image-rs/color_quant.git) | 1.1.0 | MIT |
 | [combine](https://github.com/Marwes/combine) | 4.6.9 | MIT |
@@ -84,6 +85,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [crypto-common](https://github.com/RustCrypto/traits) | 0.2.2 | MIT OR Apache-2.0 |
 | [cssparser](https://github.com/servo/rust-cssparser) | 0.37.0 | MPL-2.0 |
 | [cssparser-macros](https://github.com/servo/rust-cssparser) | 0.7.1 | MPL-2.0 |
+| [ctutils](https://github.com/RustCrypto/utils) | 0.4.8 | Apache-2.0 OR MIT |
 | [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek) | 4.1.3 | BSD-3-Clause |
 | [curve25519-dalek-derive](https://github.com/dalek-cryptography/curve25519-dalek) | 0.1.1 | MIT/Apache-2.0 |
 | [dart-sys](https://github.com/dart-sys/dart-sys) | 4.1.5 | MIT OR Apache-2.0 |
@@ -177,7 +179,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [hickory-proto](https://github.com/hickory-dns/hickory-dns) | 0.26.3 | MIT OR Apache-2.0 |
 | [hickory-resolver](https://github.com/hickory-dns/hickory-dns) | 0.26.3 | MIT OR Apache-2.0 |
 | [hkdf](https://github.com/RustCrypto/KDFs/) | 0.12.4 | MIT OR Apache-2.0 |
+| [hkdf](https://github.com/RustCrypto/KDFs/) | 0.13.0 | MIT OR Apache-2.0 |
 | [hmac](https://github.com/RustCrypto/MACs) | 0.12.1 | MIT OR Apache-2.0 |
+| [hmac](https://github.com/RustCrypto/MACs) | 0.13.0 | MIT OR Apache-2.0 |
 | [hostname](https://github.com/djc/hostname) | 0.4.2 | MIT |
 | [html5ever](https://github.com/servo/html5ever) | 0.39.0 | MIT OR Apache-2.0 |
 | [http](https://github.com/hyperium/http) | 1.5.0 | MIT OR Apache-2.0 |
@@ -201,7 +205,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [image](https://github.com/image-rs/image) | 0.25.10 | MIT OR Apache-2.0 |
 | [image-webp](https://github.com/image-rs/image-webp) | 0.2.4 | MIT OR Apache-2.0 |
 | [imagesize](https://github.com/Roughsketch/imagesize) | 0.13.0 | MIT |
-| [imap-proto](https://github.com/djc/tokio-imap) | 0.16.7 | MIT OR Apache-2.0 |
+| [imap-proto](https://github.com/djc/imap-proto) | 0.17.0 | MIT OR Apache-2.0 |
 | [indexmap](https://github.com/indexmap-rs/indexmap) | 2.14.2 | Apache-2.0 OR MIT |
 | [inout](https://github.com/RustCrypto/utils) | 0.1.4 | MIT OR Apache-2.0 |
 | [ipconfig](https://github.com/liranringel/ipconfig) | 0.3.4 | MIT/Apache-2.0 |
@@ -236,7 +240,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [memoffset](https://github.com/Gilnaa/memoffset) | 0.9.1 | MIT |
 | [mime](https://github.com/hyperium/mime) | 0.3.17 | MIT OR Apache-2.0 |
 | [mime_guess](https://github.com/abonander/mime_guess) | 2.0.5 | MIT |
-| [minimal-lexical](https://github.com/Alexhuszagh/minimal-lexical) | 0.2.1 | MIT/Apache-2.0 |
 | [miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | [miniz_oxide](https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide) | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | [mio](https://github.com/tokio-rs/mio) | 1.2.4 | MIT |
@@ -246,7 +249,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [new_debug_unreachable](https://github.com/mbrubeck/rust-debug-unreachable) | 1.0.6 | MIT |
 | [nix](https://github.com/nix-rust/nix) | 0.29.0 | MIT |
 | [nix](https://github.com/nix-rust/nix) | 0.31.3 | MIT |
-| [nom](https://github.com/Geal/nom) | 7.1.3 | MIT |
 | [nom](https://github.com/rust-bakery/nom) | 8.0.0 | MIT |
 | [normpath](https://github.com/dylni/normpath) | 1.5.2 | MIT OR Apache-2.0 |
 | [num](https://github.com/rust-num/num) | 0.4.3 | MIT OR Apache-2.0 |
@@ -320,7 +322,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [rgb](https://github.com/kornelski/rust-rgb) | 0.8.53 | MIT |
 | [ring](https://github.com/briansmith/ring) | 0.17.14 | Apache-2.0 AND ISC |
 | [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.20.0 | MIT OR Apache-2.0 |
-| [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.21.1 | MIT OR Apache-2.0 |
+| [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.21.2 | MIT OR Apache-2.0 |
 | [rqrr](https://github.com/WanzenBug/rqrr) | 0.11.0 | (MIT OR Apache-2.0) AND ISC |
 | [rusqlite](https://github.com/rusqlite/rusqlite) | 0.41.1 | MIT |
 | [rustc-demangle](https://github.com/rust-lang/rustc-demangle) | 0.1.28 | MIT/Apache-2.0 |
@@ -393,7 +395,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [tinyjson](https://github.com/rhysd/tinyjson) | 2.5.1 | MIT |
 | [tinystr](https://github.com/unicode-org/icu4x) | 0.8.4 | Unicode-3.0 |
 | [tinyvec](https://github.com/Lokathor/tinyvec) | 1.13.3 | Zlib OR Apache-2.0 OR MIT |
-| [tokio](https://github.com/tokio-rs/tokio) | 1.53.3 | MIT |
+| [tokio](https://github.com/tokio-rs/tokio) | 1.54.1 | MIT |
 | [tokio-macros](https://github.com/tokio-rs/tokio) | 2.7.2 | MIT |
 | [tokio-rustls](https://github.com/rustls/tokio-rustls) | 0.26.6 | MIT OR Apache-2.0 |
 | [toml_datetime](https://github.com/toml-rs/toml) | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 |
@@ -441,7 +443,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [web-time](https://github.com/daxpedda/web-time) | 1.1.0 | MIT OR Apache-2.0 |
 | [web_atoms](https://github.com/servo/html5ever) | 0.2.6 | MIT OR Apache-2.0 |
 | [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.10 | CDLA-Permissive-2.0 |
-| [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.10 | CDLA-Permissive-2.0 |
+| [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.11 | CDLA-Permissive-2.0 |
 | [weezl](https://github.com/image-rs/weezl) | 0.1.12 | MIT OR Apache-2.0 |
 | [whatlang](https://github.com/greyblake/whatlang-rs) | 0.18.0 | MIT |
 | [widestring](https://github.com/VoidStarKat/widestring-rs) | 1.2.1 | MIT OR Apache-2.0 |
