@@ -276,16 +276,59 @@ pub enum FileRisk {
     Locked,
 }
 
-/// Extensions of programs and scripts the systems run on a double click.
+/// Extensions of programs and scripts the systems run on a double click;
+/// shortcuts, help files and consoles that run what they point at; disk
+/// images, which open as a folder whose files lose the "from the internet"
+/// mark; and installers.
 const PROGRAMS: &[&str] = &[
-    "exe", "scr", "com", "pif", "bat", "cmd", "msi", "msix", "msp", "cpl", "vbs", "vbe", "js",
-    "jse", "wsf", "wsh", "hta", "ps1", "psm1", "jar", "lnk", "reg", "scf", "apk", "xapk", "appx",
-    "appimage", "command", "action", "workflow",
-    // Shortcuts, help files and consoles that run what they point at.
-    "url", "website", "chm", "msc", "inf", "settingcontent-ms", "library-ms", "xll",
-    // Disk images, which open as a folder whose files lose the "from the
-    // internet" mark, and installers.
-    "iso", "img", "vhd", "vhdx", "dmg", "pkg", "deb", "rpm", "sh", "desktop",
+    "exe",
+    "scr",
+    "com",
+    "pif",
+    "bat",
+    "cmd",
+    "msi",
+    "msix",
+    "msp",
+    "cpl",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "ps1",
+    "psm1",
+    "jar",
+    "lnk",
+    "reg",
+    "scf",
+    "apk",
+    "xapk",
+    "appx",
+    "appimage",
+    "command",
+    "action",
+    "workflow",
+    "url",
+    "website",
+    "chm",
+    "msc",
+    "inf",
+    "settingcontent-ms",
+    "library-ms",
+    "xll",
+    "iso",
+    "img",
+    "vhd",
+    "vhdx",
+    "dmg",
+    "pkg",
+    "deb",
+    "rpm",
+    "sh",
+    "desktop",
 ];
 
 /// Office files that keep macros.
