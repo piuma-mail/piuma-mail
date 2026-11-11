@@ -85,6 +85,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [cssparser-macros](https://github.com/servo/rust-cssparser) | 0.7.1 | MPL-2.0 |
 | [ctutils](https://github.com/RustCrypto/utils) | 0.4.8 | Apache-2.0 OR MIT |
 | [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek) | 4.1.3 | BSD-3-Clause |
+| [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek) | 5.0.0 | BSD-3-Clause |
 | [curve25519-dalek-derive](https://github.com/dalek-cryptography/curve25519-dalek) | 0.1.1 | MIT/Apache-2.0 |
 | [dart-sys](https://github.com/dart-sys/dart-sys) | 4.1.5 | MIT OR Apache-2.0 |
 | [dashmap](https://github.com/xacrimon/dashmap) | 5.5.3 | MIT |
@@ -125,6 +126,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [fearless_simd](https://github.com/linebender/fearless_simd) | 0.7.0 | Apache-2.0 OR MIT |
 | [fearless_simd](https://github.com/linebender/fearless_simd) | 1.1.0 | Apache-2.0 OR MIT |
 | [fiat-crypto](https://github.com/mit-plv/fiat-crypto) | 0.2.9 | MIT OR Apache-2.0 OR BSD-1-Clause |
+| [fiat-crypto](https://github.com/mit-plv/fiat-crypto) | 0.3.0 | MIT OR Apache-2.0 OR BSD-1-Clause |
 | [flate2](https://github.com/rust-lang/flate2-rs) | 1.1.10 | MIT OR Apache-2.0 |
 | [float-cmp](https://github.com/mikedilger/float-cmp) | 0.9.0 | MIT |
 | [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge) | 2.13.0 | MIT |
@@ -482,7 +484,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [windows_x86_64_msvc](https://github.com/microsoft/windows-rs) | 0.53.1 | MIT OR Apache-2.0 |
 | [winnow](https://github.com/winnow-rs/winnow) | 1.0.4 | MIT |
 | [writeable](https://github.com/unicode-org/icu4x) | 0.6.4 | Unicode-3.0 |
-| [x25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) | 2.0.1 | BSD-3-Clause |
+| [x25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) | 3.0.0 | BSD-3-Clause |
 | [xdg-home](https://github.com/zeenix/xdg-home) | 1.3.0 | MIT |
 | [xml](https://github.com/kornelski/xml-rs) | 1.4.0 | MIT |
 | [yoke](https://github.com/unicode-org/icu4x) | 0.8.3 | Unicode-3.0 |

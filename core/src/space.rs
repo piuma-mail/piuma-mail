@@ -746,8 +746,8 @@ mod tests {
 
     /// What devices already keep must still open after a library update:
     /// a space sealed and a key wrapped for a device by an earlier build
-    /// (chacha20poly1305 0.10, x25519-dalek 2), HKDF as RFC 5869 defines
-    /// it, and recovery phrases as BIP-39 defines them.
+    /// (chacha20poly1305 0.10, x25519-dalek 2), X25519 and HKDF as RFC 7748
+    /// and RFC 5869 define them, and recovery phrases as BIP-39 defines them.
     #[test]
     fn what_earlier_builds_sealed_still_opens() {
         let key = Key([7u8; 32]);
@@ -763,6 +763,29 @@ mod tests {
             "d29f2075095f63c9fda855c9",
         ]);
         assert_eq!(open_for(&Key([3u8; 32]), &wrapped).unwrap(), key);
+        // RFC 7748, section 6.1: both public keys and the shared secret.
+        let alice = <[u8; 32]>::try_from(from_hex(&[
+            "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+        ]))
+        .unwrap();
+        let bob = <[u8; 32]>::try_from(from_hex(&[
+            "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+        ]))
+        .unwrap();
+        let bob_public =
+            from_hex(&["de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"]);
+        assert_eq!(
+            public_key(&Key(alice)),
+            from_hex(&["8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"])
+        );
+        assert_eq!(public_key(&Key(bob)), bob_public);
+        let shared = x25519_dalek::StaticSecret::from(alice).diffie_hellman(
+            &x25519_dalek::PublicKey::from(<[u8; 32]>::try_from(bob_public).unwrap()),
+        );
+        assert_eq!(
+            shared.as_bytes().to_vec(),
+            from_hex(&["4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"])
+        );
         // RFC 5869, test case 3 (no salt, no info).
         assert_eq!(
             derive(&[0x0b; 22], b"").to_hex(),
