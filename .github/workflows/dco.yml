@@ -5,15 +5,19 @@ name: DCO
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   dco:
     name: DCO sign-off
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Every commit has Signed-off-by
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -21,6 +25,10 @@ jobs:
         run: |
           missing=0
           for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            # Dependabot's own commits: a bot certifies nothing (DCO.txt).
+            case "$(git log -1 --format=%ae "$c")" in
+              *+dependabot\[bot\]@users.noreply.github.com) continue ;;
+            esac
             if ! git log -1 --format=%B "$c" | grep -qE '^Signed-off-by: .+ <.+>$'; then
               echo "::error::Commit $(git log -1 --format='%h %s' "$c") has no Signed-off-by line."
               missing=1
