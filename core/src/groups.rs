@@ -113,14 +113,15 @@ pub fn recipients(m: &mail_parser::Message) -> String {
         }
     };
     for list in [m.to(), m.cc()].into_iter().flatten() {
-        for a in list.iter() {
+        for a in list.mailboxes() {
             if let Some(address) = a.address() {
                 add(address);
             }
         }
     }
     for name in ["Delivered-To", "X-Original-To"] {
-        for value in m.header_values(name) {
+        for header in m.headers().all(name) {
+            let value = header.value();
             if let Some(text) = value.as_text() {
                 add(text);
             }

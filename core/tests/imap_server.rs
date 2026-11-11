@@ -733,6 +733,86 @@ async fn archive_and_delete_move_messages() {
 }
 
 #[tokio::test]
+async fn forwarded_multipart_before_pdf_fetches_the_right_bytes() {
+    let Some(cfg) = config("forward-pdf") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    outside
+        .deliver(
+            include_str!("fixtures/forward-before-pdf.eml"),
+            "15-Oct-2026 09:15:00 +0200",
+        )
+        .await;
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let body = conn.full_body(&store, account, "INBOX", 1).await.unwrap();
+    let pdf = body
+        .attachments
+        .iter()
+        .find(|a| a.name == "report.pdf")
+        .unwrap();
+    assert!(pdf.part > 3);
+    assert_eq!(
+        conn.attachment("INBOX", 1, pdf.part).await.unwrap(),
+        b"%PDF-OUTER"
+    );
+    // Simulate the row emitted by the schema migration. Fetching it
+    // through the app's Remote path preserves IDs held by the reader.
+    let legacy = (1 << 31) | 3;
+    let mut historical = body.clone();
+    let historical_pdf = historical
+        .attachments
+        .iter_mut()
+        .find(|a| a.name == "report.pdf")
+        .unwrap();
+    historical_pdf.part = legacy;
+    let (legacy_store, legacy_account) = store_with_account();
+    let mut summary = store
+        .lock()
+        .unwrap()
+        .message(account, "INBOX", 1)
+        .unwrap()
+        .unwrap();
+    summary.account = legacy_account;
+    legacy_store
+        .lock()
+        .unwrap()
+        .upsert_messages(&[summary])
+        .unwrap();
+    legacy_store
+        .lock()
+        .unwrap()
+        .set_full_body(legacy_account, "INBOX", 1, &historical)
+        .unwrap();
+    let mut remote = piuma_core::remote::Remote::Imap(conn);
+    assert_eq!(
+        remote
+            .attachment(&legacy_store, legacy_account, "INBOX", 1, legacy)
+            .await
+            .unwrap(),
+        b"%PDF-OUTER"
+    );
+    let migrated = legacy_store
+        .lock()
+        .unwrap()
+        .attachments(legacy_account, "INBOX", 1)
+        .unwrap();
+    let pdf = migrated.iter().find(|a| a.name == "report.pdf").unwrap();
+    assert_eq!(pdf.part, legacy);
+    assert_eq!(
+        remote
+            .attachment(&legacy_store, legacy_account, "INBOX", 1, pdf.part)
+            .await
+            .unwrap(),
+        b"%PDF-OUTER"
+    );
+}
+
+#[tokio::test]
 async fn attachments_are_listed_then_fetched_on_demand() {
     let Some(cfg) = config("attach") else { return };
     let draft = piuma_core::smtp::Draft {

@@ -7,7 +7,7 @@ exclude = ["third_party/fxtranslate"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/piuma-mail/piuma-mail"
-rust-version = "1.89"
+rust-version = "1.98"
 
 # Our copy of fxtranslate: plain NEON kernel on arm64 and byte-fallback
 # decoding (see third_party/fxtranslate/PIUMA.md).

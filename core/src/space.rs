@@ -635,14 +635,14 @@ impl Note {
     /// Reads a message of [FOLDER]; None for anything else.
     pub fn from_message(raw: &[u8]) -> Option<Note> {
         let m = mail_parser::MessageParser::default().parse(raw)?;
-        let tag = m.header(HEADER)?.as_text()?.trim().to_owned();
+        let tag = m.headers().value(HEADER)?.as_text()?.trim().to_owned();
         let data = m
             .body_bytes()
-            .or_else(|| m.attachment(0).map(|a| a.contents()))?;
+            .or_else(|| m.attachments().next().map(|a| a.decoded()))?;
         Some(match tag.as_str() {
-            "space" => Note::Space(SealedSpace::from_bytes(data).ok()?),
-            "request" => Note::Request(serde_json::from_slice(data).ok()?),
-            "answer" => Note::Answer(serde_json::from_slice(data).ok()?),
+            "space" => Note::Space(SealedSpace::from_bytes(&data).ok()?),
+            "request" => Note::Request(serde_json::from_slice(&data).ok()?),
+            "answer" => Note::Answer(serde_json::from_slice(&data).ok()?),
             "refused" => Note::Refused(String::from_utf8(data.to_vec()).ok()?),
             "moved" => Note::Moved(String::from_utf8(data.to_vec()).ok()?),
             _ => return None,
@@ -651,12 +651,12 @@ impl Note {
 }
 
 trait BodyBytes {
-    fn body_bytes(&self) -> Option<&[u8]>;
+    fn body_bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>>;
 }
 
 impl BodyBytes for mail_parser::Message<'_> {
-    fn body_bytes(&self) -> Option<&[u8]> {
-        self.part(0).map(|p| p.contents())
+    fn body_bytes(&self) -> Option<std::borrow::Cow<'_, [u8]>> {
+        self.part(0).map(|p| p.decoded())
     }
 }
 
