@@ -14,5 +14,7 @@ a few places. Each change is marked "Piuma Mail:" in the source.
   and `c++abi`), since the app ships no `libc++_shared.so`.
 - `src/spm.rs`: byte-fallback pieces (`<0x7C>`) decode to their byte, so "|"
   and other rare characters come out as themselves.
+- `Cargo.toml`, `src/cache.rs`: ruzstd 0.9.1 instead of 0.7, which fixes a
+  decompression bomb (RUSTSEC-2026-0344); its decoder is now in `decoding`.
 
 Drop this copy when upstream has the same fixes.

@@ -9,7 +9,6 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [adler2](https://github.com/oyvindln/adler2) | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | [aead](https://github.com/RustCrypto/traits) | 0.5.2 | MIT OR Apache-2.0 |
 | [aes](https://github.com/RustCrypto/block-ciphers) | 0.8.4 | MIT OR Apache-2.0 |
-| [ahash](https://github.com/tkaitchuck/ahash) | 0.8.12 | MIT OR Apache-2.0 |
 | [aho-corasick](https://github.com/BurntSushi/aho-corasick) | 1.1.5 | Unlicense OR MIT |
 | [allo-isolate](https://github.com/sunshine-protocol/allo-isolate) | 0.1.27 | Apache-2.0 |
 | [alloc-no-stdlib](https://github.com/dropbox/rust-alloc-no-stdlib) | 2.0.4 | BSD-3-Clause |
@@ -160,10 +159,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [half](https://github.com/VoidStarKat/half-rs) | 2.7.1 | MIT OR Apache-2.0 |
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.14.5 | MIT OR Apache-2.0 |
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.15.5 | MIT OR Apache-2.0 |
-| [hashbrown](https://github.com/rust-lang/hashbrown) | 0.16.1 | MIT OR Apache-2.0 |
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.17.1 | MIT OR Apache-2.0 |
 | [hashify](https://github.com/stalwartlabs/hashify) | 0.2.9 | Apache-2.0 OR MIT |
-| [hashlink](https://github.com/kyren/hashlink) | 0.9.1 | MIT OR Apache-2.0 |
+| [hashlink](https://github.com/djc/hashlink) | 0.12.2 | MIT OR Apache-2.0 |
 | [hayro](https://github.com/LaurenzV/hayro) | 0.8.0 | Apache-2.0 OR MIT |
 | [hayro-ccitt](https://github.com/LaurenzV/hayro) | 0.4.0 | Apache-2.0 OR MIT |
 | [hayro-cmap](https://github.com/LaurenzV/hayro) | 0.1.0 | Apache-2.0 OR MIT |
@@ -222,13 +220,13 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [libc](https://github.com/rust-lang/libc) | 0.2.189 | MIT OR Apache-2.0 |
 | [libdbus-sys](https://github.com/diwic/dbus-rs) | 0.2.7 | Apache-2.0/MIT |
 | [libredox](https://gitlab.redox-os.org/redox-os/libredox.git) | 0.1.25 | MIT |
-| [libsqlite3-sys](https://github.com/rusqlite/rusqlite) | 0.30.1 | MIT |
+| [libsqlite3-sys](https://github.com/rusqlite/rusqlite) | 0.39.1 | MIT |
 | [linebender_resource_handle](https://github.com/linebender/raw_resource_handle) | 0.1.1 | Apache-2.0 OR MIT |
 | [linux-raw-sys](https://github.com/sunfishcode/linux-raw-sys) | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | [litemap](https://github.com/unicode-org/icu4x) | 0.8.3 | Unicode-3.0 |
 | [lock_api](https://github.com/Amanieu/parking_lot) | 0.4.14 | MIT OR Apache-2.0 |
 | [log](https://github.com/rust-lang/log) | 0.4.34 | MIT OR Apache-2.0 |
-| [lru](https://github.com/jeromefroe/lru-rs.git) | 0.16.4 | MIT |
+| [lru](https://github.com/jeromefroe/lru-rs.git) | 0.18.5 | MIT |
 | [lru-slab](https://github.com/Ralith/lru-slab) | 0.1.3 | MIT OR Apache-2.0 OR Zlib |
 | [mail-parser](https://github.com/stalwartlabs/mail-parser) | 0.11.9 | Apache-2.0 OR MIT |
 | [markup5ever](https://github.com/servo/html5ever) | 0.39.0 | MIT OR Apache-2.0 |
@@ -247,6 +245,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [ndk-context](https://github.com/rust-windowing/android-ndk-rs) | 0.1.1 | MIT OR Apache-2.0 |
 | [new_debug_unreachable](https://github.com/mbrubeck/rust-debug-unreachable) | 1.0.6 | MIT |
 | [nix](https://github.com/nix-rust/nix) | 0.29.0 | MIT |
+| [nix](https://github.com/nix-rust/nix) | 0.31.3 | MIT |
 | [nom](https://github.com/Geal/nom) | 7.1.3 | MIT |
 | [nom](https://github.com/rust-bakery/nom) | 8.0.0 | MIT |
 | [normpath](https://github.com/dylni/normpath) | 1.5.2 | MIT OR Apache-2.0 |
@@ -322,18 +321,18 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [ring](https://github.com/briansmith/ring) | 0.17.14 | Apache-2.0 AND ISC |
 | [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.20.0 | MIT OR Apache-2.0 |
 | [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.21.1 | MIT OR Apache-2.0 |
-| [rqrr](https://github.com/WanzenBug/rqrr) | 0.10.1 | (MIT OR Apache-2.0) AND ISC |
-| [rusqlite](https://github.com/rusqlite/rusqlite) | 0.32.1 | MIT |
+| [rqrr](https://github.com/WanzenBug/rqrr) | 0.11.0 | (MIT OR Apache-2.0) AND ISC |
+| [rusqlite](https://github.com/rusqlite/rusqlite) | 0.41.1 | MIT |
 | [rustc-demangle](https://github.com/rust-lang/rustc-demangle) | 0.1.28 | MIT/Apache-2.0 |
 | [rustc-hash](https://github.com/rust-lang/rustc-hash) | 2.1.3 | Apache-2.0 OR MIT |
-| [rustix](https://github.com/bytecodealliance/rustix) | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
+| [rustix](https://github.com/bytecodealliance/rustix) | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | [rustls](https://github.com/rustls/rustls) | 0.23.46 | Apache-2.0 OR ISC OR MIT |
 | [rustls-native-certs](https://github.com/rustls/rustls-native-certs) | 0.8.5 | Apache-2.0 OR ISC OR MIT |
 | [rustls-pki-types](https://github.com/rustls/pki-types) | 1.15.1 | MIT OR Apache-2.0 |
 | [rustls-platform-verifier](https://github.com/rustls/rustls-platform-verifier) | 0.7.1 | MIT OR Apache-2.0 |
 | [rustls-platform-verifier-android](https://github.com/rustls/rustls-platform-verifier) | 0.2.0 | MIT OR Apache-2.0 |
-| [rustls-webpki](https://github.com/rustls/webpki) | 0.103.15 | ISC |
-| [ruzstd](https://github.com/KillingSpark/zstd-rs) | 0.7.3 | MIT |
+| [rustls-webpki](https://github.com/rustls/webpki) | 0.103.16 | ISC |
+| [ruzstd](https://github.com/KillingSpark/zstd-rs) | 0.9.1 | MIT |
 | [schannel](https://github.com/steffengy/schannel-rs) | 0.1.29 | MIT |
 | [scopeguard](https://github.com/bluss/scopeguard) | 1.2.0 | MIT OR Apache-2.0 |
 | [scraper](https://github.com/rust-scraper/scraper) | 0.27.0 | ISC |
@@ -408,8 +407,9 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [tracing-attributes](https://github.com/tokio-rs/tracing) | 0.1.31 | MIT |
 | [tracing-core](https://github.com/tokio-rs/tracing) | 0.1.36 | MIT |
 | [try-lock](https://github.com/seanmonstar/try-lock) | 0.2.5 | MIT |
-| [twox-hash](https://github.com/shepmaster/twox-hash) | 1.6.3 | MIT |
+| [twox-hash](https://github.com/shepmaster/twox-hash) | 2.1.5 | MIT |
 | [typed-path](https://github.com/chipsenkbeil/typed-path) | 0.12.4 | MIT OR Apache-2.0 |
+| [typed-path](https://github.com/chipsenkbeil/typed-path) | 0.13.0 | MIT OR Apache-2.0 |
 | [typenum](https://github.com/paholg/typenum) | 1.20.1 | MIT OR Apache-2.0 |
 | [uds_windows](https://github.com/haraldh/rust_uds_windows) | 1.2.1 | MIT |
 | [unicase](https://github.com/seanmonstar/unicase) | 2.10.0 | MIT OR Apache-2.0 |
@@ -440,8 +440,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [web-sys](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys) | 0.3.106 | MIT OR Apache-2.0 |
 | [web-time](https://github.com/daxpedda/web-time) | 1.1.0 | MIT OR Apache-2.0 |
 | [web_atoms](https://github.com/servo/html5ever) | 0.2.6 | MIT OR Apache-2.0 |
-| [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.9 | CDLA-Permissive-2.0 |
-| [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.9 | CDLA-Permissive-2.0 |
+| [webpki-root-certs](https://github.com/rustls/webpki-roots) | 1.0.10 | CDLA-Permissive-2.0 |
+| [webpki-roots](https://github.com/rustls/webpki-roots) | 1.0.10 | CDLA-Permissive-2.0 |
 | [weezl](https://github.com/image-rs/weezl) | 0.1.12 | MIT OR Apache-2.0 |
 | [whatlang](https://github.com/greyblake/whatlang-rs) | 0.18.0 | MIT |
 | [widestring](https://github.com/VoidStarKat/widestring-rs) | 1.2.1 | MIT OR Apache-2.0 |
@@ -499,8 +499,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [zerotrie](https://github.com/unicode-org/icu4x) | 0.2.5 | Unicode-3.0 |
 | [zerovec](https://github.com/unicode-org/icu4x) | 0.11.8 | Unicode-3.0 |
 | [zerovec-derive](https://github.com/unicode-org/icu4x) | 0.11.6 | Unicode-3.0 |
-| [zip](https://github.com/zip-rs/zip2.git) | 7.4.0 | MIT |
 | [zip](https://github.com/zip-rs/zip2) | 8.6.0 | MIT |
+| [zip](https://github.com/zip-rs/zip2) | 9.1.3 | MIT |
 | [zlib-rs](https://github.com/trifectatechfoundation/zlib-rs) | 0.6.8 | Zlib |
 | [zmij](https://github.com/dtolnay/zmij) | 1.0.23 | MIT |
 | [zopfli](https://github.com/zopfli-rs/zopfli) | 0.8.4 | Apache-2.0 |

@@ -1408,13 +1408,16 @@ impl Store {
     }
 
     fn migrate(&mut self) -> Result<()> {
-        let current: usize = self
+        // SQLite keeps it as a 32-bit integer; rusqlite no longer reads a
+        // usize directly.
+        let current = self
             .conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?
+            as usize;
         let tx = self.conn.transaction()?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
             tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", i + 1)?;
+            tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         }
         // Bulk or automatic mail by Precedence and Auto-Submitted, which
         // goes to Notifications.
@@ -1450,9 +1453,10 @@ impl Store {
 
     /// Schema version, useful for diagnostics.
     pub fn schema_version(&self) -> Result<usize> {
-        Ok(self
+        let version: i64 = self
             .conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))?)
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        Ok(version as usize)
     }
 
     /// Adds an account and returns its id. The id passed in is ignored.
@@ -4878,7 +4882,7 @@ impl Store {
         let mut out = serde_json::Map::new();
         for table in SPACE_TABLES {
             let mut stmt = self.conn.prepare(&format!("SELECT * FROM {table}"))?;
-            let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+            let names: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
             let rows = stmt
                 .query_map([], |r| {
                     let mut row = serde_json::Map::new();
@@ -7065,7 +7069,7 @@ From: <help@bank.example>\r\n\r\nHi";
             .unwrap();
         store
             .conn
-            .pragma_update(None, "user_version", CLEAN_PREVIEWS - 1)
+            .pragma_update(None, "user_version", (CLEAN_PREVIEWS - 1) as i64)
             .unwrap();
         store.migrate().unwrap();
         let preview = |uid: u32| -> String {
@@ -9146,7 +9150,7 @@ From: <help@bank.example>\r\n\r\nHi";
             from_email: from.1.into(),
             subject: subject.into(),
             preview: String::new(),
-            ..msg(account, uid, at, uid % 2 == 0)
+            ..msg(account, uid, at, uid.is_multiple_of(2))
         }
     }
 

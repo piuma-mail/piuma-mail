@@ -1,0 +1,28 @@
+# cargo-deny: known vulnerabilities and where crates come from.
+# `cargo deny check advisories sources`, run by .github/workflows/dependencies.yml.
+
+[graph]
+all-features = false
+
+[advisories]
+# Unmaintained crates count only when we depend on them directly; deeper
+# ones (derivative via velopack, pin-utils via async-imap, zbus via keyring)
+# are left to the crates that bring them.
+unmaintained = "workspace"
+yanked = "deny"
+ignore = [
+    # velopack 1.2.161 (Windows updates) still requires zip ^8.6; no stable
+    # release has zip 9 yet. Velopack opens only the update packages of our
+    # own GitHub releases, and these advisories are about extracting
+    # attacker-made archives (symlinks, permissions, AES entries). Remove
+    # once velopack moves to zip 9.
+    { id = "RUSTSEC-2026-0367", reason = "zip 8.6 through velopack: our own update packages only" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 8.6 through velopack: our own update packages only" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 8.6 through velopack: our own update packages only" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 8.6 through velopack: our own update packages only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

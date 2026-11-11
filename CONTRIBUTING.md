@@ -30,6 +30,7 @@ The mockup canvas and the app must always show the same thing.
 cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 python3 tools/gen_tokens.py --check
 python3 tools/gen_rust_licenses.py --check   # after changing Cargo.lock
+cargo deny check advisories sources          # after changing Cargo.lock (cargo install cargo-deny)
 cd app && dart format lib test && flutter analyze && flutter test
 cd ../wear && dart format lib test && flutter analyze && flutter test   # the watch app
 ```
