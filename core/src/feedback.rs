@@ -818,7 +818,7 @@ fn valid_id(id: &str) -> bool {
 
 fn random_hex(bytes: usize) -> String {
     let mut b = vec![0u8; bytes];
-    getrandom::getrandom(&mut b).expect("the system has randomness");
+    getrandom::fill(&mut b).expect("the system has randomness");
     hex(&b)
 }
 

@@ -32,7 +32,7 @@ pub fn invite_code() -> String {
     // 250 is the largest multiple of 10 under 256: no digit comes up more.
     let mut digits = String::with_capacity(CODE_DIGITS);
     while digits.len() < CODE_DIGITS {
-        getrandom::getrandom(&mut b).expect("the system has randomness");
+        getrandom::fill(&mut b).expect("the system has randomness");
         for x in b {
             if x < 250 && digits.len() < CODE_DIGITS {
                 digits.push(char::from(b'0' + x % 10));

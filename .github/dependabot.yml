@@ -10,6 +10,16 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      # app/rust keeps libc below 0.2.190 for iOS (see its Cargo.toml):
+      # backtrace still calls functions libc 0.2.190 limits to macOS.
+      - dependency-name: libc
+        versions: [">= 0.2.190"]
+      # mail-parser 1.0 numbers parts across nested messages, which moves
+      # the part ids the database keeps for attachments: it needs its own
+      # migration (issue #64), not a version bump.
+      - dependency-name: mail-parser
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
