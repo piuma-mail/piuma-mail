@@ -140,7 +140,8 @@ version = "0.9"
 optional = true
 
 [dependencies.ruzstd]
-version = "0.7"
+# Piuma Mail: 0.9.1 fixes a decompression bomb (RUSTSEC-2026-0344).
+version = "0.9.1"
 optional = true
 
 [dependencies.sha2]
