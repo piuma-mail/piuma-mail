@@ -2481,7 +2481,7 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
             .collect(),
         files,
         marks: m
-            .header_raw(crate::rich::HEADER)
+            .headers().get(crate::rich::HEADER).and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .map(crate::rich::decode)
             .unwrap_or_default(),
         ..Default::default()
@@ -2503,7 +2503,7 @@ fn calendar(m: &mail_parser::Message) -> Option<String> {
         if !ics {
             return None;
         }
-        let text = String::from_utf8_lossy(part.decoded()).into_owned();
+        let text = String::from_utf8_lossy(&part.decoded()).into_owned();
         text.contains("BEGIN:VEVENT").then_some(text)
     })
 }

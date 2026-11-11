@@ -120,7 +120,8 @@ pub fn recipients(m: &mail_parser::Message) -> String {
         }
     }
     for name in ["Delivered-To", "X-Original-To"] {
-        for value in m.header_values(name) {
+        for header in m.headers().all(name) {
+            let value = header.value();
             if let Some(text) = value.as_text() {
                 add(text);
             }

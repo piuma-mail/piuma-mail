@@ -128,9 +128,10 @@ pub fn trail(m: &Message, raw: &[u8]) -> Trail {
         .unwrap_or_default();
     let mut steps = Vec::new();
     for h in m.headers() {
-        let name = h.name().as_str();
+        let header_name = h.name();
+        let name = header_name.as_str();
         let value = raw
-            .get(h.offset_start as usize..h.offset_end as usize)
+            .get(h.offset_start() as usize..h.offset_end() as usize)
             .map(|v| String::from_utf8_lossy(v).replace(['\r', '\n'], " "))
             .unwrap_or_default();
         if name.eq_ignore_ascii_case("received") {
