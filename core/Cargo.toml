@@ -40,7 +40,7 @@ hkdf = "0.13.0"
 sha2 = "0.11.1"
 getrandom = "0.4.3"
 zeroize = "1.9.1"
-bip39 = { version = "2.1.0", default-features = false, features = ["std"] }
+bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 resvg = { version = "0.45", default-features = false }
 # The preview saved inside office documents, for the Attachments board.
