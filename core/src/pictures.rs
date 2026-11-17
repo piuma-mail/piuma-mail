@@ -232,7 +232,7 @@ pub fn svg_to_png(svg: &[u8]) -> Option<Vec<u8>> {
 /// A bitmap icon (PNG, JPEG, ICO, GIF, WebP) as a square PNG of [`SIZE`]
 /// on white. None for what isn't one, and for tiny icons that would blur.
 pub fn bitmap_to_png(bytes: &[u8]) -> Option<Vec<u8>> {
-    let image = image::load_from_memory(bytes).ok()?;
+    let image = crate::images::decode(bytes)?;
     if image.width() < 32 || image.height() < 32 {
         return None;
     }

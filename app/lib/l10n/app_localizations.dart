@@ -1216,6 +1216,24 @@ abstract class AppLocalizations {
   /// **'{name} is locked with a password, so nothing can look inside it. Open it only if you were expecting it.'**
   String riskBodyLocked(String name);
 
+  /// No description provided for @riskWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'A web page'**
+  String get riskWeb;
+
+  /// No description provided for @riskOpenWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Open this web page?'**
+  String get riskOpenWeb;
+
+  /// No description provided for @riskBodyWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.'**
+  String riskBodyWeb(String name);
+
   /// No description provided for @riskFileFrom.
   ///
   /// In en, this message translates to:

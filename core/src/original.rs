@@ -271,13 +271,26 @@ impl Writer<'_> {
     /// only as a `data:` picture or font. A remote one is noted, and comes
     /// in as `data:` once loaded; until then it is `none`.
     fn css(&mut self, css: &str) -> String {
+        // `u\72l(` is `url(` to a browser: read escapes first.
+        let decoded = unescape_css(css);
+        let css: &str = &decoded;
         let mut out = String::with_capacity(css.len());
         let lower = css.to_ascii_lowercase();
         let mut i = 0;
         while i < css.len() {
-            if lower[i..].starts_with("url(") {
-                let end = lower[i..].find(')').map_or(css.len(), |e| i + e + 1);
-                let inner = css[i + 4..end.saturating_sub(1).max(i + 4)]
+            if let Some(len) = IMAGE_FUNCTIONS
+                .iter()
+                .find(|f| lower[i..].starts_with(*f))
+                .map(|f| f.len())
+            {
+                // `image-set("a.png" 1x)` and the like load addresses
+                // without `url(`: the whole function goes.
+                out.push_str("none");
+                i = closing_paren(&lower, i + len);
+            } else if lower[i..].starts_with("url(") {
+                let close = lower[i..].find(')').map(|e| i + e);
+                let end = close.map_or(css.len(), |c| c + 1);
+                let inner = css[i + 4..close.unwrap_or(css.len())]
                     .trim()
                     .trim_matches(['"', '\''])
                     .trim();
@@ -321,8 +334,10 @@ impl Writer<'_> {
         let tiny = width.is_some_and(|w| w <= 3) || height.is_some_and(|h| h <= 3);
         let data = if let Some(rest) = src.strip_prefix("data:") {
             raster(rest).then(|| format!("data:{rest}"))
-        } else if src.len() > 4 && src[..4].eq_ignore_ascii_case("cid:") {
-            let cid = src[4..].trim_matches(['<', '>']).trim();
+        } else if let Some(cid) =
+            crate::guard::strip_prefix_ci(src, "cid:").filter(|c| !c.is_empty())
+        {
+            let cid = cid.trim_matches(['<', '>']).trim();
             (self.inline)(cid).and_then(|b| data_uri(&b))
         } else {
             let Ok(url) = Url::parse(src) else {
@@ -424,10 +439,99 @@ fn data_uri(bytes: &[u8]) -> Option<String> {
     ))
 }
 
+/// CSS functions that load a picture by an address of their own.
+const IMAGE_FUNCTIONS: &[&str] = &[
+    "-webkit-image-set(",
+    "image-set(",
+    "-webkit-cross-fade(",
+    "cross-fade(",
+    "image(",
+    "src(",
+];
+
+/// The index after the `)` that closes a function whose arguments start at
+/// `from`, counting nested parentheses; the end when it never closes.
+fn closing_paren(lower: &str, from: usize) -> usize {
+    let mut depth = 1usize;
+    for (i, b) in lower.bytes().enumerate().skip(from) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    lower.len()
+}
+
+/// CSS with its escapes read (`\72` is "r", `\@` is "@"), so a keyword
+/// spelled with escapes is seen. Escapes that stand for a quote, a
+/// backslash, a line break or a control character stay escaped: written
+/// out they would change where a string ends.
+fn unescape_css(css: &str) -> std::borrow::Cow<'_, str> {
+    if !css.contains('\\') {
+        return std::borrow::Cow::Borrowed(css);
+    }
+    let mut out = String::with_capacity(css.len());
+    let mut chars = css.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let mut hex = String::new();
+        while hex.len() < 6 {
+            match chars.peek() {
+                Some(&(_, h)) if h.is_ascii_hexdigit() => {
+                    hex.push(h);
+                    chars.next();
+                }
+                _ => break,
+            }
+        }
+        let (decoded, end) = if hex.is_empty() {
+            match chars.peek() {
+                // A backslash before a line break, or at the end, stays.
+                None | Some((_, '\n' | '\r' | '\u{c}')) => {
+                    out.push('\\');
+                    continue;
+                }
+                Some(&(i, n)) => {
+                    chars.next();
+                    (n, i + n.len_utf8())
+                }
+            }
+        } else {
+            // One white space after a hex escape belongs to it.
+            if let Some(&(_, w)) = chars.peek() {
+                if matches!(w, ' ' | '\t' | '\n' | '\r' | '\u{c}') {
+                    chars.next();
+                }
+            }
+            let n = u32::from_str_radix(&hex, 16).unwrap_or(0xFFFD);
+            let c = char::from_u32(n)
+                .filter(|&c| c != '\0')
+                .unwrap_or('\u{FFFD}');
+            let end = chars.peek().map_or(css.len(), |&(i, _)| i);
+            (c, end)
+        };
+        if matches!(decoded, '"' | '\'' | '\\') || decoded.is_control() {
+            out.push_str(&css[at..end]);
+        } else {
+            out.push(decoded);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// A grey box the size of the image it stands for.
 fn placeholder(width: Option<u32>, height: Option<u32>) -> String {
     let w = width.unwrap_or(600).max(1);
-    let h = height.unwrap_or(w * 2 / 3).max(1);
+    let h = height.unwrap_or((u64::from(w) * 2 / 3) as u32).max(1);
     let svg = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}'>\
          <rect width='100%' height='100%' fill='{}'/></svg>",
@@ -457,6 +561,53 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plain(html: &str) -> Original {
+        original(html, Options::default(), &|_| None, &Loaded::new())
+    }
+
+    #[test]
+    fn cut_sources_and_styles_never_split_a_character() {
+        // A cid-like source whose fourth byte is inside "é".
+        let o = plain("<img src=\"cid\u{e9}\">");
+        assert!(!o.html.contains("cid"));
+        // An unterminated url( ending in a character of two bytes.
+        let o = plain("<div style=\"background:url(a\u{e9}\">x</div>");
+        assert!(o.html.contains("x"));
+        let o = plain("<style>.a{background:url(\u{20ac}</style><p>y</p>");
+        assert!(o.html.contains('y'));
+    }
+
+    #[test]
+    fn escaped_and_image_set_addresses_are_caught() {
+        let o = plain("<div style=\"background:u\\72l(https://x.example/a.png)\">x</div>");
+        assert_eq!(o.remote, ["https://x.example/a.png"]);
+        assert!(!o.html.contains("x.example"));
+        let o = plain("<style>@\\69mport \"https://x.example/b.css\"; p{color:red}</style>");
+        assert!(!o.html.contains("x.example"), "{}", o.html);
+        let o = plain(
+            "<div style='background-image:image-set(\"https://x.example/c.png\" 1x, \"https://x.example/d.png\" 2x)'>x</div>",
+        );
+        assert!(!o.html.contains("x.example"), "{}", o.html);
+        let o = plain(
+            "<div style='background:-webkit-image-set(url(https://x.example/e.png) 1x)'>x</div>",
+        );
+        assert!(!o.html.contains("x.example"), "{}", o.html);
+        // Escapes that only spell a character are kept as that character,
+        // and a quote spelled as an escape stays escaped.
+        assert_eq!(unescape_css("a\\62 c"), "abc");
+        assert_eq!(unescape_css("content:\"\\22\""), "content:\"\\22\"");
+        assert_eq!(unescape_css("x\\"), "x\\");
+    }
+
+    #[test]
+    fn a_huge_declared_width_makes_a_placeholder() {
+        let o = plain(&format!(
+            "<img src=\"https://x.example/a.png\" width=\"{}\">",
+            u32::MAX
+        ));
+        assert!(o.html.contains("<img"));
+    }
 
     const NEWSLETTER: &str = r##"<html><head>
         <link rel="stylesheet" href="https://cdn.example.com/a.css">

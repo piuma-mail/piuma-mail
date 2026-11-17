@@ -13,6 +13,9 @@ pub mod features;
 pub mod feedback;
 pub mod files;
 pub mod groups;
+pub mod guard;
+#[cfg(test)]
+mod hostile_tests;
 pub mod images;
 pub mod imap;
 pub mod impostor;

@@ -8406,6 +8406,7 @@ impl SseDecode for crate::api::engine::FileRisk {
             1 => crate::api::engine::FileRisk::Disguised,
             2 => crate::api::engine::FileRisk::Macros,
             3 => crate::api::engine::FileRisk::Locked,
+            4 => crate::api::engine::FileRisk::Web,
             _ => unreachable!("Invalid variant for FileRisk: {}", inner),
         };
     }
@@ -12029,6 +12030,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::FileRisk {
             Self::Disguised => 1.into_dart(),
             Self::Macros => 2.into_dart(),
             Self::Locked => 3.into_dart(),
+            Self::Web => 4.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -14433,6 +14435,7 @@ impl SseEncode for crate::api::engine::FileRisk {
                 crate::api::engine::FileRisk::Disguised => 1,
                 crate::api::engine::FileRisk::Macros => 2,
                 crate::api::engine::FileRisk::Locked => 3,
+                crate::api::engine::FileRisk::Web => 4,
                 _ => {
                     unimplemented!("");
                 }

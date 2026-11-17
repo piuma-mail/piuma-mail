@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
@@ -453,6 +454,15 @@ class _BodyImageView extends StatelessWidget {
           ),
         );
 
+        // Pictures are decoded at the size they are drawn, never larger:
+        // a small file can declare a huge picture.
+        final ratio = MediaQuery.devicePixelRatioOf(context);
+        int decodeWidth(double logical) =>
+            (logical * ratio).ceil().clamp(1, 4096).toInt();
+        // Drawn to cover its box, a picture wider than the box is decoded
+        // wide enough for the box's height.
+        final coverWidth = known ? math.max(width, height * w / h) : width;
+
         // A picture whose size the message doesn't give: as drawn, at most
         // as wide as the text.
         Widget natural(Uint8List bytes) => ClipRRect(
@@ -465,6 +475,7 @@ class _BodyImageView extends StatelessWidget {
               child: Image.memory(
                 bytes,
                 fit: BoxFit.contain,
+                cacheWidth: decodeWidth(maxW),
                 gaplessPlayback: true,
                 filterQuality: FilterQuality.medium,
                 errorBuilder: (_, _, _) => box(placeholder(failed: true)),
@@ -479,6 +490,7 @@ class _BodyImageView extends StatelessWidget {
           child: Image.memory(
             bytes,
             fit: BoxFit.cover,
+            cacheWidth: decodeWidth(coverWidth),
             gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
             errorBuilder: (_, _, _) => placeholder(failed: true),

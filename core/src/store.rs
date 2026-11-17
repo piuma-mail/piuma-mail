@@ -1154,13 +1154,21 @@ fn file_card(
         html,
         attachments: &body.attachments,
     };
-    let card = if pinned && folder != "drafts" {
-        Some(crate::vault::extract_kept(&src))
-    } else if worth {
-        crate::vault::extract(&src)
-    } else {
-        None
-    };
+    // A message the Vault can't read gets no card, and is checked all the
+    // same: it isn't read again at every sync.
+    let card = crate::guard::shielded(
+        "vault card",
+        || None,
+        || {
+            if pinned && folder != "drafts" {
+                Some(crate::vault::extract_kept(&src))
+            } else if worth {
+                crate::vault::extract(&src)
+            } else {
+                None
+            }
+        },
+    );
     match card {
         Some(card) => {
             tx.execute(
@@ -3303,9 +3311,15 @@ impl Store {
         let (verified, checked) = match self.account(account)? {
             Some(a) => {
                 let trust = crate::sender_auth::Trust::for_account(&a);
-                (
-                    crate::sender_auth::verified(&body.auth, &trust),
-                    crate::sender_auth::checked(&body.auth, &trust),
+                crate::guard::shielded(
+                    "sender check",
+                    || (false, Default::default()),
+                    || {
+                        (
+                            crate::sender_auth::verified(&body.auth, &trust),
+                            crate::sender_auth::checked(&body.auth, &trust),
+                        )
+                    },
                 )
             }
             None => (false, Default::default()),
@@ -3375,7 +3389,11 @@ impl Store {
                     account.0,
                     mailbox,
                     uid,
-                    crate::newsletter::words(&body.text, body.html.as_deref())
+                    crate::guard::shielded(
+                        "reading time",
+                        || 0,
+                        || { crate::newsletter::words(&body.text, body.html.as_deref()) }
+                    )
                 ],
             )?;
         }

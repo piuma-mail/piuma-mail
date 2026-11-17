@@ -151,6 +151,7 @@ impl From<JmapError> for EngineError {
         let kind = match &e {
             JmapError::Auth => ErrorKind::WrongPassword,
             JmapError::Connect { .. } => ErrorKind::Unreachable,
+            JmapError::Insecure => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
         };
         EngineError::new(kind, e.to_string())
@@ -460,6 +461,9 @@ pub fn init_app() {
     } else {
         log::LevelFilter::Warn
     });
+    // After the bridge's hook: notes where a panic happened, so the log
+    // can say where one message tripped a reader (never what it said).
+    piuma_core::guard::install();
 }
 
 /// Opens (or creates) the local database. Call once at startup.
@@ -469,6 +473,7 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         return Ok(());
     }
     piuma_core::tls::use_one_crypto_provider();
+    piuma_core::guard::install();
     let store = Store::open(&db_path)?;
     // Actions still inside their Undo window when the app quit never
     // happened: show those messages again.
@@ -1303,71 +1308,160 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         }
         watched.push(id.0);
         let store = engine.store.clone();
-        let settings_store = engine.store.clone();
-        let task = engine.runtime.spawn(async move {
-            // A locked/unavailable keychain (or Android credentials not handed
-            // over yet) is not a server refusal. Retry without a notification
-            // that the password stopped working; stop_watching aborts this
-            // wait too.
-            let password = wait_for_credentials(
-                || credentials::read(id),
-                |kind| {
-                    set_waiting(id.0, Some(kind));
-                    emit(SyncEvent::new(kind, id.0));
-                },
-                HANDOVER,
-                backoff(RETRY_FIRST, RETRY_MOST),
-            )
-            .await;
-            set_waiting(id.0, None);
-            let (outbox_account, outbox_password) = (account.clone(), password.clone());
-            let result = remote::watch(&account, &password, store, move |e| {
-                // In touch with the server again: what waits can go.
-                if let WatchEvent::Synced { .. } = &e {
-                    save_waiting_drafts(outbox_account.clone(), outbox_password.clone());
-                    send_outbox(outbox_account.clone(), outbox_password.clone());
-                    super::away::keep_on_time(outbox_account.clone(), outbox_password.clone());
-                }
-                emit(match e {
-                    WatchEvent::Progress { done, total, .. } => SyncEvent {
-                        done: done as u32,
-                        total: total as u32,
-                        ..SyncEvent::new(SyncEventKind::Progress, id.0)
-                    },
-                    WatchEvent::Synced { report, .. } => {
-                        crate::background::signed_in(id);
-                        let notices = notices_for(&report.arrived, &settings_store);
-                        // With Android's background service on, it shows
-                        // them; the app does not.
-                        crate::background::push(&notices);
-                        SyncEvent {
-                            added: report.added as u32,
-                            removed: report.removed as u32,
-                            notices,
-                            ..SyncEvent::new(SyncEventKind::Synced, id.0)
-                        }
-                    }
-                    WatchEvent::Offline { reason, .. } => SyncEvent {
-                        reason,
-                        ..SyncEvent::new(SyncEventKind::Offline, id.0)
-                    },
-                });
-            })
-            .await;
-            WATCHED
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .retain(|a| *a != id.0);
-            if result.is_err_and(|e| e.is_auth()) {
-                emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-                crate::background::sign_in_failed(id);
-            }
-        });
+        let task = engine.runtime.spawn(supervise(account, store));
         let mut watchers = WATCHERS.lock().unwrap_or_else(|e| e.into_inner());
         watchers.retain(|(a, _)| *a != id.0);
         watchers.push((id.0, task.abort_handle()));
     }
     Ok(())
+}
+
+/// A watcher that ends for any reason but a refused password (a panic
+/// while reading a message, a server that made it give up) is logged and
+/// started again, 5 s later, then twice as long each time up to 5
+/// minutes; one that ran a while starts from 5 s again. The account
+/// stays in WATCHED meanwhile, so nothing else starts a second one.
+async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
+    let id = account.id;
+    keep_following(
+        id,
+        || follow(account.clone(), store.clone()),
+        backoff(RESTART_FIRST, RESTART_MOST),
+    )
+    .await;
+    WATCHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|a| *a != id.0);
+    emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
+    crate::background::sign_in_failed(id);
+}
+
+/// Runs the watcher `start` makes until it ends with a refused password,
+/// starting it again, after the next wait of `restarts`, whenever it ends
+/// otherwise or panics.
+async fn keep_following<F, Fut>(
+    id: AccountId,
+    mut start: F,
+    restarts: impl Iterator<Item = Duration> + Clone,
+) where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Followed> + Send + 'static,
+{
+    let mut waits = restarts.clone();
+    loop {
+        let started = tokio::time::Instant::now();
+        // Aborting the supervisor (stop_watching) drops this, which aborts
+        // the watcher too.
+        let mut follow = AbortOnDrop(tokio::spawn(start()));
+        let why = match (&mut follow.0).await {
+            Ok(Followed::SignInFailed) => return,
+            Ok(Followed::Ended(why)) => why,
+            Err(e) if e.is_panic() => {
+                format!("panic{}", piuma_core::guard::last_panic_place())
+            }
+            // Cancelled from outside, as when the runtime shuts down.
+            Err(_) => "cancelled".into(),
+        };
+        if started.elapsed() >= RESTART_RESET {
+            waits = restarts.clone();
+        }
+        let wait = waits.next().unwrap_or(RESTART_MOST);
+        piuma_core::feedback::log(
+            piuma_core::feedback::Level::Error,
+            "sync",
+            &format!(
+                "account {} watcher stopped ({why}); again in {} s",
+                id.0,
+                wait.as_secs()
+            ),
+        );
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// How a watcher ended.
+#[derive(Debug)]
+enum Followed {
+    /// The server refused the password: it waits for a new one.
+    SignInFailed,
+    /// Anything else, with what happened.
+    Ended(String),
+}
+
+/// A task aborted when this handle goes.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+const RESTART_FIRST: Duration = Duration::from_secs(5);
+const RESTART_MOST: Duration = Duration::from_secs(5 * 60);
+/// A watcher that ran this long had worked: its next restart is quick.
+const RESTART_RESET: Duration = Duration::from_secs(10 * 60);
+
+/// Follows one account until the server refuses its password or the
+/// watcher ends.
+async fn follow(account: Account, store: Arc<Mutex<Store>>) -> Followed {
+    let id = account.id;
+    let settings_store = store.clone();
+    // A locked/unavailable keychain (or Android credentials not handed
+    // over yet) is not a server refusal. Retry without a notification
+    // that the password stopped working; stop_watching aborts this
+    // wait too.
+    let password = wait_for_credentials(
+        || credentials::read(id),
+        |kind| {
+            set_waiting(id.0, Some(kind));
+            emit(SyncEvent::new(kind, id.0));
+        },
+        HANDOVER,
+        backoff(RETRY_FIRST, RETRY_MOST),
+    )
+    .await;
+    set_waiting(id.0, None);
+    let (outbox_account, outbox_password) = (account.clone(), password.clone());
+    let result = remote::watch(&account, &password, store, move |e| {
+        // In touch with the server again: what waits can go.
+        if let WatchEvent::Synced { .. } = &e {
+            save_waiting_drafts(outbox_account.clone(), outbox_password.clone());
+            send_outbox(outbox_account.clone(), outbox_password.clone());
+            super::away::keep_on_time(outbox_account.clone(), outbox_password.clone());
+        }
+        emit(match e {
+            WatchEvent::Progress { done, total, .. } => SyncEvent {
+                done: done as u32,
+                total: total as u32,
+                ..SyncEvent::new(SyncEventKind::Progress, id.0)
+            },
+            WatchEvent::Synced { report, .. } => {
+                crate::background::signed_in(id);
+                let notices = notices_for(&report.arrived, &settings_store);
+                // With Android's background service on, it shows
+                // them; the app does not.
+                crate::background::push(&notices);
+                SyncEvent {
+                    added: report.added as u32,
+                    removed: report.removed as u32,
+                    notices,
+                    ..SyncEvent::new(SyncEventKind::Synced, id.0)
+                }
+            }
+            WatchEvent::Offline { reason, .. } => SyncEvent {
+                reason,
+                ..SyncEvent::new(SyncEventKind::Offline, id.0)
+            },
+        });
+    })
+    .await;
+    match result {
+        Err(e) if e.is_auth() => Followed::SignInFailed,
+        Err(e) => Followed::Ended(e.to_string()),
+        Ok(()) => Followed::Ended("finished".into()),
+    }
 }
 
 /// How long Android's app or service may take to hand the passwords over
@@ -1381,7 +1475,7 @@ const HANDOVER: Duration = Duration::from_secs(if cfg!(target_os = "android") { 
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_MOST: Duration = Duration::from_secs(5 * 60);
 
-fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> {
+fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> + Clone {
     std::iter::successors(Some(first), move |d| Some((*d * 2).min(most)))
 }
 
@@ -1415,6 +1509,88 @@ async fn wait_for_credentials(
         }
         let next = retry.next().unwrap_or(RETRY_MOST);
         tokio::time::sleep(wait.map_or(next, |w| next.min(w))).await;
+    }
+}
+
+#[cfg(test)]
+mod watcher_supervision_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn a_watcher_that_panics_or_ends_is_started_again() {
+        piuma_core::guard::install();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(keep_following(
+            AccountId(7),
+            move || {
+                let run = counted.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    match run {
+                        0 => panic!("a message tripped the reader"),
+                        1 => Followed::Ended("server gave up".into()),
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            std::iter::repeat(Duration::from_millis(1)),
+        ));
+        assert_eq!(runs.load(Ordering::SeqCst), 3);
+        let log = piuma_core::feedback::recent_log();
+        assert!(log.contains("watcher stopped (panic"), "{log}");
+        assert!(!log.contains("tripped"), "{log}");
+    }
+
+    #[test]
+    fn stopping_the_supervisor_stops_the_watcher() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        let alive = Arc::new(AtomicUsize::new(0));
+        let inside = alive.clone();
+        runtime.block_on(async move {
+            let task = tokio::spawn(keep_following(
+                AccountId(8),
+                move || {
+                    let inside = inside.clone();
+                    async move {
+                        inside.fetch_add(1, Ordering::SeqCst);
+                        let _guard = Bye(inside);
+                        std::future::pending::<Followed>().await
+                    }
+                },
+                std::iter::repeat(Duration::from_millis(1)),
+            ));
+            while alive.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            task.abort();
+            let _ = task.await;
+            // The watcher was dropped with its supervisor.
+            for _ in 0..1000 {
+                if alive.load(Ordering::SeqCst) == 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert_eq!(alive.load(Ordering::SeqCst), 0);
+        });
+    }
+
+    struct Bye(Arc<AtomicUsize>);
+
+    impl Drop for Bye {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -1848,6 +2024,8 @@ pub enum FileRisk {
     Macros,
     /// An archive locked with a password.
     Locked,
+    /// A web page, which opens in the browser.
+    Web,
 }
 
 impl From<files::FileRisk> for FileRisk {
@@ -1857,6 +2035,7 @@ impl From<files::FileRisk> for FileRisk {
             files::FileRisk::Disguised => FileRisk::Disguised,
             files::FileRisk::Macros => FileRisk::Macros,
             files::FileRisk::Locked => FileRisk::Locked,
+            files::FileRisk::Web => FileRisk::Web,
         }
     }
 }

@@ -700,6 +700,17 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Eine Webseite';
+
+  @override
+  String get riskOpenWeb => 'Diese Webseite öffnen?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name ist eine Webseite: Sie öffnet sich im Browser. Gib dort nie ein Passwort ein: Eine per E-Mail geschickte Seite kann wie jede Anmeldung aussehen.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · von $email';
   }

@@ -307,11 +307,9 @@ pub struct Letter {
 pub fn bare_subject(subject: &str) -> String {
     let mut s = subject.trim();
     loop {
-        let lower = s.to_lowercase();
         let Some(rest) = ["re:", "fwd:", "fw:", "i:", "r:", "rif:"]
             .iter()
-            .find(|p| lower.starts_with(*p))
-            .map(|p| &s[p.len()..])
+            .find_map(|p| crate::guard::strip_prefix_ci(s, p))
         else {
             return s.to_owned();
         };
