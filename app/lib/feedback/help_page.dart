@@ -246,7 +246,7 @@ class _HelpPageState extends State<HelpPage> {
             ),
             _Link(
               icon: PiumaIcon.lock,
-              label: l.privacyTitle,
+              label: l.reportPrivacyTitle,
               onTap: () => showPrivacyNotice(context, widget.source),
             ),
             if (_canShake)

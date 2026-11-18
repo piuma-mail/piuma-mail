@@ -23,10 +23,10 @@ Future<void> showPrivacyNotice(BuildContext context, MailSource source) {
     byRelay: source.reportsByRelay,
   );
   return phone
-      ? showPiumaSheet<void>(context, label: l.privacyTitle, builder: panel)
+      ? showPiumaSheet<void>(context, label: l.reportPrivacyTitle, builder: panel)
       : showPiumaDialog<void>(
           context,
-          label: l.privacyTitle,
+          label: l.reportPrivacyTitle,
           width: 480,
           builder: panel,
         );
@@ -50,14 +50,14 @@ class PrivacyNotice extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final text = PiumaType.body.copyWith(color: c.fg);
     final paragraphs = [
-      l.privacyWhat,
+      l.reportPrivacyWhat,
       if (byRelay && privacy.relayHost.isNotEmpty)
-        l.privacyWhere(privacy.relayHost, privacy.filesDays)
+        l.reportPrivacyWhere(privacy.relayHost, privacy.filesDays)
       else
-        l.privacyWhereEmail(privacy.contact),
-      l.privacyWho(privacy.controller),
-      l.privacyKeep,
-      l.privacyErase(privacy.contact),
+        l.reportPrivacyWhereEmail(privacy.contact),
+      l.reportPrivacyWho(privacy.controller),
+      l.reportPrivacyKeep,
+      l.reportPrivacyErase(privacy.contact),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -82,7 +82,7 @@ class PrivacyNotice extends StatelessWidget {
             const SizedBox(width: PiumaSpace.s12),
             Expanded(
               child: Text(
-                l.privacyTitle,
+                l.reportPrivacyTitle,
                 style: PiumaType.subtitle.copyWith(color: c.fg),
               ),
             ),
@@ -111,9 +111,9 @@ class PrivacyNotice extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: PiumaPressable(
                     onTap: () => openExternalLink(Uri.parse(privacy.url)),
-                    semanticLabel: l.privacyFull,
+                    semanticLabel: l.reportPrivacyFull,
                     child: Text(
-                      l.privacyFull,
+                      l.reportPrivacyFull,
                       style: PiumaType.small.copyWith(
                         fontWeight: FontWeight.w500,
                         color: c.accentText,
