@@ -12,6 +12,7 @@ import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/settings/shortcuts_page.dart';
 import 'package:piuma_mail/widgets/attachment_chip.dart';
+import 'package:piuma_mail/widgets/links.dart';
 
 final _now = DateTime(2026, 10, 15, 10, 30);
 
@@ -454,5 +455,183 @@ void main() {
       await tester.pumpAndSettle();
       expect(source.sent.single.cc, ['Marco Riva <marco.riva@posta.it>']);
     });
+
+    /// The phone's More, then [item] in it.
+    Future<void> more(WidgetTester tester, String item) async {
+      await tester.tap(find.bySemanticsLabel('More actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(MenuItemButton),
+          matching: find.text(item),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<DemoMailSource> phone(WidgetTester tester, String subject) async {
+      final source = await _pump(tester, size: const Size(390, 844));
+      await tester.tap(find.text(subject));
+      await tester.pumpAndSettle();
+      return source;
+    }
+
+    testWidgets('To and Cc show and open, as on the desktop', (tester) async {
+      await phone(tester, 'Mockup v3 review');
+      expect(
+        find.textContaining('to you, Sara Conti, Elena Ferri · today at'),
+        findsOneWidget,
+      );
+      await tester.tap(find.bySemanticsLabel('Show who received it'));
+      await tester.pumpAndSettle();
+      expect(find.text('Elena Ferri <elena@studio.it>'), findsOneWidget);
+    });
+
+    testWidgets('a blind copy says so, and has no Reply all', (tester) async {
+      await phone(tester, 'Trip photos');
+      expect(find.textContaining('to Mum · you were Bcc’d · '), findsOneWidget);
+      expect(find.bySemanticsLabel('Reply all'), findsNothing);
+    });
+
+    testWidgets('Forward: a failed file is named, Try again, Go on', (
+      tester,
+    ) async {
+      final source = await phone(tester, 'Mockup v3 review');
+      source.failFiles.add('compose-notes.png');
+      await more(tester, 'Forward');
+      expect(find.byType(ComposePane), findsNothing);
+      expect(find.text('This file couldn’t be attached:'), findsOneWidget);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('This file couldn’t be attached:'), findsOneWidget);
+      await tester.tap(find.text('Go on without it'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsOneWidget);
+      expect(_inCompose(find.byType(AttachmentChip)), findsOneWidget);
+    });
+
+    testWidgets('Forward as attachment', (tester) async {
+      await phone(tester, 'Mockup v3 review');
+      await more(tester, 'Forward as attachment');
+      expect(find.byType(ComposePane), findsOneWidget);
+      expect(_inCompose(find.text('Mockup v3 review.eml')), findsOneWidget);
+    });
+
+    testWidgets('Edit as new', (tester) async {
+      await phone(tester, 'Mockup v3 review');
+      await more(tester, 'Edit as new');
+      expect(find.byType(ComposePane), findsOneWidget);
+      expect(
+        _inCompose(find.textContaining('I left two comments')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Redirect', (tester) async {
+      final source = await phone(tester, 'Mockup v3 review');
+      await more(tester, 'Redirect');
+      expect(find.text('Redirect this email'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, 'eve@example.org');
+      await tester.pump();
+      await tester.tap(find.text('Redirect').last);
+      await tester.pumpAndSettle();
+      expect(source.redirected.single.$2, ['eve@example.org']);
+      expect(find.text('Redirected to eve@example.org'), findsOneWidget);
+    });
+
+    testWidgets('View source', (tester) async {
+      await phone(tester, 'Mockup v3 review');
+      await more(tester, 'View source');
+      expect(find.text('Source of the email'), findsOneWidget);
+      await tester.tap(find.text('Raw'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Message-ID: <demo-'), findsOneWidget);
+    });
+
+    testWidgets('Save as .eml: Downloads, then Open hands it to the system', (
+      tester,
+    ) async {
+      String? opened;
+      openLocalFile = (path) async => opened = path;
+      final source = await phone(tester, 'Mockup v3 review');
+      await more(tester, 'Save as .eml');
+      expect(
+        utf8.decode(source.savedFiles['Mockup v3 review.eml']!),
+        contains('Subject: Mockup v3 review'),
+      );
+      expect(
+        find.text('Mockup v3 review.eml saved in Downloads'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      expect(opened, '/demo/Downloads/Mockup v3 review.eml');
+    });
+
+    testWidgets('Mute conversation, then Unmute', (tester) async {
+      final source = await phone(tester, 'Mockup v3 review');
+      await more(tester, 'Mute conversation');
+      expect(source.mutedThreads, hasLength(1));
+      await tester.tap(find.bySemanticsLabel('More actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Unmute conversation'), findsOneWidget);
+    });
+
+    testWidgets('Text size: larger, smaller, actual size', (tester) async {
+      await phone(tester, 'Mockup v3 review');
+      Reader reader() => tester.widget<Reader>(find.byType(Reader).last);
+      await more(tester, 'Text size');
+      expect(find.text('100%'), findsOneWidget);
+      await tester.tap(find.text('Zoom in'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Zoom in'));
+      await tester.pumpAndSettle();
+      expect(find.text('125%'), findsOneWidget);
+      expect(reader().zoom, 1.25);
+      await tester.tap(find.text('Zoom out'));
+      await tester.pumpAndSettle();
+      expect(reader().zoom, 1.1);
+      await tester.tap(find.text('Actual size'));
+      await tester.pumpAndSettle();
+      expect(reader().zoom, 1);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('100%'), findsNothing);
+    });
+  });
+
+  testWidgets('desktop: Text size in More, beside Ctrl + and −', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await _open(tester, 'Mockup v3 review');
+    Reader reader() => tester.widget<Reader>(find.byType(Reader));
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Text size'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Zoom in'));
+    await tester.pumpAndSettle();
+    expect(find.text('110%'), findsOneWidget);
+    expect(reader().zoom, 1.1);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 11));
+  });
+
+  testWidgets('desktop: Save as .eml offers Open too', (tester) async {
+    String? opened;
+    openLocalFile = (path) async => opened = path;
+    pickSaveLocation = (name) async => '/picked/$name';
+    writeSavedFile = (path, data) async {};
+    await _pump(tester);
+    await _open(tester, 'Mockup v3 review');
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save as .eml'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(opened, '/picked/Mockup v3 review.eml');
   });
 }

@@ -9333,6 +9333,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Text size {percent}%'**
   String zoomLevel(int percent);
+
+  /// No description provided for @textSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Text size'**
+  String get textSize;
 }
 
 class _AppLocalizationsDelegate

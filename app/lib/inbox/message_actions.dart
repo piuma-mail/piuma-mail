@@ -14,6 +14,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
+import '../widgets/links.dart' show openLocalFile;
 import '../widgets/progress.dart';
 import '../widgets/segments.dart';
 import '../widgets/text_field.dart';
@@ -188,15 +189,30 @@ class MessageActions {
     final l = _l;
     final name = ReplyBuilder.emlName(row.subject);
     try {
+      // The phone has no save window: Downloads, then Open hands the file
+      // to the system (the app chooser on Android, the preview with Share
+      // on iPhone), as a saved attachment does.
       if (phone || kIsWeb || Platform.isAndroid || Platform.isIOS) {
-        await source.saveFile(name, raw);
-        if (context.mounted) toast(l.attachmentSaved(name));
+        final path = await source.saveFile(name, raw);
+        if (context.mounted) {
+          toast(
+            l.attachmentSaved(name),
+            action: l.noticeOpen,
+            onAction: () => openLocalFile(path),
+          );
+        }
         return;
       }
       final path = await pickSaveLocation(name);
       if (path == null) return;
       await writeSavedFile(path, raw);
-      if (context.mounted) toast(l.emlSaved(path.split(RegExp(r'[\\/]')).last));
+      if (context.mounted) {
+        toast(
+          l.emlSaved(path.split(RegExp(r'[\\/]')).last),
+          action: l.noticeOpen,
+          onAction: () => openLocalFile(path),
+        );
+      }
     } catch (_) {
       if (context.mounted) toast(l.emlNotSaved);
     }

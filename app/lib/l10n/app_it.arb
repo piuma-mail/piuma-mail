@@ -1548,5 +1548,6 @@
   "zoomIn": "Ingrandisci",
   "zoomOut": "Riduci",
   "zoomReset": "Dimensione reale",
-  "zoomLevel": "Dimensione testo {percent}%"
+  "zoomLevel": "Dimensione testo {percent}%",
+  "textSize": "Dimensione del testo"
 }

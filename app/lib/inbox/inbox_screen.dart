@@ -39,6 +39,7 @@ import 'labels.dart';
 import 'pictures.dart';
 import 'mail_pager.dart';
 import 'message_actions.dart';
+import 'text_size.dart';
 import 'message_list.dart';
 import 'move_menu.dart';
 import 'newsletters.dart';
@@ -1072,22 +1073,28 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   /// The open email's text size, from Ctrl/⌘ + and − (and 0 for the
-  /// size the app sets); kept while the app runs.
+  /// size the app sets) and from Text size in More, on the phone too;
+  /// kept while the app runs.
   double _zoom = 1;
 
-  static const _zooms = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+  void _zoomBy(int step) => _zoomTo(textSizeStep(_zoom, step));
 
-  void _zoomBy(int step) {
-    final at = _zooms.indexWhere((z) => z >= _zoom - 0.001);
-    final next = (at < 0 ? _zooms.length - 1 : at) + step;
-    _zoomTo(_zooms[next.clamp(0, _zooms.length - 1)]);
-  }
-
-  void _zoomTo(double zoom) {
+  /// [toast] says the new size; Text size shows it itself.
+  void _zoomTo(double zoom, {bool toast = true}) {
     if (_selected == null || _zoom == zoom) return;
     setState(() => _zoom = zoom);
-    _toast(AppLocalizations.of(context).zoomLevel((zoom * 100).round()));
+    if (toast) {
+      _toast(AppLocalizations.of(context).zoomLevel((zoom * 100).round()));
+    }
   }
+
+  /// More's Text size: smaller, larger, actual size.
+  void _textSize() => showTextSize(
+    context,
+    size: () => _zoom,
+    onSize: (z) => _zoomTo(z, toast: false),
+    phone: MediaQuery.sizeOf(context).width < phoneWidth,
+  );
 
   /// Ctrl + and − (⌘ on Apple), with or without Shift for "+", on the main
   /// keys and the keypad; Ctrl 0 for the size the app sets.
@@ -1743,6 +1750,7 @@ class _InboxScreenState extends State<InboxScreen> {
         _fromPalette(() => _zoomTo(1)),
         meta: '${mod}0',
       ),
+      PaletteCommand(PiumaIcon.sliders, l.textSize, _fromPalette(_textSize)),
     ];
   }
 
@@ -2408,6 +2416,8 @@ class _InboxScreenState extends State<InboxScreen> {
       onViewSource: (row) => _actions.viewSource(row),
       onSaveEml: (row) => _actions.saveEml(row),
       onMute: (row, muted, done) => _actions.setMuted(row, muted, done: done),
+      zoom: _zoom,
+      onTextSize: _textSize,
       onReportSpam: _canReportSpam(reading)
           ? (row) => _act([row], MessageAction.junk)
           : null,
@@ -3309,6 +3319,7 @@ class _InboxScreenState extends State<InboxScreen> {
       onSaveEml: (row) => _actions.saveEml(row),
       onMute: (row, muted, done) => _actions.setMuted(row, muted, done: done),
       zoom: _zoom,
+      onTextSize: _textSize,
       onQuickReply: _inSent
           ? null
           : (row, body, text, all) => _quickReply(row, body, text, all: all),

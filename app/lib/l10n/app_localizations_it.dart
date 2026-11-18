@@ -6390,4 +6390,7 @@ class AppLocalizationsIt extends AppLocalizations {
   String zoomLevel(int percent) {
     return 'Dimensione testo $percent%';
   }
+
+  @override
+  String get textSize => 'Dimensione del testo';
 }

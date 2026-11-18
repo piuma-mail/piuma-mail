@@ -58,6 +58,7 @@ class Reader extends StatefulWidget {
     this.onSaveEml,
     this.onMute,
     this.zoom = 1,
+    this.onTextSize,
     this.onMove,
     this.onLabel,
     this.onSnooze,
@@ -171,8 +172,12 @@ class Reader extends StatefulWidget {
   /// should become and calls back once done, so More says the other.
   final void Function(MailRow row, bool muted, VoidCallback done)? onMute;
 
-  /// The message's text size, from Ctrl/⌘ + and −: 1 as the app sets it.
+  /// The message's text size, from Ctrl/⌘ + and − and Text size: 1 as
+  /// the app sets it.
   final double zoom;
+
+  /// More's Text size, on the phone and the computer alike.
+  final VoidCallback? onTextSize;
 
   /// The `PhoneRead` layout: "‹ Inbox" with Archive and More on top, and
   /// the quick reply bar at the foot.
@@ -580,6 +585,8 @@ class _ReaderState extends State<Reader> {
         _Extra(l.actionViewSource, PiumaIcon.document, f),
       if (one(widget.onSaveEml) case final f?)
         _Extra(l.actionSaveEml, PiumaIcon.download, f),
+      if (widget.onTextSize case final f?)
+        _Extra(l.textSize, PiumaIcon.sliders, f),
     ];
     final onWriteAgain = widget.onWriteAgain == null
         ? null

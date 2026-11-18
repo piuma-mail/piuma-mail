@@ -2096,5 +2096,6 @@
   "zoomOut": "Zoom out",
   "zoomReset": "Actual size",
   "zoomLevel": "Text size {percent}%",
-  "@zoomLevel": {"placeholders": {"percent": {"type": "int"}}}
+  "@zoomLevel": {"placeholders": {"percent": {"type": "int"}}},
+  "textSize": "Text size"
 }
