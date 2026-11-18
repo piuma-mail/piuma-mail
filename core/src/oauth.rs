@@ -28,7 +28,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use zeroize::Zeroizing;
 
 use crate::model::{Security, Server};
@@ -95,6 +95,9 @@ pub struct Provider {
     /// this build has no client for it.
     #[serde(default)]
     pub app_passwords: bool,
+    /// Whether a refresh asks for the scopes again (Microsoft wants them).
+    #[serde(default)]
+    pub refresh_scopes: bool,
 }
 
 /// The app's own URL scheme on Android: a reverse domain name the project
@@ -419,67 +422,70 @@ impl Loopback {
     }
 
     async fn serve(self, request: &Request) -> Result<String, FlowError> {
+        // Browsers open spare connections that may never send anything:
+        // each connection is read on its own, so none holds up the answer.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, TcpStream)>(8);
         loop {
-            let (mut tcp, _) = self
-                .listener
-                .accept()
-                .await
-                .map_err(|e| FlowError::Io(e.to_string()))?;
-            let mut head = Vec::new();
-            let mut buf = [0u8; 2048];
-            // The request line is all that matters; a slow client gets
-            // a few seconds.
-            let read = tokio::time::timeout(Duration::from_secs(5), async {
-                while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
-                    match tcp.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => head.extend_from_slice(&buf[..n]),
-                    }
+            tokio::select! {
+                accepted = self.listener.accept() => {
+                    let (mut tcp, _) = accepted.map_err(|e| FlowError::Io(e.to_string()))?;
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        if let Some(target) = request_target(&mut tcp).await {
+                            let _ = tx.send((target, tcp)).await;
+                        }
+                    });
                 }
-            })
-            .await;
-            if read.is_err() {
-                continue;
+                Some((target, mut tcp)) = rx.recv() => {
+                    // Browsers also ask for /favicon.ico.
+                    if !(target == "/" || target.starts_with("/?")) {
+                        let _ = tcp
+                            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .await;
+                        continue;
+                    }
+                    let result = request.code_from_redirect(&format!("{}{target}", self.redirect_uri()));
+                    let (status, text) = match &result {
+                        Ok(_) => ("200 OK", "Signed in. You can close this page and go back to Piuma Mail."),
+                        Err(_) => (
+                            "400 Bad Request",
+                            "Piuma Mail could not sign in. Close this page and try again from the app.",
+                        ),
+                    };
+                    let body = format!(
+                        "<!doctype html><meta charset=utf-8><title>Piuma Mail</title><p style=\"font:16px system-ui;margin:3em\">{text}</p>"
+                    );
+                    let reply = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = tcp.write_all(reply.as_bytes()).await;
+                    let _ = tcp.shutdown().await;
+                    return result;
+                }
             }
-            let line = String::from_utf8_lossy(&head);
-            let target = line
-                .lines()
-                .next()
-                .and_then(|l| l.strip_prefix("GET "))
-                .and_then(|l| l.split(' ').next())
-                .unwrap_or("");
-            // Browsers also ask for /favicon.ico.
-            if !(target == "/" || target.starts_with("/?")) {
-                let _ = tcp
-                    .write_all(
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    )
-                    .await;
-                continue;
-            }
-            let result = request.code_from_redirect(&format!("{}{target}", self.redirect_uri()));
-            let (status, text) = match &result {
-                Ok(_) => (
-                    "200 OK",
-                    "Signed in. You can close this page and go back to Piuma Mail.",
-                ),
-                Err(_) => (
-                    "400 Bad Request",
-                    "Piuma Mail could not sign in. Close this page and try again from the app.",
-                ),
-            };
-            let body = format!(
-                "<!doctype html><meta charset=utf-8><title>Piuma Mail</title><p style=\"font:16px system-ui;margin:3em\">{text}</p>"
-            );
-            let reply = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = tcp.write_all(reply.as_bytes()).await;
-            let _ = tcp.shutdown().await;
-            return result;
         }
     }
+}
+
+/// The target of a GET (`/?code=…`), from the request's first line; None
+/// for anything else, or a client too slow to send it.
+async fn request_target(tcp: &mut TcpStream) -> Option<String> {
+    let mut head = Vec::new();
+    let mut buf = [0u8; 2048];
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
+            match tcp.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => head.extend_from_slice(&buf[..n]),
+            }
+        }
+    })
+    .await
+    .ok()?;
+    let line = String::from_utf8_lossy(&head);
+    let target = line.lines().next()?.strip_prefix("GET ")?.split(' ').next()?;
+    Some(target.to_owned())
 }
 
 /// What the token endpoint gave.
@@ -580,16 +586,15 @@ pub async fn refresh(
     client: &Client,
     refresh_token: &str,
 ) -> Result<Grant, TokenError> {
-    token_request(
-        provider,
-        client,
-        &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("scope", &provider.scopes.join(" ")),
-        ],
-    )
-    .await
+    let scopes = provider.scopes.join(" ");
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ];
+    if provider.refresh_scopes {
+        form.push(("scope", &scopes));
+    }
+    token_request(provider, client, &form).await
 }
 
 /// Gives a refresh token back, when the account is removed. Providers
@@ -786,6 +791,7 @@ mod tests {
         assert_eq!(google.scopes, ["https://mail.google.com/"]);
         assert!(google.revoke_url.is_some());
         assert!(google.app_passwords && !ms.app_passwords);
+        assert!(ms.refresh_scopes && !google.refresh_scopes);
     }
 
     #[test]

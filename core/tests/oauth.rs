@@ -102,6 +102,10 @@ async fn the_browser_comes_back_with_a_code_for_tokens() {
         let code = loopback.wait(&request, Duration::from_secs(10)).await;
         (code, request)
     });
+    // A spare connection that never sends anything holds nothing up.
+    let _idle = TcpStream::connect(redirect.trim_start_matches("http://"))
+        .await
+        .unwrap();
     // The browser also asks for an icon: not the redirect.
     assert!(browser(&redirect, "/favicon.ico").await.contains("404"));
     let status = browser(&redirect, &format!("/?code=the-code&state={state}")).await;
@@ -180,6 +184,8 @@ async fn tokens_are_renewed_before_they_run_out() {
     s.seed("almost-gone".to_owned().into(), 60).await;
     assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
     assert_eq!(forms.lock().unwrap()[0]["refresh_token"], "refresh-0");
+    // Only providers that want them get the scopes again.
+    assert!(!forms.lock().unwrap()[0].contains_key("scope"));
     // Microsoft sends a new refresh token each time: it is kept.
     assert_eq!(*kept.lock().unwrap(), ["refresh-1"]);
     assert_eq!(s.stored().await.refresh_token, "refresh-1");

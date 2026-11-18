@@ -22,7 +22,8 @@
     ],
     "mx": ["mail.protection.outlook.com", "olc.protection.outlook.com"],
     "android_redirect": "{app_scheme}://oauth",
-    "app_passwords": false
+    "app_passwords": false,
+    "refresh_scopes": true
   },
   {
     "id": "google",
