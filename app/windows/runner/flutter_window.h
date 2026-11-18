@@ -5,6 +5,8 @@
 #include <flutter/flutter_view_controller.h>
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "unread_badge.h"
 #include "win32_window.h"
@@ -15,6 +17,9 @@ class FlutterWindow : public Win32Window {
   // Creates a new FlutterWindow hosting a Flutter view running |project|.
   explicit FlutterWindow(const flutter::DartProject& project);
   virtual ~FlutterWindow();
+
+  // WM_COPYDATA tag of a later launch's command line (see main.cpp).
+  static constexpr ULONG_PTR kForwardedCommandLine = 0x5049554D;  // "PIUM"
 
  protected:
   // Win32Window:
@@ -32,6 +37,9 @@ class FlutterWindow : public Win32Window {
 
   // The unread count on the taskbar button.
   std::unique_ptr<UnreadBadge> unread_badge_;
+  // Command lines of later launches, oldest first, for what will read
+  // them (a mailto: handler).
+  std::vector<std::wstring> forwarded_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

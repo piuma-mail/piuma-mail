@@ -1260,8 +1260,14 @@ class OutboxTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final refused = item.error != null;
-    final tone = refused ? c.danger : c.muted;
+    final refused = item.state == OutboxState.refused;
+    // May have gone: a warning, not a failure (`Outbox`, maybe sent).
+    final maybe = item.state == OutboxState.maybeSent;
+    final tone = refused
+        ? c.danger
+        : maybe
+        ? c.warn
+        : c.muted;
     final size = phone ? 42.0 : 38.0;
     const line = TextStyle(fontSize: 14, height: 1.45);
     final tile = Container(
@@ -1281,9 +1287,9 @@ class OutboxTile extends StatelessWidget {
             child: SizedBox.square(
               dimension: size,
               child: Center(
-                child: refused
+                child: refused || maybe
                     ? Text(
-                        '!',
+                        maybe ? '?' : '!',
                         style: line.copyWith(
                           color: tone,
                           fontWeight: FontWeight.w600,
@@ -1317,10 +1323,18 @@ class OutboxTile extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(switch ((refused, item.sendAt)) {
-                      (true, _) => l.outboxNotSent,
-                      (false, final at?) => snoozeWhen(
-                        at,
+                    Text(switch (item.state) {
+                      OutboxState.maybeSent => l.outboxMaybeSent,
+                      OutboxState.refused => l.outboxNotSent,
+                      OutboxState.sending => l.sending,
+                      // In its Undo window it is on its way; past it
+                      // (offline) it only waits.
+                      _ when item.undo =>
+                        item.sendAt?.isAfter(now ?? DateTime.now()) ?? false
+                            ? l.sending
+                            : l.outboxWaiting,
+                      _ when item.sendAt != null => snoozeWhen(
+                        item.sendAt!,
                         now ?? DateTime.now(),
                         l,
                         Localizations.localeOf(context).toLanguageTag(),
@@ -1337,7 +1351,9 @@ class OutboxTile extends StatelessWidget {
                 ),
                 Text(
                   refused
-                      ? l.outboxRefused(item.error!)
+                      ? l.outboxRefused(item.error ?? '')
+                      : maybe
+                      ? l.outboxMaybeSentCheck
                       : item.body.trim().split('\n').first,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
