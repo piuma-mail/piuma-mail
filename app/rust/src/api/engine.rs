@@ -3469,6 +3469,45 @@ pub struct OutgoingMessage {
     pub remind_at: Option<i64>,
     /// Bold, italic and links over [body].
     pub marks: Vec<BodyMark>,
+    /// Pictures inside the text, one for each U+FFFC in [body], in order.
+    pub images: Vec<InlineImageData>,
+    /// Goes as plain text only (`format=flowed`).
+    pub plain_text: bool,
+    /// Asks for a read receipt.
+    pub read_receipt: bool,
+    /// Marked important.
+    pub high_priority: bool,
+}
+
+/// A picture inside a message being written.
+#[derive(Debug, Clone)]
+pub struct InlineImageData {
+    pub name: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+fn core_images(images: Vec<InlineImageData>) -> Vec<piuma_core::compose_image::InlineImage> {
+    images
+        .into_iter()
+        .map(|i| piuma_core::compose_image::InlineImage {
+            cid: String::new(),
+            name: i.name,
+            mime: i.mime,
+            data: i.data,
+        })
+        .collect()
+}
+
+fn image_data(images: Vec<piuma_core::compose_image::InlineImage>) -> Vec<InlineImageData> {
+    images
+        .into_iter()
+        .map(|i| InlineImageData {
+            name: i.name,
+            mime: i.mime,
+            data: i.data,
+        })
+        .collect()
 }
 
 /// Bold, italic or a link over the characters `start..end` of a body
@@ -3975,6 +4014,10 @@ pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
         signature_picked: false,
         remind_at: None,
         marks: body_marks(d.marks),
+        images: image_data(d.images),
+        plain_text: d.plain_text,
+        read_receipt: d.read_receipt,
+        high_priority: d.high_priority,
         draft: out.saved.map(|(mailbox, uid)| MessageRef {
             account_id: out.account.0,
             mailbox,
@@ -4130,6 +4173,10 @@ fn core_draft(account: &Account, message: OutgoingMessage) -> Result<Draft, Engi
         date: None,
         calendar: None,
         marks: core_marks(message.marks),
+        images: core_images(message.images),
+        plain_text: message.plain_text,
+        read_receipt: message.read_receipt,
+        high_priority: message.high_priority,
     })
 }
 
@@ -4424,6 +4471,10 @@ pub async fn open_draft(draft: MessageRef) -> Result<OutgoingMessage, EngineErro
         signature_picked: picked.is_some(),
         remind_at: None,
         marks: body_marks(d.marks),
+        images: image_data(d.images),
+        plain_text: d.plain_text,
+        read_receipt: d.read_receipt,
+        high_priority: d.high_priority,
         draft: Some(draft),
     })
 }
@@ -5515,6 +5566,10 @@ pub async fn unsubscribe(account_id: i64, mailbox: String, uid: u32) -> Result<(
         signature_picked: false,
         remind_at: None,
         marks: vec![],
+        images: vec![],
+        plain_text: false,
+        read_receipt: false,
+        high_priority: false,
         draft: None,
     })
     .await?;
