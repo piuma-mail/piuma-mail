@@ -1085,8 +1085,12 @@ async fn read_and_unread_reach_the_server() {
         2
     );
 
-    conn.set_seen("INBOX", &[1, 2], true).await.unwrap();
-    conn.set_seen("INBOX", &[2], false).await.unwrap();
+    conn.set_seen(&store, account, "INBOX", &[1, 2], true)
+        .await
+        .unwrap();
+    conn.set_seen(&store, account, "INBOX", &[2], false)
+        .await
+        .unwrap();
     // A fresh look at the server sees what was set.
     let (fresh, fresh_account) = store_with_account();
     let mut other = Connection::open(&cfg).await.unwrap();

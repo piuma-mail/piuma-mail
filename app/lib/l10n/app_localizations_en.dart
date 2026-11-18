@@ -695,6 +695,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'A web page';
+
+  @override
+  String get riskOpenWeb => 'Open this web page?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · from $email';
   }
@@ -6101,6 +6112,25 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String get listFailed => 'Couldn’t show these emails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Couldn’t refresh this folder from the server.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'The server didn’t take $count changes you made, so those emails are back as they were.',
+      one: 'The server didn’t take a change you made, so that email is back as it was.',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get actionReplyAll => 'Reply all';

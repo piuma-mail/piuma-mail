@@ -23,6 +23,9 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 /// The longest response line or literal taken, against a runaway server.
 const MAX_RESPONSE: usize = 1 << 20;
 
+/// Most lines one response may have (a list of scripts, capabilities).
+const MAX_LINES: usize = 10_000;
+
 #[derive(Clone)]
 pub struct SieveConfig {
     pub host: String,
@@ -113,6 +116,13 @@ pub enum Token {
 }
 
 impl Token {
+    /// Bytes of text it holds.
+    fn len(&self) -> usize {
+        match self {
+            Token::Atom(t) | Token::Str(t) | Token::Code(t) => t.len(),
+        }
+    }
+
     fn atom(&self) -> Option<&str> {
         match self {
             Token::Atom(a) => Some(a),
@@ -502,10 +512,16 @@ impl Client {
     /// Lines up to and including OK, NO or BYE.
     async fn response(&mut self) -> Result<(Vec<Vec<Token>>, Status)> {
         let mut lines = Vec::new();
+        let mut size = 0usize;
         loop {
             let line = self.line().await?;
             if let Some(status) = Status::from_line(&line) {
                 return Ok((lines, status));
+            }
+            // A server that never says OK must not fill the memory.
+            size += line.iter().map(Token::len).sum::<usize>() + 2;
+            if lines.len() >= MAX_LINES || size > 2 * MAX_RESPONSE {
+                return Err(SieveError::Protocol("response too long".into()));
             }
             lines.push(line);
         }
