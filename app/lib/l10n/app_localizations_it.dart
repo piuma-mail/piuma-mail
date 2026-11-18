@@ -6288,4 +6288,7 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get emlTooLarge => 'Questo file email è troppo grande da aprire.';
+
+  @override
+  String get newMailClosedLead => 'Con Piuma chiuso';
 }

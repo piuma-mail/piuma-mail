@@ -1518,5 +1518,6 @@
   "emlImported": "Importado para {folder}",
   "emlNotImported": "Não foi possível importar. Verifique a ligação e tente novamente.",
   "emlNotMail": "Este ficheiro não é um e-mail que o Piuma consiga ler.",
-  "emlTooLarge": "Este ficheiro de e-mail é demasiado grande para abrir."
+  "emlTooLarge": "Este ficheiro de e-mail é demasiado grande para abrir.",
+  "newMailClosedLead": "Com o Piuma fechado"
 }

@@ -9213,6 +9213,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This email file is too large to open.'**
   String get emlTooLarge;
+
+  /// No description provided for @newMailClosedLead.
+  ///
+  /// In en, this message translates to:
+  /// **'With Piuma closed'**
+  String get newMailClosedLead;
 }
 
 class _AppLocalizationsDelegate

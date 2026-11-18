@@ -2067,5 +2067,6 @@
   "@emlImported": {"placeholders": {"folder": {"type": "String"}}},
   "emlNotImported": "Couldn’t import it. Check the connection and try again.",
   "emlNotMail": "This file isn’t an email Piuma can read.",
-  "emlTooLarge": "This email file is too large to open."
+  "emlTooLarge": "This email file is too large to open.",
+  "newMailClosedLead": "With Piuma closed"
 }

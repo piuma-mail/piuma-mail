@@ -44,4 +44,6 @@
         <item quantity="one">inviata %d giorno fa</item>
         <item quantity="other">inviata %d giorni fa</item>
     </plurals>
+    <!-- Keep in step with compose. -->
+    <string name="shortcut_compose">Scrivi</string>
 </resources>

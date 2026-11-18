@@ -51,4 +51,6 @@
         <item quantity="one">sent %d day ago</item>
         <item quantity="other">sent %d days ago</item>
     </plurals>
+    <!-- Keep in step with compose. -->
+    <string name="shortcut_compose">Compose</string>
 </resources>

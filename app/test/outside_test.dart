@@ -223,8 +223,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // To the end: "This device", under "New mail" and the rest.
       await tester.scrollUntilVisible(
-        find.text('Start when you sign in'),
+        find.text(state == 'unavailable' ? 'Due dates' : 'This device'),
         300,
         scrollable: find.byType(Scrollable).last,
       );
@@ -238,16 +239,24 @@ void main() {
         final (source, calls) = await settings(tester);
         expect(find.text('This device'), findsOneWidget);
         expect(find.text('Make Piuma your default mail app'), findsOneWidget);
+        // Under "New mail", as the phone's background delivery.
+        expect(find.text('With Piuma closed'), findsOneWidget);
         await tester.tap(find.text('Make default'));
         await tester.pumpAndSettle();
         expect(calls.map((c) => c.method), contains('makeDefault'));
 
+        await tester.ensureVisible(find.text('Start when you sign in'));
+        await tester.pumpAndSettle();
         await tester.tap(find.bySemanticsLabel('Start when you sign in').last);
         await tester.pumpAndSettle();
         expect(source.desktop.startAtLogin, isTrue);
         expect(calls.where((c) => c.method == 'startAtLogin').last.arguments, {
           'on': true,
         });
+        await tester.ensureVisible(
+          find.text('Keep running in the background when closed'),
+        );
+        await tester.pumpAndSettle();
         await tester.tap(
           find
               .bySemanticsLabel('Keep running in the background when closed')

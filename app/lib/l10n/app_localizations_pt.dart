@@ -6258,4 +6258,7 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get emlTooLarge =>
       'Este ficheiro de e-mail é demasiado grande para abrir.';
+
+  @override
+  String get newMailClosedLead => 'Com o Piuma fechado';
 }

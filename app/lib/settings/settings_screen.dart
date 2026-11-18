@@ -1420,10 +1420,27 @@ class _NotificationsPageState extends State<NotificationsPage> {
         if (s != null) ...[
           // Android: how new mail arrives with the app closed
           // (`AndroidBackground`, 3).
-          if (widget.source.backgroundChoice) ...[
+          // How new mail reaches the person with Piuma closed: the same
+          // heading and words on the phone (the background service) and
+          // on the desktop (the tray).
+          if (widget.source.backgroundChoice || Shell.canKeepRunning) ...[
             const SizedBox(height: 32),
             Text(l.newMailHeading, style: heading),
+            const SizedBox(height: 4),
+            Text(
+              l.newMailClosedLead,
+              style: TextStyle(
+                fontFamily: PiumaFonts.sans,
+                fontSize: 13,
+                height: 1.35,
+                color: c.muted,
+              ),
+            ),
             const SizedBox(height: 10),
+          ],
+          if (Shell.canKeepRunning && !widget.source.backgroundChoice)
+            _KeepRunningCard(source: widget.source),
+          if (widget.source.backgroundChoice)
             Semantics(
               label: l.newMailHeading,
               container: true,
@@ -1453,7 +1470,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 ],
               ),
             ),
-          ],
           const SizedBox(height: 32),
           Text(l.notifyAbout, style: heading),
           const SizedBox(height: 10),
@@ -1791,9 +1807,8 @@ class _ToggleRow extends StatelessWidget {
   }
 }
 
-/// "This device": Piuma as the default mail app, and on Windows and
-/// Linux keeping running with the window closed and starting at sign-in
-/// (lib/outside/shell.dart). Shows only what the platform allows.
+/// "This device": Piuma as the default mail app, on the phone and on the
+/// desktop (lib/outside/shell.dart). Shows only what the platform allows.
 class _DeviceSection extends StatefulWidget {
   const _DeviceSection({required this.source, required this.heading});
 
@@ -1805,7 +1820,6 @@ class _DeviceSection extends StatefulWidget {
 }
 
 class _DeviceSectionState extends State<_DeviceSection> {
-  late DesktopSettings _desktop = widget.source.desktopSettings;
   DefaultMail? _default;
   late final AppLifecycleListener _lifecycle;
 
@@ -1836,6 +1850,48 @@ class _DeviceSectionState extends State<_DeviceSection> {
     if (state != DefaultMail.unknown) setState(() => _default = state);
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final android = defaultTargetPlatform == TargetPlatform.android;
+    final state = _default;
+    final showDefault = state != null && state != DefaultMail.unavailable;
+    final rows = <Widget>[
+      if (showDefault)
+        _DefaultMailRow(
+          state: state,
+          android: android,
+          onMakeDefault: _makeDefault,
+        ),
+    ];
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 32),
+        Text(l.deviceHeading, style: widget.heading),
+        const SizedBox(height: 10),
+        _Card(children: rows),
+      ],
+    );
+  }
+}
+
+/// Under "New mail" on Windows and Linux, where the phone has its
+/// background delivery: keeping running in the tray with the window
+/// closed, and starting at sign-in.
+class _KeepRunningCard extends StatefulWidget {
+  const _KeepRunningCard({required this.source});
+
+  final MailSource source;
+
+  @override
+  State<_KeepRunningCard> createState() => _KeepRunningCardState();
+}
+
+class _KeepRunningCardState extends State<_KeepRunningCard> {
+  late DesktopSettings _desktop = widget.source.desktopSettings;
+
   void _set(DesktopSettings next) {
     final l = AppLocalizations.of(context);
     setState(() => _desktop = next);
@@ -1852,39 +1908,21 @@ class _DeviceSectionState extends State<_DeviceSection> {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    final android = defaultTargetPlatform == TargetPlatform.android;
-    final state = _default;
-    final showDefault = state != null && state != DefaultMail.unavailable;
-    final rows = <Widget>[
-      if (showDefault)
-        _DefaultMailRow(
-          state: state,
-          android: android,
-          onMakeDefault: _makeDefault,
-        ),
-      if (Shell.canKeepRunning)
+    return _Card(
+      children: [
         _ToggleRow(
           title: l.keepRunningTitle,
           hint: l.keepRunningHint,
           value: _desktop.keepRunning,
           onChanged: (v) => _set(_desktop.copyWith(keepRunning: v)),
         ),
-      if (Shell.canStartAtLogin)
-        _ToggleRow(
-          title: l.startAtLoginTitle,
-          hint: l.startAtLoginHint,
-          value: _desktop.startAtLogin,
-          onChanged: (v) => _set(_desktop.copyWith(startAtLogin: v)),
-        ),
-    ];
-    if (rows.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 32),
-        Text(l.deviceHeading, style: widget.heading),
-        const SizedBox(height: 10),
-        _Card(children: rows),
+        if (Shell.canStartAtLogin)
+          _ToggleRow(
+            title: l.startAtLoginTitle,
+            hint: l.startAtLoginHint,
+            value: _desktop.startAtLogin,
+            onChanged: (v) => _set(_desktop.copyWith(startAtLogin: v)),
+          ),
       ],
     );
   }
