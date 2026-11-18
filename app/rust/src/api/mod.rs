@@ -8,6 +8,7 @@ pub mod labels;
 pub mod mailbox;
 pub mod outside;
 pub mod preview;
+pub mod reply;
 pub mod sync;
 pub mod templates;
 pub mod updates;

@@ -78,4 +78,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get undo => 'Undo';
+
+  @override
+  String get replyAll => 'Reply all';
+
+  @override
+  String replyToAll(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return 'Reply to $name and $_temp0';
+  }
 }

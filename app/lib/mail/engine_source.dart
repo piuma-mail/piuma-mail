@@ -3,6 +3,7 @@ import 'dart:async';
 import '../notify/android_background.dart';
 import 'android_passwords.dart';
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show AppLifecycleState;
 
@@ -23,6 +24,7 @@ import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
 import '../engine/api/outside.dart' as outside;
 import '../engine/api/mailbox.dart' as mbx;
+import '../engine/api/reply.dart' as rep;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
@@ -1960,7 +1962,11 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  Future<String> saveText(String name, String text) async {
+  Future<String> saveText(String name, String text) =>
+      saveFile(name, Uint8List.fromList(utf8.encode(text)));
+
+  @override
+  Future<String> saveFile(String name, Uint8List data) async {
     Future<String> saveIn(Directory folder) async {
       final dot = name.lastIndexOf('.');
       final stem = dot < 0 ? name : name.substring(0, dot);
@@ -1969,7 +1975,7 @@ class EngineMailSource extends MailSource {
       for (var n = 2; await file.exists(); n++) {
         file = File('${folder.path}/$stem ($n)$ext');
       }
-      await file.writeAsString(text, flush: true);
+      await file.writeAsBytes(data, flush: true);
       return file.path;
     }
 
@@ -2027,6 +2033,77 @@ class EngineMailSource extends MailSource {
   @override
   Future<void> setMuted(String email, bool muted) =>
       engine.setSenderMuted(email: email, muted: muted);
+
+  @override
+  Future<MailEnvelope?> envelope(MailRow row) async {
+    try {
+      final e = await rep.messageEnvelope(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+      );
+      return envelopeOf(e);
+    } catch (_) {
+      // Mail kept before its headers were read, with the server out of
+      // reach: Reply goes to the sender, as before.
+      return null;
+    }
+  }
+
+  /// The engine's envelope as the app keeps it.
+  @visibleForTesting
+  static MailEnvelope envelopeOf(rep.MessageEnvelope e) => MailEnvelope(
+    to: [for (final a in e.to) MailPerson(a.name, a.email, you: a.you)],
+    cc: [for (final a in e.cc) MailPerson(a.name, a.email, you: a.you)],
+    bccYou: e.bccYou,
+    replyTo: e.replyTo,
+    replyAllTo: e.replyAllTo,
+    replyAllCc: e.replyAllCc,
+    listPost: e.listPost,
+    muted: e.muted,
+    replyAllReview: e.replyAllReview,
+  );
+
+  @override
+  Future<Uint8List> rawMessage(MailRow row) => rep.messageSource(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+  );
+
+  @override
+  List<MailHeader> headersOf(Uint8List raw) => [
+    for (final h in rep.messageHeaders(raw: raw)) MailHeader(h.name, h.value),
+  ];
+
+  @override
+  Future<int> redirect(MailRow row, List<String> to, Duration window) async {
+    try {
+      final id = await rep.redirectMessage(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+        fromEmail: replyFrom(row),
+        to: to,
+        undoSeconds: window.inSeconds,
+      );
+      // As Send with Undo: should the app be swiped away in the window,
+      // Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
+      _changes.add(null);
+      return id;
+    } on engine.EngineError catch (e) {
+      throw _sendException(e);
+    }
+  }
+
+  @override
+  Future<void> setThreadMuted(MailRow row, bool muted) => rep.setThreadMuted(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+    muted: muted,
+  );
 
   @override
   Future<bool> isBlocked(String email) async =>
@@ -3070,8 +3147,29 @@ class EngineMailSource extends MailSource {
           engine.OutboxState.maybeSent => OutboxState.maybeSent,
         },
         undo: o.undo,
+        redirect: o.redirect,
       ),
   ];
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    try {
+      await engine.deleteOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    try {
+      await engine.retryOutgoing(id: id);
+    } finally {
+      _changes.add(null);
+    }
+  }
 
   @override
   Future<Draft> reopenOutgoing(int id) async {

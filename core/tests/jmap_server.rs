@@ -18,6 +18,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 const USER: &str = "matteo@example.com";
 const PASSWORD: &str = "secret";
+/// One of the account's aliases, with an identity of its own.
+const ALIAS: &str = "studio@example.com";
 /// The server hands out ids two at a time, to make the engine page.
 const QUERY_CAP: usize = 2;
 
@@ -36,6 +38,8 @@ struct Server {
     blobs: BTreeMap<String, Vec<u8>>,
     next: u32,
     sent: Vec<(String, Vec<String>)>,
+    /// The identity and MAIL FROM of each submission, in order.
+    senders: Vec<(String, String)>,
     changed: Arc<tokio::sync::Notify>,
     /// Whether `header:` properties are answered, as by servers that the
     /// engine asked before it read list headers.
@@ -52,9 +56,23 @@ struct Server {
     drop_submission: bool,
     /// The next submission is refused (`notCreated`).
     refuse_submission: bool,
+    /// The identities (id, address) when not the usual three; an address
+    /// may be a wildcard, `*@domain`.
+    identities: Option<Vec<(String, String)>>,
 }
 
 impl Server {
+    /// The account's identities, as `Identity/get` lists them.
+    fn identities(&self) -> Vec<(String, String)> {
+        self.identities.clone().unwrap_or_else(|| {
+            vec![
+                ("other".into(), "someone@example.com".into()),
+                ("me".into(), USER.into()),
+                ("alias".into(), ALIAS.into()),
+            ]
+        })
+    }
+
     fn add(&mut self, mailbox: &str, from: &str, subject: &str, day: u32, seen: bool) -> String {
         self.next += 1;
         let id = format!("M{}", self.next);
@@ -120,6 +138,7 @@ impl Server {
             "keywords": e.keywords.iter().map(|k| (k.clone(), json!(true))).collect::<serde_json::Map<_, _>>(),
             "from": addr(m.from()),
             "to": addr(m.to()),
+            "cc": addr(m.cc()),
             "replyTo": addr(m.reply_to()),
             "subject": m.subject(),
             "preview": m.body_preview(100),
@@ -150,6 +169,16 @@ impl Server {
             let value = match p.as_str() {
                 "size" => json!(e.raw.len()),
                 "attachments" => json!(attachments),
+                header if header.starts_with("header:") && header.ends_with(":asAddresses") => {
+                    let name = &header["header:".len()..header.len() - ":asAddresses".len()];
+                    match m.headers().get(name) {
+                        Some(h) if self.headers => {
+                            let parsed = h.parse_as(mail_parser::HeaderForm::Addresses);
+                            addr(parsed.value().as_address())
+                        }
+                        _ => Value::Null,
+                    }
+                }
                 header if header.starts_with("header:") && self.headers => m
                     .headers()
                     .get(&header["header:".len()..])
@@ -358,17 +387,41 @@ impl Server {
                 }
                 one(json!({ "updated": { "singleton": null } }))
             }
-            "Identity/get" => one(json!({ "list": [
-                { "id": "other", "email": "someone@example.com" },
-                { "id": "me", "email": USER },
-            ] })),
+            "Identity/get" => one(json!({ "list": self
+                .identities()
+                .into_iter()
+                .map(|(id, email)| json!({ "id": id, "email": email }))
+                .collect::<Vec<_>>() })),
             "EmailSubmission/set" if self.refuse_submission => {
                 self.refuse_submission = false;
                 one(json!({ "notCreated": { "send": { "type": "forbiddenToSend" } } }))
             }
             "EmailSubmission/set" => {
                 let send = &args["create"]["send"];
-                assert_eq!(send["identityId"], "me");
+                let from = send["envelope"]["mailFrom"]["email"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let identity = send["identityId"].as_str().unwrap().to_owned();
+                // As servers do: the envelope goes from the identity's
+                // own address (any in its domain, for a wildcard), or
+                // nothing goes.
+                let own = self
+                    .identities()
+                    .into_iter()
+                    .find(|(id, _)| *id == identity)
+                    .map(|(_, email)| email)
+                    .unwrap_or_default();
+                let allowed = match own.strip_prefix("*@") {
+                    Some(domain) => from.rsplit_once('@').is_some_and(|(_, d)| d == domain),
+                    None => from == own,
+                };
+                if !allowed {
+                    return one(json!({
+                        "notCreated": { "send": { "type": "forbiddenMailFrom" } }
+                    }));
+                }
+                self.senders.push((identity, from));
                 let email = send["emailId"].as_str().unwrap().to_owned();
                 let rcpt = send["envelope"]["rcptTo"]
                     .as_array()
@@ -992,6 +1045,233 @@ async fn a_message_id_that_only_contains_ours_is_not_taken_for_it() {
     assert_ne!(email, &other);
     assert_ne!(email, &shouted);
     assert!(String::from_utf8_lossy(&s.emails[email].raw).contains("Once."));
+}
+
+#[tokio::test]
+async fn keeps_every_recipient_and_redirects() {
+    use piuma_core::envelope::{self, reply_recipients, Address, ReplyMode};
+    let (server, cfg) = start().await;
+    let (store, account) = store_with_account(&cfg);
+    let id = {
+        let mut s = server.lock().unwrap();
+        s.headers = true;
+        s.add_raw(
+            "mb-in",
+            &format!(
+                "From: Anna <anna@x.it>\r\nReply-To: desk@x.it, Bo <bo@x.it>\r\n\
+                 To: Matteo <{USER}>, Carla <carla@x.it>\r\nCc: dan@x.it\r\n\
+                 Mail-Followup-To: team@x.it, Carla <carla@x.it>\r\n\
+                 Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
+                 Content-Type: text/plain\r\n\r\nSee you at 20:30.\r\n"
+            ),
+            9,
+        )
+    };
+    let mut client = Client::open(&cfg).await.unwrap();
+    client
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let row = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 50)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.subject == "Plan for Friday")
+        .unwrap();
+    let e = store
+        .lock()
+        .unwrap()
+        .envelope(account, &row.mailbox, row.uid)
+        .unwrap()
+        .unwrap();
+    let emails = |l: &[Address]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    assert_eq!(emails(&e.reply_to), ["desk@x.it", "bo@x.it"]);
+    assert_eq!(emails(&e.to), [USER, "carla@x.it"]);
+    assert_eq!(emails(&e.cc), ["dan@x.it"]);
+    assert_eq!(emails(&e.followup_to), ["team@x.it", "carla@x.it"]);
+    let own = store.lock().unwrap().own_addresses(account).unwrap();
+    let from = Address::new("Anna", "anna@x.it");
+    let one = reply_recipients(&e, &from, &own, ReplyMode::Sender);
+    assert_eq!(emails(&one.to), ["desk@x.it", "bo@x.it"]);
+    let all = reply_recipients(&e, &from, &own, ReplyMode::All);
+    assert_eq!(emails(&all.to), ["team@x.it", "carla@x.it"]);
+
+    // Redirect, from an alias: the raw message from the server, resent
+    // unchanged through the outbox, from the alias's identity.
+    let mut remote = Remote::Jmap(client);
+    let raw = remote
+        .raw(&store, account, &row.mailbox, row.uid)
+        .await
+        .unwrap();
+    assert_eq!(raw, server.lock().unwrap().emails[&id].raw);
+    let to = vec!["Rossi, Mario <eve@x.it>".to_owned()];
+    let own = vec![USER.to_owned(), ALIAS.to_owned()];
+    let (draft, ready) = envelope::redirect(
+        &raw,
+        "Plan for Friday",
+        Some(ALIAS),
+        &own,
+        &to,
+        1_790_000_000,
+    )
+    .unwrap();
+    let out = piuma_core::outbox::Outgoing {
+        account,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: false,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let account = store.lock().unwrap().account(account).unwrap().unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    {
+        let s = server.lock().unwrap();
+        let (email, rcpt) = s.sent.last().unwrap();
+        assert_eq!(rcpt, &["eve@x.it".to_owned()]);
+        assert_eq!(
+            s.senders.last().unwrap(),
+            &("alias".to_owned(), ALIAS.to_owned())
+        );
+        let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+        assert!(
+            sent.starts_with(&format!("Resent-From: {ALIAS}\r\n")),
+            "{sent}"
+        );
+        assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
+        assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
+        assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");
+    }
+
+    // From an alias the server has no identity for: the login's identity
+    // sends it, with the envelope from that identity's address (the alias
+    // would be forbiddenMailFrom); Resent-From still names the alias.
+    let shop = "shop@example.com";
+    let own = vec![USER.to_owned(), ALIAS.to_owned(), shop.to_owned()];
+    let (draft, ready) = envelope::redirect(
+        &raw,
+        "Plan for Friday",
+        Some(shop),
+        &own,
+        &to,
+        1_790_000_100,
+    )
+    .unwrap();
+    assert_eq!(ready.from, shop);
+    let out = piuma_core::outbox::Outgoing {
+        account: account.id,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: true,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    let s = server.lock().unwrap();
+    assert_eq!(
+        s.senders.last().unwrap(),
+        &("me".to_owned(), USER.to_owned())
+    );
+    let (email, _) = s.sent.last().unwrap();
+    let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+    assert!(
+        sent.starts_with(&format!("Resent-From: {shop}\r\n")),
+        "{sent}"
+    );
+}
+
+/// Sends a redirect of a small message from `from` through the outbox, and
+/// gives the identity and MAIL FROM the server saw.
+async fn redirect_from(
+    server: &Arc<Mutex<Server>>,
+    cfg: &JmapConfig,
+    from: &str,
+    at: i64,
+) -> (String, String) {
+    use piuma_core::envelope;
+    let (store, account) = store_with_account(cfg);
+    let raw = b"From: Anna <anna@x.it>\r\nTo: team@x.it\r\nSubject: Hi\r\n\
+                Message-ID: <hi@x.it>\r\nContent-Type: text/plain\r\n\r\nHi.\r\n";
+    let own = vec![USER.to_owned(), from.to_owned()];
+    let to = vec!["eve@x.it".to_owned()];
+    let (draft, ready) = envelope::redirect(raw, "Hi", Some(from), &own, &to, at).unwrap();
+    assert_eq!(ready.from, from);
+    let out = piuma_core::outbox::Outgoing {
+        account,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: true,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let account = store.lock().unwrap().account(account).unwrap().unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    server.lock().unwrap().senders.last().unwrap().clone()
+}
+
+#[tokio::test]
+async fn sends_through_a_wildcard_identity() {
+    let (server, cfg) = start().await;
+    // The login is covered only by a wildcard identity for its domain;
+    // another identity has an address of its own, elsewhere.
+    server.lock().unwrap().identities = Some(vec![
+        ("other".into(), "someone@example.org".into()),
+        ("wild".into(), "*@example.com".into()),
+    ]);
+    // An alias the wildcard covers: it sends, and the envelope keeps the
+    // alias as it is.
+    assert_eq!(
+        redirect_from(&server, &cfg, ALIAS, 1_790_000_000).await,
+        ("wild".to_owned(), ALIAS.to_owned())
+    );
+    // An address no identity covers: the login's identity, the wildcard,
+    // sends it, with the envelope from the login (the wildcard has no
+    // address of its own).
+    assert_eq!(
+        redirect_from(&server, &cfg, "shop@elsewhere.net", 1_790_000_100).await,
+        ("wild".to_owned(), USER.to_owned())
+    );
 }
 
 #[tokio::test]

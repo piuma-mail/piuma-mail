@@ -96,6 +96,7 @@ class WatchRow {
     required this.at,
     required this.seen,
     required this.messages,
+    this.others = 0,
   });
 
   factory WatchRow.fromJson(Map<String, dynamic> m) => WatchRow(
@@ -107,6 +108,7 @@ class WatchRow {
     at: (m['at'] as num).toInt(),
     seen: m['seen'] as bool,
     messages: (m['messages'] as num).toInt(),
+    others: (m['others'] as num?)?.toInt() ?? 0,
   );
 
   /// "account\nmailbox\nuid": what the phone acts on.
@@ -120,6 +122,10 @@ class WatchRow {
   final int at;
   final bool seen;
   final int messages;
+
+  /// How many more people Reply all reaches than Reply; 0 when it reaches
+  /// nobody else (or the phone doesn't know yet).
+  final int others;
 
   DateTime get time => DateTime.fromMillisecondsSinceEpoch(at * 1000);
 }

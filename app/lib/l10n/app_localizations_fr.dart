@@ -1607,6 +1607,22 @@ class AppLocalizationsFr extends AppLocalizations {
       'La connexion a été coupée pendant l’envoi. Vérifiez dans Envoyés avant de le renvoyer.';
 
   @override
+  String get outboxRedirectTitle => 'Redirection en attente';
+
+  @override
+  String get outboxRedirectLine => 'Redirigé sans modification';
+
+  @override
+  String get outboxRedirectBody =>
+      'Une redirection part telle que l’e-mail est arrivé : il n’y a rien à modifier. Annulez-la ou réessayez de l’envoyer.';
+
+  @override
+  String get outboxCancelRedirect => 'Annuler la redirection';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirection annulée';
+
+  @override
   String get dataProblemTitle => 'Piuma n’a pas pu ouvrir ses données';
 
   @override
@@ -6229,6 +6245,213 @@ class AppLocalizationsFr extends AppLocalizations {
       one: 'Le serveur n’a pas accepté une modification que vous avez faite : cet e-mail est revenu comme avant.',
     );
     return '$_temp0';
+  }
+
+  @override
+  String get actionReplyAll => 'Répondre à tous';
+
+  @override
+  String get actionReplyList => 'Répondre à la liste';
+
+  @override
+  String get actionForwardAttachment => 'Transférer en pièce jointe';
+
+  @override
+  String get actionRedirect => 'Rediriger';
+
+  @override
+  String get actionEditAsNew => 'Modifier comme nouveau';
+
+  @override
+  String get actionViewSource => 'Afficher la source';
+
+  @override
+  String get actionSaveEml => 'Enregistrer en .eml';
+
+  @override
+  String get muteConversation => 'Mettre la conversation en sourdine';
+
+  @override
+  String get unmuteConversation => 'Réactiver la conversation';
+
+  @override
+  String get conversationMuted =>
+      'Conversation en sourdine : les nouveaux messages arrivent lus, sans notification';
+
+  @override
+  String get conversationUnmuted => 'Conversation réactivée';
+
+  @override
+  String get conversationMutedLine => 'En sourdine';
+
+  @override
+  String forwardFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'de $count fichiers',
+      one: 'du fichier',
+    );
+    return 'Récupération $_temp0';
+  }
+
+  @override
+  String forwardFilesDone(int done, int total) {
+    return '$done sur $total';
+  }
+
+  @override
+  String forwardFilesFailed(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ces fichiers n’ont pas pu être joints :',
+      one: 'Ce fichier n’a pas pu être joint :',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String forwardWithoutFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Continuer sans eux',
+      one: 'Continuer sans lui',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gettingEmail => 'Récupération de l’e-mail';
+
+  @override
+  String get messageFetchFailed =>
+      'Impossible de récupérer l’e-mail sur le serveur. Vérifiez la connexion et réessayez.';
+
+  @override
+  String get redirectTitle => 'Rediriger cet e-mail';
+
+  @override
+  String redirectBody(String sender) {
+    return 'Il part tel quel, comme il est arrivé de $sender : les réponses iront à $sender, pas à vous.';
+  }
+
+  @override
+  String get redirectTo => 'À';
+
+  @override
+  String get redirectHint => 'Adresses, séparées par des virgules';
+
+  @override
+  String redirectDone(String to) {
+    return 'Redirigé vers $to';
+  }
+
+  @override
+  String get redirectFailed =>
+      'Impossible de rediriger l’e-mail. Vérifiez les adresses et la connexion.';
+
+  @override
+  String get sourceTitle => 'Source de l’e-mail';
+
+  @override
+  String get sourceHeaders => 'En-têtes';
+
+  @override
+  String get sourceRaw => 'Brut';
+
+  @override
+  String get sourceCopy => 'Copier';
+
+  @override
+  String emlSaved(String name) {
+    return 'Enregistré sous $name';
+  }
+
+  @override
+  String get emlNotSaved => 'Impossible d’enregistrer l’e-mail';
+
+  @override
+  String recipientsMore(String names, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count autres',
+      one: '1 autre personne',
+    );
+    return '$names et $_temp0';
+  }
+
+  @override
+  String get recipientYou => 'vous';
+
+  @override
+  String get recipientsBcc => 'vous étiez en Cci';
+
+  @override
+  String get recipientsTo => 'À';
+
+  @override
+  String get recipientsCc => 'Cc';
+
+  @override
+  String get recipientsBccLabel => 'Cci';
+
+  @override
+  String get showRecipients => 'Afficher les destinataires';
+
+  @override
+  String get hideRecipients => 'Masquer les destinataires';
+
+  @override
+  String replyAllNames(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count autres',
+      one: '1 autre personne',
+    );
+    return '$name et $_temp0';
+  }
+
+  @override
+  String replyAllOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'et $count autres',
+      one: 'et 1 autre personne',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutNextEmail => 'E-mail suivant';
+
+  @override
+  String get shortcutPreviousEmail => 'E-mail précédent';
+
+  @override
+  String get zoomIn => 'Agrandir';
+
+  @override
+  String get zoomOut => 'Réduire';
+
+  @override
+  String get zoomReset => 'Taille réelle';
+
+  @override
+  String zoomLevel(int percent) {
+    return 'Taille du texte $percent %';
+  }
+
+  @override
+  String get textSize => 'Taille du texte';
+
+  @override
+  String sourceCut(int size) {
+    return 'Seuls les premiers $size Ko sont affichés. Enregistrez en .eml pour l’e-mail entier.';
   }
 
   @override

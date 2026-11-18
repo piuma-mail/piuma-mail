@@ -3,11 +3,13 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
 
 import 'calendars.dart';
+import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
 
 export 'calendars.dart';
+export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
 
@@ -1143,10 +1145,16 @@ class OutboxItem {
     this.sendAt,
     this.state = OutboxState.waiting,
     this.undo = false,
+    this.redirect = false,
   });
 
   final int id;
   final int accountId;
+
+  /// A Redirect: the email as it came, with nothing of its own to edit.
+  /// It never opens in compose; it is cancelled or tried again
+  /// ([MailSource.cancelOutgoing], [MailSource.retryOutgoing]).
+  final bool redirect;
 
   /// Where it stands: waiting, on its way, refused, or maybe sent.
   final OutboxState state;
@@ -1185,6 +1193,7 @@ class OutboxItem {
     sendAt: clearSendAt ? null : sendAt,
     state: state ?? this.state,
     undo: undo ?? this.undo,
+    redirect: redirect,
   );
 
   /// Who it goes to, by name where there is one.
@@ -2501,6 +2510,36 @@ abstract class MailSource {
   /// Mute a sender's notifications, or let them come again.
   Future<void> setMuted(String email, bool muted);
 
+  /// Who [row] went to, and who Reply, Reply all and Reply to list write
+  /// to. Null when it can't be known (mail kept before its headers were
+  /// read, with the server out of reach): Reply then goes to the sender.
+  Future<MailEnvelope?> envelope(MailRow row) async => null;
+
+  /// [row] as it came from the server, byte for byte: View source, Save
+  /// as .eml, Forward as attachment and Redirect start from it.
+  Future<Uint8List> rawMessage(MailRow row) =>
+      Future.error(UnsupportedError('no raw message'));
+
+  /// The headers of a raw message, in order, encoded words decoded.
+  List<MailHeader> headersOf(Uint8List raw) => const [];
+
+  /// Redirect: [row] unchanged, with Resent-* headers on top, to [to],
+  /// from the account (or the alias it was written to). It goes through
+  /// the outbox like any message, after [window] (Undo takes it back with
+  /// [cancelOutgoing]); returns its id there, for [deliver]. Throws
+  /// [SendException] for an address that isn't one.
+  Future<int> redirect(MailRow row, List<String> to, Duration window) =>
+      Future.error(UnsupportedError('no redirect'));
+
+  /// Mutes [row]'s conversation, or unmutes it: new mail in it arrives
+  /// read and makes no notice. It stays in the inbox.
+  Future<void> setThreadMuted(MailRow row, bool muted) async {}
+
+  /// Saves [data] in Downloads as [name], or a name like it no other file
+  /// there has, as [saveText] does; returns the saved file's path.
+  Future<String> saveFile(String name, Uint8List data) =>
+      Future.error(UnsupportedError('no files'));
+
   /// Whether a sender's new mail goes straight to Trash.
   Future<bool> isBlocked(String email);
 
@@ -3033,8 +3072,21 @@ abstract class MailSource {
   /// Mail waiting to go, oldest first: one account's, or every account's.
   Future<List<OutboxItem>> outbox(int? accountId);
 
-  /// Takes a message back out of the outbox, to edit it.
+  /// Takes a message back out of the outbox, to edit it. Never a
+  /// Redirect ([OutboxItem.redirect]), which has nothing to edit: that
+  /// throws and the Redirect stays.
   Future<Draft> reopenOutgoing(int id);
+
+  /// Deletes a message from the outbox without sending it: Undo of a
+  /// Redirect, or Cancel in the Outbox. Throws when it is on its way.
+  Future<void> cancelOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
+
+  /// Sends a message of the outbox again now (waiting, refused, or maybe
+  /// sent, when the person says so); [deliver] then says what became of
+  /// it. Throws when it is on its way or gone.
+  Future<void> retryOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
 
   /// How many drafts every account keeps.
   Future<int> draftCount();

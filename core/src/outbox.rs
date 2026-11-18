@@ -46,6 +46,9 @@ pub struct Waiting {
     /// Sent with Undo: [send_at] is the end of the Undo window, not a time
     /// the person picked.
     pub undo: bool,
+    /// A Redirect: the message as it came, which can't be reopened to
+    /// edit; it is only cancelled or tried again.
+    pub redirect: bool,
 }
 
 /// Where a message in the outbox stands, as the list shows it.
@@ -86,6 +89,9 @@ pub struct Outgoing {
     pub send_at: Option<i64>,
     /// Sent with Undo: [send_at] ends the Undo window.
     pub undo: bool,
+    /// A Redirect ([crate::envelope::redirect]): [draft] holds only its
+    /// recipients and subject, so it is never reopened in compose.
+    pub redirect: bool,
 }
 
 /// One message the server took.

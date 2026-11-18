@@ -49,7 +49,11 @@ void main() {
     expect(find.byType(InboxRowTile), findsNWidgets(5));
     expect(find.text('3 accounts · 2 unread'), findsOneWidget);
     expect(find.text('to you · today at 10:42'), findsNothing);
-    expect(find.text('to you · today at 09:42'), findsOneWidget);
+    // Who else it went to, once the engine says.
+    expect(
+      find.text('to you, Elena Ferri, Marco Riva · today at 09:42'),
+      findsOneWidget,
+    );
     expect(find.textContaining('bring the new board game'), findsOneWidget);
   });
 

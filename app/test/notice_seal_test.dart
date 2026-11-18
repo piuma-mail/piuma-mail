@@ -36,6 +36,8 @@ void main() {
       reply: 'Reply',
       archive: 'Archive',
       snooze: 'Snooze',
+      delete: 'Delete',
+      markRead: 'Mark read',
       send: 'Send',
       replyHint: 'Reply',
       onAction: (payload, action, _) => acted.add((payload, action)),

@@ -2826,8 +2826,15 @@ class DemoMailSource extends MailSource {
   /// Pictures are the board's own; other files are empty bytes of their
   /// size, as when forwarded.
   @override
-  Future<Uint8List?> attachmentData(AttachedFile file) async =>
-      await attachmentThumb(file) ?? Uint8List(file.file.size);
+  Future<Uint8List?> attachmentData(AttachedFile file) async {
+    if (failFiles.contains(file.file.name)) {
+      throw StateError('${file.file.name} is not on the server');
+    }
+    return await attachmentThumb(file) ?? Uint8List(file.file.size);
+  }
+
+  /// Files whose download fails, by name, for tests.
+  final failFiles = <String>{};
 
   /// The demo's Vault gives no notices of its own; tests set some.
   List<MailNotice> reminders = const [];
@@ -3616,6 +3623,199 @@ class DemoMailSource extends MailSource {
   @override
   Future<void> setMuted(String email, bool mute) async {
     mute ? muted.add(email.toLowerCase()) : muted.remove(email.toLowerCase());
+  }
+
+  /// Conversations muted, by a message of theirs, for tests.
+  final mutedThreads = <Object>{};
+
+  /// Who demo mail went to, besides the account: the reader's To and Cc
+  /// and Reply all show on these. Dad's photos came as a blind copy.
+  static const _demoRecipients =
+      <String, ({List<MailPerson> to, List<MailPerson> cc, bool you})>{
+        'Mockup v3 review': (
+          to: [MailPerson('Sara Conti', 'sara@studio.it')],
+          cc: [MailPerson('Elena Ferri', 'elena@studio.it')],
+          you: true,
+        ),
+        'Dinner on Friday?': (
+          to: [MailPerson('Elena Ferri', 'elena.ferri@icloud.com')],
+          cc: [MailPerson('Marco Riva', 'marco.riva@posta.it')],
+          you: true,
+        ),
+        'Re: Print quote': (
+          to: [],
+          cc: [MailPerson('Luca Bianchi', 'luca@studio.it')],
+          you: true,
+        ),
+        'Trip photos': (
+          to: [MailPerson('Mum', 'mamma@posta.it')],
+          cc: [],
+          you: false,
+        ),
+      };
+
+  /// Envelopes tests set, by subject, in place of the demo's own.
+  final envelopeFor = <String, MailEnvelope>{};
+
+  @override
+  Future<MailEnvelope?> envelope(MailRow row) async {
+    if (envelopeFor[row.subject] case final e?) {
+      return e.withMuted(mutedThreads.contains(row.key));
+    }
+    final account = accounts.where((a) => a.id == row.accountId).firstOrNull;
+    final own = {
+      if (account != null) account.email.toLowerCase(),
+      for (final a in _aliases[row.accountId] ?? const <String>[])
+        a.toLowerCase(),
+    };
+    final mine = own.contains(row.fromEmail.toLowerCase());
+    final me = MailPerson(
+      account?.senderName.isNotEmpty ?? false ? account!.senderName : 'Matteo',
+      writtenTo(row) ?? account?.email ?? '',
+      you: true,
+    );
+    final known = mine ? null : _demoRecipients[row.subject];
+    final List<MailPerson> to;
+    final List<MailPerson> cc;
+    if (mine) {
+      to = [
+        for (final (i, name) in row.to.split(',').indexed)
+          if (name.trim().isNotEmpty)
+            MailPerson(
+              name.trim(),
+              i < row.waitingFor.length
+                  ? row.waitingFor[i]
+                  : name.trim().contains('@')
+                  ? name.trim()
+                  : '${name.trim().split(' ').first.toLowerCase()}@studio.it',
+            ),
+      ];
+      cc = const [];
+    } else {
+      to = [if (known?.you ?? true) me, ...?known?.to];
+      cc = known?.cc ?? const [];
+    }
+    final sender = row.replyTo.isNotEmpty
+        ? row.replyTo
+        : row.fromName.isNotEmpty
+        ? '${row.fromName} <${row.fromEmail}>'
+        : row.fromEmail;
+    final reply = mine ? [for (final p in to) p.address] : [sender];
+    final seen = {for (final r in reply) bareAddress(r).toLowerCase()};
+    final allTo = [
+      ...reply,
+      for (final p in to)
+        if (!p.you && seen.add(p.email.toLowerCase())) p.address,
+    ];
+    final allCc = [
+      for (final p in cc)
+        if (!p.you && seen.add(p.email.toLowerCase())) p.address,
+    ];
+    return MailEnvelope(
+      to: to,
+      cc: cc,
+      bccYou: !mine && !to.any((p) => p.you) && !cc.any((p) => p.you),
+      replyTo: reply,
+      replyAllTo: allTo,
+      replyAllCc: allCc,
+      muted: mutedThreads.contains(row.key),
+    );
+  }
+
+  /// The raw demo message: its headers and text.
+  @override
+  Future<Uint8List> rawMessage(MailRow row) async {
+    final failure = failNextRaw;
+    failNextRaw = null;
+    if (failure != null) throw failure;
+    final e = (await envelope(row))!;
+    String line(List<MailPerson> people) =>
+        people.map((p) => p.address).join(', ');
+    final date = row.receivedAt.toUtc().toIso8601String();
+    final raw = StringBuffer()
+      ..write('Return-Path: <${row.fromEmail}>\r\n')
+      ..write('From: ${row.fromName} <${row.fromEmail}>\r\n')
+      ..write('To: ${line(e.to)}\r\n')
+      ..write(e.cc.isEmpty ? '' : 'Cc: ${line(e.cc)}\r\n')
+      ..write('Subject: ${row.subject}\r\n')
+      ..write('Date: $date\r\n')
+      ..write('Message-ID: ${row.messageId}\r\n')
+      ..write('MIME-Version: 1.0\r\n')
+      ..write('Content-Type: text/plain; charset=utf-8\r\n\r\n')
+      ..write((await body(row)).replaceAll('\n', '\r\n'))
+      ..write('\r\n');
+    return Uint8List.fromList(utf8.encode(raw.toString()));
+  }
+
+  /// Makes the next [rawMessage] fail, for tests.
+  Object? failNextRaw;
+
+  @override
+  List<MailHeader> headersOf(Uint8List raw) {
+    final text = utf8.decode(raw, allowMalformed: true);
+    final head = text.split('\r\n\r\n').first;
+    return [
+      for (final l in head.split('\r\n'))
+        if (l.indexOf(':') case final at when at > 0)
+          MailHeader(l.substring(0, at), l.substring(at + 1).trim()),
+    ];
+  }
+
+  /// What was redirected, and where, for tests.
+  final redirected = <(MailRow, List<String>)>[];
+
+  /// Makes the next [redirect] fail, for tests.
+  Object? failNextRedirect;
+
+  /// Redirect, as the engine does it: the addresses checked, then the
+  /// message in the outbox with Undo, like any other.
+  @override
+  Future<int> redirect(MailRow row, List<String> to, Duration window) async {
+    final failure = failNextRedirect;
+    failNextRedirect = null;
+    if (failure != null) throw failure;
+    if (to.every((t) => t.trim().isEmpty)) {
+      throw const SendException(SendError.noRecipients);
+    }
+    for (final t in to) {
+      if (!validAddress(t)) throw SendException(SendError.badAddress, t);
+    }
+    final bare = [for (final t in to) bareAddress(t)];
+    redirected.add((row, bare));
+    final id = await sendWithUndo(
+      Draft(accountId: row.accountId, to: bare, subject: row.subject),
+      window,
+    );
+    final i = _outbox.indexWhere((o) => o.id == id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: row.accountId,
+      to: bare,
+      subject: row.subject,
+      body: '',
+      queuedAt: _outbox[i].queuedAt,
+      sendAt: _outbox[i].sendAt,
+      undo: true,
+      redirect: true,
+    );
+    return id;
+  }
+
+  @override
+  Future<void> setThreadMuted(MailRow row, bool muted) async {
+    muted ? mutedThreads.add(row.key) : mutedThreads.remove(row.key);
+  }
+
+  /// Files saved through [saveFile], for tests.
+  final savedFiles = <String, Uint8List>{};
+
+  @override
+  Future<String> saveFile(String name, Uint8List data) async {
+    final failure = failNextSave;
+    failNextSave = null;
+    if (failure != null) throw failure;
+    savedFiles[name] = data;
+    return '/demo/Downloads/$name';
   }
 
   /// Senders blocked, for tests.
@@ -4665,11 +4865,48 @@ class DemoMailSource extends MailSource {
     if (i < 0 || _outbox[i].state == OutboxState.sending) {
       throw StateError('not in the outbox');
     }
+    // A Redirect has nothing to edit: it stays, as the engine keeps it.
+    if (_outbox[i].redirect) throw StateError('a redirect');
     _outbox.removeAt(i);
     _undoWindows.remove(id);
     final draft = _outboxDrafts.remove(id)!;
     _changes.add(null);
     return draft;
+  }
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    _outbox.removeAt(i);
+    _undoWindows.remove(id);
+    _outboxDrafts.remove(id);
+    _changes.add(null);
+  }
+
+  /// Messages tried again from the Outbox, for tests.
+  final List<int> retried = [];
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    retried.add(id);
+    _undoWindows.remove(id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: _outbox[i].accountId,
+      to: _outbox[i].to,
+      subject: _outbox[i].subject,
+      body: _outbox[i].body,
+      queuedAt: _outbox[i].queuedAt,
+      redirect: _outbox[i].redirect,
+    );
+    _changes.add(null);
   }
 
   void _deliver(Draft draft) {

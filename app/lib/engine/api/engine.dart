@@ -556,7 +556,8 @@ Future<List<OutboxItem>> outbox({PlatformInt64? accountId}) =>
     RustLib.instance.api.crateApiEngineOutbox(accountId: accountId);
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 Future<OutgoingMessage> reopenOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineReopenOutgoing(id: id);
 
@@ -569,6 +570,13 @@ Future<void> sendOutboxNow() =>
 /// being sent.
 Future<void> deleteOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineDeleteOutgoing(id: id);
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+Future<void> retryOutgoing({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiEngineRetryOutgoing(id: id);
 
 /// Keeps what is being written in its account's Drafts folder, in place of
 /// its earlier copy (`message.draft`), even one in another account.
@@ -2186,6 +2194,11 @@ class OutboxItem {
   /// Sent with Undo: [send_at] ends the Undo window.
   final bool undo;
 
+  /// A Redirect: the message as it came, with nothing of its own to
+  /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+  /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+  final bool redirect;
+
   const OutboxItem({
     required this.id,
     required this.accountId,
@@ -2197,6 +2210,7 @@ class OutboxItem {
     this.sendAt,
     required this.state,
     required this.undo,
+    required this.redirect,
   });
 
   @override
@@ -2210,7 +2224,8 @@ class OutboxItem {
       error.hashCode ^
       sendAt.hashCode ^
       state.hashCode ^
-      undo.hashCode;
+      undo.hashCode ^
+      redirect.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2226,7 +2241,8 @@ class OutboxItem {
           error == other.error &&
           sendAt == other.sendAt &&
           state == other.state &&
-          undo == other.undo;
+          undo == other.undo &&
+          redirect == other.redirect;
 }
 
 enum OutboxState {

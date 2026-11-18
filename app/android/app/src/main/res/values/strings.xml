@@ -14,6 +14,10 @@
     <string name="notice_reply_hint">Reply to %s</string>
     <string name="notice_archive">Archive</string>
     <string name="notice_snooze">Snooze</string>
+    <string name="notice_delete">Delete</string>
+    <string name="notice_read">Mark read</string>
+    <string name="notice_reply_all">Reply all</string>
+    <string name="notice_reply_all_hint">Reply to %1$s and %2$d more</string>
     <string name="notice_failed">Couldn’t do that from the notification. Open Piuma Mail to try again.</string>
     <string name="notice_sign_in_title">%1$s can\'t sign in</string>
     <string name="notice_sign_in_body">The server refused the password. Did it change?</string>

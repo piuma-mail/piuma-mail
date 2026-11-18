@@ -2554,6 +2554,36 @@ abstract class AppLocalizations {
   /// **'The connection broke as it went. Check Sent before sending it again.'**
   String get outboxMaybeSentCheck;
 
+  /// No description provided for @outboxRedirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect waiting'**
+  String get outboxRedirectTitle;
+
+  /// No description provided for @outboxRedirectLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirected unchanged'**
+  String get outboxRedirectLine;
+
+  /// No description provided for @outboxRedirectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A redirect goes as the email came, so there’s nothing to edit. Cancel it, or try sending it again.'**
+  String get outboxRedirectBody;
+
+  /// No description provided for @outboxCancelRedirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel redirect'**
+  String get outboxCancelRedirect;
+
+  /// No description provided for @outboxRedirectCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect cancelled'**
+  String get outboxRedirectCancelled;
+
   /// No description provided for @dataProblemTitle.
   ///
   /// In en, this message translates to:
@@ -9135,6 +9165,294 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
+
+  /// No description provided for @actionReplyAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply all'**
+  String get actionReplyAll;
+
+  /// No description provided for @actionReplyList.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to list'**
+  String get actionReplyList;
+
+  /// No description provided for @actionForwardAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward as attachment'**
+  String get actionForwardAttachment;
+
+  /// No description provided for @actionRedirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect'**
+  String get actionRedirect;
+
+  /// No description provided for @actionEditAsNew.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit as new'**
+  String get actionEditAsNew;
+
+  /// No description provided for @actionViewSource.
+  ///
+  /// In en, this message translates to:
+  /// **'View source'**
+  String get actionViewSource;
+
+  /// No description provided for @actionSaveEml.
+  ///
+  /// In en, this message translates to:
+  /// **'Save as .eml'**
+  String get actionSaveEml;
+
+  /// No description provided for @muteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute conversation'**
+  String get muteConversation;
+
+  /// No description provided for @unmuteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute conversation'**
+  String get unmuteConversation;
+
+  /// No description provided for @conversationMuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation muted: new messages arrive read, without a notification'**
+  String get conversationMuted;
+
+  /// No description provided for @conversationUnmuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation unmuted'**
+  String get conversationUnmuted;
+
+  /// No description provided for @conversationMutedLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted'**
+  String get conversationMutedLine;
+
+  /// No description provided for @forwardFilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting {count, plural, =1{the file} other{{count} files}}'**
+  String forwardFilesTitle(int count);
+
+  /// No description provided for @forwardFilesDone.
+  ///
+  /// In en, this message translates to:
+  /// **'{done} of {total}'**
+  String forwardFilesDone(int done, int total);
+
+  /// No description provided for @forwardFilesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{This file couldn’t be attached:} other{These files couldn’t be attached:}}'**
+  String forwardFilesFailed(int count);
+
+  /// No description provided for @forwardWithoutFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Go on without it} other{Go on without them}}'**
+  String forwardWithoutFiles(int count);
+
+  /// No description provided for @gettingEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting the email'**
+  String get gettingEmail;
+
+  /// No description provided for @messageFetchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t get the email from the server. Check the connection and try again.'**
+  String get messageFetchFailed;
+
+  /// No description provided for @redirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect this email'**
+  String get redirectTitle;
+
+  /// No description provided for @redirectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It goes unchanged, as it came from {sender}: replies go to {sender}, not to you.'**
+  String redirectBody(String sender);
+
+  /// No description provided for @redirectTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get redirectTo;
+
+  /// No description provided for @redirectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses, separated by commas'**
+  String get redirectHint;
+
+  /// No description provided for @redirectDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirected to {to}'**
+  String redirectDone(String to);
+
+  /// No description provided for @redirectFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t redirect the email. Check the addresses and the connection.'**
+  String get redirectFailed;
+
+  /// No description provided for @sourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Source of the email'**
+  String get sourceTitle;
+
+  /// No description provided for @sourceHeaders.
+  ///
+  /// In en, this message translates to:
+  /// **'Headers'**
+  String get sourceHeaders;
+
+  /// No description provided for @sourceRaw.
+  ///
+  /// In en, this message translates to:
+  /// **'Raw'**
+  String get sourceRaw;
+
+  /// No description provided for @sourceCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get sourceCopy;
+
+  /// No description provided for @emlSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved as {name}'**
+  String emlSaved(String name);
+
+  /// No description provided for @emlNotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t save the email'**
+  String get emlNotSaved;
+
+  /// No description provided for @recipientsMore.
+  ///
+  /// In en, this message translates to:
+  /// **'{names} and {count, plural, =1{1 other} other{{count} others}}'**
+  String recipientsMore(String names, int count);
+
+  /// No description provided for @recipientYou.
+  ///
+  /// In en, this message translates to:
+  /// **'you'**
+  String get recipientYou;
+
+  /// No description provided for @recipientsBcc.
+  ///
+  /// In en, this message translates to:
+  /// **'you were Bcc’d'**
+  String get recipientsBcc;
+
+  /// No description provided for @recipientsTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get recipientsTo;
+
+  /// No description provided for @recipientsCc.
+  ///
+  /// In en, this message translates to:
+  /// **'Cc'**
+  String get recipientsCc;
+
+  /// No description provided for @recipientsBccLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Bcc'**
+  String get recipientsBccLabel;
+
+  /// No description provided for @showRecipients.
+  ///
+  /// In en, this message translates to:
+  /// **'Show who received it'**
+  String get showRecipients;
+
+  /// No description provided for @hideRecipients.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide who received it'**
+  String get hideRecipients;
+
+  /// No description provided for @replyAllNames.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} and {count, plural, =1{1 other} other{{count} others}}'**
+  String replyAllNames(String name, int count);
+
+  /// No description provided for @replyAllOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{and 1 other} other{and {count} others}}'**
+  String replyAllOthers(int count);
+
+  /// No description provided for @shortcutNextEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Next email'**
+  String get shortcutNextEmail;
+
+  /// No description provided for @shortcutPreviousEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous email'**
+  String get shortcutPreviousEmail;
+
+  /// No description provided for @zoomIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom in'**
+  String get zoomIn;
+
+  /// No description provided for @zoomOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom out'**
+  String get zoomOut;
+
+  /// No description provided for @zoomReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Actual size'**
+  String get zoomReset;
+
+  /// No description provided for @zoomLevel.
+  ///
+  /// In en, this message translates to:
+  /// **'Text size {percent}%'**
+  String zoomLevel(int percent);
+
+  /// No description provided for @textSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Text size'**
+  String get textSize;
+
+  /// No description provided for @sourceCut.
+  ///
+  /// In en, this message translates to:
+  /// **'Showing the first {size} KB. Save as .eml for the whole email.'**
+  String sourceCut(int size);
 
   /// No description provided for @deviceHeading.
   ///

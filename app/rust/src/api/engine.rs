@@ -1932,13 +1932,16 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
     }
     let store = store.lock().unwrap_or_else(|e| e.into_inner());
     let settings = notify::Settings::load(&store).unwrap_or_default();
-    // Groups with notices off stay quiet.
+    // Groups with notices off stay quiet, and so do muted conversations.
     let mut arrived: Vec<notify::Arrival> = arrived
         .iter()
         .filter(|a| {
             store
                 .notifies(a.summary.account, &a.summary.reply.recipients)
                 .unwrap_or(true)
+                && !store
+                    .thread_muted(a.summary.account, &a.summary.mailbox, a.summary.uid)
+                    .unwrap_or(false)
         })
         .cloned()
         .collect();
@@ -3469,7 +3472,7 @@ pub fn schedule_message(message: OutgoingMessage, send_at: i64) -> Result<i64, E
 
 /// Sends an account's outbox at `send_at`, on time while the app runs;
 /// the watchers also wait for it.
-fn send_outbox_at(id: AccountId, send_at: i64) -> Result<(), EngineError> {
+pub(crate) fn send_outbox_at(id: AccountId, send_at: i64) -> Result<(), EngineError> {
     engine()?.runtime.spawn(async move {
         let wait = (send_at - now_secs()).max(0) as u64;
         tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
@@ -3525,6 +3528,7 @@ fn queue_draft(
         saved,
         send_at,
         undo,
+        redirect: false,
     };
     let id = store()?.queue_outgoing(&out, now_secs())?;
     Ok(Queued {
@@ -3752,6 +3756,10 @@ pub struct OutboxItem {
     pub state: OutboxState,
     /// Sent with Undo: [send_at] ends the Undo window.
     pub undo: bool,
+    /// A Redirect: the message as it came, with nothing of its own to
+    /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+    /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+    pub redirect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3787,6 +3795,7 @@ pub fn outbox(account_id: Option<i64>) -> Result<Vec<OutboxItem>, EngineError> {
                 outbox::State::Unknown => OutboxState::MaybeSent,
             },
             undo: w.undo,
+            redirect: w.redirect,
         })
         .collect())
 }
@@ -3808,8 +3817,12 @@ fn take_outgoing(id: i64) -> Result<Outgoing, EngineError> {
 }
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
+    if store()?.outgoing(id)?.is_some_and(|o| o.redirect) {
+        return Err(EngineError::new(ErrorKind::Other, "a redirect"));
+    }
     let out = take_outgoing(id)?;
     let d = out.draft;
     Ok(OutgoingMessage {
@@ -3858,6 +3871,22 @@ pub fn send_outbox_now() -> Result<(), EngineError> {
 /// being sent.
 pub fn delete_outgoing(id: i64) -> Result<(), EngineError> {
     take_outgoing(id).map(|_| ())
+}
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+pub fn retry_outgoing(id: i64) -> Result<(), EngineError> {
+    let store = store()?;
+    let Some(out) = store.outgoing(id)? else {
+        return Err(EngineError::new(ErrorKind::Other, "already sent"));
+    };
+    if !store.retry_outgoing(id)? {
+        return Err(EngineError::new(ErrorKind::Other, "being sent"));
+    }
+    drop(store);
+    send_outbox_at(out.account, now_secs())
 }
 
 /// Accounts whose outbox is being sent by this process: one batch at a

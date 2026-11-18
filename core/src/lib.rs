@@ -11,6 +11,7 @@ pub mod brief;
 pub mod calendar;
 pub mod dates;
 pub mod eml;
+pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
