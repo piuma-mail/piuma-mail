@@ -21,6 +21,7 @@ import javax.crypto.spec.GCMParameterSpec
 class MainActivity : FlutterActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
+    private var shared: Shared? = null
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
@@ -29,13 +30,17 @@ class MainActivity : FlutterActivity() {
         // the app context, so it needs it before Flutter starts.
         init(applicationContext)
         NetworkWatch.follow(applicationContext)
-        launchPayload = Background.payload(intent)
+        launchPayload = Background.payload(applicationContext, intent)
         super.onCreate(savedInstanceState)
+        // A link or a share that started the app; not again when Android
+        // brings the activity back after it was gone.
+        if (savedInstanceState == null) shared?.handle(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        Background.payload(intent)?.let { notices?.invokeMethod("open", it) }
+        Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
+        shared?.handle(intent)
     }
 
     companion object {
@@ -73,6 +78,7 @@ class MainActivity : FlutterActivity() {
         Model(flutterEngine.dartExecutor.binaryMessenger)
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
         val context = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/background")
             .setMethodCallHandler { call, result ->
@@ -127,11 +133,20 @@ class MainActivity : FlutterActivity() {
         notices = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/notices")
             .apply {
                 setMethodCallHandler { call, result ->
-                    if (call.method == "launch") {
-                        result.success(launchPayload)
-                        launchPayload = null
-                    } else {
-                        result.notImplemented()
+                    when (call.method) {
+                        "launch" -> {
+                            result.success(launchPayload)
+                            launchPayload = null
+                        }
+                        // Notices the Flutter plugin shows carry sealed
+                        // payloads too (notice_seal.dart).
+                        "seal" -> result.success(
+                            NoticeSeal.seal(applicationContext, call.arguments as String),
+                        )
+                        "unseal" -> result.success(
+                            NoticeSeal.open(applicationContext, call.arguments as? String),
+                        )
+                        else -> result.notImplemented()
                     }
                 }
             }
@@ -140,6 +155,8 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         shake?.stop()
         shake = null
+        shared?.stop()
+        shared = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

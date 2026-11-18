@@ -84,8 +84,9 @@ From a commit on `main` to code running on users' devices:
    (protected branch; [CODEOWNERS](../.github/CODEOWNERS) on workflows, tools and dependency policy).
    Every commit is signed off (DCO).
 2. **Dependencies**: Cargo.lock, pubspec.lock and package-lock.json pin every version; cargo-deny
-   checks advisories, licenses, banned crates and registries on every pull request; OSV checks the Dart
-   packages; `npm audit` the relay's; Dependabot proposes updates after a 14-day cooldown and security
+   checks advisories, licenses, banned crates and registries on every pull request and every push to
+   `main`, with no path filter (the release gate needs its result on the exact commit); OSV checks the
+   Dart packages; `npm audit` the relay's; Dependabot proposes updates after a 14-day cooldown and security
    fixes at once; the vendored fxtranslate is watched by a weekly job. Every GitHub Action is pinned by
    commit.
 3. **Build**: the "Release" workflow runs from `main` only, after CI passed on that commit. Jobs that

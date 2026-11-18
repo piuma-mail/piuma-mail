@@ -1144,6 +1144,30 @@ abstract class AppLocalizations {
   /// **'Open anyway'**
   String get openAnyway;
 
+  /// No description provided for @linkTargetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Where this link goes'**
+  String get linkTargetTitle;
+
+  /// No description provided for @linkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open link'**
+  String get linkOpen;
+
+  /// No description provided for @linkCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get linkCopy;
+
+  /// No description provided for @linkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Link copied'**
+  String get linkCopied;
+
   /// No description provided for @dontOpen.
   ///
   /// In en, this message translates to:
@@ -2530,6 +2554,36 @@ abstract class AppLocalizations {
   /// **'The connection broke as it went. Check Sent before sending it again.'**
   String get outboxMaybeSentCheck;
 
+  /// No description provided for @outboxRedirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect waiting'**
+  String get outboxRedirectTitle;
+
+  /// No description provided for @outboxRedirectLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirected unchanged'**
+  String get outboxRedirectLine;
+
+  /// No description provided for @outboxRedirectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A redirect goes as the email came, so there’s nothing to edit. Cancel it, or try sending it again.'**
+  String get outboxRedirectBody;
+
+  /// No description provided for @outboxCancelRedirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel redirect'**
+  String get outboxCancelRedirect;
+
+  /// No description provided for @outboxRedirectCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect cancelled'**
+  String get outboxRedirectCancelled;
+
   /// No description provided for @dataProblemTitle.
   ///
   /// In en, this message translates to:
@@ -2691,6 +2745,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A message goes from your account to {address} to ask. What already came stays here.'**
   String unsubscribeMail(String address);
+
+  /// No description provided for @unsubscribeMailTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To: {address}'**
+  String unsubscribeMailTo(String address);
+
+  /// No description provided for @unsubscribeMailSubject.
+  ///
+  /// In en, this message translates to:
+  /// **'Subject: {subject}'**
+  String unsubscribeMailSubject(String subject);
 
   /// No description provided for @unsubscribePage.
   ///
@@ -4575,6 +4641,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Receipts stay out of the inbox and gather on the message they belong to. Receipt saves the signed proof as a file.'**
   String get pecNote;
+
+  /// No description provided for @pecUnverified.
+  ///
+  /// In en, this message translates to:
+  /// **'Unverified'**
+  String get pecUnverified;
+
+  /// No description provided for @pecUnverifiedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Says “{status}”, but the provider’s signature couldn’t be checked: this isn’t proof.'**
+  String pecUnverifiedNote(String status);
 
   /// No description provided for @pickDateTime.
   ///
@@ -9141,6 +9219,876 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
+
+  /// No description provided for @actionReplyAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply all'**
+  String get actionReplyAll;
+
+  /// No description provided for @actionReplyList.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to list'**
+  String get actionReplyList;
+
+  /// No description provided for @actionForwardAttachment.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward as attachment'**
+  String get actionForwardAttachment;
+
+  /// No description provided for @actionRedirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect'**
+  String get actionRedirect;
+
+  /// No description provided for @actionEditAsNew.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit as new'**
+  String get actionEditAsNew;
+
+  /// No description provided for @actionViewSource.
+  ///
+  /// In en, this message translates to:
+  /// **'View source'**
+  String get actionViewSource;
+
+  /// No description provided for @actionSaveEml.
+  ///
+  /// In en, this message translates to:
+  /// **'Save as .eml'**
+  String get actionSaveEml;
+
+  /// No description provided for @muteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute conversation'**
+  String get muteConversation;
+
+  /// No description provided for @unmuteConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute conversation'**
+  String get unmuteConversation;
+
+  /// No description provided for @conversationMuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation muted: new messages arrive read, without a notification'**
+  String get conversationMuted;
+
+  /// No description provided for @conversationUnmuted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation unmuted'**
+  String get conversationUnmuted;
+
+  /// No description provided for @conversationMutedLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Muted'**
+  String get conversationMutedLine;
+
+  /// No description provided for @forwardFilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting {count, plural, =1{the file} other{{count} files}}'**
+  String forwardFilesTitle(int count);
+
+  /// No description provided for @forwardFilesDone.
+  ///
+  /// In en, this message translates to:
+  /// **'{done} of {total}'**
+  String forwardFilesDone(int done, int total);
+
+  /// No description provided for @forwardFilesFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{This file couldn’t be attached:} other{These files couldn’t be attached:}}'**
+  String forwardFilesFailed(int count);
+
+  /// No description provided for @forwardWithoutFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Go on without it} other{Go on without them}}'**
+  String forwardWithoutFiles(int count);
+
+  /// No description provided for @gettingEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting the email'**
+  String get gettingEmail;
+
+  /// No description provided for @messageFetchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t get the email from the server. Check the connection and try again.'**
+  String get messageFetchFailed;
+
+  /// No description provided for @redirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect this email'**
+  String get redirectTitle;
+
+  /// No description provided for @redirectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It goes unchanged, as it came from {sender}: replies go to {sender}, not to you.'**
+  String redirectBody(String sender);
+
+  /// No description provided for @redirectTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get redirectTo;
+
+  /// No description provided for @redirectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses, separated by commas'**
+  String get redirectHint;
+
+  /// No description provided for @redirectDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirected to {to}'**
+  String redirectDone(String to);
+
+  /// No description provided for @redirectFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t redirect the email. Check the addresses and the connection.'**
+  String get redirectFailed;
+
+  /// No description provided for @sourceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Source of the email'**
+  String get sourceTitle;
+
+  /// No description provided for @sourceHeaders.
+  ///
+  /// In en, this message translates to:
+  /// **'Headers'**
+  String get sourceHeaders;
+
+  /// No description provided for @sourceRaw.
+  ///
+  /// In en, this message translates to:
+  /// **'Raw'**
+  String get sourceRaw;
+
+  /// No description provided for @sourceCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get sourceCopy;
+
+  /// No description provided for @emlSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved as {name}'**
+  String emlSaved(String name);
+
+  /// No description provided for @emlNotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t save the email'**
+  String get emlNotSaved;
+
+  /// No description provided for @recipientsMore.
+  ///
+  /// In en, this message translates to:
+  /// **'{names} and {count, plural, =1{1 other} other{{count} others}}'**
+  String recipientsMore(String names, int count);
+
+  /// No description provided for @recipientYou.
+  ///
+  /// In en, this message translates to:
+  /// **'you'**
+  String get recipientYou;
+
+  /// No description provided for @recipientsBcc.
+  ///
+  /// In en, this message translates to:
+  /// **'you were Bcc’d'**
+  String get recipientsBcc;
+
+  /// No description provided for @recipientsTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To'**
+  String get recipientsTo;
+
+  /// No description provided for @recipientsCc.
+  ///
+  /// In en, this message translates to:
+  /// **'Cc'**
+  String get recipientsCc;
+
+  /// No description provided for @recipientsBccLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Bcc'**
+  String get recipientsBccLabel;
+
+  /// No description provided for @showRecipients.
+  ///
+  /// In en, this message translates to:
+  /// **'Show who received it'**
+  String get showRecipients;
+
+  /// No description provided for @hideRecipients.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide who received it'**
+  String get hideRecipients;
+
+  /// No description provided for @replyAllNames.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} and {count, plural, =1{1 other} other{{count} others}}'**
+  String replyAllNames(String name, int count);
+
+  /// No description provided for @replyAllOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{and 1 other} other{and {count} others}}'**
+  String replyAllOthers(int count);
+
+  /// No description provided for @shortcutNextEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Next email'**
+  String get shortcutNextEmail;
+
+  /// No description provided for @shortcutPreviousEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous email'**
+  String get shortcutPreviousEmail;
+
+  /// No description provided for @zoomIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom in'**
+  String get zoomIn;
+
+  /// No description provided for @zoomOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom out'**
+  String get zoomOut;
+
+  /// No description provided for @zoomReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Actual size'**
+  String get zoomReset;
+
+  /// No description provided for @zoomLevel.
+  ///
+  /// In en, this message translates to:
+  /// **'Text size {percent}%'**
+  String zoomLevel(int percent);
+
+  /// No description provided for @textSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Text size'**
+  String get textSize;
+
+  /// No description provided for @sourceCut.
+  ///
+  /// In en, this message translates to:
+  /// **'Showing the first {size} KB. Save as .eml for the whole email.'**
+  String sourceCut(int size);
+
+  /// No description provided for @deviceHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get deviceHeading;
+
+  /// No description provided for @defaultMailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make Piuma your default mail app'**
+  String get defaultMailTitle;
+
+  /// No description provided for @defaultMailHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Email addresses you click in other apps and on websites open a new message here.'**
+  String get defaultMailHint;
+
+  /// No description provided for @defaultMailIsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma is your default mail app'**
+  String get defaultMailIsTitle;
+
+  /// No description provided for @defaultMailIs.
+  ///
+  /// In en, this message translates to:
+  /// **'Email addresses you click in other apps and on websites open here.'**
+  String get defaultMailIs;
+
+  /// No description provided for @defaultMailButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Make default'**
+  String get defaultMailButton;
+
+  /// No description provided for @defaultMailOtherAndroid.
+  ///
+  /// In en, this message translates to:
+  /// **'Another app opens email addresses now. Clear its defaults in its App info; next time Android asks, pick Piuma and Always.'**
+  String get defaultMailOtherAndroid;
+
+  /// No description provided for @defaultMailAskAndroid.
+  ///
+  /// In en, this message translates to:
+  /// **'Android asks which app to use when you tap an email address: pick Piuma, then Always.'**
+  String get defaultMailAskAndroid;
+
+  /// No description provided for @defaultMailAppInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Open App info'**
+  String get defaultMailAppInfo;
+
+  /// No description provided for @keepRunningTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep running in the background when closed'**
+  String get keepRunningTitle;
+
+  /// No description provided for @keepRunningHint.
+  ///
+  /// In en, this message translates to:
+  /// **'New mail still notifies you. Piuma stays in the tray; quit it from there.'**
+  String get keepRunningHint;
+
+  /// No description provided for @startAtLoginTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Start when you sign in'**
+  String get startAtLoginTitle;
+
+  /// No description provided for @startAtLoginHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma starts in the tray, ready for new mail.'**
+  String get startAtLoginHint;
+
+  /// No description provided for @trayOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Piuma Mail'**
+  String get trayOpen;
+
+  /// No description provided for @trayQuit.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit Piuma Mail'**
+  String get trayQuit;
+
+  /// No description provided for @trayTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Piuma Mail} =1{Piuma Mail: 1 unread} other{Piuma Mail: {count} unread}}'**
+  String trayTooltip(int count);
+
+  /// No description provided for @arrivalWhichAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Write from which account?'**
+  String get arrivalWhichAccount;
+
+  /// No description provided for @arrivalWaits.
+  ///
+  /// In en, this message translates to:
+  /// **'The new message opens when you close this one.'**
+  String get arrivalWaits;
+
+  /// No description provided for @arrivalFilesLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 file was too large to attach.} other{{count} files were too large to attach.}}'**
+  String arrivalFilesLeft(int count);
+
+  /// No description provided for @emlFromFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Opened from a file'**
+  String get emlFromFile;
+
+  /// No description provided for @emlImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import to a folder'**
+  String get emlImport;
+
+  /// No description provided for @emlImportWhichAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Import into which account?'**
+  String get emlImportWhichAccount;
+
+  /// No description provided for @emlImportIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Import to a folder in {account}'**
+  String emlImportIn(String account);
+
+  /// No description provided for @emlImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Imported to {folder}'**
+  String emlImported(String folder);
+
+  /// No description provided for @emlNotImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t import it. Check the connection and try again.'**
+  String get emlNotImported;
+
+  /// No description provided for @emlNotMail.
+  ///
+  /// In en, this message translates to:
+  /// **'This file isn’t an email Piuma can read.'**
+  String get emlNotMail;
+
+  /// No description provided for @emlTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'This email file is too large to open.'**
+  String get emlTooLarge;
+
+  /// No description provided for @arrivalNetworkFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Files in network folders don’t open in Piuma. Copy them to this device first.'**
+  String get arrivalNetworkFile;
+
+  /// No description provided for @imagesOffFile.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image is off, so no one can see when you open this file.} other{{count} images are off, so no one can see when you open this file.}}'**
+  String imagesOffFile(int count);
+
+  /// No description provided for @newMailClosedLead.
+  ///
+  /// In en, this message translates to:
+  /// **'With Piuma closed'**
+  String get newMailClosedLead;
+
+  /// No description provided for @star.
+  ///
+  /// In en, this message translates to:
+  /// **'Star'**
+  String get star;
+
+  /// No description provided for @unstar.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove star'**
+  String get unstar;
+
+  /// No description provided for @folderStarred.
+  ///
+  /// In en, this message translates to:
+  /// **'Starred'**
+  String get folderStarred;
+
+  /// No description provided for @messageStarred.
+  ///
+  /// In en, this message translates to:
+  /// **'Starred'**
+  String get messageStarred;
+
+  /// No description provided for @starredMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Starred} other{{count} conversations starred}}'**
+  String starredMany(int count);
+
+  /// No description provided for @unstarredMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Star removed} other{Stars removed from {count} conversations}}'**
+  String unstarredMany(int count);
+
+  /// No description provided for @starFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t change the star. Try again in a moment.'**
+  String get starFailed;
+
+  /// No description provided for @trashFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Trash'**
+  String get trashFolder;
+
+  /// No description provided for @deleteForever.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for good'**
+  String get deleteForever;
+
+  /// No description provided for @deleteForeverTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Delete this email for good?} other{Delete {count} emails for good?}}'**
+  String deleteForeverTitle(int count);
+
+  /// No description provided for @deleteForeverNote.
+  ///
+  /// In en, this message translates to:
+  /// **'They can’t be brought back, here or on the server.'**
+  String get deleteForeverNote;
+
+  /// No description provided for @deletedForeverMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Deleted for good} other{{count} emails deleted for good}}'**
+  String deletedForeverMany(int count);
+
+  /// No description provided for @emptyTrash.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty Trash'**
+  String get emptyTrash;
+
+  /// No description provided for @emptySpam.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty spam'**
+  String get emptySpam;
+
+  /// No description provided for @emptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{{folder} is empty} =1{Delete the email in {folder} for good?} other{Delete all {count} emails in {folder} for good?}}'**
+  String emptyTitle(int count, String folder);
+
+  /// No description provided for @emptyConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty'**
+  String get emptyConfirm;
+
+  /// No description provided for @emptyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t empty it. Try again when you’re online.'**
+  String get emptyFailed;
+
+  /// No description provided for @copyTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy to…'**
+  String get copyTo;
+
+  /// No description provided for @copyToIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy to folder in {name}'**
+  String copyToIn(String name);
+
+  /// No description provided for @copiedMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Copied to {folder}} other{{count} conversations copied to {folder}}}'**
+  String copiedMany(int count, String folder);
+
+  /// No description provided for @folderActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More for “{name}”'**
+  String folderActions(String name);
+
+  /// No description provided for @folderRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get folderRename;
+
+  /// No description provided for @folderRenameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename “{name}”'**
+  String folderRenameTitle(String name);
+
+  /// No description provided for @folderNewName.
+  ///
+  /// In en, this message translates to:
+  /// **'New name'**
+  String get folderNewName;
+
+  /// No description provided for @folderHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide from lists'**
+  String get folderHide;
+
+  /// No description provided for @folderShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in lists'**
+  String get folderShow;
+
+  /// No description provided for @folderHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Hidden'**
+  String get folderHidden;
+
+  /// No description provided for @folderDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete folder'**
+  String get folderDelete;
+
+  /// No description provided for @folderDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}”?'**
+  String folderDeleteTitle(String name);
+
+  /// No description provided for @folderDeleteEmails.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{It holds no emails.} =1{Its email goes to Trash.} other{Its {count} emails go to Trash.}}'**
+  String folderDeleteEmails(int count);
+
+  /// No description provided for @folderDeleteSubfolders.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Its subfolder goes with it.} other{Its {count} subfolders go with it.}}'**
+  String folderDeleteSubfolders(int count);
+
+  /// No description provided for @folderDeleteEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'The folder can’t be brought back; its emails can, from Trash.'**
+  String get folderDeleteEnd;
+
+  /// No description provided for @folderChangeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t change the folder.'**
+  String get folderChangeFailed;
+
+  /// No description provided for @hiddenFoldersShow.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Show 1 hidden folder} other{Show {count} hidden folders}}'**
+  String hiddenFoldersShow(int count);
+
+  /// No description provided for @hiddenFoldersHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide hidden folders'**
+  String get hiddenFoldersHide;
+
+  /// No description provided for @folderExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the folders in {name}'**
+  String folderExpand(String name);
+
+  /// No description provided for @folderCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide the folders in {name}'**
+  String folderCollapse(String name);
+
+  /// No description provided for @specialFolders.
+  ///
+  /// In en, this message translates to:
+  /// **'Special folders'**
+  String get specialFolders;
+
+  /// No description provided for @specialFoldersNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma finds them from your server’s marks and their names. If one is wrong, pick the right folder.'**
+  String get specialFoldersNote;
+
+  /// No description provided for @specialFoldersOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Special folders of {name}'**
+  String specialFoldersOf(String name);
+
+  /// No description provided for @specialAutomatic.
+  ///
+  /// In en, this message translates to:
+  /// **'As the server says'**
+  String get specialAutomatic;
+
+  /// No description provided for @specialNone.
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get specialNone;
+
+  /// No description provided for @specialChosen.
+  ///
+  /// In en, this message translates to:
+  /// **'Chosen by you'**
+  String get specialChosen;
+
+  /// No description provided for @listsHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'Lists'**
+  String get listsHeading;
+
+  /// No description provided for @listOrder.
+  ///
+  /// In en, this message translates to:
+  /// **'Sort'**
+  String get listOrder;
+
+  /// No description provided for @orderNewest.
+  ///
+  /// In en, this message translates to:
+  /// **'Newest first'**
+  String get orderNewest;
+
+  /// No description provided for @orderOldest.
+  ///
+  /// In en, this message translates to:
+  /// **'Oldest first'**
+  String get orderOldest;
+
+  /// No description provided for @orderSender.
+  ///
+  /// In en, this message translates to:
+  /// **'By sender'**
+  String get orderSender;
+
+  /// No description provided for @listThreads.
+  ///
+  /// In en, this message translates to:
+  /// **'Group into conversations'**
+  String get listThreads;
+
+  /// No description provided for @listThreadsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, every email is a row of its own.'**
+  String get listThreadsNote;
+
+  /// No description provided for @swipeRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe right'**
+  String get swipeRight;
+
+  /// No description provided for @swipeLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe left'**
+  String get swipeLeft;
+
+  /// No description provided for @swipeRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read or unread'**
+  String get swipeRead;
+
+  /// No description provided for @swipeStar.
+  ///
+  /// In en, this message translates to:
+  /// **'Star'**
+  String get swipeStar;
+
+  /// No description provided for @swipeMove.
+  ///
+  /// In en, this message translates to:
+  /// **'Move to…'**
+  String get swipeMove;
+
+  /// No description provided for @swipeNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing'**
+  String get swipeNothing;
+
+  /// No description provided for @quotaLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get quotaLabel;
+
+  /// No description provided for @quotaUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'{used} of {limit}'**
+  String quotaUsed(String used, String limit);
+
+  /// No description provided for @quotaNearlyFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearly full. Delete or archive some mail, or new mail may not arrive.'**
+  String get quotaNearlyFull;
+
+  /// No description provided for @draggedEmails.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 email} other{{count} emails}}'**
+  String draggedEmails(int count);
+
+  /// No description provided for @shortcutStar.
+  ///
+  /// In en, this message translates to:
+  /// **'Star or remove the star'**
+  String get shortcutStar;
+
+  /// No description provided for @badgeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Piuma Mail} other{Piuma Mail ({count})}}'**
+  String badgeTitle(int count);
+
+  /// No description provided for @badgeUnread.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 unread email} other{{count} unread emails}}'**
+  String badgeUnread(int count);
+
+  /// No description provided for @moreShort.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get moreShort;
+
+  /// No description provided for @swipeNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.'**
+  String get swipeNote;
+
+  /// No description provided for @folderDeleteProtected.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” can’t be deleted: {inside} is inside it, and would go with it.'**
+  String folderDeleteProtected(String name, String inside);
+
+  /// No description provided for @specialRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.'**
+  String get specialRefused;
 }
 
 class _AppLocalizationsDelegate

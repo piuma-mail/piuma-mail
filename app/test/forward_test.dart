@@ -56,9 +56,13 @@ void main() {
     expect(_text(tester, 1), 'Fwd: Mockup v3 review');
     final body = _text(tester, 2);
     expect(body, startsWith('\n\n---------- Forwarded message ----------\n'));
+    // To names everyone it went to, Cc too, as the reader shows them.
     expect(
       body,
-      contains('\nTo: matteo@studio.it\nSubject: Mockup v3 review\n'),
+      contains(
+        '\nTo: Matteo <matteo@studio.it>, Sara Conti <sara@studio.it>, '
+        'Elena Ferri <elena@studio.it>\nSubject: Mockup v3 review\n',
+      ),
     );
     expect(body, contains('Date: Thursday, October 15, 2026 at '));
     expect(_inCompose(find.byType(AttachmentChip)), findsNWidgets(2));

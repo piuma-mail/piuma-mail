@@ -31,6 +31,7 @@ String _summary() => jsonEncode({
       'at': _at(10, 2),
       'seen': false,
       'messages': 1,
+      'others': 2,
     },
     {
       'payload': '2\nINBOX\n7',
@@ -100,6 +101,8 @@ void main() {
     final s = Summary.parse(_summary())!;
     expect(s.unread, 3);
     expect(s.rows.first.sender, 'Giulia Romano');
+    expect(s.rows.first.others, 2);
+    expect(s.rows[1].others, 0);
     expect(s.account(2)!.color, const Color(0xFF2F8F83));
     expect(s.without('1\nINBOX\n41').rows.length, 2);
     expect(s.templates.first.label, "I'm on my way");
@@ -255,5 +258,43 @@ void main() {
     );
     expect(until.weekday, DateTime.monday);
     expect(until.hour, 8);
+  });
+
+  testWidgets('reply all, when others got the email too', (tester) async {
+    final asked = <MethodCall>[];
+    await _pump(tester, asked);
+    // Sara's email went to the person alone: no Reply all.
+    await tester.tap(find.text('Sara Conti'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Reply'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reply all'), findsNothing);
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .popUntil((r) => r.isFirst);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Giulia Romano'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Reply'));
+    await tester.pumpAndSettle();
+    // Reply stays the default; Reply all is one tap away.
+    expect(find.text('Reply to Giulia Romano'), findsOneWidget);
+    expect(find.text('+2'), findsOneWidget);
+    await tester.tap(find.text('Reply all'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reply to Giulia Romano and 2 others'), findsOneWidget);
+    // The templates are further down the round screen.
+    await _toEnd(tester);
+    await tester.tap(find.text('Thanks, got it'));
+    await tester.pumpAndSettle();
+    await tester.pump(DoneScreen.undoFor);
+    await tester.pumpAndSettle();
+    final reply = jsonDecode(
+      asked.lastWhere((c) => c.method == 'act').arguments as String,
+    ) as Map<String, dynamic>;
+    expect(reply['action'], 'replyAll');
+    expect(reply['text'], 'Thanks, got it');
+    expect(reply['payload'], '1\nINBOX\n41');
   });
 }
