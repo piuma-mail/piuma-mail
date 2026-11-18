@@ -16,6 +16,7 @@ import 'api/oauth.dart';
 import 'api/outside.dart';
 import 'api/preview.dart';
 import 'api/reply.dart';
+import 'api/storage.dart';
 import 'api/sync.dart';
 import 'api/templates.dart';
 import 'api/updates.dart';
@@ -62,6 +63,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AccountServers dco_decode_account_servers(dynamic raw);
+
+  @protected
+  AccountStorageInfo dco_decode_account_storage_info(dynamic raw);
 
   @protected
   AppearanceSettings dco_decode_appearance_settings(dynamic raw);
@@ -382,6 +386,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<AccountInfo> dco_decode_list_account_info(dynamic raw);
 
   @protected
+  List<AccountStorageInfo> dco_decode_list_account_storage_info(dynamic raw);
+
+  @protected
   List<AttachedFile> dco_decode_list_attached_file(dynamic raw);
 
   @protected
@@ -557,6 +564,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TrustedSenderInfo> dco_decode_list_trusted_sender_info(dynamic raw);
+
+  @protected
+  List<UnsentMessage> dco_decode_list_unsent_message(dynamic raw);
 
   @protected
   List<VaultCard> dco_decode_list_vault_card(dynamic raw);
@@ -841,6 +851,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoppedTracker dco_decode_stopped_tracker(dynamic raw);
 
   @protected
+  StorageInfo dco_decode_storage_info(dynamic raw);
+
+  @protected
   SuspiciousLink dco_decode_suspicious_link(dynamic raw);
 
   @protected
@@ -904,6 +917,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UnopenedNewsletters dco_decode_unopened_newsletters(dynamic raw);
 
   @protected
+  UnsentMessage dco_decode_unsent_message(dynamic raw);
+
+  @protected
   Unsubscribe dco_decode_unsubscribe(dynamic raw);
 
   @protected
@@ -958,6 +974,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   AccountServers sse_decode_account_servers(SseDeserializer deserializer);
+
+  @protected
+  AccountStorageInfo sse_decode_account_storage_info(
+    SseDeserializer deserializer,
+  );
 
   @protected
   AppearanceSettings sse_decode_appearance_settings(
@@ -1344,6 +1365,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<AccountInfo> sse_decode_list_account_info(SseDeserializer deserializer);
 
   @protected
+  List<AccountStorageInfo> sse_decode_list_account_storage_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<AttachedFile> sse_decode_list_attached_file(
     SseDeserializer deserializer,
   );
@@ -1575,6 +1601,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TrustedSenderInfo> sse_decode_list_trusted_sender_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<UnsentMessage> sse_decode_list_unsent_message(
     SseDeserializer deserializer,
   );
 
@@ -1911,6 +1942,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoppedTracker sse_decode_stopped_tracker(SseDeserializer deserializer);
 
   @protected
+  StorageInfo sse_decode_storage_info(SseDeserializer deserializer);
+
+  @protected
   SuspiciousLink sse_decode_suspicious_link(SseDeserializer deserializer);
 
   @protected
@@ -1980,6 +2014,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  UnsentMessage sse_decode_unsent_message(SseDeserializer deserializer);
+
+  @protected
   Unsubscribe sse_decode_unsubscribe(SseDeserializer deserializer);
 
   @protected
@@ -2042,6 +2079,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_account_servers(
     AccountServers self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_account_storage_info(
+    AccountStorageInfo self,
     SseSerializer serializer,
   );
 
@@ -2547,6 +2590,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_account_storage_info(
+    List<AccountStorageInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_attached_file(
     List<AttachedFile> self,
     SseSerializer serializer,
@@ -2861,6 +2910,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_trusted_sender_info(
     List<TrustedSenderInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_unsent_message(
+    List<UnsentMessage> self,
     SseSerializer serializer,
   );
 
@@ -3291,6 +3346,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_storage_info(StorageInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_suspicious_link(
     SuspiciousLink self,
     SseSerializer serializer,
@@ -3364,6 +3422,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     UnopenedNewsletters self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_unsent_message(UnsentMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_unsubscribe(Unsubscribe self, SseSerializer serializer);
