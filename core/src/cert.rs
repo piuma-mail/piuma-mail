@@ -115,7 +115,7 @@ fn parse(der: &[u8]) -> Option<CertInfo> {
         fingerprint: String::new(),
         subject: name(subject.body),
         issuer: name(issuer.body),
-        not_after: times.get(1).map(time).unwrap_or_default(),
+        not_after: times.get(1).and_then(time).unwrap_or_default(),
     })
 }
 
@@ -157,18 +157,55 @@ fn name(rdns: &[u8]) -> String {
     parts.join(", ")
 }
 
-/// `YYYY-MM-DD` from a UTCTime or GeneralizedTime.
-fn time(t: &Tlv<'_>) -> String {
-    let text = String::from_utf8_lossy(t.body);
+/// `YYYY-MM-DD` from a UTCTime or GeneralizedTime; None unless it starts
+/// with the digits those carry. The bytes come from the server, which may
+/// send anything: they are read as bytes, never sliced as text.
+fn time(t: &Tlv<'_>) -> Option<String> {
+    fn number(digits: &[u8]) -> Option<u32> {
+        digits.iter().try_fold(0u32, |n, d| {
+            d.is_ascii_digit().then(|| n * 10 + u32::from(d - b'0'))
+        })
+    }
     let (year, rest) = match t.tag {
-        0x17 if text.len() >= 6 => {
-            let yy: u32 = text[..2].parse().unwrap_or(0);
-            (if yy >= 50 { 1900 + yy } else { 2000 + yy }, &text[2..])
+        0x17 => {
+            let yy = number(t.body.get(..2)?)?;
+            (
+                if yy >= 50 { 1900 + yy } else { 2000 + yy },
+                t.body.get(2..)?,
+            )
         }
-        0x18 if text.len() >= 8 => (text[..4].parse().unwrap_or(0), &text[4..]),
-        _ => return String::new(),
+        0x18 => (number(t.body.get(..4)?)?, t.body.get(4..)?),
+        _ => return None,
     };
-    format!("{year:04}-{}-{}", &rest[..2], &rest[2..4])
+    let month = number(rest.get(..2)?)?;
+    let day = number(rest.get(2..4)?)?;
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// Test helper: the dates of `der` (UTCTime or GeneralizedTime) with
+/// `fill` written over their bytes, as a hostile server could send them.
+#[cfg(test)]
+pub(crate) fn with_dates(der: &[u8], fill: &[u8]) -> Vec<u8> {
+    let mut out = der.to_vec();
+    let mut i = 0;
+    while i + 2 <= out.len() {
+        let len = match (out[i], out[i + 1]) {
+            (0x17, 0x0d) => 13,
+            (0x18, 0x0f) => 15,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        if i + 2 + len > out.len() {
+            break;
+        }
+        for (j, b) in out[i + 2..i + 2 + len].iter_mut().enumerate() {
+            *b = fill.get(j).copied().unwrap_or(b'Z');
+        }
+        i += 2 + len;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -196,6 +233,25 @@ mod tests {
         assert_eq!(parse_fingerprint(&text.replace(':', "")), Some(hash));
         assert_eq!(parse_fingerprint("AB:CD"), None);
         assert_eq!(parse_fingerprint(&"zz".repeat(32)), None);
+    }
+
+    #[test]
+    fn dates_that_are_not_digits_are_left_out() {
+        // "é" is two bytes: cutting text there used to panic.
+        for fill in [
+            "é9é9é9é9é9é9é9".as_bytes(),
+            b"2026013\xff\xfe0000Z",
+            b"ab",
+            b"",
+        ] {
+            let info = CertInfo::read(&with_dates(LEAF, fill));
+            assert!(info.not_after.is_empty(), "{fill:?}");
+            assert_eq!(info.subject, "CN=localhost, O=Piuma Test");
+        }
+        // The fixture's end date is a GeneralizedTime (after 2049).
+        let fine = CertInfo::read(&with_dates(LEAF, b"20270131120000Z"));
+        assert_eq!(fine.not_after, "2027-01-31");
+        assert!(!CertInfo::read(LEAF).not_after.is_empty());
     }
 
     #[test]

@@ -365,3 +365,23 @@ fn server_names_and_replies_never_panic() {
         let _ = crate::jmap::method_responses(&answer, ["Email/get", "Mailbox/get"]);
     }
 }
+
+#[test]
+fn certificates_never_panic() {
+    // Shown for every certificate a server's TLS refuses, so a hostile
+    // server chooses all of it.
+    const LEAF: &[u8] = include_bytes!("../tests/fixtures/tls/first.der");
+    let mut rng = rng(0x5EED_0007);
+    for _ in 0..rounds() {
+        let s = text(&mut rng, 6);
+        let _ = crate::cert::CertInfo::read(&crate::cert::with_dates(LEAF, s.as_bytes()));
+        // Any bytes at all, and the certificate cut anywhere.
+        let _ = crate::cert::CertInfo::read(s.as_bytes());
+        let cut = rng.below(LEAF.len());
+        let _ = crate::cert::CertInfo::read(&LEAF[..cut]);
+        let mut flipped = LEAF.to_vec();
+        let at = rng.below(flipped.len());
+        flipped[at] = s.as_bytes().first().copied().unwrap_or(0xff);
+        let _ = crate::cert::CertInfo::read(&flipped);
+    }
+}
