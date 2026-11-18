@@ -69,6 +69,7 @@ class ShortcutsPage extends StatelessWidget {
                   (l.actionReply, 'R'),
                   (l.actionReplyAll, 'A'),
                   (l.actionForward, 'F'),
+                  (l.shortcutStar, 'S'),
                   (l.shortcutNextEmail, 'J  ↓'),
                   (l.shortcutPreviousEmail, 'K  ↑'),
                   (l.zoomIn, apple ? '⌘+' : 'Ctrl +'),

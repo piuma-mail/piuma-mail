@@ -1333,8 +1333,13 @@ async fn own_folders_are_listed_and_take_moved_mail() {
         .unwrap();
     let s = store.lock().unwrap();
     assert_eq!(s.count(Folder::Inbox).unwrap(), 1);
-    assert_eq!(s.mailbox_count(account, &acme).unwrap(), 1);
-    let page = s.mailbox_page(account, &acme, 0, 10).unwrap();
+    assert_eq!(
+        s.mailbox_count(account, &acme, Default::default()).unwrap(),
+        1
+    );
+    let page = s
+        .mailbox_page(account, &acme, Default::default(), 0, 10)
+        .unwrap();
     assert_eq!(page[0].latest.subject, "New website quote");
 }
 

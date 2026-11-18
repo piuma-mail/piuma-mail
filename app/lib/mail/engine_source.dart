@@ -22,6 +22,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/mailbox.dart' as mbx;
 import '../engine/api/reply.dart' as rep;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
@@ -754,6 +755,14 @@ class EngineMailSource extends MailSource {
     if (folder == MailFolder.label) {
       return (await labelled(mailbox ?? '')).skip(offset).take(limit).toList();
     }
+    if (folder == MailFolder.starred) {
+      return [
+        for (final r in (await mbx.starred(
+          account: account,
+        )).skip(offset).take(limit))
+          _row(r),
+      ];
+    }
     if (account != null && mailbox != null) {
       final rows = await engine.mailboxPage(
         accountId: account,
@@ -817,6 +826,7 @@ class EngineMailSource extends MailSource {
         selectable: f.selectable,
         unread: f.unread,
         total: f.total,
+        subscribed: f.subscribed,
       ),
   ];
 
@@ -957,6 +967,7 @@ class EngineMailSource extends MailSource {
     pictures: r.pictures,
     invite: r.invite,
     labels: r.labels,
+    starred: r.flagged,
   );
 
   @override
@@ -1024,6 +1035,184 @@ class EngineMailSource extends MailSource {
       return null;
     }
   }
+
+  @override
+  String? trashMailbox(int accountId) {
+    try {
+      return mbx.trashMailbox(accountId: accountId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> deleteForever(List<MailRow> rows) async {
+    if (rows.isEmpty) return;
+    try {
+      await mbx.deleteForever(messages: _refs(rows));
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {
+    if (rows.isEmpty) return;
+    final sent = mbx.setMessagesFlagged(
+      messages: _refs(rows),
+      flagged: starred,
+    );
+    // Here at once; the servers hear of it after.
+    _changes.add(null);
+    await sent;
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {
+    if (rows.isEmpty) return;
+    await mbx.copyMessagesTo(messages: _refs(rows), target: mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<int> folderTotal(int accountId, String mailbox) =>
+      mbx.folderTotal(accountId: accountId, mailbox: mailbox);
+
+  @override
+  Future<int> emptyFolder(int accountId, String mailbox) async {
+    try {
+      return await mbx.emptyFolder(accountId: accountId, mailbox: mailbox);
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {
+    await mbx.renameFolder(accountId: accountId, mailbox: mailbox, name: name);
+    _changes.add(null);
+  }
+
+  @override
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
+    final c = mbx.folderContents(accountId: accountId, mailbox: mailbox);
+    return (emails: c.emails, subfolders: c.subfolders, protected: c.protected);
+  }
+
+  @override
+  Future<void> deleteFolder(int accountId, String mailbox) async {
+    await mbx.deleteFolder(accountId: accountId, mailbox: mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {
+    await mbx.setFolderSubscribed(
+      accountId: accountId,
+      mailbox: mailbox,
+      subscribed: subscribed,
+    );
+    _changes.add(null);
+  }
+
+  @override
+  List<SpecialFolder> specialFolders(int accountId) => [
+    for (final f in mbx.specialFolders(accountId: accountId))
+      SpecialFolder(
+        SpecialRole.values.byName(f.role.name),
+        f.mailbox,
+        chosen: f.chosen,
+      ),
+  ];
+
+  @override
+  List<({String mailbox, String name})> serverFolders(int accountId) => [
+    for (final f in mbx.serverFolders(accountId: accountId))
+      (mailbox: f.mailbox, name: f.name),
+  ];
+
+  @override
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in mbx.specialFolderOptions(
+      accountId: accountId,
+      role: mbx.SpecialFolder.values.byName(role.name),
+    ))
+      (mailbox: f.mailbox, name: f.name),
+  ];
+
+  @override
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {
+    await mbx.setSpecialFolder(
+      accountId: accountId,
+      role: mbx.SpecialFolder.values.byName(role.name),
+      mailbox: mailbox,
+    );
+    _changes.add(null);
+  }
+
+  late final _listPrefs = ValueNotifier(_readListPrefs());
+
+  static ListPrefs _readListPrefs() {
+    try {
+      final s = mbx.listSettings();
+      return ListPrefs(
+        order: ListOrder.values.byName(s.order.name),
+        threads: s.threads,
+        swipeRight: SwipeChoice.values.byName(s.swipeRight.name),
+        swipeLeft: SwipeChoice.values.byName(s.swipeLeft.name),
+      );
+    } catch (_) {
+      return const ListPrefs();
+    }
+  }
+
+  @override
+  ValueListenable<ListPrefs> get listPrefs => _listPrefs;
+
+  @override
+  Future<void> setListPrefs(ListPrefs prefs) async {
+    mbx.setListSettings(
+      settings: mbx.ListSettings(
+        order: mbx.ListOrder.values.byName(prefs.order.name),
+        threads: prefs.threads,
+        swipeRight: mbx.SwipeAction.values.byName(prefs.swipeRight.name),
+        swipeLeft: mbx.SwipeAction.values.byName(prefs.swipeLeft.name),
+      ),
+    );
+    _listPrefs.value = prefs;
+    _changes.add(null);
+  }
+
+  static MailQuota? _quota(mbx.QuotaInfo? q) =>
+      q == null ? null : MailQuota(q.used.toInt(), q.limit.toInt());
+
+  @override
+  MailQuota? quota(int accountId) {
+    try {
+      return _quota(mbx.accountQuota(accountId: accountId));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<MailQuota?> refreshQuota(int accountId) async =>
+      _quota(await mbx.refreshQuota(accountId: accountId));
 
   @override
   Future<List<MailRow>> conversation(MailRow row) async {

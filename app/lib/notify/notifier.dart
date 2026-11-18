@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
 import 'notice_seal.dart';
+import 'unread_badge.dart';
 
 export 'notice_seal.dart' show NoticeSeal, noticeSeal;
 
@@ -267,6 +268,8 @@ class SystemNotifier implements Notifier {
             _channel,
             silent: n.silent,
             category: AndroidNotificationCategory.email,
+            // Launchers that show a count on the icon read it here.
+            number: UnreadBadge.count > 0 ? UnreadBadge.count : null,
           ),
           linux: LinuxNotificationDetails(
             suppressSound: n.silent,

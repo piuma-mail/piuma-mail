@@ -80,8 +80,17 @@ class Reader extends StatefulWidget {
     this.onReportSpam,
     this.onNotSpam,
     this.onSide,
+    this.onStar,
+    this.onCopy,
     this.printer = printEmail,
   });
+
+  /// Star, or Remove star once starred: a button in the desktop's bar,
+  /// and in the phone's and tablet's More.
+  final void Function(MailRow row, bool starred)? onStar;
+
+  /// "Copy to…" in the More menus, with where More is on the desktop.
+  final void Function(MailRow row, Rect? anchor)? onCopy;
 
   /// "Mark as unread" (or read) in the desktop's More menu, and ⇧⌘U
   /// (Ctrl Shift U off Apple) while the message is shown.
@@ -531,6 +540,12 @@ class _ReaderState extends State<Reader> {
         ? null
         : (Rect? at) => widget.onSnooze!(row, at);
     final onWake = widget.onWake == null ? null : () => widget.onWake!(row);
+    final onStar = widget.onStar == null || row.folder == MailFolder.drafts
+        ? null
+        : () => widget.onStar!(row, !row.starred);
+    final onCopy = widget.onCopy == null || row.folder == MailFolder.drafts
+        ? null
+        : (Rect? at) => widget.onCopy!(row, at);
     final onReply = widget.onReply == null
         ? null
         : () async {
@@ -661,6 +676,9 @@ class _ReaderState extends State<Reader> {
             onNotSpam: onNotSpam,
             onSide: onSide,
             sideLabel: sideLabel,
+            onStar: onStar,
+            starred: row.starred,
+            onCopy: onCopy == null ? null : () => onCopy(null),
           )
         else if (tablet && widget.onBack != null)
           _PanelTop(onClose: widget.onBack!)
@@ -697,6 +715,9 @@ class _ReaderState extends State<Reader> {
             onSide: onSide,
             sideLabel: sideLabel,
             onUnsubscribe: onUnsubscribe,
+            onStar: onStar,
+            starred: row.starred,
+            onCopy: onCopy,
           ),
         Expanded(
           // The real address of the link under the pointer, at the foot.
@@ -865,6 +886,9 @@ class _ReaderState extends State<Reader> {
               sideLabel: sideLabel,
               onUnsubscribe: onUnsubscribe,
               onDelete: onDelete,
+              onStar: onStar,
+              starred: row.starred,
+              onCopy: onCopy == null ? null : () => onCopy(null),
             ),
           ),
         ),
@@ -2476,6 +2500,9 @@ class _Toolbar extends StatelessWidget {
     this.onSide,
     this.sideLabel = '',
     this.onUnsubscribe,
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
 
   /// More's "Move to Notifications" or "Move to People", as [sideLabel].
@@ -2484,6 +2511,13 @@ class _Toolbar extends StatelessWidget {
 
   /// More's "Unsubscribe", for mail whose list can be left.
   final VoidCallback? onUnsubscribe;
+
+  /// More's "Star", "Remove star" once [starred]; its key is S.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// More's "Copy to…", the folders hanging under More.
+  final ValueChanged<Rect>? onCopy;
 
   /// More's "Mark as unread", "Mark as read" once [unread], with
   /// [seenKeys].
@@ -2822,8 +2856,11 @@ class _Toolbar extends StatelessWidget {
       _MoreItem(l.stopWaiting, null, stop),
     if (onSeen case final seen?)
       _MoreItem(unread ? l.markRead : l.markUnread, seenKeys, seen),
+    if (onStar case final star?)
+      _MoreItem(starred ? l.unstar : l.star, 'S', star),
     if (onLabel case final label?)
       _MoreItem(l.labelMenu, 'L', null, onAt: label),
+    if (onCopy case final copy?) _MoreItem(l.copyTo, null, null, onAt: copy),
     if (onSide case final side?) _MoreItem(sideLabel, null, side),
     if (onUnsubscribe case final leave?) _MoreItem(l.unsubscribe, null, leave),
     if (onOriginal case final original?)
@@ -3106,11 +3143,21 @@ class _PhoneBar extends StatelessWidget {
     this.onNotSpam,
     this.onSide,
     this.sideLabel = '',
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
 
   final VoidCallback? onPrint;
   final VoidCallback? onReportSpam;
   final VoidCallback? onNotSpam;
+
+  /// Star, or Remove star once [starred], in More.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// "Copy to…", in More.
+  final VoidCallback? onCopy;
 
   /// "Move to Notifications" or "Move to People", as [sideLabel].
   final VoidCallback? onSide;
@@ -3233,7 +3280,10 @@ class _PhoneBar extends StatelessWidget {
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
               for (final x in early) item(x.icon, x.label, x.onTap),
+              if (onStar != null)
+                item(PiumaIcon.star, starred ? l.unstar : l.star, onStar),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
+              if (onCopy != null) item(PiumaIcon.copy, l.copyTo, onCopy),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
                 item(
@@ -3333,7 +3383,17 @@ class _TabletBar extends StatelessWidget {
     this.sideLabel = '',
     this.onUnsubscribe,
     this.onDelete,
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
+
+  /// Star, or Remove star once [starred], in More.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// "Copy to…", in More.
+  final VoidCallback? onCopy;
 
   /// "Move to Notifications" or "Move to People", as [sideLabel].
   final VoidCallback? onSide;
@@ -3456,7 +3516,10 @@ class _TabletBar extends StatelessWidget {
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
               for (final x in early) item(x.icon, x.label, x.onTap),
+              if (onStar != null)
+                item(PiumaIcon.star, starred ? l.unstar : l.star, onStar),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
+              if (onCopy != null) item(PiumaIcon.copy, l.copyTo, onCopy),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
                 item(
