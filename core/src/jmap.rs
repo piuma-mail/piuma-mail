@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1344,17 +1343,8 @@ impl Client {
                 .await
                 .map_err(|e| JmapError::Protocol(e.to_string()))?
             {
-                seen.push_str(&String::from_utf8_lossy(&chunk));
-                if seen.lines().any(|l| l.trim() == "event: state") {
+                if state_event(&mut seen, &chunk) {
                     return Ok(true);
-                }
-                // Keep only the line being written, and only its start: a
-                // line that never ends must not fill the memory.
-                if let Some(i) = seen.rfind('\n') {
-                    seen.drain(..=i);
-                }
-                if seen.len() > EVENT_LINE_MAX {
-                    seen.clear();
                 }
             }
             Ok(false)
@@ -2106,16 +2096,35 @@ async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<
     Ok(bytes)
 }
 
+/// Adds a piece of the event stream to `seen` and says whether a state
+/// change arrived. Keeps only the line still being written, and drops it
+/// once it passes [`EVENT_LINE_MAX`]: a line that never ends must not
+/// fill the memory.
+fn state_event(seen: &mut String, chunk: &[u8]) -> bool {
+    seen.push_str(&String::from_utf8_lossy(chunk));
+    if seen.lines().any(|l| l.trim() == "event: state") {
+        return true;
+    }
+    if let Some(i) = seen.rfind('\n') {
+        seen.drain(..=i);
+    }
+    if seen.len() > EVENT_LINE_MAX {
+        seen.clear();
+    }
+    false
+}
+
 /// Whether an address may carry the account's credentials: https only.
-/// Plain http is allowed on this computer's own address, and only when a
-/// test asked for it with [`allow_loopback_http_for_tests`].
+/// Plain http is allowed on this computer's own address, and only in a
+/// build for tests, when a test asked for it
+/// (`allow_loopback_http_for_tests`).
 fn credentials_may_go_to(url: &str) -> bool {
     let Ok(u) = url::Url::parse(url) else {
         return false;
     };
     match u.scheme() {
         "https" => true,
-        "http" => LOOPBACK_HTTP.load(Ordering::Relaxed) && is_loopback(&u),
+        "http" => loopback_http_allowed() && is_loopback(&u),
         _ => false,
     }
 }
@@ -2129,13 +2138,29 @@ fn is_loopback(u: &url::Url) -> bool {
     }
 }
 
-static LOOPBACK_HTTP: AtomicBool = AtomicBool::new(false);
+/// Whether a test turned plain http on this computer on. Never in the
+/// app: the switch is only built for tests (the `test-support` feature,
+/// which only the integration tests turn on).
+fn loopback_http_allowed() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        LOOPBACK_HTTP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static LOOPBACK_HTTP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Lets the engine talk plain http to a JMAP server on 127.0.0.1, as the
-/// tests' local server does. Never called by the app.
+/// tests' local server does. Built only for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub fn allow_loopback_http_for_tests() {
-    LOOPBACK_HTTP.store(true, Ordering::Relaxed);
+    LOOPBACK_HTTP.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Follows redirects only to addresses that may carry credentials, at
@@ -2164,6 +2189,25 @@ fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_line_that_never_ends_is_dropped() {
+        let mut seen = String::new();
+        let piece = vec![b'x'; 16 * 1024];
+        for _ in 0..64 {
+            assert!(!state_event(&mut seen, &piece));
+            assert!(seen.len() <= EVENT_LINE_MAX, "{}", seen.len());
+        }
+        // The stream still works after a dropped line.
+        assert!(!state_event(&mut seen, b"\nevent: pi"));
+        assert_eq!(seen, "event: pi");
+        assert!(state_event(&mut seen, b"ng\nevent: state\ndata: {}\n"));
+        // A short unfinished line is kept for the next piece.
+        let mut seen = String::new();
+        assert!(!state_event(&mut seen, b"data: 1\nevent: sta"));
+        assert_eq!(seen, "event: sta");
+        assert!(state_event(&mut seen, b"te\n"));
+    }
 
     #[test]
     fn repeated_mailbox_ids_make_a_finite_tree() {

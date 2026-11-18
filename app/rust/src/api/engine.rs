@@ -469,8 +469,9 @@ pub fn init_app() {
     } else {
         log::LevelFilter::Warn
     });
-    // After the bridge's hook: notes where a panic happened, so the log
-    // can say where one message tripped a reader (never what it said).
+    // After the bridge's hook, and the only place that decides what a
+    // panic prints: where it happened, never the text of the mail it was
+    // reading (the whole message only in debug builds).
     piuma_core::guard::install();
 }
 
@@ -1541,6 +1542,74 @@ async fn wait_for_credentials(
 }
 
 #[cfg(test)]
+mod seen_rollback_tests {
+    use super::*;
+    use piuma_core::model::ReplyInfo;
+    use piuma_core::{Flags, ListInfo, Security, Server};
+
+    fn message(account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
+        MessageSummary {
+            account,
+            mailbox: mailbox.into(),
+            uid,
+            from_name: "Julia".into(),
+            from_email: "julia@example.org".into(),
+            to: String::new(),
+            subject: format!("Message {uid}"),
+            preview: String::new(),
+            received_at: 1_000 + uid as i64,
+            flags: Flags::default(),
+            reply: ReplyInfo::default(),
+            list: ListInfo::default(),
+        }
+    }
+
+    /// Marked read in two folders; the server took the first and refused
+    /// the second: only the second goes back to unread and leaves the
+    /// queue.
+    #[test]
+    fn a_failed_push_undoes_only_the_folders_the_server_did_not_take() {
+        let mut store = Store::open_in_memory().unwrap();
+        let server = Server {
+            host: "127.0.0.1".into(),
+            port: 1,
+            security: Security::None,
+        };
+        let id = store
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Test".into(),
+                email: "me@example.org".into(),
+                sender_name: String::new(),
+                color: "#2F8F83".into(),
+                kind: AccountKind::Imap {
+                    imap: server.clone(),
+                    smtp: server,
+                    username: "me".into(),
+                },
+            })
+            .unwrap();
+        store
+            .upsert_messages(&[message(id, "INBOX", 1), message(id, "Work", 2)])
+            .unwrap();
+        let list = vec![("INBOX".to_owned(), 1), ("Work".to_owned(), 2)];
+        for (mailbox, uid) in &list {
+            store.set_seen(id, mailbox, *uid, true).unwrap();
+            store
+                .queue_change(id, mailbox, *uid, Change::Seen(true))
+                .unwrap();
+        }
+        // The inbox went through and was settled, as the push does.
+        store.settle_seen(id, "INBOX", &[1], true).unwrap();
+        undo_seen(&store, id, &list, &["INBOX".to_owned()], true).unwrap();
+        let seen = |m: &str, u| store.message(id, m, u).unwrap().unwrap().flags.seen;
+        assert!(seen("INBOX", 1), "delivered: stays read");
+        assert!(!seen("Work", 2), "not delivered: back to unread");
+        assert!(store.pending_changes(id).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod watcher_supervision_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1573,6 +1642,59 @@ mod watcher_supervision_tests {
         let log = piuma_core::feedback::recent_log();
         assert!(log.contains("watcher stopped (panic"), "{log}");
         assert!(!log.contains("tripped"), "{log}");
+    }
+
+    /// Adapted from #76's test of the same name: since restarts start over
+    /// after a sync round that went through, not after a run of a given
+    /// length, a watcher that ran a long time without completing a round
+    /// keeps the growing wait, and the next one that completes a round
+    /// brings back the first wait.
+    #[test]
+    fn a_watcher_that_ran_long_restarts_from_the_first_wait() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let seen = starts.clone();
+        let first = Duration::from_secs(5);
+        runtime.block_on(keep_following(
+            AccountId(10),
+            move |worked| {
+                let mut starts = seen.lock().unwrap();
+                starts.push(tokio::time::Instant::now());
+                let run = starts.len();
+                async move {
+                    match run {
+                        // Ends at once.
+                        1 => Followed::Ended("gone".into()),
+                        // Runs an hour without a round: no reset.
+                        2 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            Followed::Ended("gone after a while".into())
+                        }
+                        // Runs an hour and gets through a round: reset.
+                        3 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            worked.store(true, Ordering::Relaxed);
+                            Followed::Ended("gone after a round".into())
+                        }
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            first,
+        ));
+        let starts = starts.lock().unwrap();
+        assert_eq!(starts.len(), 4);
+        // The wait between a run's end and the next start.
+        let wait = |i: usize, ran: u64| (starts[i + 1] - starts[i]).as_secs_f64() - ran as f64;
+        // 5 s, then 10 s even after an hour's run, then 5 s after a round;
+        // each ±20 %.
+        assert!((4.0..=6.0).contains(&wait(0, 0)), "{starts:?}");
+        assert!((8.0..=12.0).contains(&wait(1, 3600)), "{starts:?}");
+        assert!((4.0..=6.0).contains(&wait(2, 3600)), "{starts:?}");
     }
 
     #[test]
@@ -3904,11 +4026,13 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
     let mut result = Ok(());
     for (account_id, list) in by_account {
         let id = AccountId(account_id);
+        // Folders whose server took the change, in case a later one fails.
+        let mut delivered: Vec<String> = Vec::new();
         let pushed = async {
             let (account, password) = signed_in(id)?;
             let shared = engine.store.clone();
             let list = list.clone();
-            engine
+            let (done, sent) = engine
                 .runtime
                 .spawn(async move {
                     let mut by_folder: std::collections::BTreeMap<String, Vec<u32>> =
@@ -3916,40 +4040,57 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
                     for (mailbox, uid) in list {
                         by_folder.entry(mailbox).or_default().push(uid);
                     }
+                    let mut done = Vec::new();
                     let pushed = async {
                         let mut conn = Remote::open(&account, &password).await?;
                         for (mailbox, uids) in &by_folder {
                             conn.set_seen(&shared, id, mailbox, uids, seen).await?;
                             let store = shared.lock().unwrap_or_else(|e| e.into_inner());
                             store.settle_seen(id, mailbox, uids, seen)?;
+                            done.push(mailbox.clone());
                         }
                         conn.close().await;
                         Ok::<_, RemoteError>(())
                     }
                     .await;
-                    match pushed {
+                    let pushed = match pushed {
                         // Queued already: it goes out once the server can
                         // be reached.
                         Err(e) if e.is_offline() => Ok(()),
                         other => other,
-                    }
+                    };
+                    (done, pushed)
                 })
                 .await
-                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
-                .map_err(EngineError::from)
+                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
+            delivered = done;
+            sent.map_err(EngineError::from)
         }
         .await;
         if let Err(e) = pushed {
-            // Not done: out of the queue, and back as it was here.
             let store = store()?;
-            for (mailbox, uid) in &list {
-                store.settle_seen(id, mailbox, &[*uid], seen)?;
-                store.set_seen(id, mailbox, *uid, !seen)?;
-            }
+            undo_seen(&store, id, &list, &delivered, seen)?;
             result = Err(e);
         }
     }
     result
+}
+
+/// A read or unread change that didn't reach the server: out of the queue,
+/// and back as it was here, for every message but those in `delivered`,
+/// folders whose server already took it.
+fn undo_seen(
+    store: &Store,
+    id: AccountId,
+    list: &[(String, u32)],
+    delivered: &[String],
+    seen: bool,
+) -> Result<(), piuma_core::StoreError> {
+    for (mailbox, uid) in list.iter().filter(|(m, _)| !delivered.contains(m)) {
+        store.settle_seen(id, mailbox, &[*uid], seen)?;
+        store.set_seen(id, mailbox, *uid, !seen)?;
+    }
+    Ok(())
 }
 
 /// Where a message goes.

@@ -2902,6 +2902,7 @@ dependencies = [
  "lettre",
  "libc",
  "mail-parser",
+ "piuma-core",
  "qrcode",
  "regex",
  "reqwest",

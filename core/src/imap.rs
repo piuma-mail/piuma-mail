@@ -306,6 +306,12 @@ impl Connection {
     /// dropped, the messages they had hidden show again, and this fails
     /// with [`ImapError::Renumbered`]: nothing is done to whatever messages
     /// carry those numbers now. The next sync rebuilds the folder.
+    ///
+    /// A SELECT answer without UIDVALIDITY can't say whether the numbers
+    /// still hold: nothing is done and nothing is dropped. The call fails
+    /// with [`ImapError::NoUidValidity`], which a queued change counts as a
+    /// refused try, so it waits and is given up (and its message shown)
+    /// only by the usual rules.
     async fn select_checked(
         &mut self,
         store: &Mutex<Store>,
@@ -316,9 +322,13 @@ impl Connection {
         let stored = lock(store).mailbox_state(account, mailbox)?;
         // A folder never synced has no numbers of ours to protect.
         if let Some(stored) = stored {
-            if selected.uid_validity != Some(stored.uid_validity) {
-                lock(store).drop_renumbered(account, mailbox)?;
-                return Err(ImapError::Renumbered);
+            match selected.uid_validity {
+                None => return Err(ImapError::NoUidValidity),
+                Some(now) if now != stored.uid_validity => {
+                    lock(store).drop_renumbered(account, mailbox)?;
+                    return Err(ImapError::Renumbered);
+                }
+                Some(_) => {}
             }
         }
         Ok(selected)

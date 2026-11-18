@@ -56,7 +56,86 @@ class _Failing extends DemoMailSource {
   }
 }
 
-Future<void> _pump(WidgetTester tester, _Failing source) async {
+/// An inbox of 250 rows in one section whose second page fails once.
+class _LongInbox extends DemoMailSource {
+  _LongInbox() : super(now: _now);
+
+  static const total = 250;
+  int pageFailures = 1;
+  final asked = <int>[];
+
+  bool _ours(MailFolder folder, String? mailbox) =>
+      folder == MailFolder.inbox && mailbox == null;
+
+  @override
+  Future<List<int>> countsBetween(
+    List<DateTime> edges, {
+    MailFolder folder = MailFolder.inbox,
+    int? account,
+    String? mailbox,
+    InboxTab? tab,
+    bool unread = false,
+    GroupScope? group,
+  }) async {
+    final counts = await super.countsBetween(
+      edges,
+      folder: folder,
+      account: account,
+      mailbox: mailbox,
+      tab: tab,
+      unread: unread,
+      group: group,
+    );
+    if (!_ours(folder, mailbox)) return counts;
+    return [total, for (var i = 1; i < counts.length; i++) 0];
+  }
+
+  @override
+  Future<List<MailRow>> page(
+    int offset,
+    int limit, {
+    MailFolder folder = MailFolder.inbox,
+    int? account,
+    String? mailbox,
+    InboxTab? tab,
+    bool unread = false,
+    GroupScope? group,
+  }) async {
+    if (!_ours(folder, mailbox)) {
+      return super.page(
+        offset,
+        limit,
+        folder: folder,
+        account: account,
+        mailbox: mailbox,
+        tab: tab,
+        unread: unread,
+        group: group,
+      );
+    }
+    asked.add(offset);
+    if (offset == 100 && pageFailures > 0) {
+      pageFailures--;
+      throw StateError('database is locked');
+    }
+    return [
+      for (var i = offset; i < offset + limit && i < total; i++)
+        MailRow(
+          accountId: 1,
+          mailbox: 'INBOX',
+          uid: 1000 + i,
+          fromName: 'Sender $i',
+          fromEmail: 'sender$i@example.org',
+          subject: 'Row $i',
+          preview: 'Preview $i',
+          receivedAt: _now.subtract(Duration(minutes: i)),
+          seen: true,
+        ),
+    ];
+  }
+}
+
+Future<void> _pump(WidgetTester tester, DemoMailSource source) async {
   tester.view.physicalSize = const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -70,6 +149,12 @@ Future<void> _pump(WidgetTester tester, _Failing source) async {
   await tester.pumpAndSettle();
 }
 
+/// Subjects of the inbox rows built, on screen or just around it.
+List<String> _built(WidgetTester tester) => tester
+    .widgetList<InboxRowTile>(find.byType(InboxRowTile, skipOffstage: false))
+    .map((t) => t.row.subject)
+    .toList();
+
 void main() {
   testWidgets('a list that can’t be read says so, and Try again reads it', (
     tester,
@@ -82,6 +167,38 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Couldn’t show these emails.'), findsNothing);
     expect(find.byType(InboxRowTile), findsWidgets);
+  });
+
+  testWidgets('a page that fails while scrolling keeps the rows on screen', (
+    tester,
+  ) async {
+    final source = _LongInbox();
+    await _pump(tester, source);
+    final list = find
+        .descendant(
+          of: find.byType(MessageList),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(
+      find.text('Couldn’t show these emails.'),
+      600,
+      scrollable: list,
+    );
+    await tester.pumpAndSettle();
+    // In place of page 2 only: the rows above stay, and so does the place.
+    expect(find.text('Couldn’t show these emails.'), findsOneWidget);
+    expect(_built(tester), contains('Row 99'));
+    expect(_built(tester), isNot(contains('Row 0')));
+    expect(source.asked.where((o) => o == 100), hasLength(1));
+    // Not asked again on every frame.
+    await tester.pump(const Duration(seconds: 1));
+    expect(source.asked.where((o) => o == 100), hasLength(1));
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Couldn’t show these emails.'), findsNothing);
+    expect(_built(tester), containsAll(['Row 99', 'Row 100']));
+    expect(_built(tester), isNot(contains('Row 0')));
   });
 
   testWidgets('a folder the server didn’t refresh says so, with Try again', (
