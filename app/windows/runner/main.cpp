@@ -43,13 +43,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       nullptr, TRUE,
       IsDevCopy() ? L"Local\\PiumaMail.Dev" : L"Local\\PiumaMail");
   if (single != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
-    if (HandToRunning(title, command_line)) {
-      return EXIT_SUCCESS;
+    // Another Piuma holds it. Hand over to its window as soon as it has
+    // one (it may be starting), looking every 100 ms without waiting on
+    // the mutex. Should its owner end meanwhile (an update restarts into
+    // itself), the mutex comes to this launch, which goes on as the one.
+    bool ours = false;
+    for (int i = 0; i < 50 && !ours; i++) {
+      if (HandToRunning(title, command_line)) {
+        ::CloseHandle(single);
+        return EXIT_SUCCESS;
+      }
+      DWORD free = ::WaitForSingleObject(single, 0);
+      ours = free == WAIT_OBJECT_0 || free == WAIT_ABANDONED;
+      if (!ours) {
+        ::Sleep(100);
+      }
     }
-    // Held, but no window yet or any more: one starting, or one ending
-    // (an update restarts into itself). Wait for it a while.
-    DWORD waited = ::WaitForSingleObject(single, 10000);
-    if (waited == WAIT_TIMEOUT && HandToRunning(title, command_line)) {
+    if (!ours) {
+      // Alive and still without a window: never a second Piuma on the
+      // same data. This launch ends; the person can launch again.
+      ::CloseHandle(single);
       return EXIT_SUCCESS;
     }
   }

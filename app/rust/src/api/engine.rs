@@ -3277,8 +3277,25 @@ async fn deliver(id: i64) -> Result<Delivery, EngineError> {
                     DeliveryKind::Gone
                 }));
             }
-            Some("unknown") => return Ok(Delivery::of(DeliveryKind::MaybeSent)),
-            Some("refused") => return Ok(Delivery::of(DeliveryKind::Refused)),
+            // Settled by the other sender: its words are kept in the row.
+            Some("unknown") => {
+                return Ok(Delivery {
+                    detail: store()?.outgoing_error(id)?.unwrap_or_default(),
+                    ..Delivery::of(DeliveryKind::MaybeSent)
+                })
+            }
+            Some("refused") => {
+                let detail = store()?.outgoing_error(id)?.unwrap_or_default();
+                return Ok(Delivery {
+                    kind: if smtp::insecure_reason(&detail) {
+                        DeliveryKind::Insecure
+                    } else {
+                        DeliveryKind::Refused
+                    },
+                    filed: false,
+                    detail,
+                });
+            }
             Some("queued") => return Ok(Delivery::of(DeliveryKind::Waiting)),
             _ => {}
         }

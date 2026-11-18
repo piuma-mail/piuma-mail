@@ -4229,6 +4229,9 @@ impl Store {
         let Some(out) = self.outgoing(id)? else {
             return Ok(None);
         };
+        // An unknown row may be taken: the person was told it may have
+        // gone, and decides. Only the engine never resends one on its own
+        // while its sender could still finish (see [Self::settle_unknown]).
         let taken = self.conn.execute(
             "DELETE FROM outbox WHERE id = ?1 AND state IN ('queued', 'refused', 'unknown')",
             params![id],
@@ -4282,34 +4285,103 @@ impl Store {
         Ok(ids.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// Claims of other senders older than `before` belong to a sender that
-    /// died: a message being sent may have gone, so it becomes unknown
-    /// (never queued again); a Sent copy being filed goes back to unfiled.
+    /// Claims of other senders not renewed since `before` (a sender
+    /// renews its claim while it works, see `outbox::HEARTBEAT`) belong to
+    /// a sender that died or stalled: a message being sent may have gone,
+    /// so it becomes unknown, keeping who claimed it and when, and is
+    /// never queued again while that sender could still finish (see
+    /// [Self::settle_unknown]); a Sent copy being filed goes back to
+    /// unfiled.
     pub fn expire_claims(&self, account: AccountId, me: &str, before: i64) -> Result<()> {
         self.conn.execute(
-            "UPDATE outbox SET state = CASE state WHEN 'sending' THEN 'unknown' ELSE 'unfiled' END,
-                    claim = NULL
-              WHERE account = ?1 AND state IN ('sending', 'filing')
+            "UPDATE outbox SET state = 'unknown'
+              WHERE account = ?1 AND state = 'sending'
+                AND (claim IS NULL OR claim <> ?2) AND claimed_at < ?3",
+            params![account.0, me, before],
+        )?;
+        self.conn.execute(
+            "UPDATE outbox SET state = 'unfiled', claim = NULL
+              WHERE account = ?1 AND state = 'filing'
                 AND (claim IS NULL OR claim <> ?2) AND claimed_at < ?3",
             params![account.0, me, before],
         )?;
         Ok(())
     }
 
+    /// Renews the claim `me` holds on a message it is working on.
+    pub fn touch_claim(&self, id: i64, me: &str, now: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET claimed_at = ?3 WHERE id = ?1 AND claim = ?2",
+            params![id, me, now],
+        )?;
+        Ok(())
+    }
+
+    /// Why a message of the outbox was refused, or why it may have gone.
+    pub fn outgoing_error(&self, id: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT error FROM outbox WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Who claims a message of the outbox, and when they last said so.
+    pub fn outgoing_claim(&self, id: i64) -> Result<Option<(String, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT claim, claimed_at FROM outbox WHERE id = ?1 AND claim IS NOT NULL",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     /// The server took the message `me` claimed: it leaves the outbox,
     /// or, when its copy is not in Sent yet, stays out of sight to be filed.
+    /// Should the row no longer be ours (taken from a sender silent for
+    /// long, then queued again), it went all the same: it must not go
+    /// again, so a waiting or refused row of it is settled too; one
+    /// another sender has claimed meanwhile can't be stopped any more.
     pub fn sent_outgoing(&self, id: i64, me: &str, filed: bool) -> Result<()> {
-        if filed {
+        let ours = if filed {
             self.conn.execute(
                 "DELETE FROM outbox WHERE id = ?1 AND claim = ?2",
                 params![id, me],
-            )?;
+            )?
         } else {
             self.conn.execute(
                 "UPDATE outbox SET state = 'unfiled', claim = NULL, error = NULL
                   WHERE id = ?1 AND claim = ?2",
                 params![id, me],
-            )?;
+            )?
+        };
+        if ours > 0 {
+            return Ok(());
+        }
+        let settled = if filed {
+            self.conn.execute(
+                "DELETE FROM outbox WHERE id = ?1 AND state IN ('queued', 'unknown', 'refused')",
+                params![id],
+            )?
+        } else {
+            self.conn.execute(
+                "UPDATE outbox SET state = 'unfiled', claim = NULL, error = NULL
+                  WHERE id = ?1 AND state IN ('queued', 'unknown', 'refused')",
+                params![id],
+            )?
+        };
+        if settled == 0 && self.outgoing_state(id)?.is_some() {
+            crate::feedback::log(
+                crate::feedback::Level::Warn,
+                "outbox",
+                "a message went while another sender held it",
+            );
         }
         Ok(())
     }
@@ -4346,8 +4418,12 @@ impl Store {
     }
 
     /// The server told whether a message that may have gone did: sent, it
-    /// leaves the outbox; not sent, it waits again.
-    pub fn settle_unknown(&self, id: i64, sent: bool) -> Result<()> {
+    /// leaves the outbox; not sent, it waits again, but only when no
+    /// sender could still be sending it: one settled by its own sender
+    /// (no claim left), or whose sender has said nothing since
+    /// `quiet_before`. A sender that only seemed dead may still finish,
+    /// and the server would then have it twice.
+    pub fn settle_unknown(&self, id: i64, sent: bool, quiet_before: i64) -> Result<()> {
         if sent {
             self.conn.execute(
                 "DELETE FROM outbox WHERE id = ?1 AND state = 'unknown'",
@@ -4355,8 +4431,10 @@ impl Store {
             )?;
         } else {
             self.conn.execute(
-                "UPDATE outbox SET state = 'queued', error = NULL WHERE id = ?1 AND state = 'unknown'",
-                params![id],
+                "UPDATE outbox SET state = 'queued', error = NULL, claim = NULL
+                  WHERE id = ?1 AND state = 'unknown'
+                    AND (claim IS NULL OR claimed_at < ?2)",
+                params![id, quiet_before],
             )?;
         }
         Ok(())

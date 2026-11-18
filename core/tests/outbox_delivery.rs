@@ -233,11 +233,13 @@ async fn a_send_cut_by_a_crash_is_never_sent_again_blindly() {
     assert!(tells_sent.sent.lock().unwrap().is_empty());
     assert_eq!(state(&store, id), None, "it went: it leaves the outbox");
 
+    // The server says it never went, and its sender has been silent for
+    // two days: it goes now, once.
     let id = queue(&store, account.id, "Plans again", None);
     assert!(store
         .lock()
         .unwrap()
-        .claim_outgoing(id, "crashed", now() - 3_600)
+        .claim_outgoing(id, "crashed", now() - 2 * 86_400)
         .unwrap());
     let mut tells_not_sent = Script {
         was_sent: Some(false),
@@ -248,6 +250,123 @@ async fn a_send_cut_by_a_crash_is_never_sent_again_blindly() {
         .unwrap();
     assert_eq!(sent.len(), 1, "it never went: it goes now, once");
     assert_eq!(tells_not_sent.sent.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_sender_silent_for_an_hour_may_still_finish_so_nothing_resends() {
+    let (store, account) = store();
+    let id = queue(&store, account.id, "Big file", None);
+    // A sender claimed it an hour ago and said nothing since (a computer
+    // asleep mid-send): it may wake up and finish.
+    assert!(store
+        .lock()
+        .unwrap()
+        .claim_outgoing(id, "slow", now() - 3_600)
+        .unwrap());
+    // Another sender, on a server that says "not sent yet".
+    let mut other = Script {
+        was_sent: Some(false),
+        ..Script::default()
+    };
+    outbox::send(&store, &account, &mut other, "other")
+        .await
+        .unwrap();
+    assert!(other.sent.lock().unwrap().is_empty(), "not sent a second time");
+    assert_eq!(state(&store, id).as_deref(), Some("unknown"));
+    // Its sender is still known, so it can settle the row.
+    assert_eq!(
+        store.lock().unwrap().outgoing_claim(id).unwrap().unwrap().0,
+        "slow"
+    );
+    // The slow sender finishes: the row goes, nothing is stranded.
+    store.lock().unwrap().sent_outgoing(id, "slow", true).unwrap();
+    assert_eq!(state(&store, id), None);
+}
+
+#[tokio::test]
+async fn a_slow_send_renews_its_claim_so_no_one_takes_it() {
+    let (store, account) = store();
+    let store = Arc::new(store);
+    let id = queue(&store, account.id, "Big file", None);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let started = Arc::new(tokio::sync::Notify::new());
+    let slow = Script {
+        gate: Some(gate.clone()),
+        started: Some(started.clone()),
+        ..Script::default()
+    };
+    let sending = {
+        let (store, mut slow) = (store.clone(), slow.clone());
+        tokio::spawn(async move {
+            outbox::send_one_beating(&store, id, &mut slow, "slow", Duration::from_millis(50))
+                .await
+        })
+    };
+    started.notified().await;
+    // Minutes pass in the send (the claim made long ago)...
+    store
+        .lock()
+        .unwrap()
+        .execute_for_tests(&format!(
+            "UPDATE outbox SET claimed_at = {} WHERE id = {id}",
+            now() - 3_600
+        ))
+        .unwrap();
+    // ...but the sender renews it while it works.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (_, at) = store.lock().unwrap().outgoing_claim(id).unwrap().unwrap();
+    assert!(at >= now() - 5, "renewed");
+    let mut other = Script {
+        was_sent: Some(false),
+        ..Script::default()
+    };
+    outbox::send(&store, &account, &mut other, "other")
+        .await
+        .unwrap();
+    assert!(other.sent.lock().unwrap().is_empty());
+    assert_eq!(state(&store, id).as_deref(), Some("sending"));
+    gate.notify_one();
+    assert!(matches!(sending.await.unwrap().unwrap(), Outcome::Sent(_)));
+    assert_eq!(slow.sent.lock().unwrap().len(), 1);
+    assert_eq!(state(&store, id), None);
+}
+
+#[tokio::test]
+async fn a_message_that_went_is_never_left_to_go_again() {
+    let (store, account) = store();
+    let id = queue(&store, account.id, "Plans", None);
+    assert!(store
+        .lock()
+        .unwrap()
+        .claim_outgoing(id, "slow", now() - 2 * 86_400)
+        .unwrap());
+    // Silent for two days: taken for abandoned, and queued again...
+    let mut other = Script {
+        was_sent: Some(false),
+        gate: Some(Arc::new(tokio::sync::Notify::new())),
+        ..Script::default()
+    };
+    store
+        .lock()
+        .unwrap()
+        .expire_claims(account.id, "other", now() - 600)
+        .unwrap();
+    store
+        .lock()
+        .unwrap()
+        .settle_unknown(id, false, now() - 86_400)
+        .unwrap();
+    assert_eq!(state(&store, id).as_deref(), Some("queued"));
+    // ...when the old sender comes back and says it went: it must not go
+    // again.
+    store.lock().unwrap().sent_outgoing(id, "slow", true).unwrap();
+    assert_eq!(state(&store, id), None);
+    assert!(matches!(
+        outbox::send_one(&store, id, &mut other, "other")
+            .await
+            .unwrap(),
+        Outcome::Gone
+    ));
 }
 
 #[tokio::test]

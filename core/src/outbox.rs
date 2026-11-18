@@ -135,10 +135,21 @@ pub trait Courier {
     fn was_sent(&mut self, ready: &Ready) -> impl Future<Output = Option<bool>> + Send;
 }
 
-/// How long a claim lasts before another sender may decide its sender
-/// died (a crash, a killed app). The row then becomes `unknown`, never
-/// `queued`: the message may have gone before the end.
+/// How often a sender renews its claim while it works on a message: a
+/// slow send (a large file, a slow uplink) stays its own however long it
+/// takes.
+pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long a claim may go unrenewed before another sender decides its
+/// sender died (a crash, a killed app). The row then becomes `unknown`,
+/// never `queued`: the message may have gone before the end.
 pub const STALE_CLAIM: i64 = 10 * 60;
+
+/// How long the sender of an `unknown` message must have been silent
+/// before the engine, told by the server that it never went, queues it
+/// again on its own. Shorter, a sender that only stalled (a computer
+/// asleep mid-send) could still finish it, and it would go twice.
+pub const ABANDONED_CLAIM: i64 = 24 * 60 * 60;
 
 /// Times a write that settles a send is tried (a full disk can refuse
 /// it); failing them all, the row stays claimed and is never sent again.
@@ -182,6 +193,18 @@ pub async fn send_one(
     courier: &mut impl Courier,
     me: &str,
 ) -> Result<Outcome, StoreError> {
+    send_one_beating(store, id, courier, me, HEARTBEAT).await
+}
+
+/// [send_one], renewing the claim every `beat` (tests use a short one).
+#[doc(hidden)]
+pub async fn send_one_beating(
+    store: &Mutex<Store>,
+    id: i64,
+    courier: &mut impl Courier,
+    me: &str,
+    beat: std::time::Duration,
+) -> Result<Outcome, StoreError> {
     let now = crate::pending::now();
     if !lock(store).claim_outgoing(id, me, now)? {
         return Ok(match lock(store).outgoing_state(id)?.as_deref() {
@@ -201,6 +224,18 @@ pub async fn send_one(
         out.ready.raw = crate::smtp::redate(&out.ready.raw, now);
         lock(store).set_outgoing_raw(id, me, &out.ready.raw).ok();
     }
+    // Everything until the row is settled happens under a renewed claim.
+    beating(store, id, me, beat, deliver(store, id, courier, me, out)).await
+}
+
+/// Hands a claimed message to the server and settles its row.
+async fn deliver(
+    store: &Mutex<Store>,
+    id: i64,
+    courier: &mut impl Courier,
+    me: &str,
+    out: Outgoing,
+) -> Result<Outcome, StoreError> {
     let result = courier.send(&out.ready).await;
     let outcome = match result {
         Ok(()) => {
@@ -300,12 +335,35 @@ async fn settle_unknown(
                 lock(store).settle_unknown(id, true)?;
             }
             Some(false) => {
-                lock(store).settle_unknown(id, false)?;
+                lock(store).settle_unknown(id, false, now - ABANDONED_CLAIM)?;
             }
             None => {}
         }
     }
     Ok(())
+}
+
+/// Runs `work`, renewing the claim `me` holds on message `id` every `beat`
+/// meanwhile, so no other sender takes it for abandoned.
+async fn beating<T>(
+    store: &Mutex<Store>,
+    id: i64,
+    me: &str,
+    beat: std::time::Duration,
+    work: impl Future<Output = T>,
+) -> T {
+    tokio::pin!(work);
+    let mut tick = tokio::time::interval(beat);
+    // The first tick is now; the claim was just made.
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            done = &mut work => return done,
+            _ = tick.tick() => {
+                lock(store).touch_claim(id, me, crate::pending::now()).ok();
+            }
+        }
+    }
 }
 
 /// Runs a write that settles a send, a few times: it must not be lost,

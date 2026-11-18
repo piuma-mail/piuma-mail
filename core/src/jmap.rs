@@ -175,6 +175,16 @@ pub async fn discover_at(url: &str) -> Option<String> {
     }
 }
 
+/// Where a message being sent stands on a JMAP server ([Client::sent_state]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentState {
+    /// A copy with its Message-ID was submitted for sending: it went.
+    pub submitted: bool,
+    /// Its copy in Drafts, left by an earlier try, to submit rather than
+    /// import again.
+    pub draft: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum JmapError {
     #[error("could not reach {url}: {source}")]
@@ -1009,11 +1019,15 @@ impl Client {
         let sent = self.folder(FolderRole::Sent).await?;
         let drafts = self.folder(FolderRole::Drafts).await?;
         let email = match self.sent_state(message_id).await? {
-            Some((_, true)) => return Ok(sent),
-            Some((email, false)) => email,
+            Some(SentState {
+                submitted: true, ..
+            }) => return Ok(sent),
+            Some(SentState {
+                draft: Some(email), ..
+            }) => email,
             // The message waits in Drafts and moves to Sent once it is
             // out, so a failed send leaves it where the person can find it.
-            None => self.import(raw, &drafts, &["$draft", "$seen"]).await?,
+            _ => self.import(raw, &drafts, &["$draft", "$seen"]).await?,
         };
         let identity = self.identity(from).await?;
         let rcpt: Vec<Value> = recipients.iter().map(|r| json!({ "email": r })).collect();
@@ -1050,24 +1064,39 @@ impl Client {
         Ok(sent)
     }
 
-    /// The message with this Message-ID as the server has it: its id, and
-    /// whether it was submitted for sending; None when the server has no
-    /// such message.
-    pub async fn sent_state(&mut self, message_id: &str) -> Result<Option<(String, bool)>> {
+    /// Where the message with this Message-ID stands on the server: in
+    /// Drafts (a copy an earlier try left there) or Sent (where a
+    /// submission moves it), matched on the whole Message-ID, never on a
+    /// part of another's; and whether one of those copies was submitted.
+    /// None when neither folder has it.
+    pub async fn sent_state(&mut self, message_id: &str) -> Result<Option<SentState>> {
         let id = message_id
             .trim()
             .trim_start_matches('<')
-            .trim_end_matches('>');
+            .trim_end_matches('>')
+            .trim();
         if id.is_empty() {
             return Ok(None);
         }
+        let drafts = self.folder(FolderRole::Drafts).await?;
+        let sent = self.folder(FolderRole::Sent).await?;
+        let (drafts, sent) = (self.remote(&drafts)?, self.remote(&sent)?);
+        // The header filter matches a part of the value, ignoring case
+        // (RFC 8621 4.4.1): it only narrows the search; each candidate's
+        // own Message-ID decides.
         let [found] = self
             .call([(
                 "Email/query",
                 json!({
                     "accountId": self.account_id,
-                    "filter": { "header": ["Message-ID", id] },
-                    "limit": 10,
+                    "filter": { "operator": "AND", "conditions": [
+                        { "header": ["Message-ID", id] },
+                        { "operator": "OR", "conditions": [
+                            { "inMailbox": drafts },
+                            { "inMailbox": sent },
+                        ] },
+                    ] },
+                    "limit": 50,
                 }),
             )])
             .await?;
@@ -1077,17 +1106,50 @@ impl Client {
             .flatten()
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect();
-        let Some(first) = ids.first().cloned() else {
+        if ids.is_empty() {
             return Ok(None);
-        };
+        }
+        let [got] = self
+            .call([(
+                "Email/get",
+                json!({
+                    "accountId": self.account_id,
+                    "ids": ids,
+                    "properties": ["id", "messageId", "mailboxIds"],
+                }),
+            )])
+            .await?;
+        let mine: Vec<(String, bool)> = got["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| {
+                e["messageId"]
+                    .as_array()
+                    .is_some_and(|m| m.len() == 1 && m[0].as_str() == Some(id))
+            })
+            .filter_map(|e| {
+                let in_drafts = e["mailboxIds"][&drafts].as_bool() == Some(true);
+                e["id"].as_str().map(|i| (i.to_owned(), in_drafts))
+            })
+            .collect();
+        if mine.is_empty() {
+            return Ok(None);
+        }
+        let exact: Vec<&String> = mine.iter().map(|(i, _)| i).collect();
         let [submissions] = self
             .call([(
                 "EmailSubmission/query",
-                json!({ "accountId": self.account_id, "filter": { "emailIds": ids } }),
+                json!({ "accountId": self.account_id, "filter": { "emailIds": exact } }),
             )])
             .await?;
-        let submitted = submissions["ids"].as_array().is_some_and(|a| !a.is_empty());
-        Ok(Some((first, submitted)))
+        Ok(Some(SentState {
+            submitted: submissions["ids"].as_array().is_some_and(|a| !a.is_empty()),
+            draft: mine
+                .iter()
+                .find(|(_, in_drafts)| *in_drafts)
+                .map(|(i, _)| i.clone()),
+        }))
     }
 
     /// Waits until the server reports a change or `timeout` passes, over

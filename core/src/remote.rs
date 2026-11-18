@@ -484,7 +484,7 @@ impl Courier for AccountCourier<'_> {
         if let Some(cfg) = self.jmap() {
             let mut client = jmap::Client::open(&cfg).await.ok()?;
             return match client.sent_state(&ready.message_id).await.ok()? {
-                Some((_, submitted)) => Some(submitted),
+                Some(state) => Some(state.submitted),
                 None => Some(false),
             };
         }

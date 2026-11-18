@@ -191,16 +191,11 @@ impl Server {
                 ));
                 one(json!({ "created": { "new": { "id": id } } }))
             }
-            "Email/query" if args["filter"]["header"].is_array() => {
-                let wanted = args["filter"]["header"][1].as_str().unwrap();
+            "Email/query" if args["filter"]["operator"].is_string() => {
                 let ids: Vec<&String> = self
                     .emails
                     .iter()
-                    .filter(|(_, e)| {
-                        String::from_utf8_lossy(&e.raw)
-                            .lines()
-                            .any(|l| l.starts_with("Message-ID:") && l.contains(wanted))
-                    })
+                    .filter(|(_, e)| matches_filter(e, &args["filter"]))
                     .map(|(id, _)| id)
                     .collect();
                 one(json!({ "ids": ids, "position": 0 }))
@@ -343,6 +338,35 @@ impl Server {
             )],
         }
     }
+}
+
+/// A JMAP filter (RFC 8621 4.4.1), as far as the engine uses one: a
+/// header filter matches a part of the value, ignoring case, as servers do.
+fn matches_filter(e: &Email, f: &Value) -> bool {
+    if let Some(op) = f["operator"].as_str() {
+        let mut each = f["conditions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| matches_filter(e, c));
+        return match op {
+            "AND" => each.all(|m| m),
+            "OR" => each.any(|m| m),
+            _ => !each.any(|m| m),
+        };
+    }
+    if let Some(mailbox) = f["inMailbox"].as_str() {
+        return e.mailboxes.contains(mailbox);
+    }
+    if let Some(header) = f["header"].as_array() {
+        let name = format!("{}:", header[0].as_str().unwrap().to_lowercase());
+        let wanted = header[1].as_str().unwrap().to_lowercase();
+        return String::from_utf8_lossy(&e.raw).lines().any(|l| {
+            let l = l.to_lowercase();
+            l.starts_with(&name) && l.contains(&wanted)
+        });
+    }
+    true
 }
 
 async fn read_request(tcp: &mut TcpStream) -> Option<(String, String, Vec<u8>)> {
@@ -812,8 +836,7 @@ async fn a_send_whose_answer_was_lost_is_not_sent_twice() {
 
     // The server can tell it went; sending again does nothing.
     let mut client = Client::open(&cfg).await.unwrap();
-    let (_, submitted) = client.sent_state(ONCE).await.unwrap().unwrap();
-    assert!(submitted);
+    assert!(client.sent_state(ONCE).await.unwrap().unwrap().submitted);
     let emails = server.lock().unwrap().emails.len();
     let sent = client
         .send(once().as_bytes(), USER, &rcpt, ONCE)
@@ -837,8 +860,9 @@ async fn a_send_tried_again_uses_the_copy_it_left_in_drafts() {
         .await
         .unwrap_err();
     let emails = server.lock().unwrap().emails.len();
-    let (_, submitted) = client.sent_state(ONCE).await.unwrap().unwrap();
-    assert!(!submitted, "the server can tell it never went");
+    let state = client.sent_state(ONCE).await.unwrap().unwrap();
+    assert!(!state.submitted, "the server can tell it never went");
+    assert!(state.draft.is_some());
     client
         .send(once().as_bytes(), USER, &rcpt, ONCE)
         .await
@@ -848,6 +872,48 @@ async fn a_send_tried_again_uses_the_copy_it_left_in_drafts() {
     assert_eq!(s.emails.len(), emails, "the copy in Drafts was used again");
     let (email, _) = &s.sent[0];
     assert_eq!(s.emails[email].mailboxes, ["mb-sent".to_owned()].into());
+}
+
+#[tokio::test]
+async fn a_message_id_that_only_contains_ours_is_not_taken_for_it() {
+    let (server, cfg) = start().await;
+    // Someone else's message in Drafts whose Message-ID contains ours, as
+    // the header filter matches parts of values; and a sent one in another
+    // case. Neither is this message.
+    let (other, shouted) = {
+        let mut s = server.lock().unwrap();
+        let other = s.add_raw(
+            "mb-drafts",
+            "From: x@example.org\r\nTo: boss@example.org\r\nSubject: Private\r\n\
+             Message-ID: <xonce-1@example.com.other>\r\n\r\nNot for Julia.\r\n",
+            3,
+        );
+        let shouted = s.add_raw(
+            "mb-sent",
+            "From: x@example.org\r\nTo: a@example.org\r\nSubject: Loud\r\n\
+             Message-ID: <ONCE-1@EXAMPLE.COM>\r\n\r\nHi.\r\n",
+            3,
+        );
+        (other, shouted)
+    };
+    let mut client = Client::open(&cfg).await.unwrap();
+    assert_eq!(client.sent_state(ONCE).await.unwrap(), None);
+    let emails = server.lock().unwrap().emails.len();
+    client
+        .send(
+            once().as_bytes(),
+            USER,
+            &["julia@example.org".to_owned()],
+            ONCE,
+        )
+        .await
+        .unwrap();
+    let s = server.lock().unwrap();
+    assert_eq!(s.emails.len(), emails + 1, "this message, imported fresh");
+    let (email, _) = &s.sent[0];
+    assert_ne!(email, &other);
+    assert_ne!(email, &shouted);
+    assert!(String::from_utf8_lossy(&s.emails[email].raw).contains("Once."));
 }
 
 #[tokio::test]

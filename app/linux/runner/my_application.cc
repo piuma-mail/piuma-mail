@@ -115,7 +115,9 @@ static void my_application_activate(GApplication* application) {
 static gint my_application_command_line(GApplication* application,
                                         GApplicationCommandLine* command_line) {
   MyApplication* self = MY_APPLICATION(application);
-  if (self->window == nullptr) {
+  // The first launch's arguments start the app; later ones never
+  // replace them (nor leak).
+  if (self->dart_entrypoint_arguments == nullptr) {
     gchar** arguments =
         g_application_command_line_get_arguments(command_line, nullptr);
     // Strip out the first argument as it is the binary name.
@@ -163,6 +165,7 @@ static void my_application_class_init(MyApplicationClass* klass) {
 
 static void my_application_init(MyApplication* self) {
   self->window = nullptr;
+  self->dart_entrypoint_arguments = nullptr;
 }
 
 MyApplication* my_application_new() {

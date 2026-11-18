@@ -144,6 +144,12 @@ pub enum SendError {
     Tls { host: String, detail: String },
 }
 
+/// Whether a refusal kept in the outbox is [SendError::Tls]'s: the
+/// connection could not be made secure.
+pub fn insecure_reason(reason: &str) -> bool {
+    reason.starts_with("could not make a secure connection")
+}
+
 impl SendError {
     /// The server could not be reached: the message can wait in the
     /// outbox and go once the connection is back.
@@ -891,6 +897,18 @@ mod tests {
         let text = String::from_utf8(later.clone()).unwrap();
         assert_eq!(text.matches("Date:").count(), 1, "{text}");
         assert!(text.contains(&built.message_id));
+    }
+
+    #[test]
+    fn a_kept_tls_refusal_is_told_apart() {
+        let tls = SendError::Tls {
+            host: "smtp.example.org".into(),
+            detail: "invalid peer certificate".into(),
+        };
+        assert!(insecure_reason(&tls.to_string()));
+        assert!(!insecure_reason(
+            &SendError::Rejected("550 no".into()).to_string()
+        ));
     }
 
     #[test]
