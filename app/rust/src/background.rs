@@ -463,6 +463,10 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     draft: None,
                     remind_at: None,
                     marks: Vec::new(),
+                    images: Vec::new(),
+                    plain_text: false,
+                    read_receipt: false,
+                    high_priority: false,
                 }))
                 .map(|_| ())
         }

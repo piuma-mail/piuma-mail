@@ -204,7 +204,7 @@ void main() {
     expect(find.text('folder'), findsNothing);
   });
 
-  testWidgets('too much to send is stopped before it leaves', (tester) async {
+  testWidgets('too much to send is refused as it is picked', (tester) async {
     final source = await _pump(tester);
     _pickReturns([_file('video.mov', maxDraftFilesSize + 1)]);
     await tester.tap(find.text('Compose'));
@@ -212,15 +212,11 @@ void main() {
     await tester.enterText(_field(0), 'luca@studio.it,');
     await tester.tap(find.byTooltip('Attach file'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Send'));
-    await tester.pumpAndSettle();
     expect(
-      find.text(
-        'Attachments can be up to 18 MB in all. Remove some and try '
-        'again.',
-      ),
+      find.text('video.mov is too big: attachments can be up to 18 MB in all.'),
       findsOneWidget,
     );
+    expect(find.text('video.mov'), findsNothing);
     expect(find.byType(ComposePane), findsOneWidget);
     expect(source.sent, isEmpty);
   });

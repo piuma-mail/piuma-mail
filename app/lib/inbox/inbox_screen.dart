@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' show NumberFormat;
 
+import '../compose/quoting.dart';
 import '../compose/compose_pane.dart';
 import '../compose/remind_me.dart';
 import '../compose/reply_builder.dart';
@@ -274,6 +275,10 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// Groups and every account's aliases, for From.
   List<MailGroup> _groups = const [];
+
+  /// Settings › Writing › Replies: where a reply is written, and what it
+  /// quotes.
+  ComposeSettings _composeSettings = const ComposeSettings();
   Map<int, List<String>> _aliases = const {};
 
   /// The group, or one address of it, whose mail the inbox shows in place
@@ -1466,6 +1471,7 @@ class _InboxScreenState extends State<InboxScreen> {
     openCompose: _openCompose,
     toast: _toast,
     phone: MediaQuery.sizeOf(context).width < phoneWidth,
+    builder: _replyBuilder,
   );
 
   /// Drafts stay drafts: anything else can be forwarded.
@@ -1552,21 +1558,28 @@ class _InboxScreenState extends State<InboxScreen> {
     bool quote = true,
     MailEnvelope? envelope,
     ReplyMode mode = ReplyMode.sender,
-  }) =>
-      ReplyBuilder(
-        AppLocalizations.of(context),
-        Localizations.localeOf(context).toLanguageTag(),
-      ).reply(
-        row,
-        body,
-        envelope: envelope,
-        mode: mode,
-        text: text,
-        fromEmail: widget.source.replyFrom(row),
-        signatureId: signatureId,
-        to: to,
-        quote: quote,
-      );
+  }) => _replyBuilder.reply(
+    row,
+    body,
+    envelope: envelope,
+    mode: mode,
+    text: text,
+    fromEmail: widget.source.replyFrom(row),
+    signatureId: signatureId,
+    to: to,
+    quote: quote,
+    // Only the words selected in the reader, when the setting allows.
+    selection: readerSelection.value,
+  );
+
+  /// Builds every Reply, Reply all, Forward and Edit as new, with
+  /// Settings › Writing.
+  ReplyBuilder get _replyBuilder => ReplyBuilder(
+    AppLocalizations.of(context),
+    Localizations.localeOf(context).toLanguageTag(),
+    settings: _composeSettings,
+    accounts: widget.source.accounts,
+  );
 
   /// Send later: compose closes, the message waits in the Outbox for its
   /// time, and Undo opens it again.
@@ -2137,6 +2150,9 @@ class _InboxScreenState extends State<InboxScreen> {
   Future<void> _loadSignatures() async {
     final all = await widget.source.signatures();
     final groups = await widget.source.groups();
+    final writing = await widget.source.composeSettings().catchError(
+      (Object _) => const ComposeSettings(),
+    );
     final aliases = {
       for (final a in widget.source.accounts)
         a.id: await widget.source.aliases(a.id),
@@ -2146,6 +2162,7 @@ class _InboxScreenState extends State<InboxScreen> {
         _signatures = all;
         _groups = groups;
         _aliases = aliases;
+        _composeSettings = writing;
       });
     }
   }
@@ -2707,6 +2724,7 @@ class _InboxScreenState extends State<InboxScreen> {
         onSave: widget.source.saveDraft,
         templates: widget.source.templates,
         suggest: widget.source.suggestRecipients,
+        extras: widget.source,
         onSaveTemplate: widget.source.saveTemplate,
         onTemplateUsed: widget.source.templateUsed,
         onManageTemplates: () =>
@@ -3494,6 +3512,7 @@ class _InboxScreenState extends State<InboxScreen> {
       onSave: widget.source.saveDraft,
       templates: widget.source.templates,
       suggest: widget.source.suggestRecipients,
+      extras: widget.source,
       onSaveTemplate: widget.source.saveTemplate,
       onTemplateUsed: widget.source.templateUsed,
       onManageTemplates: () =>

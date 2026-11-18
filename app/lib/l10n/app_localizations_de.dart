@@ -6471,6 +6471,169 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get composeOptions => 'Optionen';
+
+  @override
+  String get composePlainText => 'Nur-Text';
+
+  @override
+  String get composeHighPriority => 'Hohe Priorität';
+
+  @override
+  String get composeReadReceipt => 'Lesebestätigung anfordern';
+
+  @override
+  String get composePlainTitle => 'Zu Nur-Text wechseln?';
+
+  @override
+  String get composePlainBody =>
+      'Nur-Text kennt kein Fett, Kursiv, keine Links und keine Bilder. Links behalten ihre Adresse in Klammern, Bilder werden als Dateien angehängt.';
+
+  @override
+  String get composePlainConfirm => 'Zu Nur-Text wechseln';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Anhang vergessen?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Deine Nachricht erwähnt einen Anhang, aber es ist nichts angehängt.';
+
+  @override
+  String get sendNoSubjectTitle => 'Ohne Betreff senden?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Ein Betreff hilft, deine Nachricht später wiederzufinden.';
+
+  @override
+  String get sendAddSubject => 'Betreff hinzufügen';
+
+  @override
+  String get sendAnyway => 'Trotzdem senden';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name ist zu groß: Anhänge dürfen insgesamt höchstens $size groß sein.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name ist zu groß für den Text.';
+  }
+
+  @override
+  String get pastedImage => 'Das eingefügte Bild';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Adressen',
+      one: '1 Adresse',
+      zero: 'Keine Adressen',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Gruppe';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender möchte wissen, wann du diese Nachricht liest.';
+  }
+
+  @override
+  String get readReceiptSend => 'Bestätigung senden';
+
+  @override
+  String get readReceiptDontSend => 'Nicht senden';
+
+  @override
+  String get readReceiptNever => 'Nie für diesen Absender';
+
+  @override
+  String get readReceiptSent => 'Bestätigung gesendet';
+
+  @override
+  String get readReceiptFailed =>
+      'Die Bestätigung konnte nicht gesendet werden. Versuch es später noch einmal.';
+
+  @override
+  String get highPriority => 'Hohe Priorität';
+
+  @override
+  String get repliesTitle => 'Antworten';
+
+  @override
+  String get replyBelowQuote => 'Unter dem Zitat antworten';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Aus: Antworten beginnen über der zitierten Nachricht.';
+
+  @override
+  String get quoteSelection => 'Nur markierte Wörter zitieren';
+
+  @override
+  String get quoteSelectionHint =>
+      'Sind in einer Nachricht Wörter markiert, zitiert Antworten nur diese.';
+
+  @override
+  String get plainTextTitle => 'Neue Nachrichten als Nur-Text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · neue Nachrichten beginnen als Nur-Text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Kontaktgruppen';
+
+  @override
+  String get contactGroupsHint =>
+      'Gib den Namen einer Gruppe in An, Cc oder Bcc ein, um alle darin hinzuzufügen.';
+
+  @override
+  String get contactGroupNew => 'Neue Gruppe';
+
+  @override
+  String get contactGroupUntitled => 'Unbenannte Gruppe';
+
+  @override
+  String get contactGroupName => 'Gruppenname';
+
+  @override
+  String get contactGroupAddresses => 'Adressen';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Eine pro Zeile oder durch Kommas getrennt.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return '$name löschen';
+  }
+
+  @override
+  String get composeInsertPicture => 'Bild einfügen';
+
+  @override
+  String get composePastePicture => 'Bild aus Zwischenablage';
+
+  @override
+  String get noPictureToPaste => 'In der Zwischenablage ist kein Bild.';
+
+  @override
+  String get composeReadReceiptAsked => 'Lesebestätigung angefordert';
+
+  @override
+  String get readReceiptQueued =>
+      'Die Bestätigung wartet im Postausgang und geht raus, sobald es geht.';
+
+  @override
   String oauthOwnClientNotHere(String provider) {
     return 'Auf Android kann sich diese App bei $provider nur mit dem Client anmelden, mit dem sie gebaut wurde. Nutze ein App-Passwort oder einen Build mit deinem Client.';
   }
