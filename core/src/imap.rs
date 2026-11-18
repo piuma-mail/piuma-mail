@@ -1643,6 +1643,8 @@ async fn sign_in(client: Client, cfg: &ImapConfig) -> Result<Session> {
         .map_err(|(e, _)| classify_token(e))
 }
 
+// async-imap gives the client back with its error, as `login` does.
+#[allow(clippy::result_large_err)]
 async fn authenticate(
     client: Client,
     cfg: &ImapConfig,
