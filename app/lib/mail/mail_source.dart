@@ -2077,6 +2077,12 @@ abstract class MailSource {
   /// New mail worth a notification, as it arrives.
   Stream<List<MailNotice>> get notices;
 
+  /// Changes made on this device (a move, read or unread, a label) that
+  /// the server kept refusing for a day, or refused for good, and were
+  /// given up, by how many. Their messages are back as the server has
+  /// them.
+  Stream<int> get changesDropped => const Stream.empty();
+
   Future<NotifySettings> notifySettings();
 
   Future<void> setNotifySettings(NotifySettings settings);

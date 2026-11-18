@@ -14,7 +14,9 @@ use crate::model::{
 };
 use crate::outbox::{Outgoing, Waiting};
 use crate::pec;
-use crate::pending::{Change, Pending, MAX_ATTEMPTS};
+use crate::pending::{
+    Change, Pending, Refusal, GIVE_UP_AFTER, HIDING, MAX_ATTEMPTS, REFUSED_ATTEMPTS,
+};
 use crate::rules::{Action as RuleAction, Field as RuleField, Op as RuleOp, Rule};
 use crate::search::Query;
 use crate::signature::{Accent, Logo, Signature, Template};
@@ -1168,13 +1170,21 @@ fn file_card(
         html,
         attachments: &body.attachments,
     };
-    let card = if pinned && folder != "drafts" {
-        Some(crate::vault::extract_kept(&src))
-    } else if worth {
-        crate::vault::extract(&src)
-    } else {
-        None
-    };
+    // A message the Vault can't read gets no card, and is checked all the
+    // same: it isn't read again at every sync.
+    let card = crate::guard::shielded(
+        "vault card",
+        || None,
+        || {
+            if pinned && folder != "drafts" {
+                Some(crate::vault::extract_kept(&src))
+            } else if worth {
+                crate::vault::extract(&src)
+            } else {
+                None
+            }
+        },
+    );
     match card {
         Some(card) => {
             tx.execute(
@@ -1468,6 +1478,22 @@ impl Store {
         )?;
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
+        }
+        // A change the server refused waits before it is tried again, and
+        // is given up only after failing for a day (pending.rs). Added
+        // here rather than in MIGRATIONS, like the two above, so it holds
+        // when migrations run again over a newer database.
+        let retries: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('pending_change')
+                             WHERE name = 'next_try_at')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !retries {
+            tx.execute_batch(
+                "ALTER TABLE pending_change ADD COLUMN next_try_at INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE pending_change ADD COLUMN failing_since INTEGER;",
+            )?;
         }
         if current < CLEAN_PREVIEWS {
             clean_previews(&tx)?;
@@ -2004,14 +2030,17 @@ impl Store {
 
     /// Shows every hidden message again: an action that never reached the
     /// server (the app quit inside the Undo window) is simply not done.
-    /// Messages moved while offline stay hidden: that move is still on
+    /// Messages moved while offline (to Archive, Trash, spam, Snoozed, a
+    /// folder, or back from Snoozed) stay hidden: that move is still on
     /// its way.
     pub fn unhide_all(&self) -> Result<()> {
         self.conn.execute(
-            "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
-                SELECT 1 FROM pending_change p
-                 WHERE p.account = message.account AND p.mailbox = message.mailbox
-                   AND p.uid = message.uid AND p.change IN ('archive', 'trash', 'move'))",
+            &format!(
+                "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
+                    SELECT 1 FROM pending_change p
+                     WHERE p.account = message.account AND p.mailbox = message.mailbox
+                       AND p.uid = message.uid AND p.change IN ({HIDING}))"
+            ),
             [],
         )?;
         Ok(())
@@ -2387,11 +2416,28 @@ impl Store {
 
     /// An account's waiting changes, oldest first.
     pub fn pending_changes(&self, account: AccountId) -> Result<Vec<Pending>> {
+        self.due_changes(account, i64::MAX)
+    }
+
+    /// Makes every waiting change of an account due now, as if its wait
+    /// were over. For tests, which can't wait a minute.
+    #[doc(hidden)]
+    pub fn retry_changes_now(&self, account: AccountId) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pending_change SET next_try_at = 0 WHERE account = ?1",
+            params![account.0],
+        )?;
+        Ok(())
+    }
+
+    /// An account's waiting changes whose next try is due at `now`,
+    /// oldest first.
+    pub fn due_changes(&self, account: AccountId, now: i64) -> Result<Vec<Pending>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, mailbox, uid, change, attempts, target FROM pending_change
-              WHERE account = ?1 ORDER BY id",
+              WHERE account = ?1 AND next_try_at <= ?2 ORDER BY id",
         )?;
-        let rows = stmt.query_map(params![account.0], |r| {
+        let rows = stmt.query_map(params![account.0, now], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -2428,30 +2474,102 @@ impl Store {
         Ok(())
     }
 
-    /// Counts a failed try. After [`MAX_ATTEMPTS`] the change is given up:
-    /// a message that was moved shows again, and the next sync puts its
-    /// flags back to the server's.
-    pub fn failed_changes(&self, ids: &[i64]) -> Result<()> {
+    /// Counts a failed try at `now` and puts the next one off (a minute,
+    /// doubling, at most an hour). A change is given up after
+    /// [`REFUSED_ATTEMPTS`] tries the server refused for good, or after
+    /// [`MAX_ATTEMPTS`] tries over at least [`GIVE_UP_AFTER`] otherwise: a
+    /// message it had hidden shows again, and the next sync puts its flags
+    /// back to the server's. Returns how many were given up.
+    pub fn failed_changes(&self, ids: &[i64], now: i64, refusal: Refusal) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
+        let mut given_up = 0;
         for id in ids {
+            let Some(attempts) = tx
+                .query_row(
+                    "UPDATE pending_change
+                        SET attempts = attempts + 1, failing_since = COALESCE(failing_since, ?2)
+                      WHERE id = ?1 RETURNING attempts",
+                    params![id, now],
+                    |r| r.get::<_, u32>(0),
+                )
+                .optional()?
+            else {
+                continue;
+            };
+            let failing_since: i64 = tx.query_row(
+                "SELECT failing_since FROM pending_change WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )?;
+            let give_up = match refusal {
+                Refusal::Permanent => attempts >= REFUSED_ATTEMPTS,
+                Refusal::Temporary => {
+                    attempts >= MAX_ATTEMPTS && now - failing_since >= GIVE_UP_AFTER
+                }
+            };
+            if !give_up {
+                tx.execute(
+                    "UPDATE pending_change SET next_try_at = ?2 WHERE id = ?1",
+                    params![id, now + crate::pending::retry_after(attempts)],
+                )?;
+                continue;
+            }
             tx.execute(
-                "UPDATE pending_change SET attempts = attempts + 1 WHERE id = ?1",
+                &format!(
+                    "UPDATE message SET hidden = 0 WHERE EXISTS (
+                        SELECT 1 FROM pending_change p
+                         WHERE p.id = ?1
+                           AND p.account = message.account AND p.mailbox = message.mailbox
+                           AND p.uid = message.uid AND p.change IN ({HIDING}))"
+                ),
                 params![id],
             )?;
-            tx.execute(
-                "UPDATE message SET hidden = 0 WHERE EXISTS (
-                    SELECT 1 FROM pending_change p
-                     WHERE p.id = ?1 AND p.attempts >= ?2
-                       AND p.account = message.account AND p.mailbox = message.mailbox
-                       AND p.uid = message.uid AND p.change IN ('archive', 'trash', 'move'))",
-                params![id, MAX_ATTEMPTS],
-            )?;
-            tx.execute(
-                "DELETE FROM pending_change WHERE id = ?1 AND attempts >= ?2",
-                params![id, MAX_ATTEMPTS],
-            )?;
+            tx.execute("DELETE FROM pending_change WHERE id = ?1", params![id])?;
+            given_up += 1;
         }
         tx.commit()?;
+        Ok(given_up)
+    }
+
+    /// A folder's messages were renumbered (its UIDVALIDITY changed) while
+    /// changes waited for them: those changes are dropped, since their
+    /// numbers now name other messages, and the messages they had hidden
+    /// show again. The next sync rebuilds the folder.
+    pub fn drop_renumbered(&self, account: AccountId, mailbox: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE message SET hidden = 0
+              WHERE account = ?1 AND mailbox = ?2 AND hidden = 1 AND EXISTS (
+                  SELECT 1 FROM pending_change p
+                   WHERE p.account = message.account AND p.mailbox = message.mailbox
+                     AND p.uid = message.uid)",
+            params![account.0, mailbox],
+        )?;
+        tx.execute(
+            "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2",
+            params![account.0, mailbox],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets the read or unread change queued for messages once their
+    /// server has it. A newer one the other way stays.
+    pub fn settle_seen(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        seen: bool,
+    ) -> Result<()> {
+        let tag = Change::Seen(seen).tag();
+        let mut stmt = self.conn.prepare(
+            "DELETE FROM pending_change
+              WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change = ?4",
+        )?;
+        for uid in uids {
+            stmt.execute(params![account.0, mailbox, uid, tag])?;
+        }
         Ok(())
     }
 
@@ -2988,6 +3106,9 @@ impl Store {
     }
 
     /// Applies flag changes in one transaction. Unknown UIDs are skipped.
+    /// A read or unread change made here and not yet on the server wins
+    /// over what the server said, as labels do in
+    /// [`Self::set_server_labels`]: the server's answer may predate it.
     pub fn update_flags(
         &mut self,
         account: AccountId,
@@ -3001,7 +3122,19 @@ impl Store {
                 "UPDATE message SET flags = ?4
                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND flags != ?4",
             )?;
+            let mut waiting = tx.prepare(
+                "SELECT change FROM pending_change
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('seen', 'unseen')
+                  ORDER BY id DESC LIMIT 1",
+            )?;
             for (uid, flags) in changes {
+                let mut flags = *flags;
+                let local: Option<String> = waiting
+                    .query_row(params![account.0, mailbox, uid], |r| r.get(0))
+                    .optional()?;
+                if let Some(local) = local {
+                    flags.seen = local == "seen";
+                }
                 changed += stmt.execute(params![account.0, mailbox, uid, flags.to_bits()])?;
             }
         }
@@ -3344,9 +3477,15 @@ impl Store {
         let (verified, checked) = match self.account(account)? {
             Some(a) => {
                 let trust = crate::sender_auth::Trust::for_account(&a);
-                (
-                    crate::sender_auth::verified(&body.auth, &trust),
-                    crate::sender_auth::checked(&body.auth, &trust),
+                crate::guard::shielded(
+                    "sender check",
+                    || (false, Default::default()),
+                    || {
+                        (
+                            crate::sender_auth::verified(&body.auth, &trust),
+                            crate::sender_auth::checked(&body.auth, &trust),
+                        )
+                    },
                 )
             }
             None => (false, Default::default()),
@@ -3416,7 +3555,11 @@ impl Store {
                     account.0,
                     mailbox,
                     uid,
-                    crate::newsletter::words(&body.text, body.html.as_deref())
+                    crate::guard::shielded(
+                        "reading time",
+                        || 0,
+                        || { crate::newsletter::words(&body.text, body.html.as_deref()) }
+                    )
                 ],
             )?;
         }
@@ -5671,7 +5814,13 @@ impl Store {
             params![account.0, now],
             |r| r.get(0),
         )?;
-        Ok([self.next_wake(account)?, send, remind]
+        // A change the server refused, tried again.
+        let retry: Option<i64> = self.conn.query_row(
+            "SELECT MIN(next_try_at) FROM pending_change WHERE account = ?1 AND next_try_at > 0",
+            params![account.0],
+            |r| r.get(0),
+        )?;
+        Ok([self.next_wake(account)?, send, remind, retry]
             .into_iter()
             .flatten()
             .min())
@@ -9050,15 +9199,186 @@ From: <help@bank.example>\r\n\r\nHi";
         assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
 
         let move_id = store.pending_changes(a).unwrap()[1].id;
-        for _ in 0..MAX_ATTEMPTS {
-            store.failed_changes(&[move_id]).unwrap();
+        for _ in 0..REFUSED_ATTEMPTS - 1 {
+            assert_eq!(
+                store
+                    .failed_changes(&[move_id], 1_000, Refusal::Permanent)
+                    .unwrap(),
+                0
+            );
         }
+        assert_eq!(
+            store
+                .failed_changes(&[move_id], 1_000, Refusal::Permanent)
+                .unwrap(),
+            1
+        );
         assert_eq!(store.pending_changes(a).unwrap().len(), 1);
         assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
 
         let seen_id = store.pending_changes(a).unwrap()[0].id;
         store.drop_changes(&[seen_id]).unwrap();
         assert!(store.pending_changes(a).unwrap().is_empty());
+    }
+
+    /// A busy server (THROTTLED, UNAVAILABLE) costs a change nothing for a
+    /// day: tries are spaced out, and only many tries over a whole day
+    /// give it up.
+    #[test]
+    fn refused_for_now_waits_longer_each_time_and_gives_up_only_after_a_day() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 100, false)]).unwrap();
+        store.set_hidden(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Move(FolderRole::Trash))
+            .unwrap();
+        let id = store.pending_changes(a).unwrap()[0].id;
+        let start = 1_000_000;
+        // Five refusals within a minute, as five IDLE wakes would bring.
+        let mut at = start;
+        let mut waits = Vec::new();
+        for _ in 0..5 {
+            assert_eq!(
+                store.failed_changes(&[id], at, Refusal::Temporary).unwrap(),
+                0
+            );
+            // Not due again until its wait is over.
+            assert!(store.due_changes(a, at).unwrap().is_empty());
+            let next = store.next_due(a, at).unwrap().unwrap();
+            waits.push(next - at);
+            at = next;
+            assert_eq!(store.due_changes(a, at).unwrap().len(), 1);
+        }
+        assert_eq!(waits, [60, 120, 240, 480, 960]);
+        // Still hidden, still waiting, also after a restart.
+        store.unhide_all().unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 0);
+        // Many more tries within the day: kept.
+        for _ in 0..MAX_ATTEMPTS {
+            at += 60 * 60;
+            assert!(at - start < GIVE_UP_AFTER);
+            store.failed_changes(&[id], at, Refusal::Temporary).unwrap();
+        }
+        assert_eq!(store.pending_changes(a).unwrap().len(), 1);
+        // A day after the first refusal it is given up, and the message
+        // is back.
+        assert_eq!(
+            store
+                .failed_changes(&[id], start + GIVE_UP_AFTER, Refusal::Temporary)
+                .unwrap(),
+            1
+        );
+        assert!(store.pending_changes(a).unwrap().is_empty());
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
+    }
+
+    /// Spam, Snooze and the way back from Snoozed hide their message like
+    /// Archive and Trash: kept hidden across a restart while on their way,
+    /// shown again when given up.
+    #[test]
+    fn every_move_kind_stays_hidden_while_queued_and_shows_when_given_up() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        for (uid, change) in [
+            (1, Change::Move(FolderRole::Junk)),
+            (2, Change::Snooze(5_000)),
+        ] {
+            store.set_hidden(a, "INBOX", uid, true).unwrap();
+            store.queue_change(a, "INBOX", uid, change).unwrap();
+        }
+        store.unhide_all().unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 0);
+        let ids: Vec<i64> = store
+            .pending_changes(a)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        for _ in 0..REFUSED_ATTEMPTS {
+            store
+                .failed_changes(&ids, 1_000, Refusal::Permanent)
+                .unwrap();
+        }
+        assert!(store.pending_changes(a).unwrap().is_empty());
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
+    }
+
+    /// A folder renumbered on the server takes its waiting changes with it,
+    /// and what they had hidden shows again; other folders keep theirs.
+    #[test]
+    fn a_renumbered_folder_drops_its_changes_and_shows_their_messages() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        store.set_hidden(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Move(FolderRole::Archive))
+            .unwrap();
+        store
+            .queue_change(a, "INBOX", 2, Change::Seen(true))
+            .unwrap();
+        store
+            .queue_change(a, "Work", 7, Change::Seen(true))
+            .unwrap();
+        store.drop_renumbered(a, "INBOX").unwrap();
+        let left: Vec<_> = store
+            .pending_changes(a)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.mailbox, p.uid))
+            .collect();
+        assert_eq!(left, [("Work".to_owned(), 7)]);
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
+    }
+
+    /// Flags the server sent before a read or unread change here reached
+    /// it don't undo the change.
+    #[test]
+    fn server_flags_leave_a_waiting_read_change_alone() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        store.set_seen(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Seen(true))
+            .unwrap();
+        let flagged_unread = Flags {
+            seen: false,
+            flagged: true,
+            answered: false,
+        };
+        store
+            .update_flags(a, "INBOX", &[(1, flagged_unread), (2, flagged_unread)])
+            .unwrap();
+        let one = store.message(a, "INBOX", 1).unwrap().unwrap().flags;
+        assert!(one.seen, "the read change waiting wins");
+        assert!(one.flagged, "the rest is the server's");
+        assert!(!store.message(a, "INBOX", 2).unwrap().unwrap().flags.seen);
+        // Once the server has it, its word counts again.
+        store.settle_seen(a, "INBOX", &[1], true).unwrap();
+        store
+            .update_flags(a, "INBOX", &[(1, flagged_unread)])
+            .unwrap();
+        assert!(!store.message(a, "INBOX", 1).unwrap().unwrap().flags.seen);
     }
 
     #[test]

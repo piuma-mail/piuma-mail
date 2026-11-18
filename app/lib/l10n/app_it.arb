@@ -184,6 +184,9 @@
   "riskBodyDisguised": "{name} sembra un {kind}, ma è un programma. I programmi arrivati per email possono prendere il controllo del dispositivo. Aprilo solo se lo aspettavi.",
   "riskBodyMacros": "{name} ha delle macro, che possono avviarsi quando lo apri. Aprilo solo se lo aspettavi.",
   "riskBodyLocked": "{name} è protetto da password, quindi nessuno può guardarci dentro. Aprilo solo se lo aspettavi.",
+  "riskWeb": "Una pagina web",
+  "riskOpenWeb": "Aprire questa pagina web?",
+  "riskBodyWeb": "{name} è una pagina web: si apre nel browser. Non scriverci mai una password: una pagina arrivata per email può somigliare a qualsiasi accesso.",
   "riskFileFrom": "{name} · {size} · da {email}",
   "settings": "Impostazioni",
   "backToMail": "Torna alla posta",
@@ -1523,5 +1526,8 @@
   "pairStep1Device": "{kind, select, phone{Il tuo telefono mostrerà “{title}”} tablet{Il tuo tablet mostrerà “{title}”} other{Il tuo computer mostrerà “{title}”}}",
   "pairConfirmFromDevice": "{kind, select, phone{Per sicurezza, conferma da un dispositivo già collegato: il tuo telefono, attivo {ago}.} tablet{Per sicurezza, conferma da un dispositivo già collegato: il tuo tablet, attivo {ago}.} other{Per sicurezza, conferma da un dispositivo già collegato: il tuo computer, attivo {ago}.}}",
   "syncRecoveryChangedTitle": "Scrivi la nuova frase di recupero",
-  "syncRecoveryChangedBody": "Due dispositivi sono stati scollegati nello stesso momento, quindi il tuo spazio ha una nuova chiave e una nuova frase di recupero. Quella che avevi scritto non funziona più."
+  "syncRecoveryChangedBody": "Due dispositivi sono stati scollegati nello stesso momento, quindi il tuo spazio ha una nuova chiave e una nuova frase di recupero. Quella che avevi scritto non funziona più.",
+  "listFailed": "Impossibile mostrare queste email.",
+  "folderRefreshFailed": "Impossibile aggiornare questa cartella dal server.",
+  "changesDropped": "{count, plural, =1{Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.} other{Il server non ha accettato {count} modifiche fatte da te: quelle email sono tornate com’erano.}}"
 }

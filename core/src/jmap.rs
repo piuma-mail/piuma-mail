@@ -46,6 +46,9 @@ const QUERY_PAGES_MAX: usize = 1000;
 /// The most JSON a server response may hold: beyond this the response
 /// is a protocol failure, not something to keep buffering.
 const RESPONSE_MAX: usize = 32 * 1024 * 1024;
+
+/// The longest event-stream line kept while waiting for its end.
+const EVENT_LINE_MAX: usize = 64 * 1024;
 /// How long to wait for a push before looking anyway.
 pub const POLL_EVERY: Duration = Duration::from_secs(5 * 60);
 
@@ -151,10 +154,15 @@ pub async fn discover(email: &str) -> Option<String> {
 pub async fn discover_at(url: &str) -> Option<String> {
     let http = crate::tls::http_client()
         .timeout(Duration::from_secs(8))
+        .redirect(redirect_policy())
         .build()
         .ok()?;
     let response = http.get(url).send().await.ok()?;
     let found = response.url().to_string();
+    // What is found becomes where the password goes.
+    if !credentials_may_go_to(&found) {
+        return None;
+    }
     match response.status() {
         reqwest::StatusCode::UNAUTHORIZED => {
             let challenge = response
@@ -167,7 +175,7 @@ pub async fn discover_at(url: &str) -> Option<String> {
             challenge.contains("basic").then_some(found)
         }
         s if s.is_success() => {
-            let bytes = response.bytes().await.ok()?;
+            let bytes = read_capped(response, RESPONSE_MAX).await.ok()?;
             let session: Value = serde_json::from_slice(&bytes).ok()?;
             session.get("apiUrl").is_some().then_some(found)
         }
@@ -189,6 +197,8 @@ pub enum JmapError {
     NoFolder,
     #[error("JMAP: {0}")]
     Protocol(String),
+    #[error("the server asked to send the password without encryption")]
+    Insecure,
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -281,8 +291,12 @@ pub struct Client {
 impl Client {
     /// Reads the session object, which is also the login check.
     pub async fn open(cfg: &JmapConfig) -> Result<Self> {
+        if !credentials_may_go_to(&cfg.session_url) {
+            return Err(JmapError::Insecure);
+        }
         let http = crate::tls::http_client()
             .timeout(Duration::from_secs(60))
+            .redirect(redirect_policy())
             .build()
             .map_err(|e| JmapError::Protocol(e.to_string()))?;
         let authorization = cfg.authorization();
@@ -316,14 +330,26 @@ impl Client {
         };
         // A template's braces must survive joining.
         let template = |u: String| absolute(u).replace("%7B", "{").replace("%7D", "}");
+        let api_url = absolute(session.api_url);
+        let download_url = template(session.download_url);
+        let upload_url = template(session.upload_url);
+        let event_source_url = session.event_source_url.map(template);
+        // The session names where the password goes next: never plain http.
+        let insecure = [&api_url, &download_url, &upload_url]
+            .into_iter()
+            .chain(event_source_url.as_ref())
+            .any(|u| !credentials_may_go_to(u));
+        if insecure {
+            return Err(JmapError::Insecure);
+        }
         let mut client = Client {
             http,
             config: cfg.clone(),
             authorization,
-            api_url: absolute(session.api_url),
-            download_url: template(session.download_url),
-            upload_url: template(session.upload_url),
-            event_source_url: session.event_source_url.map(template),
+            api_url,
+            download_url,
+            upload_url,
+            event_source_url,
             account_id,
             max_get,
             mailboxes: Vec::new(),
@@ -1068,13 +1094,8 @@ impl Client {
                 .await
                 .map_err(|e| JmapError::Protocol(e.to_string()))?
             {
-                seen.push_str(&String::from_utf8_lossy(&chunk));
-                if seen.lines().any(|l| l.trim() == "event: state") {
+                if state_event(&mut seen, &chunk) {
                     return Ok(true);
-                }
-                // Keep only the line being written.
-                if let Some(i) = seen.rfind('\n') {
-                    seen.drain(..=i);
                 }
             }
             Ok(false)
@@ -1323,11 +1344,7 @@ impl Client {
             return Err(JmapError::Gone);
         }
         check_status(&response)?;
-        Ok(response
-            .bytes()
-            .await
-            .map_err(|e| JmapError::Protocol(e.to_string()))?
-            .to_vec())
+        read_capped(response, crate::guard::MESSAGE_MAX).await
     }
 
     async fn upload(&self, raw: &[u8]) -> Result<String> {
@@ -1379,32 +1396,43 @@ impl Client {
                 source,
             })?;
         let answer: Value = read_json(response).await?;
-        let mut out: [Value; N] = std::array::from_fn(|_| Value::Null);
-        for r in answer["methodResponses"].as_array().into_iter().flatten() {
-            let (Some(name), Some(i)) = (
-                r[0].as_str(),
-                r[2].as_str().and_then(|i| i.parse::<usize>().ok()),
-            ) else {
-                continue;
-            };
-            if name == "error" {
-                let kind = r[1]["type"].as_str().unwrap_or("unknown");
-                return Err(JmapError::Protocol(format!("{}: {kind}", calls[i].0)));
-            }
-            if i < N && out[i].is_null() {
-                out[i] = r[1].clone();
-            }
-        }
-        if out.iter().any(Value::is_null) {
-            return Err(JmapError::Protocol("missing method response".into()));
-        }
-        Ok(out)
+        method_responses(&answer, calls.map(|(name, _)| name))
     }
 
     /// The settings it was opened with.
     pub fn config(&self) -> &JmapConfig {
         &self.config
     }
+}
+
+/// The answer to each call, in order, from a JMAP response. The ids
+/// that tie answers to calls come from the server and are checked.
+pub(crate) fn method_responses<const N: usize>(
+    answer: &Value,
+    names: [&str; N],
+) -> Result<[Value; N]> {
+    let mut out: [Value; N] = std::array::from_fn(|_| Value::Null);
+    for r in answer["methodResponses"].as_array().into_iter().flatten() {
+        let (Some(name), Some(i)) = (
+            r[0].as_str(),
+            r[2].as_str().and_then(|i| i.parse::<usize>().ok()),
+        ) else {
+            continue;
+        };
+        if name == "error" {
+            let kind = r[1]["type"].as_str().unwrap_or("unknown");
+            // The call id is the server's word: a made-up one names no call.
+            let call = names.get(i).copied().unwrap_or("unknown call");
+            return Err(JmapError::Protocol(format!("{call}: {kind}")));
+        }
+        if i < N && out[i].is_null() {
+            out[i] = r[1].clone();
+        }
+    }
+    if out.iter().any(Value::is_null) {
+        return Err(JmapError::Protocol("missing method response".into()));
+    }
+    Ok(out)
 }
 
 /// Checks that the settings work.
@@ -1421,14 +1449,35 @@ pub async fn watch(
     account: AccountId,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    let mut pause = Duration::from_secs(2);
+    watch_timed(cfg, store, account, events, crate::backoff::FIRST).await
+}
+
+/// [`watch`] with another first wait after a failure, for tests.
+#[doc(hidden)]
+pub async fn watch_timed(
+    cfg: JmapConfig,
+    store: Arc<Mutex<Store>>,
+    account: AccountId,
+    events: impl Fn(WatchEvent),
+    retry_first: Duration,
+) -> Result<()> {
+    // The same waits as IMAP's (see crate::backoff): they start over only
+    // after a whole round.
+    let mut backoff = crate::backoff::Backoff::new(retry_first);
+    let mut answered;
     loop {
+        answered = false;
         let result: Result<()> = async {
             let mut client = Client::open(&cfg).await?;
-            pause = Duration::from_secs(2);
+            answered = true;
             let mut folders_synced: Option<std::time::Instant> = None;
+            let dropped = |changes: usize| {
+                if changes > 0 {
+                    events(WatchEvent::Dropped { account, changes });
+                }
+            };
             loop {
-                crate::pending::send(&mut client, &store, account).await?;
+                dropped(crate::pending::send(&mut client, &store, account).await?);
                 if folders_synced.is_none_or(|t| t.elapsed() >= crate::imap::FOLDERS_EVERY) {
                     client.sync_folders(&store, account).await?;
                     folders_synced = Some(std::time::Instant::now());
@@ -1443,11 +1492,12 @@ pub async fn watch(
                     })
                     .await?;
                 if crate::rules::after_sync(&store, account, &mut report)? {
-                    crate::pending::send(&mut client, &store, account).await?;
+                    dropped(crate::pending::send(&mut client, &store, account).await?);
                 }
                 events(WatchEvent::Synced { account, report });
-                // Snoozed mail comes back, and mail sent later goes, on
-                // time.
+                backoff.reset();
+                // Snoozed mail comes back, mail sent later goes, and a
+                // refused change is tried again, on time.
                 let due = lock(&store)
                     .next_due(account, crate::pending::now())?
                     .map(|at| Duration::from_secs((at - crate::pending::now()).max(1) as u64));
@@ -1457,31 +1507,37 @@ pub async fn watch(
             }
         }
         .await;
-        match result {
+        let most = match &result {
             Err(JmapError::Auth) => return Err(JmapError::Auth),
-            Err(e) => events(WatchEvent::Offline {
+            Err(e) if answered && !e.is_offline() => crate::backoff::ANSWERED_MOST,
+            _ => crate::backoff::OFFLINE_MOST,
+        };
+        if let Err(e) = result {
+            events(WatchEvent::Offline {
                 account,
                 reason: e.to_string(),
-            }),
-            Ok(()) => {}
+            });
         }
-        tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(Duration::from_secs(60));
+        tokio::time::sleep(backoff.fail(most)).await;
     }
 }
 
 /// The account's own folders in tree order: those with no role, under
 /// their parents, by the server's sort order then name.
-fn own_folders(mailboxes: &[Mailbox]) -> Vec<crate::AccountFolder> {
-    fn add(
-        mailboxes: &[Mailbox],
+pub(crate) fn own_folders(mailboxes: &[Mailbox]) -> Vec<crate::AccountFolder> {
+    fn add<'a>(
+        mailboxes: &'a [Mailbox],
         parent: Option<&str>,
         depth: u32,
+        seen: &mut HashSet<&'a str>,
         out: &mut Vec<crate::AccountFolder>,
     ) {
+        // Each id once: a server that repeats ids would otherwise make the
+        // tree grow without end.
         let mut children: Vec<&Mailbox> = mailboxes
             .iter()
             .filter(|m| m.parent_id.as_deref() == parent && m.role.is_none() && !is_space(m))
+            .filter(|m| seen.insert(m.id.as_str()))
             .collect();
         children.sort_by(|a, b| {
             (a.sort_order, a.name.to_lowercase()).cmp(&(b.sort_order, b.name.to_lowercase()))
@@ -1496,12 +1552,12 @@ fn own_folders(mailboxes: &[Mailbox]) -> Vec<crate::AccountFolder> {
                 total: m.total_emails,
             });
             if depth < 16 {
-                add(mailboxes, Some(&m.id), depth + 1, out);
+                add(mailboxes, Some(&m.id), depth + 1, seen, out);
             }
         }
     }
     let mut out = Vec::new();
-    add(mailboxes, None, 0, &mut out);
+    add(mailboxes, None, 0, &mut HashSet::new(), &mut out);
     out
 }
 
@@ -1579,7 +1635,7 @@ fn ids(list: &Value) -> Vec<String> {
         .collect()
 }
 
-fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
+pub(crate) fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
     let (from_name, from_email) = first_address(&e["from"]);
     let to = e["to"]
         .as_array()
@@ -1631,7 +1687,7 @@ fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSum
 
 /// The files in an Email's `attachments`, as the Attachments board lists
 /// them before the body is here. Each keeps its blob, to be fetched alone.
-fn listed_files(parts: &Value) -> Vec<Attachment> {
+pub(crate) fn listed_files(parts: &Value) -> Vec<Attachment> {
     let mut files = Vec::new();
     for p in parts.as_array().into_iter().flatten() {
         let mime = p["type"].as_str().unwrap_or_default().to_ascii_lowercase();
@@ -1654,7 +1710,7 @@ fn listed_files(parts: &Value) -> Vec<Attachment> {
         files.push(Attachment {
             part: files.len() as u32,
             name: match name {
-                Some(n) => n.to_owned(),
+                Some(n) => crate::imap::file_name(n),
                 None if mime == "message/rfc822" => "message.eml".into(),
                 None => "attachment".into(),
             },
@@ -1729,12 +1785,10 @@ fn check_status(response: &reqwest::Response) -> Result<()> {
 }
 
 /// A response body above the cap is refused before it is parsed.
-fn check_size(bytes: &[u8]) -> Result<()> {
-    if bytes.len() > RESPONSE_MAX {
+fn check_size(len: usize, max: usize) -> Result<()> {
+    if len > max {
         Err(JmapError::Protocol(format!(
-            "body of {} bytes exceeds the {}-byte limit",
-            bytes.len(),
-            RESPONSE_MAX
+            "body of {len} bytes exceeds the {max}-byte limit"
         )))
     } else {
         Ok(())
@@ -1743,12 +1797,107 @@ fn check_size(bytes: &[u8]) -> Result<()> {
 
 async fn read_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     check_status(&response)?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| JmapError::Protocol(e.to_string()))?;
-    check_size(&bytes)?;
+    let bytes = read_capped(response, RESPONSE_MAX).await?;
     serde_json::from_slice(&bytes).map_err(|e| JmapError::Protocol(e.to_string()))
+}
+
+/// A response body read a piece at a time, refused as soon as it passes
+/// `max` bytes: never held whole before it is measured.
+async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if let Some(n) = response.content_length() {
+        check_size(usize::try_from(n).unwrap_or(usize::MAX), max)?;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| JmapError::Protocol(e.to_string()))?
+    {
+        check_size(bytes.len() + chunk.len(), max)?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// Adds a piece of the event stream to `seen` and says whether a state
+/// change arrived. Keeps only the line still being written, and drops it
+/// once it passes [`EVENT_LINE_MAX`]: a line that never ends must not
+/// fill the memory.
+fn state_event(seen: &mut String, chunk: &[u8]) -> bool {
+    seen.push_str(&String::from_utf8_lossy(chunk));
+    if seen.lines().any(|l| l.trim() == "event: state") {
+        return true;
+    }
+    if let Some(i) = seen.rfind('\n') {
+        seen.drain(..=i);
+    }
+    if seen.len() > EVENT_LINE_MAX {
+        seen.clear();
+    }
+    false
+}
+
+/// Whether an address may carry the account's credentials: https only.
+/// Plain http is allowed on this computer's own address, and only in a
+/// build for tests, when a test asked for it
+/// (`allow_loopback_http_for_tests`).
+fn credentials_may_go_to(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else {
+        return false;
+    };
+    match u.scheme() {
+        "https" => true,
+        "http" => loopback_http_allowed() && is_loopback(&u),
+        _ => false,
+    }
+}
+
+fn is_loopback(u: &url::Url) -> bool {
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
+/// Whether a test turned plain http on this computer on. Never in the
+/// app: the switch is only built for tests (the `test-support` feature,
+/// which only the integration tests turn on).
+fn loopback_http_allowed() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        LOOPBACK_HTTP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static LOOPBACK_HTTP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lets the engine talk plain http to a JMAP server on 127.0.0.1, as the
+/// tests' local server does. Built only for tests.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn allow_loopback_http_for_tests() {
+    LOOPBACK_HTTP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Follows redirects only to addresses that may carry credentials, at
+/// most ten: an https server can't send the password on to plain http.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if !credentials_may_go_to(attempt.url().as_str()) {
+            attempt.error("redirect to an insecure address")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// Percent-encodes a value for a URL template.
@@ -1763,6 +1912,62 @@ fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_line_that_never_ends_is_dropped() {
+        let mut seen = String::new();
+        let piece = vec![b'x'; 16 * 1024];
+        for _ in 0..64 {
+            assert!(!state_event(&mut seen, &piece));
+            assert!(seen.len() <= EVENT_LINE_MAX, "{}", seen.len());
+        }
+        // The stream still works after a dropped line.
+        assert!(!state_event(&mut seen, b"\nevent: pi"));
+        assert_eq!(seen, "event: pi");
+        assert!(state_event(&mut seen, b"ng\nevent: state\ndata: {}\n"));
+        // A short unfinished line is kept for the next piece.
+        let mut seen = String::new();
+        assert!(!state_event(&mut seen, b"data: 1\nevent: sta"));
+        assert_eq!(seen, "event: sta");
+        assert!(state_event(&mut seen, b"te\n"));
+    }
+
+    #[test]
+    fn repeated_mailbox_ids_make_a_finite_tree() {
+        let mut mailboxes = Vec::new();
+        for i in 0..40 {
+            mailboxes.push(Mailbox {
+                id: "a".into(),
+                name: format!("n{i}"),
+                parent_id: (i % 2 == 1).then(|| "a".into()),
+                ..Default::default()
+            });
+        }
+        let folders = own_folders(&mailboxes);
+        assert_eq!(folders.len(), 1);
+    }
+
+    #[test]
+    fn an_error_for_a_call_that_was_never_made_is_an_error() {
+        let answer = json!({ "methodResponses": [["error", { "type": "serverFail" }, "7"]] });
+        let got = method_responses(&answer, ["Email/get"]);
+        assert!(matches!(got, Err(JmapError::Protocol(m)) if m == "unknown call: serverFail"));
+        let answer = json!({ "methodResponses": [["error", { "type": "serverFail" }, "0"]] });
+        let got = method_responses(&answer, ["Email/get"]);
+        assert!(matches!(got, Err(JmapError::Protocol(m)) if m == "Email/get: serverFail"));
+        let answer = json!({ "methodResponses": [["Email/get", { "list": [] }, "0"], 5, "x"] });
+        assert!(method_responses(&answer, ["Email/get"]).is_ok());
+    }
+
+    #[test]
+    fn credentials_go_only_over_https() {
+        assert!(credentials_may_go_to("https://jmap.example.com/session"));
+        assert!(!credentials_may_go_to("http://jmap.example.com/session"));
+        assert!(!credentials_may_go_to("ftp://jmap.example.com/"));
+        assert!(!credentials_may_go_to("not a url"));
+        // The tests' own switch is never turned on in these unit tests.
+        assert!(!credentials_may_go_to("http://127.0.0.1:8080/jmap"));
+    }
 
     #[test]
     fn finds_the_well_known_session() {
@@ -1865,12 +2070,11 @@ mod tests {
     #[test]
     fn refuses_a_body_over_the_limit() {
         // At the limit the body still passes, and so does a small one.
-        assert!(check_size(b"{}").is_ok());
-        assert!(check_size(&vec![0u8; RESPONSE_MAX]).is_ok());
+        assert!(check_size(2, RESPONSE_MAX).is_ok());
+        assert!(check_size(RESPONSE_MAX, RESPONSE_MAX).is_ok());
 
         // One byte over is a protocol failure, naming the limit.
-        let over = vec![0u8; RESPONSE_MAX + 1];
-        let err = check_size(&over).unwrap_err();
+        let err = check_size(RESPONSE_MAX + 1, RESPONSE_MAX).unwrap_err();
         assert!(matches!(
             err,
             JmapError::Protocol(msg)

@@ -26,6 +26,8 @@ rustls-platform-verifier = "0.7.1"
 scraper = "0.29.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
+# TCP keepalive on IMAP connections (tokio leaves it out).
+socket2 = "0.6.5"
 thiserror = "2"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
 tokio-rustls = "0.26.6"
@@ -64,8 +66,16 @@ libc = "0.2"
 lettre = { version = "0.11.23", default-features = false, features = ["webpki-roots"] }
 webpki-roots = "1.0.9"
 
+[features]
+# Switches only tests may use (plain http to a JMAP server on 127.0.0.1).
+# Turned on for the integration tests by the dev-dependency on this crate
+# below; never by the app.
+test-support = []
+
 [dev-dependencies]
+piuma-core = { path = ".", features = ["test-support"] }
 # As on Windows, where Velopack brings rustls with `ring`: see tls.rs.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+# test-util: paused time, so deadline tests don't wait for real.
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "test-util"] }
