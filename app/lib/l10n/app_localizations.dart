@@ -9136,6 +9136,186 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
 
+  /// No description provided for @deviceHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'This device'**
+  String get deviceHeading;
+
+  /// No description provided for @defaultMailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make Piuma your default mail app'**
+  String get defaultMailTitle;
+
+  /// No description provided for @defaultMailHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Email addresses you click in other apps and on websites open a new message here.'**
+  String get defaultMailHint;
+
+  /// No description provided for @defaultMailIsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma is your default mail app'**
+  String get defaultMailIsTitle;
+
+  /// No description provided for @defaultMailIs.
+  ///
+  /// In en, this message translates to:
+  /// **'Email addresses you click in other apps and on websites open here.'**
+  String get defaultMailIs;
+
+  /// No description provided for @defaultMailButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Make default'**
+  String get defaultMailButton;
+
+  /// No description provided for @defaultMailOtherAndroid.
+  ///
+  /// In en, this message translates to:
+  /// **'Another app opens email addresses now. Clear its defaults in its App info; next time Android asks, pick Piuma and Always.'**
+  String get defaultMailOtherAndroid;
+
+  /// No description provided for @defaultMailAskAndroid.
+  ///
+  /// In en, this message translates to:
+  /// **'Android asks which app to use when you tap an email address: pick Piuma, then Always.'**
+  String get defaultMailAskAndroid;
+
+  /// No description provided for @defaultMailAppInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Open App info'**
+  String get defaultMailAppInfo;
+
+  /// No description provided for @keepRunningTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep running in the background when closed'**
+  String get keepRunningTitle;
+
+  /// No description provided for @keepRunningHint.
+  ///
+  /// In en, this message translates to:
+  /// **'New mail still notifies you. Piuma stays in the tray; quit it from there.'**
+  String get keepRunningHint;
+
+  /// No description provided for @startAtLoginTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Start when you sign in'**
+  String get startAtLoginTitle;
+
+  /// No description provided for @startAtLoginHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma starts in the tray, ready for new mail.'**
+  String get startAtLoginHint;
+
+  /// No description provided for @trayOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Piuma Mail'**
+  String get trayOpen;
+
+  /// No description provided for @trayQuit.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit Piuma Mail'**
+  String get trayQuit;
+
+  /// No description provided for @trayTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Piuma Mail} =1{Piuma Mail: 1 unread} other{Piuma Mail: {count} unread}}'**
+  String trayTooltip(int count);
+
+  /// No description provided for @arrivalWhichAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Write from which account?'**
+  String get arrivalWhichAccount;
+
+  /// No description provided for @arrivalWaits.
+  ///
+  /// In en, this message translates to:
+  /// **'The new message opens when you close this one.'**
+  String get arrivalWaits;
+
+  /// No description provided for @arrivalFilesLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 file was too large to attach.} other{{count} files were too large to attach.}}'**
+  String arrivalFilesLeft(int count);
+
+  /// No description provided for @emlFromFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Opened from a file'**
+  String get emlFromFile;
+
+  /// No description provided for @emlImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import to a folder'**
+  String get emlImport;
+
+  /// No description provided for @emlImportWhichAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Import into which account?'**
+  String get emlImportWhichAccount;
+
+  /// No description provided for @emlImportIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Import to a folder in {account}'**
+  String emlImportIn(String account);
+
+  /// No description provided for @emlImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Imported to {folder}'**
+  String emlImported(String folder);
+
+  /// No description provided for @emlNotImported.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t import it. Check the connection and try again.'**
+  String get emlNotImported;
+
+  /// No description provided for @emlNotMail.
+  ///
+  /// In en, this message translates to:
+  /// **'This file isn’t an email Piuma can read.'**
+  String get emlNotMail;
+
+  /// No description provided for @emlTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'This email file is too large to open.'**
+  String get emlTooLarge;
+
+  /// No description provided for @arrivalNetworkFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Files in network folders don’t open in Piuma. Copy them to this device first.'**
+  String get arrivalNetworkFile;
+
+  /// No description provided for @imagesOffFile.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image is off, so no one can see when you open this file.} other{{count} images are off, so no one can see when you open this file.}}'**
+  String imagesOffFile(int count);
+
+  /// No description provided for @newMailClosedLead.
+  ///
+  /// In en, this message translates to:
+  /// **'With Piuma closed'**
+  String get newMailClosedLead;
+
   /// No description provided for @star.
   ///
   /// In en, this message translates to:

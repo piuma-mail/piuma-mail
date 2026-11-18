@@ -14,6 +14,7 @@ import 'api/feedback.dart';
 import 'api/groups.dart';
 import 'api/labels.dart';
 import 'api/mailbox.dart';
+import 'api/outside.dart';
 import 'api/preview.dart';
 import 'api/sync.dart';
 import 'api/templates.dart';
@@ -117,6 +118,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_box_autoadd_bool(dynamic raw);
+
+  @protected
+  DesktopSettings dco_decode_box_autoadd_desktop_settings(dynamic raw);
 
   @protected
   FeatureSettings dco_decode_box_autoadd_feature_settings(dynamic raw);
@@ -246,6 +250,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeliveryKind dco_decode_delivery_kind(dynamic raw);
+
+  @protected
+  DesktopSettings dco_decode_desktop_settings(dynamic raw);
+
+  @protected
+  EmlFile dco_decode_eml_file(dynamic raw);
 
   @protected
   EngineError dco_decode_engine_error(dynamic raw);
@@ -930,6 +940,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
+  DesktopSettings sse_decode_box_autoadd_desktop_settings(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   FeatureSettings sse_decode_box_autoadd_feature_settings(
     SseDeserializer deserializer,
   );
@@ -1101,6 +1116,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeliveryKind sse_decode_delivery_kind(SseDeserializer deserializer);
+
+  @protected
+  DesktopSettings sse_decode_desktop_settings(SseDeserializer deserializer);
+
+  @protected
+  EmlFile sse_decode_eml_file(SseDeserializer deserializer);
 
   @protected
   EngineError sse_decode_engine_error(SseDeserializer deserializer);
@@ -1911,6 +1932,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_desktop_settings(
+    DesktopSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_feature_settings(
     FeatureSettings self,
     SseSerializer serializer,
@@ -2140,6 +2167,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_delivery_kind(DeliveryKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_desktop_settings(
+    DesktopSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_eml_file(EmlFile self, SseSerializer serializer);
 
   @protected
   void sse_encode_engine_error(EngineError self, SseSerializer serializer);

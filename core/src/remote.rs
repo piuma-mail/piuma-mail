@@ -510,6 +510,15 @@ impl Remote {
             Remote::Jmap(c) => c.append_draft(raw).await?,
         })
     }
+
+    /// Puts a whole message in `folder`, as read (an imported email file).
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.append_to(folder, raw).await?,
+            Remote::Jmap(c) => c.append_to(folder, raw).await?,
+        }
+        Ok(())
+    }
 }
 
 /// Checks that an account's settings work.

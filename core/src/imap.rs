@@ -1558,6 +1558,15 @@ impl Connection {
         expunge_only(session, uids, uidplus).await
     }
 
+    /// Puts a whole message in one of the account's folders, as read: an
+    /// email file imported by the person.
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        self.session()?
+            .append(folder, Some("(\\Seen)"), None, raw)
+            .await?;
+        Ok(())
+    }
+
     /// Files a sent message, already marked as read. Returns the folder.
     pub async fn append_sent(&mut self, raw: &[u8]) -> Result<String> {
         let folder = self.folder(FolderRole::Sent).await?;

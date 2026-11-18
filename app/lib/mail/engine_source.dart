@@ -21,6 +21,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/outside.dart' as outside;
 import '../engine/api/mailbox.dart' as mbx;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
@@ -1563,84 +1564,163 @@ class EngineMailSource extends MailSource {
       OnDeviceModel.instance.rewrite(brief);
 
   @override
-  Future<Readable> readable(MailRow row) async {
-    final r = await engine.messageReadable(
+  Future<Readable> readable(MailRow row) async => _readableOf(
+    await engine.messageReadable(
       accountId: row.accountId,
       mailbox: row.mailbox,
       uid: row.uid,
       utcOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
-    );
-    return Readable(
-      blocks: [
-        for (final b in r.blocks)
-          BodyBlock(
-            kind: BlockKind.values.byName(b.kind.name),
-            level: b.level,
-            quote: b.quote,
-            marker: b.marker,
-            spans: [
-              for (final s in b.spans)
-                BodySpan(
-                  s.text,
-                  bold: s.bold,
-                  italic: s.italic,
-                  code: s.code,
-                  link: s.link,
-                  suspicious: s.suspicious,
+    ),
+  );
+
+  /// The engine's safe reading of a message, for the reader: a synced
+  /// one's, or an email file's.
+  Readable _readableOf(engine.ReadableMessage r) => Readable(
+    blocks: [
+      for (final b in r.blocks)
+        BodyBlock(
+          kind: BlockKind.values.byName(b.kind.name),
+          level: b.level,
+          quote: b.quote,
+          marker: b.marker,
+          spans: [
+            for (final s in b.spans)
+              BodySpan(
+                s.text,
+                bold: s.bold,
+                italic: s.italic,
+                code: s.code,
+                link: s.link,
+                suspicious: s.suspicious,
+              ),
+          ],
+          image: b.image == null
+              ? null
+              : BodyImage(
+                  url: b.image!.url,
+                  data: b.image!.data,
+                  alt: b.image!.alt,
+                  width: b.image!.width,
+                  height: b.image!.height,
+                  link: b.image!.link,
                 ),
-            ],
-            image: b.image == null
-                ? null
-                : BodyImage(
-                    url: b.image!.url,
-                    data: b.image!.data,
-                    alt: b.image!.alt,
-                    width: b.image!.width,
-                    height: b.image!.height,
-                    link: b.image!.link,
-                  ),
+        ),
+    ],
+    remoteImages: r.remoteImages,
+    trackers: [
+      for (final t in r.trackers)
+        StoppedTracker(
+          TrackerKind.values.byName(t.kind.name),
+          t.host,
+          count: t.count,
+        ),
+    ],
+    linksCleaned: r.linksCleaned,
+    trusted: r.trusted,
+    blockImages: r.blockImages,
+    attachments: [
+      for (final a in r.attachments)
+        MailAttachment(
+          part: a.partId,
+          name: a.name,
+          mime: a.mime,
+          size: a.size.toInt(),
+          risk: _risk(a.risk),
+        ),
+    ],
+    layout: r.layout,
+    language: r.language,
+    invite: switch (r.invite) {
+      final i? => _invite(i),
+      null => null,
+    },
+    dates: [
+      for (final d in r.dates)
+        FoundDate(
+          block: d.block,
+          start: d.start,
+          end: d.end,
+          at: _wallClock(d.at.toInt()),
+          uid: d.uid,
+          addedTo: d.addedTo,
+        ),
+    ],
+  );
+
+  @override
+  DesktopSettings get desktopSettings {
+    try {
+      final d = outside.desktopSettings();
+      return DesktopSettings(
+        keepRunning: d.keepRunning,
+        startAtLogin: d.startAtLogin,
+      );
+    } catch (_) {
+      return const DesktopSettings();
+    }
+  }
+
+  @override
+  set desktopSettings(DesktopSettings settings) {
+    outside
+        .setDesktopSettings(
+          settings: outside.DesktopSettings(
+            keepRunning: settings.keepRunning,
+            startAtLogin: settings.startAtLogin,
           ),
-      ],
-      remoteImages: r.remoteImages,
-      trackers: [
-        for (final t in r.trackers)
-          StoppedTracker(
-            TrackerKind.values.byName(t.kind.name),
-            t.host,
-            count: t.count,
-          ),
-      ],
-      linksCleaned: r.linksCleaned,
-      trusted: r.trusted,
-      blockImages: r.blockImages,
-      attachments: [
-        for (final a in r.attachments)
-          MailAttachment(
-            part: a.partId,
-            name: a.name,
-            mime: a.mime,
-            size: a.size.toInt(),
-            risk: _risk(a.risk),
-          ),
-      ],
-      layout: r.layout,
-      language: r.language,
-      invite: switch (r.invite) {
-        final i? => _invite(i),
-        null => null,
-      },
-      dates: [
-        for (final d in r.dates)
-          FoundDate(
-            block: d.block,
-            start: d.start,
-            end: d.end,
-            at: _wallClock(d.at.toInt()),
-            uid: d.uid,
-            addedTo: d.addedTo,
-          ),
-      ],
+        )
+        .ignore();
+  }
+
+  @override
+  Future<EmlMessage> openEml(String path) async {
+    try {
+      final f = await outside.openEml(path: path);
+      return EmlMessage(
+        path: path,
+        fromName: f.fromName,
+        fromEmail: f.fromEmail,
+        to: f.to,
+        cc: f.cc,
+        subject: f.subject,
+        date: switch (f.date) {
+          final d? => DateTime.fromMillisecondsSinceEpoch(d.toInt() * 1000),
+          null => null,
+        },
+        readable: _readableOf(f.readable),
+      );
+    } on engine.EngineError catch (e) {
+      throw EmlException(
+        e.kind == engine.ErrorKind.tooBig
+            ? EmlProblem.tooLarge
+            : EmlProblem.notMail,
+      );
+    }
+  }
+
+  @override
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) async {
+    Future<String> saveIn(Directory folder) => outside.saveEmlAttachment(
+      path: m.path,
+      partId: a.part,
+      folder: folder.path,
     );
+    if (!PhoneFiles.android) return saveIn(await _downloads());
+    final staged = await saveIn(await _staging());
+    if (await PhoneFiles.toDownloads(staged) case final moved?) return moved;
+    await File(staged).delete();
+    return saveIn(await _downloads());
+  }
+
+  @override
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) async {
+    await outside.importEml(
+      accountId: accountId,
+      mailbox: mailbox,
+      path: m.path,
+    );
+    // The folder shows it once its next round brings it in.
+    refreshFolder(accountId, mailbox).ignore();
   }
 
   /// A wall-clock time the engine writes as if it were UTC.

@@ -6232,6 +6232,139 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get deviceHeading => 'Cet appareil';
+
+  @override
+  String get defaultMailTitle =>
+      'Faire de Piuma votre app de messagerie par défaut';
+
+  @override
+  String get defaultMailHint =>
+      'Les adresses e-mail sur lesquelles vous cliquez dans d’autres apps et sur les sites ouvrent un nouveau message ici.';
+
+  @override
+  String get defaultMailIsTitle =>
+      'Piuma est votre app de messagerie par défaut';
+
+  @override
+  String get defaultMailIs =>
+      'Les adresses e-mail sur lesquelles vous cliquez dans d’autres apps et sur les sites s’ouvrent ici.';
+
+  @override
+  String get defaultMailButton => 'Définir par défaut';
+
+  @override
+  String get defaultMailOtherAndroid =>
+      'Une autre app ouvre les adresses e-mail. Effacez ses valeurs par défaut dans ses Infos sur l’app ; la prochaine fois qu’Android demande, choisissez Piuma et Toujours.';
+
+  @override
+  String get defaultMailAskAndroid =>
+      'Android demande quelle app utiliser quand vous touchez une adresse e-mail : choisissez Piuma, puis Toujours.';
+
+  @override
+  String get defaultMailAppInfo => 'Ouvrir les infos';
+
+  @override
+  String get keepRunningTitle => 'Continuer en arrière-plan une fois fermé';
+
+  @override
+  String get keepRunningHint =>
+      'Les nouveaux messages vous sont toujours signalés. Piuma reste dans la zone de notification ; quittez-le depuis là.';
+
+  @override
+  String get startAtLoginTitle => 'Démarrer à l’ouverture de session';
+
+  @override
+  String get startAtLoginHint =>
+      'Piuma démarre dans la zone de notification, prêt pour les nouveaux messages.';
+
+  @override
+  String get trayOpen => 'Ouvrir Piuma Mail';
+
+  @override
+  String get trayQuit => 'Quitter Piuma Mail';
+
+  @override
+  String trayTooltip(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail : $count non lus',
+      one: 'Piuma Mail : 1 non lu',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get arrivalWhichAccount => 'Écrire depuis quel compte ?';
+
+  @override
+  String get arrivalWaits =>
+      'Le nouveau message s’ouvre quand vous fermez celui-ci.';
+
+  @override
+  String arrivalFilesLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count fichiers étaient trop volumineux pour être joints.',
+      one: '1 fichier était trop volumineux pour être joint.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emlFromFile => 'Ouvert depuis un fichier';
+
+  @override
+  String get emlImport => 'Importer dans un dossier';
+
+  @override
+  String get emlImportWhichAccount => 'Importer dans quel compte ?';
+
+  @override
+  String emlImportIn(String account) {
+    return 'Importer dans un dossier de $account';
+  }
+
+  @override
+  String emlImported(String folder) {
+    return 'Importé dans $folder';
+  }
+
+  @override
+  String get emlNotImported =>
+      'Impossible de l’importer. Vérifiez la connexion et réessayez.';
+
+  @override
+  String get emlNotMail =>
+      'Ce fichier n’est pas un e-mail que Piuma peut lire.';
+
+  @override
+  String get emlTooLarge =>
+      'Ce fichier d’e-mail est trop volumineux pour être ouvert.';
+
+  @override
+  String get arrivalNetworkFile =>
+      'Les fichiers des dossiers réseau ne s’ouvrent pas dans Piuma. Copiez-les d’abord sur cet appareil.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count images sont désactivées : personne ne voit quand vous ouvrez ce fichier.',
+      one: '1 image est désactivée : personne ne voit quand vous ouvrez ce fichier.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get newMailClosedLead => 'Quand Piuma est fermé';
+
+  @override
   String get star => 'Suivre';
 
   @override
