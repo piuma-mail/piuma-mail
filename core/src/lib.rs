@@ -45,6 +45,7 @@ pub mod sieve;
 pub mod signature;
 pub mod smtp;
 pub mod space;
+pub mod space_log;
 pub mod space_merge;
 pub mod space_sync;
 pub mod space_trust;

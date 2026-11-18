@@ -1,47 +1,47 @@
 //! Which copies of the sync space a device takes, by who signed them.
 //!
-//! Every device has a signing key (Ed25519, made from its own secret) and
-//! signs every copy it writes. A device keeps the devices it trusts, each
-//! with its signing key ([Trust]): the ones listed in the space when it
-//! joined, then every device another trusted device vouched for (the
-//! device that approved it, or the recovery phrase). An unlink is a signed
-//! statement ([Unlink]) carried in the content: from then on, copies the
-//! unlinked device signs are refused, whatever key sealed them and
-//! whatever generation they claim. A copy older than the newest one taken
-//! is refused too, and so is one that jumps too far ahead ([MAX_JUMP]).
+//! A device keeps the membership log ([crate::space_log]) as it trusts it
+//! ([Trust]): from where it began (the space it made, a pairing checked by
+//! the code, or the recovery phrase) through every entry it took since.
+//! Each copy carries the log as its writer knew it; the device reads its
+//! own and every copy's together ([space_log::evaluate]) and takes a copy
+//! only when its signer belongs by that reading. So a removed device, or
+//! the mail provider, can't make a copy count: whatever key sealed it and
+//! whatever generation it claims, its writer is not a member.
 //!
-//! No content key chain is needed: a copy from a trusted signer is taken
-//! with whatever key it was sealed with, so a device that slept through
-//! any number of unlinks follows as long as it can open its own wrap.
+//! A copy older than the newest one taken is refused too, and so is one
+//! that jumps too far ahead ([MAX_JUMP]).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::space::{self, Device, SealedSpace, Space, Unlink, RECOVERY};
+use crate::space::{SealedSpace, Space};
+use crate::space_log::{self, Entry, Eval, State, MAX_ENTRIES};
 
 /// How far ahead of the newest generation a device took a copy may be: a
 /// device writes once per change, so years of use stay well under it; a
 /// forged copy claiming a huge generation to shadow the real ones doesn't.
 pub const MAX_JUMP: u64 = 100_000;
 
-/// Signed unlinks a space keeps, the newest.
-pub const KEPT_UNLINKS: usize = 64;
+/// The highest generation a copy may claim: far beyond any real use, far
+/// below where counting on would overflow.
+pub const MAX_GENERATION: u64 = 1 << 48;
 
 /// What a device trusts, kept in its own database.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Trust {
-    /// Device id → signing key, in hex. Empty for a device listed by the
-    /// old format: its first copy signed with a key it vouches for itself
-    /// sets it.
+    /// The log's first entry, by id. Empty until the device made the
+    /// space or joined it with a code or the phrase: an older build's
+    /// device has none, and trusts no copy until the person confirms it.
     #[serde(default)]
-    pub devices: BTreeMap<String, String>,
-    /// Devices unlinked by a signed statement.
+    pub root: String,
+    /// The log as this device took it.
     #[serde(default)]
-    pub revoked: BTreeSet<String>,
-    /// The recovery phrase's signing key, in hex.
+    pub log: Vec<Entry>,
+    /// Removals taken: they stand whatever comes in later.
     #[serde(default)]
-    pub recovery: String,
+    pub fixed: BTreeSet<String>,
     /// The newest generation taken.
     #[serde(default)]
     pub generation: u64,
@@ -50,235 +50,210 @@ pub struct Trust {
 impl std::fmt::Debug for Trust {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Trust")
-            .field("devices", &self.devices.keys().collect::<Vec<_>>())
-            .field("revoked", &self.revoked)
+            .field("root", &self.root)
+            .field("entries", &self.log.len())
             .field("generation", &self.generation)
             .finish()
     }
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2)
-        .filter_map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok())
-        .collect()
-}
-
 impl Trust {
-    /// Trust as a device that made the space, or took it in with a code or
-    /// the phrase, starts: the devices `space` lists.
-    pub fn from_space(space: &Space) -> Trust {
+    /// Trust that begins with `log`, whose first entry is `root`, read
+    /// with nothing fixed: a space this device made, or the log a pairing
+    /// handed over.
+    pub fn from_log(log: Vec<Entry>, root: &str, generation: u64) -> Trust {
+        let e = space_log::evaluate(log, root, &BTreeSet::new());
+        Trust::adopt(root, &e, generation)
+    }
+
+    fn adopt(root: &str, e: &Eval, generation: u64) -> Trust {
         Trust {
-            devices: space
-                .content
-                .devices
-                .iter()
-                .map(|d| (d.id.clone(), hex(&d.sign)))
-                .collect(),
-            revoked: BTreeSet::new(),
-            recovery: hex(&space.content.recovery_sign()),
-            generation: space.content.generation,
+            root: root.to_owned(),
+            log: e.kept.clone(),
+            fixed: e.removals(),
+            generation,
         }
     }
 
-    /// This device trusts itself, with its own key.
-    pub fn me(&mut self, device: &Device) {
-        self.revoked.remove(&device.id);
-        self.devices.insert(device.id.clone(), hex(&device.sign));
+    /// Whether this device ever began trusting a space.
+    pub fn verified(&self) -> bool {
+        !self.root.is_empty()
     }
 
-    fn key(&self, id: &str) -> Option<Vec<u8>> {
-        self.devices.get(id).map(|k| unhex(k))
+    pub fn evaluate(&self) -> Eval {
+        space_log::evaluate(self.log.iter().cloned(), &self.root, &self.fixed)
     }
+
+    pub fn state(&self) -> State {
+        self.evaluate().state
+    }
+
+    /// Takes in an entry this device made (or a pairing handed over).
+    pub fn push(&mut self, entry: Entry) -> State {
+        let mut log = self.log.clone();
+        log.push(entry);
+        let e = space_log::evaluate(log, &self.root, &self.fixed);
+        let generation = self.generation;
+        *self = Trust::adopt(&self.root, &e, generation);
+        e.state
+    }
+}
+
+/// How a device starts reading the copies.
+pub enum Anchor<'a> {
+    /// A linked device: from what it trusts already.
+    Linked,
+    /// Joining with a code: from the log the approving device handed over,
+    /// with its entry adding this device.
+    Paired { log: &'a [Entry], entry: &'a Entry },
+    /// Joining with the recovery phrase, by its signing key: from the log
+    /// of the copies it opens, whose phrase in force must be this one.
+    Phrase(&'a [u8]),
 }
 
 /// What judging the stored copies came to.
 pub struct Verdict {
     /// Indexes of the copies taken.
     pub accepted: Vec<usize>,
-    /// Copies left out: older, from an unlinked device, unsigned or
-    /// signed by a device not trusted.
+    /// Copies left out: older, or not signed by a member.
     pub refused: u32,
+    /// Copies by a device that left, carrying the entry that says so:
+    /// their entries count, their rows don't, and they are no warning.
+    pub left: u32,
     /// Trust after taking them.
     pub trust: Trust,
-    /// Every unlink signed by a trusted device, to carry on.
-    pub unlinked: Vec<Unlink>,
-    /// The content key must change before writing: copies were sealed
-    /// with different keys (two unlinks at once), or for a device now
-    /// unlinked.
+    /// Who belongs after taking them.
+    pub state: State,
+    /// The content key and the phrase must change before writing: a
+    /// removed device may know them, copies were sealed with different
+    /// keys, or the phrase in force isn't settled.
     pub rotate: bool,
+    /// Devices whose removals contradict each other: nothing is taken.
+    pub conflict: BTreeSet<String>,
 }
 
-/// The devices of `space` that `trust` takes, with their keys: those it
-/// knew, and those a trusted device (or the recovery phrase) vouched for.
-fn vouched(trust: &Trust, space: &Space) -> Trust {
-    let mut t = trust.clone();
-    let recovery = unhex(&trust.recovery);
-    loop {
-        let mut grew = false;
-        for d in &space.content.devices {
-            if t.revoked.contains(&d.id) || d.sign.is_empty() {
-                continue;
-            }
-            let known = t.key(&d.id);
-            if known.as_ref().is_some_and(|k| !k.is_empty()) {
-                continue;
-            }
-            let message = space::vouch_message(d);
-            let ok = if d.by == RECOVERY {
-                !recovery.is_empty() && space::verify(&recovery, &message, &d.vouch)
-            } else if d.by == d.id {
-                // Listed by the old format with no key: it claims its own.
-                known.is_some() && space::verify(&d.sign, &message, &d.vouch)
-            } else {
-                t.key(&d.by)
-                    .filter(|k| !k.is_empty() && !t.revoked.contains(&d.by))
-                    .is_some_and(|k| space::verify(&k, &message, &d.vouch))
-            };
-            if ok {
-                t.devices.insert(d.id.clone(), hex(&d.sign));
-                grew = true;
-            }
-        }
-        if !grew {
-            return t;
+impl Verdict {
+    fn none(trust: &Trust, refused: u32) -> Verdict {
+        Verdict {
+            accepted: Vec::new(),
+            refused,
+            left: 0,
+            trust: trust.clone(),
+            state: State::default(),
+            rotate: false,
+            conflict: BTreeSet::new(),
         }
     }
 }
 
 /// Judges the copies a device opened (`copies`, each sealed and opened)
-/// against what it trusts. With nothing trusted yet (a device joining),
-/// the newest copy whose signer it lists is the anchor.
-pub fn judge(trust: &Trust, copies: &[(&SealedSpace, &Space)]) -> Verdict {
-    let mut base = trust.clone();
-    if base.devices.is_empty() {
-        let anchor = copies
+/// against what it trusts.
+pub fn judge(trust: &Trust, anchor: Anchor<'_>, copies: &[(&SealedSpace, &Space)]) -> Verdict {
+    let sane = |space: &Space| {
+        space.content.log.len() <= MAX_ENTRIES && space.content.generation <= MAX_GENERATION
+    };
+    let carried = || {
+        copies
             .iter()
-            .filter(|(sealed, space)| {
-                space
-                    .content
-                    .devices
-                    .iter()
-                    .find(|d| d.id == sealed.signer)
-                    .is_some_and(|d| sealed.signed_by(&d.sign))
-            })
-            .max_by(|a, b| {
-                (a.1.content.generation, &a.0.signer).cmp(&(b.1.content.generation, &b.0.signer))
-            });
+            .filter(|(_, s)| sane(s))
+            .flat_map(|(_, s)| s.content.log.iter().cloned())
+    };
+    let (root, fixed, mut entries, floor): (String, BTreeSet<String>, Vec<Entry>, u64) =
         match anchor {
-            Some((_, space)) => {
-                base = Trust {
-                    generation: 0,
-                    ..Trust::from_space(space)
-                }
+            Anchor::Linked => (
+                trust.root.clone(),
+                trust.fixed.clone(),
+                trust.log.clone(),
+                trust.generation,
+            ),
+            Anchor::Paired { log, entry } => {
+                let Some(root) = space_log::roots(log).into_iter().next() else {
+                    return Verdict::none(trust, copies.len() as u32);
+                };
+                let theirs = space_log::evaluate(log.iter().cloned(), &root, &BTreeSet::new());
+                let mut entries = log.to_vec();
+                entries.push(entry.clone());
+                (root, theirs.removals(), entries, 0)
             }
-            None => {
-                return Verdict {
-                    accepted: Vec::new(),
-                    refused: copies.len() as u32,
-                    trust: trust.clone(),
-                    unlinked: Vec::new(),
-                    rotate: false,
-                }
+            Anchor::Phrase(public) => {
+                let all: Vec<Entry> = carried().collect();
+                let root = space_log::roots(&all).into_iter().find(|r| {
+                    let e = space_log::evaluate(all.iter().cloned(), r, &BTreeSet::new());
+                    e.state.recovery.as_deref() == Some(public)
+                });
+                let Some(root) = root else {
+                    return Verdict::none(trust, copies.len() as u32);
+                };
+                (root, BTreeSet::new(), Vec::new(), 0)
             }
+        };
+    entries.extend(carried());
+    let eval = space_log::evaluate(entries, &root, &fixed);
+    if !eval.conflict.is_empty() {
+        return Verdict {
+            conflict: eval.conflict.clone(),
+            ..Verdict::none(trust, 0)
+        };
+    }
+    if let Anchor::Paired { entry, .. } = anchor {
+        if !eval.accepted.contains(&entry.id()) {
+            return Verdict::none(trust, copies.len() as u32);
         }
     }
-    // Who signed each copy, as far as this device can tell.
-    let judged: Vec<(Trust, bool)> = copies
-        .iter()
-        .map(|(sealed, space)| {
-            let t = vouched(&base, space);
-            let ok = t
-                .key(&sealed.signer)
-                .is_some_and(|k| !k.is_empty() && sealed.signed_by(&k));
-            (t, ok)
-        })
-        .collect();
-    // The unlinks signed by a trusted device, oldest first: a device
-    // unlinked by an earlier one can't unlink anyone after.
-    let mut statements: Vec<Unlink> = Vec::new();
-    for ((_, space), (t, ok)) in copies.iter().zip(&judged) {
-        if !ok {
-            continue;
-        }
-        for u in &space.content.unlinked {
-            let valid = t
-                .key(&u.by)
-                .is_some_and(|k| !k.is_empty() && u.signed_by(&k));
-            if valid && !statements.contains(u) {
-                statements.push(u.clone());
-            }
-        }
-    }
-    statements
-        .sort_by(|a, b| (a.generation, &a.by, &a.device).cmp(&(b.generation, &b.by, &b.device)));
-    let mut revoked = base.revoked.clone();
-    let mut kept = Vec::new();
-    for u in statements {
-        if !revoked.contains(&u.by) || u.by == u.device {
-            revoked.insert(u.device.clone());
-            kept.push(u);
-        }
-    }
-    let excess = kept.len().saturating_sub(KEPT_UNLINKS);
-    kept.drain(..excess);
-    let floor = trust.generation;
+    let members = &eval.state.members;
     let mut accepted = Vec::new();
     let mut refused = 0;
-    for (i, ((sealed, space), (_, ok))) in copies.iter().zip(&judged).enumerate() {
+    let mut left = 0;
+    for (i, (sealed, space)) in copies.iter().enumerate() {
         let g = space.content.generation;
-        let in_range = g >= floor && (floor == 0 || g <= floor.saturating_add(MAX_JUMP));
-        if *ok && !revoked.contains(&sealed.signer) && in_range {
+        let in_range = sane(space) && g >= floor && (floor == 0 || g <= floor + MAX_JUMP);
+        let signed = members
+            .get(&sealed.signer)
+            .is_some_and(|m| sealed.signed_by(&m.sign));
+        if signed && in_range {
             accepted.push(i);
+        } else if leaving(&eval, sealed) {
+            left += 1;
         } else {
             refused += 1;
         }
     }
-    let mut next = Trust {
-        revoked: revoked.clone(),
-        ..trust.clone()
-    };
-    if next.devices.is_empty() {
-        next.devices = base.devices.clone();
-        next.recovery = base.recovery.clone();
-    }
-    for &i in &accepted {
-        for (id, key) in &judged[i].0.devices {
-            if !key.is_empty() || !next.devices.contains_key(id) {
-                next.devices.insert(id.clone(), key.clone());
-            }
-        }
-    }
-    next.devices.retain(|id, _| !revoked.contains(id));
-    if let Some(&top) = accepted.iter().max_by(|a, b| {
-        let (sa, ca) = (copies[**a].0, copies[**a].1);
-        let (sb, cb) = (copies[**b].0, copies[**b].1);
+    let top = accepted.iter().copied().max_by(|&a, &b| {
+        let (sa, ca) = copies[a];
+        let (sb, cb) = copies[b];
         (ca.content.generation, &sa.signer).cmp(&(cb.content.generation, &sb.signer))
-    }) {
-        next.generation = next.generation.max(copies[top].1.content.generation);
-        next.recovery = hex(&copies[top].1.content.recovery_sign());
-    }
+    });
+    let generation = top.map_or(trust.generation, |t| {
+        trust.generation.max(copies[t].1.content.generation)
+    });
     let keys: BTreeSet<[u8; 32]> = accepted
         .iter()
         .map(|&i| copies[i].1.content_key().0)
         .collect();
     let rotate = keys.len() > 1
-        || accepted.iter().any(|&i| {
-            copies[i]
-                .1
-                .content
-                .devices
-                .iter()
-                .any(|d| revoked.contains(&d.id))
-        });
+        || eval.state.recovery.is_none()
+        || top.is_some_and(|t| Some(copies[t].1.content.recovery_sign()) != eval.state.recovery)
+        || accepted
+            .iter()
+            .any(|&i| copies[i].0.readers().any(|r| !members.contains_key(r)));
     Verdict {
         accepted,
         refused,
-        trust: next,
-        unlinked: kept,
+        left,
+        trust: Trust::adopt(&root, &eval, generation),
+        state: eval.state,
         rotate,
+        conflict: BTreeSet::new(),
     }
+}
+
+/// A copy by a device that has since left by itself (turning sync off):
+/// what it wrote then was taken already, and this one is no warning.
+fn leaving(eval: &Eval, sealed: &SealedSpace) -> bool {
+    eval.state.removed.contains(&sealed.signer)
+        && eval.kept.iter().any(|e| {
+            e.by == sealed.signer
+                && matches!(&e.op, space_log::Op::Remove { device } if *device == e.by)
+                && eval.accepted.contains(&e.id())
+        })
 }

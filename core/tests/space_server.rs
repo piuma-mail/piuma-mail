@@ -40,8 +40,6 @@ fn me(name: &str, kind: &str) -> Me {
             last_seen: 0,
             public: space::public_key(&secret),
             sign: space::sign_public(&secret),
-            by: String::new(),
-            vouch: Vec::new(),
         },
         secret,
     }
@@ -134,12 +132,13 @@ async fn a_phone_pairs_with_a_code_and_is_unlinked() {
     // What the provider can read names no device.
     let about = space_sync::about(&mut phone_f).await.unwrap().unwrap();
     assert!(about.devices.iter().all(|d| d.name.is_empty()));
+    // It trusts nothing it finds until it pairs (or types the phrase).
     assert_eq!(
         space_sync::open(&mut phone_f, &phone_store, &phone)
             .await
             .unwrap_err()
             .to_string(),
-        "this device isn't linked to the space"
+        "this device must be confirmed with the recovery phrase or a code"
     );
 
     // Show code on the phone; the Mac sees the request and types it.
@@ -296,18 +295,24 @@ async fn a_phone_pairs_with_a_code_and_is_unlinked() {
     .is_ok());
     assert_eq!(again.lock().unwrap().accounts().unwrap().len(), 1);
 
-    // The phone turns sync off: the Mac keeps the space and the phrase.
+    // The phone turns sync off: the Mac keeps the space, and on its next
+    // round changes the key and the phrase the phone knew.
     assert!(!space_sync::leave(&mut phone_f, &again, &phone)
         .await
         .unwrap());
     assert!(space_sync::open(&mut phone_f, &again, &phone)
         .await
         .is_err());
-    let left = space_sync::open(&mut mac_f, &mac_store, &mac)
+    let Round::Done(r) = space_sync::round(&mut mac_f, &mac_store, pw(), &mac, Some(home))
         .await
-        .unwrap();
-    assert!(!left.is_linked(&phone.device.id));
-    assert_eq!(left.recovery().unwrap().phrase(), gone.recovery.phrase());
+        .unwrap()
+    else {
+        panic!("expected a round")
+    };
+    assert_eq!(r.refused, 0);
+    assert!(r.recovery_changed);
+    assert!(!r.space.is_linked(&phone.device.id));
+    assert_ne!(r.space.recovery().unwrap().phrase(), gone.recovery.phrase());
 
     // The hidden folder isn't one of the account's own folders.
     drop(mac_f);

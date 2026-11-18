@@ -32,6 +32,10 @@ pub enum StoreError {
     /// lose what that version keeps.
     #[error("this data was written by a newer version of Piuma (schema {found}, this one knows {known}); update Piuma to open it")]
     TooNew { found: usize, known: usize },
+    /// What this device keeps of the sync space can't be read: never taken
+    /// for an empty state, which would trust whatever comes next.
+    #[error("this device's sync state is damaged: {0}")]
+    SpaceState(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;

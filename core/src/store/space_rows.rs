@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 
-use super::{from_json, refile_inbox, to_json, Result, Store};
+use super::{from_json, refile_inbox, to_json, Result, Store, StoreError};
 use crate::space_merge::{self, Key, Local, Row, Tables, SECRETS, SYNCED};
 use crate::AccountId;
 
@@ -83,13 +83,28 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(saved
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default())
+        // Nothing saved is a device that never synced (or one from before
+        // per-row sync); something saved that doesn't read is damage, and an
+        // error: taken for an empty state, it would trust whatever comes.
+        match saved {
+            None => Ok(Local::default()),
+            Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::SpaceState(e.to_string())),
+        }
     }
 
     pub fn set_space_local(&self, local: &Local) -> Result<()> {
         let json = serde_json::to_string(local).expect("serializes");
+        self.conn.execute(
+            "INSERT OR REPLACE INTO space_state (key, value) VALUES (?1, ?2)",
+            params![STATE, json],
+        )?;
+        Ok(())
+    }
+
+    /// Puts `json` in place of what this device keeps of the space, as
+    /// damage would.
+    #[cfg(test)]
+    pub(crate) fn set_space_state_raw(&self, json: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO space_state (key, value) VALUES (?1, ?2)",
             params![STATE, json],
@@ -484,6 +499,7 @@ impl Store {
             }
             if table == "account" {
                 local.removing.remove(gid);
+                local.confirmed.remove(gid);
                 local.held.remove(gid);
             }
             for rows in local.held.values_mut() {
@@ -692,6 +708,7 @@ impl Store {
                 if spec.table == "account" {
                     // Written again since its removal: it stays.
                     local.removing.remove(gid);
+                    local.confirmed.remove(gid);
                     local.held.remove(gid);
                 }
                 let mut values: Vec<(String, rusqlite::types::Value)> = Vec::new();
@@ -850,6 +867,34 @@ impl Store {
         if settings {
             // Newsletters may have been turned on or off on another device.
             refile_inbox(&tx)?;
+        }
+        // An account on its way out is looked at again right before it goes:
+        // mail queued, a draft saved or a change made since the removal came
+        // in (or since a round that couldn't finish it) keeps it here, waiting
+        // for the person, like a removal that found them at once.
+        for gid in local.removing.clone() {
+            if local.confirmed.contains(&gid) {
+                continue;
+            }
+            let Some(&rowid) = index.get(&Local::key("account", &gid)) else {
+                continue;
+            };
+            let email: String =
+                tx.query_row("SELECT email FROM account WHERE id = ?1", [rowid], |r| {
+                    r.get(0)
+                })?;
+            let mut busy = 0u32;
+            for t in ["outbox", "draft_waiting", "pending_change"] {
+                busy += tx.query_row(
+                    &format!("SELECT COUNT(*) FROM {t} WHERE account = ?1"),
+                    [rowid],
+                    |r| r.get::<_, u32>(0),
+                )?;
+            }
+            if busy > 0 || home.is_some_and(|h| h.eq_ignore_ascii_case(&email)) {
+                local.removing.remove(&gid);
+                local.held.entry(gid).or_default();
+            }
         }
         // What this device now knows of the space goes with what came in.
         let mut kept = local.clone();

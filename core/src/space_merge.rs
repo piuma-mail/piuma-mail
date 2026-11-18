@@ -601,8 +601,8 @@ pub struct Local {
     pub columns: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub clock: Stamp,
-    /// The devices this device trusts and the newest generation it took
-    /// ([crate::space_trust]).
+    /// The membership log as this device trusts it and the newest
+    /// generation it took ([crate::space_trust]).
     #[serde(default)]
     pub trust: crate::space_trust::Trust,
     /// The newest copy this device took or wrote, as stored (sealed and
@@ -625,6 +625,10 @@ pub struct Local {
     /// Accounts another device removed, to remove here.
     #[serde(default)]
     pub removing: BTreeSet<String>,
+    /// Of those, the ones the person said to remove (Remove here): they go
+    /// whatever still waits.
+    #[serde(default)]
+    pub confirmed: BTreeSet<String>,
     /// Changes made here that the space doesn't have yet.
     #[serde(default)]
     pub unpushed: bool,
@@ -639,6 +643,18 @@ pub struct Local {
     /// doesn't write.
     #[serde(default)]
     pub outdated: bool,
+    /// Devices (by id) that removed each other at the last round, with
+    /// nothing to tell which came first: this device stopped syncing until
+    /// it is linked again.
+    #[serde(default)]
+    pub conflict: Vec<String>,
+    /// After this device unlinked another: the mailboxes whose passwords
+    /// the unlinked device knew, until the person says they changed them.
+    #[serde(default)]
+    pub exposed: Vec<String>,
+    /// The unlinked device's name, for the same notice.
+    #[serde(default)]
+    pub exposed_device: String,
     /// Rows to put in again for columns an update added ("table/gid"),
     /// between a look and the merge.
     #[serde(skip)]
