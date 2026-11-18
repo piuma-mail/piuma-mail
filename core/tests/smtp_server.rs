@@ -808,13 +808,11 @@ async fn the_size_goes_with_mail_from_and_a_message_too_big_is_never_uploaded() 
     .await;
     let message = ready(&draft()).unwrap();
     send(&smtp(port, "test"), &message).await.unwrap();
-    let got = inbox.lock().unwrap();
+    let mail = inbox.lock().unwrap()[0].mail.clone();
     assert!(
-        got[0].mail.ends_with(&format!("SIZE={}", message.raw.len())),
-        "{}",
-        got[0].mail
+        mail.ends_with(&format!("SIZE={}", message.raw.len())),
+        "{mail}"
     );
-    drop(got);
 
     // A server that takes 100 bytes at most: refused here, before upload.
     let (port, inbox) = smtp_sink_with(Sink {
