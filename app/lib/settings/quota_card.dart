@@ -64,14 +64,12 @@ class _QuotaCardState extends State<QuotaCard> {
               children: [
                 Row(
                   children: [
-                    Expanded(
-                      child: Text(
-                        l.quotaLabel,
-                        style: PiumaType.body.copyWith(color: c.fg),
-                      ),
+                    Text(
+                      l.quotaLabel,
+                      style: PiumaType.body.copyWith(color: c.fg),
                     ),
                     const SizedBox(width: 12),
-                    Flexible(
+                    Expanded(
                       child: Text(
                         used,
                         textAlign: TextAlign.end,

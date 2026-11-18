@@ -48,22 +48,26 @@ Future<bool> askToConfirm(
         const SizedBox(height: PiumaSpace.s8),
         Text(note, style: PiumaType.body.copyWith(color: c.muted)),
         const SizedBox(height: 20),
-        Wrap(
-          alignment: WrapAlignment.end,
-          spacing: PiumaSpace.s8,
-          runSpacing: PiumaSpace.s8,
-          children: [
-            PiumaButton(
-              label: l.cancel,
-              kind: PiumaButtonKind.tertiary,
-              onPressed: () => Navigator.of(context).pop(false),
-            ),
-            PiumaButton(
-              label: confirm,
-              kind: PiumaButtonKind.danger,
-              onPressed: () => Navigator.of(context).pop(true),
-            ),
-          ],
+        // Full width, so the buttons sit at the end.
+        SizedBox(
+          width: double.infinity,
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: PiumaSpace.s8,
+            runSpacing: PiumaSpace.s8,
+            children: [
+              PiumaButton(
+                label: l.cancel,
+                kind: PiumaButtonKind.tertiary,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+              PiumaButton(
+                label: confirm,
+                kind: PiumaButtonKind.danger,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
         ),
       ],
     ),
@@ -505,14 +509,12 @@ class _SpecialFoldersState extends State<SpecialFolders> {
                     ),
                     child: Row(
                       children: [
-                        Expanded(
-                          child: Text(
-                            _roleName(l, role.role),
-                            style: PiumaType.body.copyWith(color: c.fg),
-                          ),
+                        Text(
+                          _roleName(l, role.role),
+                          style: PiumaType.body.copyWith(color: c.fg),
                         ),
                         const SizedBox(width: 12),
-                        Flexible(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
