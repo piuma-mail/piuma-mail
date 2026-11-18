@@ -6,6 +6,7 @@ pub mod feedback;
 pub mod groups;
 pub mod labels;
 pub mod preview;
+pub mod search;
 pub mod sync;
 pub mod templates;
 pub mod updates;

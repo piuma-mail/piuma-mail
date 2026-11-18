@@ -31,7 +31,15 @@ class SearchStartView extends StatelessWidget {
     required this.onRecent,
     required this.onForget,
     required this.onClear,
+    this.saved = const [],
+    this.onSaved,
+    this.onEditSaved,
   });
+
+  /// Searches kept under a name, above the recent ones.
+  final List<SavedSearch> saved;
+  final ValueChanged<SavedSearch>? onSaved;
+  final ValueChanged<SavedSearch>? onEditSaved;
 
   final SearchStart start;
   final List<MailAccount> accounts;
@@ -100,6 +108,18 @@ class SearchStartView extends StatelessWidget {
               ],
             ),
           ),
+        ],
+        if (saved.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 2),
+            child: title(l.savedSearches),
+          ),
+          for (final s in saved)
+            _Saved(
+              search: s,
+              onTap: () => onSaved?.call(s),
+              onEdit: () => onEditSaved?.call(s),
+            ),
         ],
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 22, 8, 2),
@@ -413,6 +433,86 @@ class _Recent extends StatelessWidget {
               dimension: 44,
               child: Center(
                 child: PiumaIconView(PiumaIcon.close, size: 15, color: c.muted),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A saved search: the search icon, its name and query, and a button that
+/// renames or deletes it.
+class _Saved extends StatelessWidget {
+  const _Saved({
+    required this.search,
+    required this.onTap,
+    required this.onEdit,
+  });
+
+  final SavedSearch search;
+  final VoidCallback onTap;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    return Container(
+      padding: const EdgeInsets.only(left: 20, right: 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.line)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: PiumaPressable(
+              onTap: onTap,
+              semanticLabel: '${search.name}, ${search.query}',
+              child: ExcludeSemantics(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 52),
+                  child: Row(
+                    children: [
+                      PiumaIconView(PiumaIcon.search, size: 17, color: c.muted),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              search.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: PiumaType.body.copyWith(color: c.fg),
+                            ),
+                            Text(
+                              search.query,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: PiumaType.mono.copyWith(
+                                fontSize: 12,
+                                color: c.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          PiumaPressable(
+            onTap: onEdit,
+            semanticLabel: l.savedSearchEditNamed(search.name),
+            child: SizedBox.square(
+              dimension: 44,
+              child: Center(
+                child: PiumaIconView(PiumaIcon.more, size: 16, color: c.muted),
               ),
             ),
           ),

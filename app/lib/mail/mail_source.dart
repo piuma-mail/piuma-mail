@@ -1567,6 +1567,46 @@ class SearchResults {
   final Duration elapsed;
 }
 
+/// What a search on the servers found (`searchServer`).
+class ServerResults {
+  const ServerResults({
+    this.hits = const [],
+    this.asked = true,
+    this.failed = 0,
+    this.partial = false,
+  });
+
+  static const empty = ServerResults();
+
+  /// Newest first, all on this device now; some may be among the hits
+  /// the search here found.
+  final List<SearchHit> hits;
+
+  /// Whether any server was asked: not for a search only this device can
+  /// answer (`in:vault`), or one of filters only.
+  final bool asked;
+
+  /// Accounts whose server couldn't be reached or refused.
+  final int failed;
+
+  /// Some accounts could be searched only in part.
+  final bool partial;
+}
+
+/// A search kept under a name, in the sidebar.
+class SavedSearch {
+  const SavedSearch({
+    required this.id,
+    required this.name,
+    required this.query,
+  });
+  final int id;
+  final String name;
+
+  /// What was typed, operators included.
+  final String query;
+}
+
 /// One notification: a sender's newest message, and how many came.
 class MailNotice {
   const MailNotice({
@@ -2544,9 +2584,30 @@ abstract class MailSource {
   Future<Uint8List?> attachmentData(AttachedFile file);
 
   /// Searches every message on this device. [query] is what the person
-  /// typed, operators included (`from:`, `account:`, `is:unread`,
-  /// `after:`, `before:`).
+  /// typed, operators included (see `core/src/search.rs` for all of them:
+  /// `from:`, `to:`, `subject:`, `in:`, `is:`, `has:`, `-word`, `OR`…).
   Future<SearchResults> search(String query, {int limit = 50});
+
+  /// Runs [query] on the servers and brings what they find to this device
+  /// (headers; a body comes when opened). A new one, or
+  /// [cancelServerSearch], stops the one running, which then throws.
+  Future<ServerResults> searchServer(String query, {int limit = 50});
+
+  /// Stops the server search running, if one is.
+  void cancelServerSearch();
+
+  /// The saved searches, in order.
+  Future<List<SavedSearch>> savedSearches();
+
+  /// Keeps [query] under [name]; one already under that name gets the new
+  /// query. Returns its id.
+  Future<int> saveSearch(String name, String query);
+
+  /// Renames a saved search; false when another one has that name.
+  Future<bool> renameSavedSearch(int id, String name);
+
+  /// Forgets a saved search.
+  Future<void> deleteSavedSearch(int id);
 
   /// Frequent contacts, recent searches and how much is indexed, for an
   /// empty search.

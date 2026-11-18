@@ -21,6 +21,7 @@ import '../feedback/report_context.dart';
 import '../feedback/report_sheet.dart';
 import '../feedback/shake.dart';
 import '../search/command_palette.dart';
+import '../search/saved_searches.dart';
 import '../search/search_panel.dart';
 import '../settings/pair_ask.dart';
 import '../settings/settings_screen.dart';
@@ -96,6 +97,9 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// Every label, for the pills, the sidebar and the picker.
   List<MailLabel> _labels = const [];
+
+  /// Saved searches, for the sidebar.
+  List<SavedSearch> _saved = const [];
 
   /// The label whose mail [MailFolder.label] shows, by keyword.
   String? _labelKeyword;
@@ -1897,9 +1901,11 @@ class _InboxScreenState extends State<InboxScreen> {
     final groups = await widget.source.groups();
     final groupUnread = await widget.source.groupUnread();
     final labels = await widget.source.labels();
+    final saved = await widget.source.savedSearches();
     if (mounted) {
       setState(() {
         _labels = labels;
+        _saved = saved;
         // A label that went shows the inbox again.
         if (_folder == MailFolder.label &&
             !labels.any((l) => l.keyword == _labelKeyword)) {
@@ -2576,6 +2582,13 @@ class _InboxScreenState extends State<InboxScreen> {
                 onLabel: _showLabel,
                 onNewLabel: () =>
                     showLabelEditor(context, source: widget.source),
+                savedSearches: _saved,
+                onSavedSearch: (s) => _openSearch(s.query),
+                onEditSavedSearch: (s) => showSavedSearchEditor(
+                  context,
+                  source: widget.source,
+                  saved: s,
+                ),
                 newsletters: _letters.$1 > 0 ? _letters.$2 : null,
                 vault: _hasVault
                     ? VaultView(

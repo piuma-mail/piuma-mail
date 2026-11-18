@@ -7,6 +7,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../search/saved_searches.dart';
 import '../updates/updates.dart';
 import '../updates/whats_new.dart';
 import '../widgets/dialog.dart';
@@ -49,7 +50,16 @@ class Sidebar extends StatefulWidget {
     this.label,
     this.onLabel,
     this.onNewLabel,
+    this.savedSearches = const [],
+    this.onSavedSearch,
+    this.onEditSavedSearch,
   });
+
+  /// Searches kept under a name, under the labels; the section shows once
+  /// there is one.
+  final List<SavedSearch> savedSearches;
+  final ValueChanged<SavedSearch>? onSavedSearch;
+  final ValueChanged<SavedSearch>? onEditSavedSearch;
 
   /// The labels, under the groups (`LabelsToApprove`); the section shows
   /// once there is one.
@@ -286,6 +296,15 @@ class _SidebarState extends State<Sidebar> {
                       current: widget.label,
                       onLabel: widget.onLabel,
                       onNewLabel: widget.onNewLabel,
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                  if (widget.savedSearches.isNotEmpty &&
+                      widget.onSavedSearch != null) ...[
+                    SidebarSavedSearches(
+                      searches: widget.savedSearches,
+                      onOpen: widget.onSavedSearch!,
+                      onEdit: (s) => widget.onEditSavedSearch?.call(s),
                     ),
                     const SizedBox(height: 20),
                   ],
