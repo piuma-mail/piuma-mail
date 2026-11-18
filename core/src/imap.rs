@@ -251,6 +251,18 @@ pub(crate) const FILES_LOOK: u32 = 2000;
 const FILES_BATCH: usize = 200;
 /// Without CONDSTORE, the newest messages of a folder whose flags are
 /// read again at every round...
+///
+/// The compromise, on servers without CONDSTORE only: a flag changed
+/// elsewhere (read, starred, answered on another device or in webmail)
+/// shows here at the next round for the newest 500 messages of a folder,
+/// but for older ones only when the sweep below reaches them, after up to
+/// `messages / FLAGS_SWEEP` rounds (a folder of 100,000 messages: about 50
+/// rounds, a few hours of rounds every few minutes). Reading every
+/// message's flags at every round instead costs a FETCH of the whole
+/// folder each time, which on big folders is slow on the server and the
+/// network and wears phones' batteries. Changes made here go to the server
+/// at once either way, and servers with CONDSTORE (most) get every change
+/// at the next round.
 const FLAGS_NEWEST: u32 = 500;
 /// ...and how many older ones each round adds, going down the folder and
 /// starting again at the top: a big folder is looked at whole in a few

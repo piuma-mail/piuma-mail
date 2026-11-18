@@ -6,7 +6,7 @@ use piuma_core::remote::Remote;
 use piuma_core::AccountId;
 
 use crate::api::engine::{
-    engine, in_conversation, inbox_row, reader, signed_in, store, with_files, EngineError,
+    bulk_reader, engine, in_conversation, inbox_row, signed_in, store, with_files, EngineError,
     InboxRow, MessageRef,
 };
 
@@ -111,7 +111,7 @@ pub fn labelled_page(
     offset: u32,
     limit: u32,
 ) -> Result<Vec<InboxRow>, EngineError> {
-    let store = reader()?;
+    let store = bulk_reader()?;
     let rows = store
         .labelled_page(&keyword, offset, limit)?
         .into_iter()
@@ -125,7 +125,7 @@ pub fn labelled_page(
 
 /// How many emails carry a label, as [`labelled_page`] counts them.
 pub fn labelled_count(keyword: String) -> Result<u32, EngineError> {
-    Ok(reader()?.labelled_count(&keyword)?)
+    Ok(bulk_reader()?.labelled_count(&keyword)?)
 }
 
 /// Whether the account's server keeps no keywords, so its labels stay on

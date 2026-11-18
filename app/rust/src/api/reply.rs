@@ -8,7 +8,7 @@ use piuma_core::outbox::Outgoing;
 use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
-use super::engine::{engine, now_secs, reader, send_outbox_at, store, EngineError, ErrorKind};
+use super::engine::{bulk_reader, engine, now_secs, send_outbox_at, store, EngineError, ErrorKind};
 
 /// One person on a line of a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +112,7 @@ pub async fn message_envelope(
     uid: u32,
 ) -> Result<MessageEnvelope, EngineError> {
     let id = AccountId(account_id);
-    let kept = reader()?.envelope(id, &mailbox, uid)?;
+    let kept = bulk_reader()?.envelope(id, &mailbox, uid)?;
     let envelope = match kept {
         Some(e) => e,
         None => {
@@ -123,7 +123,7 @@ pub async fn message_envelope(
             read
         }
     };
-    let store = reader()?;
+    let store = bulk_reader()?;
     describe(&store, id, &mailbox, uid, &envelope)
 }
 

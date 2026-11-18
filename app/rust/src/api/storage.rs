@@ -4,13 +4,19 @@
 
 use piuma_core::AccountId;
 
-use super::engine::{engine, kick_maintenance, now_secs, reader, store, EngineError, ErrorKind};
+use super::engine::{
+    bulk_reader, engine, kick_maintenance, now_secs, store, EngineError, ErrorKind,
+};
 
 /// What the Storage page shows.
 #[derive(Debug, Clone)]
 pub struct StorageInfo {
-    /// Bytes the database takes on disk.
+    /// Bytes the database takes on disk, with the copy kept from before
+    /// the last update.
     pub total_bytes: i64,
+    /// Of which the copy kept from before the last update, let go of at
+    /// the next start (or after a week).
+    pub backup_bytes: i64,
     /// Of which free, given back to the system as the app goes.
     pub free_bytes: i64,
     pub accounts: Vec<AccountStorageInfo>,
@@ -31,10 +37,11 @@ pub struct AccountStorageInfo {
 /// How much room the mail takes. Reads every cached body's length, so it
 /// runs off the thread that draws.
 pub fn storage_info() -> Result<StorageInfo, EngineError> {
-    let store = reader()?;
+    let store = bulk_reader()?;
     let s = store.storage()?;
     Ok(StorageInfo {
-        total_bytes: s.file as i64,
+        total_bytes: (s.file + s.backup) as i64,
+        backup_bytes: s.backup as i64,
         free_bytes: s.free as i64,
         accounts: s
             .accounts
@@ -60,11 +67,19 @@ pub fn set_keep_days(days: Option<u32>) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// Pages given back per short write while clearing cached mail: about
+/// 4 MB with SQLite's 4 KB pages.
+const GIVE_BACK_PAGES: u32 = 1024;
+
 /// "Clear cached mail" for one account: lets go of every whole message
 /// and picture kept for it (the list rows and drafts stay; opening a
-/// message fetches it again), then gives the room back to the system.
-/// Takes a while on a big mailbox; each step is a short write, but the
-/// last one, the database written anew, holds it until done.
+/// message fetches it again, and search still finds its words), then gives
+/// the room back to the system, a few megabytes per short write so a sync
+/// gets the database in between. The first time only, the database is
+/// written anew once to make that possible: that step holds it until
+/// done, and is refused ([ErrorKind::DiskFull]) when the disk hasn't
+/// about twice the database's size free (the cache is cleared all the
+/// same; Piuma reuses the room).
 pub async fn clear_cached_mail(account_id: i64) -> Result<StorageInfo, EngineError> {
     store()?.queue_clear_cached(AccountId(account_id))?;
     engine()?
@@ -72,7 +87,11 @@ pub async fn clear_cached_mail(account_id: i64) -> Result<StorageInfo, EngineErr
         .spawn_blocking(|| -> Result<(), EngineError> {
             // The background work too, until nothing is left.
             while store()?.maintain()? {}
-            store()?.compact()?;
+            if store()?.needs_compacting()? {
+                store()?.compact()?;
+            }
+            while store()?.give_back_room(GIVE_BACK_PAGES)? {}
+            store()?.checkpoint()?;
             Ok(())
         })
         .await

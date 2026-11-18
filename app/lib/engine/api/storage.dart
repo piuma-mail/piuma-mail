@@ -22,9 +22,13 @@ Future<void> setKeepDays({int? days}) =>
 
 /// "Clear cached mail" for one account: lets go of every whole message
 /// and picture kept for it (the list rows and drafts stay; opening a
-/// message fetches it again), then gives the room back to the system.
-/// Takes a while on a big mailbox; each step is a short write, but the
-/// last one, the database written anew, holds it until done.
+/// message fetches it again, and search still finds its words), then gives
+/// the room back to the system, a few megabytes per short write so a sync
+/// gets the database in between. The first time only, the database is
+/// written anew once to make that possible: that step holds it until
+/// done, and is refused ([ErrorKind::DiskFull]) when the disk hasn't
+/// about twice the database's size free (the cache is cleared all the
+/// same; Piuma reuses the room).
 Future<StorageInfo> clearCachedMail({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiStorageClearCachedMail(accountId: accountId);
 
@@ -59,8 +63,13 @@ class AccountStorageInfo {
 
 /// What the Storage page shows.
 class StorageInfo {
-  /// Bytes the database takes on disk.
+  /// Bytes the database takes on disk, with the copy kept from before
+  /// the last update.
   final PlatformInt64 totalBytes;
+
+  /// Of which the copy kept from before the last update, let go of at
+  /// the next start (or after a week).
+  final PlatformInt64 backupBytes;
 
   /// Of which free, given back to the system as the app goes.
   final PlatformInt64 freeBytes;
@@ -71,6 +80,7 @@ class StorageInfo {
 
   const StorageInfo({
     required this.totalBytes,
+    required this.backupBytes,
     required this.freeBytes,
     required this.accounts,
     this.keepDays,
@@ -79,6 +89,7 @@ class StorageInfo {
   @override
   int get hashCode =>
       totalBytes.hashCode ^
+      backupBytes.hashCode ^
       freeBytes.hashCode ^
       accounts.hashCode ^
       keepDays.hashCode;
@@ -89,6 +100,7 @@ class StorageInfo {
       other is StorageInfo &&
           runtimeType == other.runtimeType &&
           totalBytes == other.totalBytes &&
+          backupBytes == other.backupBytes &&
           freeBytes == other.freeBytes &&
           accounts == other.accounts &&
           keepDays == other.keepDays;

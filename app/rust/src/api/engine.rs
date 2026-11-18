@@ -35,13 +35,22 @@ use crate::frb_generated::StreamSink;
 
 pub(crate) struct Engine {
     pub(crate) store: Arc<Mutex<Store>>,
-    /// A second connection for what the app asks while it draws, so a
-    /// sync writing never holds up a frame; none for a database in memory.
+    /// A connection of its own for what the app asks while it draws (the
+    /// calls answered on the thread that draws), so neither a sync writing
+    /// nor a long count or search ever holds up a frame; none for a
+    /// database in memory.
     reader: Option<Mutex<Store>>,
+    /// Connections for the longer reads, run off the thread that draws:
+    /// counts, pages, search. Two, so one long count doesn't hold up the
+    /// next page.
+    readers: Vec<Mutex<Store>>,
     pub(crate) runtime: tokio::runtime::Runtime,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
+
+/// How many connections [`bulk_reader`] keeps.
+const BULK_READERS: usize = 2;
 
 pub(crate) fn engine() -> Result<&'static Engine, EngineError> {
     ENGINE
@@ -54,12 +63,34 @@ pub(crate) fn store() -> Result<std::sync::MutexGuard<'static, Store>, EngineErr
 }
 
 /// The database for reading only, for the calls the app makes while it
-/// draws a frame: they don't wait for a write to finish.
+/// draws a frame: they wait neither for a write nor for a long read.
 pub(crate) fn reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
     let engine = engine()?;
     Ok(engine
         .reader
         .as_ref()
+        .unwrap_or(&engine.store)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))
+}
+
+/// The database for reading only, for the longer reads the app asks for
+/// off the thread that draws (counts, pages, search): the first of the
+/// connections kept for them that is free, or the first one when none is.
+/// Never [`reader`]'s, so the calls made while drawing don't wait on them.
+pub(crate) fn bulk_reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
+    let engine = engine()?;
+    for r in &engine.readers {
+        match r.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Ok(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+    }
+    Ok(engine
+        .readers
+        .first()
+        .or(engine.reader.as_ref())
         .unwrap_or(&engine.store)
         .lock()
         .unwrap_or_else(|e| e.into_inner()))
@@ -112,6 +143,11 @@ pub enum ErrorKind {
     Refused,
     /// Sync: the mailbox to move the space to holds another one.
     Taken,
+    /// An account still has mail written in it that hasn't gone (see
+    /// `account_unsent`): it isn't removed until that is sent or deleted.
+    Unsent,
+    /// Not enough free room on the disk for what was asked.
+    DiskFull,
     Other,
 }
 
@@ -146,7 +182,12 @@ impl std::error::Error for EngineError {}
 
 impl From<piuma_core::StoreError> for EngineError {
     fn from(e: piuma_core::StoreError) -> Self {
-        EngineError::new(ErrorKind::Other, e.to_string())
+        let kind = match e {
+            piuma_core::StoreError::Unsent { .. } => ErrorKind::Unsent,
+            piuma_core::StoreError::NoRoom { .. } => ErrorKind::DiskFull,
+            _ => ErrorKind::Other,
+        };
+        EngineError::new(kind, e.to_string())
     }
 }
 
@@ -536,13 +577,18 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         .enable_all()
         .build()
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
-    let reader = (db_path != ":memory:")
-        .then(|| Store::open_reader(&db_path).ok())
-        .flatten()
-        .map(Mutex::new);
+    let open_reader = || {
+        (db_path != ":memory:")
+            .then(|| Store::open_reader(&db_path).ok())
+            .flatten()
+            .map(Mutex::new)
+    };
+    let reader = open_reader();
+    let readers = (0..BULK_READERS).filter_map(|_| open_reader()).collect();
     let _ = ENGINE.set(Engine {
         store: Arc::new(Mutex::new(store)),
         reader,
+        readers,
         runtime,
     });
     let models = std::path::Path::new(&db_path)
@@ -580,6 +626,7 @@ fn start_maintenance() {
                     clean_up_at = std::time::Instant::now() + CLEAN_UP_EVERY;
                     if let Ok(store) = store() {
                         let _ = store.queue_body_clean_up(now_secs());
+                        store.drop_old_update_backup(piuma_core::store::UPDATE_BACKUP_DAYS);
                     }
                 }
                 let more = match store() {
@@ -989,7 +1036,7 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    let store = reader()?;
+    let store = bulk_reader()?;
     Ok(store.conversation_count(
         folder.into(),
         within(account, group, address),
@@ -1004,7 +1051,7 @@ pub fn folder_unread(
     address: Option<String>,
     tab: Option<InboxTab>,
 ) -> Result<u32, EngineError> {
-    Ok(reader()?.unread_count(
+    Ok(bulk_reader()?.unread_count(
         folder.into(),
         within(account, group, address),
         tab.map_or(Section::All, Section::from),
@@ -1027,7 +1074,7 @@ pub fn folder_page(
     limit: u32,
 ) -> Result<Vec<InboxRow>, EngineError> {
     // The reader: paging never waits on a sync's write, nor holds it up.
-    let store = reader()?;
+    let store = bulk_reader()?;
     let scope = within(account, group, address);
     let view = filter(&store, tab, unread);
     store
@@ -1383,7 +1430,7 @@ pub fn folder_counts_between(
     unread: bool,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = reader()?;
+    let store = bulk_reader()?;
     let within = within(account, group, address);
     let section = filter(&store, tab, unread);
     edges
@@ -2613,7 +2660,7 @@ pub fn sender_warning(
     uid: u32,
 ) -> Result<Option<SenderWarning>, EngineError> {
     use piuma_core::store::WarningKind;
-    let store = reader()?;
+    let store = bulk_reader()?;
     Ok(store
         .sender_warning(AccountId(account_id), &mailbox, uid)?
         .map(|w| {
@@ -4333,7 +4380,7 @@ static SAVING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 /// Puts the drafts that waited on this device in the account's Drafts
 /// folder, each in place of its earlier copy, and says so with
 /// [SyncEventKind::Synced].
-fn save_waiting_drafts(account: Account, password: Login) {
+pub(crate) fn save_waiting_drafts(account: Account, password: Login) {
     let Ok(engine) = engine() else { return };
     let id = account.id;
     let waiting = lock_store(&engine.store)
@@ -4885,7 +4932,7 @@ pub fn mailbox_counts_between(
     mailbox: String,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = reader()?;
+    let store = bulk_reader()?;
     let account = AccountId(account_id);
     edges
         .windows(2)
@@ -5302,7 +5349,7 @@ const SEARCH_FILES: u32 = 6;
 pub fn search(query: String, limit: u32) -> Result<SearchResult, EngineError> {
     let start = std::time::Instant::now();
     let query = Query::parse(&query);
-    let store = reader()?;
+    let store = bulk_reader()?;
     let found = store.search(&query, limit)?;
     let people = store.search_people(&query, 3)?;
     let files = store.search_files(&query, SEARCH_FILES)?;
@@ -5457,7 +5504,7 @@ pub async fn newsletter_cover(
     uid: u32,
 ) -> Result<Option<String>, EngineError> {
     let id = AccountId(account_id);
-    let store = reader()?;
+    let store = bulk_reader()?;
     let Some(message) = store.message(id, &mailbox, uid)? else {
         return Ok(None);
     };

@@ -543,6 +543,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TrustedSenderInfo> dco_decode_list_trusted_sender_info(dynamic raw);
 
   @protected
+  List<UnsentMessage> dco_decode_list_unsent_message(dynamic raw);
+
+  @protected
   List<VaultCard> dco_decode_list_vault_card(dynamic raw);
 
   @protected
@@ -882,7 +885,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   UnopenedNewsletters dco_decode_unopened_newsletters(dynamic raw);
 
   @protected
-  UnsentMail dco_decode_unsent_mail(dynamic raw);
+  UnsentMessage dco_decode_unsent_message(dynamic raw);
 
   @protected
   Unsubscribe dco_decode_unsubscribe(dynamic raw);
@@ -1536,6 +1539,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<UnsentMessage> sse_decode_list_unsent_message(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<VaultCard> sse_decode_list_vault_card(SseDeserializer deserializer);
 
   @protected
@@ -1929,7 +1937,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  UnsentMail sse_decode_unsent_mail(SseDeserializer deserializer);
+  UnsentMessage sse_decode_unsent_message(SseDeserializer deserializer);
 
   @protected
   Unsubscribe sse_decode_unsubscribe(SseDeserializer deserializer);
@@ -2781,6 +2789,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_unsent_message(
+    List<UnsentMessage> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_vault_card(
     List<VaultCard> self,
     SseSerializer serializer,
@@ -3273,7 +3287,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_unsent_mail(UnsentMail self, SseSerializer serializer);
+  void sse_encode_unsent_message(UnsentMessage self, SseSerializer serializer);
 
   @protected
   void sse_encode_unsubscribe(Unsubscribe self, SseSerializer serializer);
