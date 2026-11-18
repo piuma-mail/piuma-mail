@@ -8,7 +8,7 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `err`, `follows_prereleases`, `format_prefs`, `heal`, `leave_marker`, `manager`, `marker_file`, `notes_file`, `parse_prefs`, `prefs_file`, `release`, `save_notes`, `saved_notes`, `velopack_channel`
+// These functions are ignored because they are not marked as `pub`: `err`, `follows_prereleases`, `format_prefs`, `leave_marker`, `marker_file`, `notes_file`, `parse_prefs`, `prefs_file`, `save_notes`, `saved_notes`, `velopack_channel`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The first thing the app runs, before the engine opens. On the

@@ -721,6 +721,7 @@ async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
         session_url: format!("http://127.0.0.1:{port}/jmap/session"),
         username: USER.into(),
         password: PASSWORD.into(),
+        pins: Vec::new(),
     };
     (state, cfg)
 }
@@ -1131,7 +1132,7 @@ async fn keeps_every_recipient_and_redirects() {
     let outcome = piuma_core::outbox::send_one(
         &store,
         queued,
-        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
         "test",
     )
     .await
@@ -1186,7 +1187,7 @@ async fn keeps_every_recipient_and_redirects() {
     let outcome = piuma_core::outbox::send_one(
         &store,
         queued,
-        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
         "test",
     )
     .await
@@ -1238,7 +1239,7 @@ async fn redirect_from(
     let outcome = piuma_core::outbox::send_one(
         &store,
         queued,
-        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
         "test",
     )
     .await

@@ -3399,6 +3399,10 @@ class AppLocalizationsIt extends AppLocalizations {
       'Il server ha rifiutato la password. È cambiata?';
 
   @override
+  String get accountCertificateRefused =>
+      'Il certificato del server è stato rifiutato. Accedi di nuovo per controllarlo.';
+
+  @override
   String get accountEditServers => 'Modifica server';
 
   @override
@@ -6270,6 +6274,118 @@ class AppLocalizationsIt extends AppLocalizations {
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
 
   @override
+  String get errorNoKeyring =>
+      'Piuma tiene le password nel portachiavi di sistema, e non ce n’è nessuno attivo. Installane e avviane uno, come GNOME Keyring o KWallet, poi riprova. Le password non finiscono mai in un file in chiaro.';
+
+  @override
+  String get errorCertificate => 'Il certificato del server non è affidabile.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'Questa copia di Piuma Mail non può accedere a questo provider. Inserisci un tuo client ID in Avanzate, oppure usa una password per le app dove il provider lo permette.';
+
+  @override
+  String get errorSignInCancelled =>
+      'La pagina di accesso è stata chiusa prima della fine. Riprova.';
+
+  @override
+  String get errorSignInDenied =>
+      'Il provider non ha consentito l’accesso. Riprova, o controlla il client ID in Avanzate.';
+
+  @override
+  String get errorOAuthServers =>
+      'Questo account accede con la pagina del suo provider, quindi resta sui server del provider, con una connessione sicura.';
+
+  @override
+  String get errorPort => 'La porta è un numero da 1 a 65535.';
+
+  @override
+  String get certUntrusted =>
+      'Nessuna autorità di cui il sistema si fida garantisce per questo certificato. Così appaiono i server che si fanno il certificato da soli.';
+
+  @override
+  String get certExpired =>
+      'Questo certificato è scaduto, o non è ancora valido.';
+
+  @override
+  String get certNameMismatch =>
+      'Questo certificato è fatto per un altro nome di server.';
+
+  @override
+  String get certChanged =>
+      'Non è il certificato di cui ti eri fidato per questo server. Potrebbe essere stato rinnovato, oppure qualcuno potrebbe ascoltare nel mezzo. Fidati solo se sai perché è cambiato.';
+
+  @override
+  String get certInvalid =>
+      'Questo certificato non è valido, e fidarsene non renderebbe sicura la connessione.';
+
+  @override
+  String get certProvider =>
+      'Questo è il server di un grande provider, e i suoi certificati sono sempre garantiti da un’autorità. Qualcuno potrebbe intromettersi nella connessione: prova un’altra rete e controlla data e ora di questo dispositivo.';
+
+  @override
+  String get certIssuedTo => 'Rilasciato a';
+
+  @override
+  String get certIssuedBy => 'Rilasciato da';
+
+  @override
+  String get certValidUntil => 'Valido fino al';
+
+  @override
+  String get certFingerprint => 'Impronta SHA-256';
+
+  @override
+  String get certTrust => 'Fidati di questo certificato';
+
+  @override
+  String get certTrustNew => 'Fidati del nuovo certificato';
+
+  @override
+  String get certCopyFingerprint => 'Copia l’impronta';
+
+  @override
+  String get certTrustHint =>
+      'Solo per questo account e per questo preciso certificato. Prima confronta l’impronta con quella che ti dà il tuo provider o amministratore.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Accedi con $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail apre la pagina di $provider nel browser. Accedi lì, poi torna qui: la password resta a $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'In attesa del browser…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft non permette più alle app di posta di accedere con la password, e questa copia di Piuma Mail non ha l’accesso Microsoft configurato. Usa una build ufficiale, o inserisci il client ID di una tua app in Avanzate.';
+
+  @override
+  String get oauthUseAppPassword => 'Usa invece una password per le app';
+
+  @override
+  String get oauthAdvanced => 'Avanzate: il tuo client ID';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'Per una tua registrazione dell’app presso $provider. Lascialo vuoto per usare quella di questa build.';
+  }
+
+  @override
+  String get oauthClientId => 'Client ID';
+
+  @override
+  String get oauthTenant => 'Tenant (facoltativo)';
+
+  @override
+  String get oauthClientSecret => 'Client secret (solo app desktop Google)';
+
+  @override
   String get listFailed => 'Impossibile mostrare queste email.';
 
   @override
@@ -6286,6 +6402,11 @@ class AppLocalizationsIt extends AppLocalizations {
       one: 'Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.',
     );
     return '$_temp0';
+  }
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'Su Android quest’app può accedere a $provider solo con il client con cui è stata compilata. Usa una password per le app, o una build fatta con il tuo client.';
   }
 
   @override

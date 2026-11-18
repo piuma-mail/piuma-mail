@@ -26,8 +26,8 @@ use piuma_core::signature::{self, Accent, Signature, Template};
 use piuma_core::smtp::{self, Draft, SendError};
 use piuma_core::store::WaitingDraft;
 use piuma_core::{
-    images, reading, Account, AccountId, AccountKind, Body, Folder, ListFilter, MessageSummary,
-    PrivacyCounts, Query, Section, Security, Server, Store,
+    images, reading, Account, AccountId, AccountKind, Body, Folder, ListFilter, Login,
+    MessageSummary, PrivacyCounts, Query, Section, Security, Server, Store,
 };
 
 use crate::credentials;
@@ -73,6 +73,22 @@ pub enum ErrorKind {
     Unreachable,
     InsecureConnection,
     Keychain,
+    /// Linux with no Secret Service running: nowhere safe for passwords.
+    NoKeyring,
+    /// The server's certificate was refused; `detail` is the certificate
+    /// as JSON ([`certificate_error`]), for the person to decide.
+    Certificate,
+    /// OAuth: this build has no client for the provider, and none was
+    /// given.
+    SignInUnavailable,
+    /// OAuth: the person closed or cancelled the provider's page.
+    SignInCancelled,
+    /// OAuth: the provider refused (the person said no, the answer was
+    /// forged, the client is wrong).
+    SignInDenied,
+    /// OAuth: new servers for an account that signs in with a provider's
+    /// page that aren't that provider's, or not over TLS.
+    OAuthServers,
     /// A recipient is not an email address; `detail` is the address.
     BadAddress,
     NoRecipients,
@@ -140,16 +156,26 @@ impl From<ImapError> for EngineError {
             ImapError::Auth => ErrorKind::WrongPassword,
             ImapError::Connect { .. } | ImapError::TimedOut => ErrorKind::Unreachable,
             ImapError::Tls(_) => ErrorKind::InsecureConnection,
+            ImapError::Certificate(r) => return certificate_error(r),
+            ImapError::TokenUnavailable(_) => ErrorKind::Unreachable,
             _ => ErrorKind::Other,
         };
         EngineError::new(kind, e.to_string())
     }
 }
 
+/// A refused certificate, as the app shows it: `detail` is JSON with
+/// `host`, `problem` (untrusted, expired, nameMismatch, changed, invalid),
+/// `fingerprint`, `subject`, `issuer` and `notAfter`.
+pub(crate) fn certificate_error(r: &piuma_core::tls::Refused) -> EngineError {
+    EngineError::new(ErrorKind::Certificate, r.json())
+}
+
 impl From<JmapError> for EngineError {
     fn from(e: JmapError) -> Self {
         let kind = match &e {
             JmapError::Auth => ErrorKind::WrongPassword,
+            JmapError::Certificate(r) => return certificate_error(r),
             JmapError::Connect { .. } => ErrorKind::Unreachable,
             JmapError::Insecure => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
@@ -174,6 +200,7 @@ impl From<SendError> for EngineError {
             SendError::Address(a) => EngineError::new(ErrorKind::BadAddress, a),
             SendError::NoRecipients => EngineError::new(ErrorKind::NoRecipients, e.to_string()),
             SendError::Auth => EngineError::new(ErrorKind::WrongPassword, e.to_string()),
+            SendError::Certificate(r) => certificate_error(&r),
             SendError::Connect { .. } => EngineError::new(ErrorKind::Unreachable, e.to_string()),
             SendError::Rejected(_) => EngineError::new(ErrorKind::Rejected, e.to_string()),
             // The server will take it later; the outbox retries, so no
@@ -351,6 +378,9 @@ pub enum SyncEventKind {
     /// kept refusing were given up; `removed` says how many. Their
     /// messages are back as the server has them.
     ChangesDropped,
+    /// Android: the engine got a secret for the Keystore (a renewed
+    /// sign-in): `take_new_secrets` has it, to keep at once.
+    SecretsChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -656,6 +686,9 @@ pub struct FoundSettings {
     /// The JMAP session, when the domain serves JMAP: the account then
     /// uses it in place of IMAP and SMTP.
     pub jmap_url: Option<String>,
+    /// The provider (`microsoft`, `google`) whose own sign-in page these
+    /// servers want, in place of a password.
+    pub oauth: Option<String>,
 }
 
 /// Looks for the server settings of an address. None means the person
@@ -686,6 +719,7 @@ pub async fn discover_settings(email: String) -> Result<Option<FoundSettings>, E
                     },
                     username: email.clone(),
                     source: Source::Published,
+                    oauth: None,
                 })
             });
             (found, jmap_url)
@@ -701,6 +735,7 @@ pub async fn discover_settings(email: String) -> Result<Option<FoundSettings>, E
         smtp_port: s.smtp.port,
         smtp_security: s.smtp.security.into(),
         username: s.username,
+        oauth: s.oauth,
         source: match s.source {
             Source::Known => SettingsSource::Known,
             Source::Published => SettingsSource::Published,
@@ -717,8 +752,31 @@ pub struct OutgoingServer {
     pub security: ConnectionSecurity,
 }
 
+/// A server certificate the person chose to trust, by its SHA-256
+/// fingerprint (`AB:CD:…`), for the server `host`.
+#[derive(Debug, Clone)]
+pub struct TrustedCertificate {
+    pub host: String,
+    pub fingerprint: String,
+}
+
+pub(crate) fn pins_of(trusted: &[TrustedCertificate]) -> Vec<piuma_core::tls::Pin> {
+    trusted
+        .iter()
+        // Never for a big provider's server (the engine refuses those).
+        .filter(|t| piuma_core::tls::can_pin(&t.host))
+        .filter_map(|t| {
+            Some(piuma_core::tls::Pin {
+                host: t.host.trim().to_owned(),
+                sha256: piuma_core::cert::parse_fingerprint(&t.fingerprint)?,
+            })
+        })
+        .collect()
+}
+
 /// Checks the settings against the server, saves the password in the
-/// system keychain and adds the account.
+/// system keychain and adds the account. `trusted` are certificates the
+/// person chose to trust for its servers, after a [ErrorKind::Certificate].
 #[allow(clippy::too_many_arguments)]
 pub async fn add_imap_account(
     name: String,
@@ -731,6 +789,7 @@ pub async fn add_imap_account(
     username: String,
     password: String,
     smtp: Option<OutgoingServer>,
+    trusted: Vec<TrustedCertificate>,
 ) -> Result<AccountInfo, EngineError> {
     let domain = email
         .rsplit_once('@')
@@ -763,11 +822,12 @@ pub async fn add_imap_account(
             username,
         },
     };
-    add_checked_account(account, password).await
+    add_checked_account(account, password, trusted).await
 }
 
 /// Checks the login against a JMAP server, saves the password in the
 /// system keychain and adds the account.
+#[allow(clippy::too_many_arguments)]
 pub async fn add_jmap_account(
     name: String,
     email: String,
@@ -776,6 +836,7 @@ pub async fn add_jmap_account(
     session_url: String,
     password: String,
     api_token: bool,
+    trusted: Vec<TrustedCertificate>,
 ) -> Result<AccountInfo, EngineError> {
     // An API token signs in on its own, without the address.
     let username = if api_token {
@@ -794,28 +855,52 @@ pub async fn add_jmap_account(
             username,
         },
     };
-    add_checked_account(account, password).await
+    add_checked_account(account, password, trusted).await
 }
 
-/// Checks that an account signs in, then keeps it and its password.
+/// Checks that an account signs in, then keeps it and its password, and
+/// the certificates in `trusted` that are for its servers.
 pub(crate) async fn add_checked_account(
     account: Account,
     password: String,
+    trusted: Vec<TrustedCertificate>,
 ) -> Result<AccountInfo, EngineError> {
     let engine = engine()?;
-    let (checked, secret) = (account.clone(), password.clone());
+    let pins = crate::login::for_hosts(pins_of(&trusted), &crate::login::hosts_of(&account));
+    let checked = account.clone();
+    let login = Login::password(&password).with_pins(pins.clone());
     engine
         .runtime
-        .spawn(async move { remote::check_login(&checked, &secret).await })
+        .spawn(async move { remote::check_login(&checked, &login).await })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
-    let id = store()?.add_account(&account)?;
-    if let Err(e) = credentials::save(id, &password) {
+    let id = keep_account(&account, &pins, |id| credentials::save(id, &password))?;
+    let added = store()?.account(id)?.expect("just added");
+    Ok(AccountInfo::from(&added))
+}
+
+/// Adds a checked account, with its secret (`save`) and the certificates
+/// trusted for its servers (`pins`, any other left out): all of it, or,
+/// when one of them can't be kept, none.
+pub(crate) fn keep_account(
+    account: &Account,
+    pins: &[piuma_core::tls::Pin],
+    save: impl FnOnce(AccountId) -> Result<(), EngineError>,
+) -> Result<AccountId, EngineError> {
+    let hosts = crate::login::hosts_of(account);
+    let pins = crate::login::for_hosts(pins.to_vec(), &hosts);
+    let id = store()?.add_account(account)?;
+    let kept = save(id).and_then(|()| crate::login::trust_all(id, &pins));
+    if let Err(e) = kept {
+        // Half an account would sign in with nothing, or trust a
+        // certificate for an account that isn't there.
+        let _ = crate::login::untrust(id, &hosts);
+        let _ = store()?.set_setting(&crate::login::oauth_key(id.0), "");
+        credentials::forget(id);
         store()?.remove_account(id)?;
         return Err(e);
     }
-    let added = store()?.account(id)?.expect("just added");
-    Ok(AccountInfo::from(&added))
+    Ok(id)
 }
 
 /// Whose mail a list shows: one [address] of a [group], the group, one
@@ -1291,6 +1376,12 @@ fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
     }
 }
 
+/// Android: tells the app at once that a secret waits for the Keystore.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn secrets_changed(id: AccountId) {
+    emit(SyncEvent::new(SyncEventKind::SecretsChanged, id.0));
+}
+
 /// Changes a server kept refusing were given up while sent from the app:
 /// the app tells the person, as when the watcher gave them up.
 pub(crate) fn changes_dropped(id: AccountId, changes: usize) {
@@ -1351,7 +1442,7 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
 /// nothing else starts a second one.
 async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
     let id = account.id;
-    keep_following(
+    let certificate = keep_following(
         id,
         |worked| follow(account.clone(), store.clone(), worked),
         RESTART_FIRST,
@@ -1361,16 +1452,28 @@ async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|a| *a != id.0);
-    emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-    crate::background::sign_in_failed(id);
+    // The app words a refused certificate as such, not as a password.
+    emit(SyncEvent {
+        reason: if certificate {
+            CERTIFICATE_REFUSED.into()
+        } else {
+            String::new()
+        },
+        ..SyncEvent::new(SyncEventKind::SignInFailed, id.0)
+    });
+    crate::background::sign_in_failed(id, certificate);
 }
 
-/// Runs the watcher `start` makes until it ends with a refused password,
-/// starting it again whenever it ends otherwise or panics: after `first`,
-/// then longer each time in a row, up to [`RESTART_MOST`]. `start` gets a
-/// flag to raise once a sync round went through; then the waits start
-/// over.
-async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration)
+/// The `reason` of a [SyncEventKind::SignInFailed] for a server
+/// certificate that was refused, rather than the password.
+pub const CERTIFICATE_REFUSED: &str = "certificate";
+
+/// Runs the watcher `start` makes until it ends with a refused password
+/// or certificate, starting it again whenever it ends otherwise or
+/// panics: after `first`, then longer each time in a row, up to
+/// [`RESTART_MOST`]. `start` gets a flag to raise once a sync round went
+/// through; then the waits start over. True when it was the certificate.
+async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration) -> bool
 where
     F: FnMut(Arc<std::sync::atomic::AtomicBool>) -> Fut,
     Fut: std::future::Future<Output = Followed> + Send + 'static,
@@ -1382,7 +1485,8 @@ where
         // the watcher too.
         let mut follow = AbortOnDrop(tokio::spawn(start(worked.clone())));
         let why = match (&mut follow.0).await {
-            Ok(Followed::SignInFailed) => return,
+            Ok(Followed::SignInFailed) => return false,
+            Ok(Followed::CertificateRefused) => return true,
             Ok(Followed::Ended(why)) => why,
             Err(e) if e.is_panic() => {
                 format!("panic{}", piuma_core::guard::last_panic_place())
@@ -1412,6 +1516,8 @@ where
 enum Followed {
     /// The server refused the password: it waits for a new one.
     SignInFailed,
+    /// The server's certificate was refused: the person has to look at it.
+    CertificateRefused,
     /// Anything else, with what happened.
     Ended(String),
 }
@@ -1442,7 +1548,7 @@ async fn follow(
     // that the password stopped working; stop_watching aborts this
     // wait too.
     let password = wait_for_credentials(
-        || credentials::read(id),
+        || crate::login::read(id),
         |kind| {
             set_waiting(id.0, Some(kind));
             emit(SyncEvent::new(kind, id.0));
@@ -1492,6 +1598,10 @@ async fn follow(
     })
     .await;
     match result {
+        // A refused password, or a certificate other than the one
+        // trusted: the person has to act, through the same notice, in
+        // words that say which.
+        Err(e) if e.is_certificate() => Followed::CertificateRefused,
         Err(e) if e.is_auth() => Followed::SignInFailed,
         Err(e) => Followed::Ended(e.to_string()),
         Ok(()) => Followed::Ended("finished".into()),
@@ -1518,12 +1628,12 @@ fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> + 
 /// SignInFailed once it is missing. Local credential failures never
 /// establish that the server refused it: the app asks to sign in again,
 /// but no notification says the password stopped working.
-async fn wait_for_credentials(
-    mut load: impl FnMut() -> Result<String, credentials::Unreadable>,
+async fn wait_for_credentials<T>(
+    mut load: impl FnMut() -> Result<T, credentials::Unreadable>,
     mut report: impl FnMut(SyncEventKind),
     handover: Duration,
     mut retry: impl Iterator<Item = Duration>,
-) -> String {
+) -> T {
     let since = tokio::time::Instant::now();
     let mut reported = None;
     loop {
@@ -1822,7 +1932,7 @@ mod credential_recovery_tests {
                         "temporarily locked",
                     )))
                 } else {
-                    Ok("test credential".into())
+                    Ok("test credential".to_owned())
                 }
             },
             |kind| reports.push(kind),
@@ -2085,20 +2195,33 @@ pub fn remember_password(account_id: i64, password: String) {
 }
 
 /// Checks a new password for an account whose sign-in failed, saves it in
-/// the system keychain and follows the account again.
-pub async fn sign_in_again(account_id: i64, password: String) -> Result<(), EngineError> {
+/// the system keychain and follows the account again. `trusted` are
+/// certificates the person chose to trust for its servers, after a
+/// [ErrorKind::Certificate]: kept only once the check went through, and
+/// only for the account's own servers.
+pub async fn sign_in_again(
+    account_id: i64,
+    password: String,
+    trusted: Vec<TrustedCertificate>,
+) -> Result<(), EngineError> {
     let engine = engine()?;
     let id = AccountId(account_id);
     let account = store()?
         .account(id)?
         .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such account"))?;
-    let (checked, secret) = (account.clone(), password.clone());
+    let hosts = crate::login::hosts_of(&account);
+    let new_pins = crate::login::for_hosts(pins_of(&trusted), &hosts);
+    let checked = account.clone();
+    let login = Login::password(&password).with_pins(crate::login::with_new(id, &hosts, &new_pins));
     engine
         .runtime
-        .spawn(async move { remote::check_login(&checked, &secret).await })
+        .spawn(async move { remote::check_login(&checked, &login).await })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
     credentials::save(id, &password)?;
+    // Only now: the sign-in went through with them.
+    crate::login::trust_all(id, &new_pins)?;
+    crate::login::forget_session(id);
     // A watcher still waiting for the missing password starts over now,
     // not at its next look.
     stop_watching(id);
@@ -2127,7 +2250,7 @@ async fn full_body(id: AccountId, mailbox: String, uid: u32) -> Result<Body, Eng
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store = engine.store.clone();
     engine
         .runtime
@@ -2957,7 +3080,7 @@ pub async fn save_attachment(
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store = engine.store.clone();
     let data = engine
         .runtime
@@ -3858,8 +3981,10 @@ pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
 /// Tries the outbox of every account now, e.g. a while after a message
 /// was queued, when no new mail woke the watchers.
 pub fn send_outbox_now() -> Result<(), EngineError> {
-    for account in store()?.accounts()? {
-        if let Ok(password) = credentials::load(account.id) {
+    // The accounts first: reading a login looks at the store again.
+    let accounts = store()?.accounts()?;
+    for account in accounts {
+        if let Ok(password) = crate::login::load(account.id) {
             save_waiting_drafts(account.clone(), password.clone());
             send_outbox(account, password);
         }
@@ -3896,7 +4021,7 @@ static SENDING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 
 /// Sends an account's outbox, if it has anything to do, in the
 /// background (see [deliver_outbox]).
-fn send_outbox(account: Account, password: String) {
+fn send_outbox(account: Account, password: Login) {
     let Ok(engine) = engine() else { return };
     engine.runtime.spawn(async move {
         deliver_outbox(&account, &password).await;
@@ -3906,7 +4031,7 @@ fn send_outbox(account: Account, password: String) {
 /// Sends an account's outbox, and says so with
 /// [SyncEventKind::OutboxSent] when something went. The one way the
 /// outbox is sent, from the app and from the background service.
-pub(crate) async fn deliver_outbox(account: &Account, password: &str) {
+pub(crate) async fn deliver_outbox(account: &Account, password: &Login) {
     let Ok(engine) = engine() else { return };
     let id = account.id;
     {
@@ -3935,7 +4060,7 @@ pub(crate) async fn deliver_outbox(account: &Account, password: &str) {
         );
     }
     if !sent.is_empty() {
-        after_sent(account.clone(), password.to_owned(), sent);
+        after_sent(account.clone(), password.clone(), sent);
     }
 }
 
@@ -3943,7 +4068,7 @@ pub(crate) async fn deliver_outbox(account: &Account, password: &str) {
 /// looked at again, and the app hears of it. In the background; a failure
 /// changes nothing about the send (left behind, a draft is only an extra
 /// draft, and the next look at Sent picks the copy up).
-fn after_sent(account: Account, password: String, sent: Vec<outbox::Sent>) {
+fn after_sent(account: Account, password: Login, sent: Vec<outbox::Sent>) {
     let Ok(engine) = engine() else { return };
     let shared = engine.store.clone();
     let id = account.id;
@@ -4004,11 +4129,11 @@ fn core_draft(account: &Account, message: OutgoingMessage) -> Result<Draft, Engi
 }
 
 /// An account and its password, to reach its server.
-pub(crate) fn signed_in(id: AccountId) -> Result<(Account, String), EngineError> {
+pub(crate) fn signed_in(id: AccountId) -> Result<(Account, Login), EngineError> {
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     Ok((account, password))
 }
 
@@ -4143,7 +4268,7 @@ static SAVING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 /// Puts the drafts that waited on this device in the account's Drafts
 /// folder, each in place of its earlier copy, and says so with
 /// [SyncEventKind::Synced].
-fn save_waiting_drafts(account: Account, password: String) {
+fn save_waiting_drafts(account: Account, password: Login) {
     let Ok(engine) = engine() else { return };
     let id = account.id;
     let waiting = lock_store(&engine.store)
@@ -4635,7 +4760,7 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store = engine.store.clone();
     engine
         .runtime
@@ -5674,7 +5799,7 @@ pub async fn save_pec_receipts(
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store = engine.store.clone();
     let files = engine
         .runtime
@@ -5827,7 +5952,7 @@ pub async fn attachment_thumb(
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store_ref = engine.store.clone();
     let mbox = mailbox.clone();
     let data = engine
@@ -6294,4 +6419,105 @@ pub struct InviteSent {
     pub queued: bool,
     /// The calendar the event was put in, if any.
     pub added_to: Option<String>,
+}
+
+#[cfg(test)]
+mod certificate_trust_tests {
+    use super::*;
+    use piuma_core::{Security, Server};
+    use std::cell::Cell;
+
+    fn open() {
+        std::env::set_var("PIUMA_TEST_MEMORY_KEYCHAIN", "1");
+        open_engine(":memory:".into()).unwrap();
+    }
+
+    /// An account whose server refuses every connection at once. The
+    /// tests run side by side: each has its own address.
+    fn account(host: &str) -> Account {
+        let server = Server {
+            host: host.into(),
+            port: 1,
+            security: Security::None,
+        };
+        Account {
+            id: AccountId(0),
+            name: "Work".into(),
+            email: format!("me@{host}"),
+            sender_name: String::new(),
+            color: "#3451D1".into(),
+            kind: AccountKind::Imap {
+                imap: server.clone(),
+                smtp: server,
+                username: "me".into(),
+            },
+        }
+    }
+
+    fn certificate(host: &str, byte: &str) -> TrustedCertificate {
+        TrustedCertificate {
+            host: host.into(),
+            fingerprint: vec![byte; 32].join(":"),
+        }
+    }
+
+    fn kept(id: AccountId, host: &str) -> Option<String> {
+        store()
+            .unwrap()
+            .setting(&crate::login::cert_key(id.0, host))
+            .unwrap()
+            .filter(|s| !s.is_empty())
+    }
+
+    #[test]
+    fn a_new_account_keeps_certificates_only_for_its_own_servers() {
+        open();
+        let pins = pins_of(&[
+            certificate("mail.own.invalid", "AB"),
+            certificate("mail.elsewhere.invalid", "CD"),
+        ]);
+        let id = keep_account(&account("mail.own.invalid"), &pins, |_| Ok(())).unwrap();
+        assert!(kept(id, "mail.own.invalid").is_some());
+        assert_eq!(kept(id, "mail.elsewhere.invalid"), None);
+        store().unwrap().remove_account(id).unwrap();
+    }
+
+    #[test]
+    fn an_account_whose_secret_cant_be_kept_is_not_added_at_all() {
+        open();
+        let pins = pins_of(&[certificate("mail.half.invalid", "AB")]);
+        let tried = Cell::new(None);
+        let added = keep_account(&account("mail.half.invalid"), &pins, |id| {
+            tried.set(Some(id));
+            Err(EngineError::new(ErrorKind::Keychain, "locked"))
+        });
+        let error = added.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Keychain, "{error:?}");
+        let id = tried.get().expect("saving was tried");
+        assert!(store().unwrap().account(id).unwrap().is_none());
+        assert_eq!(kept(id, "mail.half.invalid"), None);
+        assert!(credentials::load(id).is_err());
+    }
+
+    #[test]
+    fn signing_in_again_trusts_nothing_before_the_check_goes_through() {
+        open();
+        let id = store().unwrap().add_account(&account("127.0.0.1")).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let signed = runtime.block_on(sign_in_again(
+            id.0,
+            "test".into(),
+            vec![
+                certificate("127.0.0.1", "AB"),
+                certificate("mail.elsewhere.invalid", "CD"),
+            ],
+        ));
+        assert!(signed.is_err(), "nothing listens on port 1");
+        assert_eq!(kept(id, "127.0.0.1"), None);
+        assert_eq!(kept(id, "mail.elsewhere.invalid"), None);
+        store().unwrap().remove_account(id).unwrap();
+    }
 }

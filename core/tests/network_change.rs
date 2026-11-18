@@ -27,7 +27,7 @@ async fn a_new_network_brings_a_fresh_sync_at_once() {
                 .unwrap()
                 .as_millis()
         ),
-        password: "test".into(),
+        login: "test".into(),
     };
     let store = Store::open_in_memory().unwrap();
     let account = store

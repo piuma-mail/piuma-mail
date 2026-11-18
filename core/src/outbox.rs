@@ -284,7 +284,7 @@ async fn deliver(
             settle(|| lock(store).refused_outgoing(id, me, &reason)).await;
             Outcome::Refused(reason)
         }
-        Err(e @ SendError::Tls { .. }) => {
+        Err(e @ (SendError::Tls { .. } | SendError::Certificate(_))) => {
             let reason = e.to_string();
             settle(|| lock(store).refused_outgoing(id, me, &reason)).await;
             Outcome::Insecure(reason)

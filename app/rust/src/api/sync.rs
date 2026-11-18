@@ -263,8 +263,8 @@ fn account(id: AccountId) -> Result<Account, EngineError> {
 }
 
 async fn connect(account: &Account) -> Result<Remote, EngineError> {
-    let password = credentials::load(account.id)?;
-    Ok(Remote::open(account, &password).await?)
+    let login = crate::login::load(account.id)?;
+    Ok(Remote::open(account, &login).await?)
 }
 
 /// The mailbox that holds the space.
@@ -285,6 +285,9 @@ fn passwords() -> Result<Vec<(String, String)>, EngineError> {
         .accounts()?
         .into_iter()
         .filter_map(|a| Some((a.email.clone(), credentials::load(a.id).ok()?)))
+        // An OAuth sign-in stays on this device: its refresh token never
+        // travels, and the other device signs in on its own.
+        .filter(|(_, secret)| !piuma_core::oauth::Stored::is_stored(secret))
         .collect();
     // Connected calendars with a password of their own.
     for source in store.calendar_sources()? {
@@ -801,5 +804,5 @@ pub async fn sync_add_invite_account(
         color,
         kind: invite.kind,
     };
-    add_checked_account(account, password).await
+    add_checked_account(account, password, Vec::new()).await
 }

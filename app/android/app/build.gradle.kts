@@ -6,6 +6,22 @@
 // (.github/actions/android-throwaway-key), releases the real one.
 val releaseKeystore: String? = System.getenv("PIUMA_KEYSTORE_FILE")
 
+// Google signs Android apps in through the reversed client ID as a URL
+// scheme: from `google.android=<id>` in PIUMA_OAUTH_CLIENTS, the same
+// variable the engine is built with (CONTRIBUTING.md, "Sign-in with
+// Microsoft and Google"). Without it the scheme is one nothing opens.
+val googleOAuthScheme: String = (System.getenv("PIUMA_OAUTH_CLIENTS") ?: "")
+    .split(';', '\n')
+    .map { it.trim() }
+    .firstOrNull { it.startsWith("google.android=") }
+    ?.substringAfter('=')
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.split('.')
+    ?.reversed()
+    ?.joinToString(".")
+    ?: "mail.piuma.app.google"
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -38,6 +54,7 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["googleOAuthScheme"] = googleOAuthScheme
     }
 
     signingConfigs {
