@@ -4,40 +4,56 @@
  *
  * The app never holds a GitHub credential: it asks this relay for a ticket when the report form
  * opens, solves a small proof of work while the user writes, then posts the report. The relay
- * stores the attachments on the repository's `feedback-assets` branch and opens the issue.
+ * keeps the attachments in an R2 bucket (deleted by a lifecycle rule after 90 days) and opens the
+ * issue, which links to them through this Worker. Nothing is committed to git.
  *
- *   POST /challenge  {installId}            → {ticket, seed, bits, nbf, exp}
+ *   POST /challenge  {installId}            → {ticket, seed, bits, nbf, exp, now}
  *   POST /report     multipart: report JSON + screenshot / logs / attachment-N files
- *                                           → 201 {url, number}
+ *                                           → 201 {url, number} (also for a report already filed)
+ *   GET  /files/<key>?s=<signature>         → an attachment, while it is kept
  *   GET  /health                            → {ok: true}
+ *   GET  /health/deep                       → GitHub, storage and recent failures; 503 when not ok
+ * A cron trigger runs the deep check every few hours and alerts the maintainer (ALERT_WEBHOOK,
+ * and an issue when the GitHub token is about to expire).
+ *
+ * Statuses the app acts on: 403 with retry-after means "this ticket works later"; 401 means the
+ * ticket can't be used (bad signature, expired, wrong proof of work): get a new one; 409 means
+ * the ticket was used or the same report is on its way; 429 and 503 come with retry-after; 413
+ * is too large; 502 is GitHub or storage failing, and the report was not counted.
  *
  * Abuse guards (the relay URL ships inside the app, so it is public):
  * - every ticket is signed, short-lived, bound to the install id and usable once;
- * - a proof of work per report (POW_BITS, 16 by default: about a second on a phone, but only
- *   milliseconds on a PC, so it slows casual abuse rather than stopping it);
+ * - a proof of work per report (POW_BITS, 16 by default, at most 24): a speed bump, not a wall;
  * - a wait before each further report that doubles each time, counted both per installation and
- *   per client IP (IPv6 by /64), so a fresh install id alone does not reset it;
- * - a daily cap across all installations;
- * - optionally, Cloudflare's rate limiter per client IP on /challenge and /report;
+ *   per network (IPv4 address, IPv6 /48), so a fresh install id alone does not reset it;
+ * - daily caps per installation and per network (NETWORK_DAILY_LIMIT) and per autonomous system
+ *   (ASN_DAILY_LIMIT), so one host or provider can't use up the day for everyone; a global cap
+ *   (DAILY_LIMIT) stays as a last resort;
+ * - a daily byte budget for attachments, overall (DAILY_BYTES) and per network
+ *   (NETWORK_DAILY_BYTES): past it, reports still arrive, without their files;
+ * - Cloudflare's rate limiter per network on /challenge and /report;
  * - at most 8 files: images up to 10 MiB each, videos up to 25 MiB, 32 MiB per report in all.
- * Used tickets, counters and the daily total live in one Durable Object (`Meter`), so checking and
- * recording them is atomic: the same ticket sent twice in parallel opens one issue, not two.
+ * Used tickets, counters, the daily totals and which report opened which issue live in one
+ * Durable Object (`Meter`), so checking and recording them is atomic.
  *
- * Report text is untrusted: the issue body fences it so it can't fake app-made sections, quotes
- * the description as the reporter's own words, and neutralises @mentions.
+ * Report text is untrusted: the issue says so at the top, fences every field from the app
+ * (description included) so nothing in it renders as a link, an image or HTML, and neutralises
+ * @mentions.
  *
- * Bindings: Durable Object `METER` (class `Meter`), optional rate limiter `RATE_LIMITER`; secrets
- * `GITHUB_TOKEN` (fine-grained: Issues + Contents on REPO) and `TICKET_SECRET`; vars `REPO`
- * ("owner/name") and optionally `DAILY_LIMIT`, `POW_BITS`.
+ * Bindings: Durable Object `METER` (class `Meter`), R2 bucket `ATTACHMENTS`, optional rate
+ * limiter `RATE_LIMITER`; secrets `GITHUB_TOKEN` (fine-grained: Issues on REPO), `TICKET_SECRET`,
+ * optional `FILES_SECRET` (signs attachment links; TICKET_SECRET when unset) and `ALERT_WEBHOOK`;
+ * vars `REPO` ("owner/name") and optionally `PUBLIC_URL`, `DAILY_LIMIT`, `NETWORK_DAILY_LIMIT`,
+ * `ASN_DAILY_LIMIT`, `DAILY_BYTES`, `NETWORK_DAILY_BYTES`, `POW_BITS`, `RETENTION_DAYS`.
+ *
+ * Logs (Workers Logs) carry events, statuses and counts only: never report text, IPs or ids.
  */
 
 import { DurableObject } from 'cloudflare:workers';
 
-const ASSETS_BRANCH = 'feedback-assets';
 const MiB = 1024 * 1024;
 // What a report may carry. Memory sets the ceiling: a Worker has 128 MB, and parsing the form holds
-// the body and its files at once (about twice MAX_FORM). Files then go to GitHub one at a time,
-// base64-encoded as they stream, so no file is ever copied whole again.
+// the body and its files at once (about twice MAX_FORM). Files then go to R2 one at a time.
 const MAX_IMAGE = 10 * MiB; // also the log
 const MAX_VIDEO = 25 * MiB;
 const MAX_TOTAL = 32 * MiB;
@@ -57,6 +73,16 @@ const FILE_TYPES = {
 const TICKET_TTL = 30 * 60; // seconds
 const DAY = 24 * 60 * 60;
 const MAX_WAIT = 15 * 60; // seconds
+/** The app solves at most 28 bits; more than 24 would take minutes on a phone. */
+const MAX_POW_BITS = 24;
+/** How long the relay remembers which issue a report opened (the app retries for 7 days). */
+const REPORT_MEMORY = 30 * DAY;
+/** A report being filed blocks the same report from another try for this long. */
+const IN_PROGRESS = 10 * 60;
+/** The deep health check runs at most this often on request (the cron runs it anyway). */
+const HEALTH_FRESH = 10 * 60;
+/** Days before the GitHub token expires when the maintainer is told. */
+const TOKEN_WARNING_DAYS = 14;
 
 export default {
   async fetch(request, env) {
@@ -64,13 +90,20 @@ export default {
     try {
       if (request.method === 'POST' && path === '/challenge') return await challenge(request, env);
       if (request.method === 'POST' && path === '/report') return await report(request, env);
+      if (request.method === 'GET' && path.startsWith('/files/')) return await serveFile(request, env, path);
       if (path === '/health') return json({ ok: true });
+      if (path === '/health/deep') return await deepHealth(env, false);
       return json({ error: 'not found' }, 404);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status, e.headers);
-      console.error(e);
+      log('error', 'unexpected', { name: e?.name, message: String(e?.message ?? e).slice(0, 200) });
       return json({ error: 'relay error' }, 502);
     }
+  },
+
+  /** The cron trigger: the deep check, and alerts when something needs the maintainer. */
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(scheduledCheck(env));
   },
 };
 
@@ -82,6 +115,14 @@ class HttpError extends Error {
   }
 }
 
+/** One structured line for Workers Logs. Callers pass counts and statuses, never content. */
+function log(level, event, fields = {}) {
+  const line = JSON.stringify({ event, ...fields });
+  if (level === 'error') console.error(line);
+  else if (level === 'warn') console.warn(line);
+  else console.log(line);
+}
+
 // ---- Challenge ----------------------------------------------------------------------------
 
 async function challenge(request, env) {
@@ -90,14 +131,13 @@ async function challenge(request, env) {
   const { installId } = await request.json().catch(() => ({}));
   if (!validInstallId(installId)) throw new HttpError(400, 'installId');
   const ih = await hmacHex(env.TICKET_SECRET, `install:${installId}`);
-  const { sent, total } = await meter(env).status(meterKeys(ih, who));
-  if (total >= dailyLimit(env)) throw dailyLimitError();
+  const status = await meter(env).status(meterKeys(ih, who), limits(env));
+  if (!status.ok) throw new HttpError(status.status, status.error, { 'retry-after': String(status.retryAfter) });
   const now = nowSeconds();
   // First report: a few seconds (the user is still typing). Each further one in a day doubles it,
   // up to MAX_WAIT: enough to stop a flood, short enough for someone testing all day.
-  const wait = waitAfter(sent);
-  const bits = Math.min(Math.max(Number(env.POW_BITS ?? 16), 0), 32);
-  if (!Number.isInteger(bits)) throw new HttpError(500, 'invalid POW_BITS');
+  const wait = waitAfter(status.sent);
+  const bits = powBits(env);
   const payload = {
     ih,
     seed: randomHex(16),
@@ -106,7 +146,14 @@ async function challenge(request, env) {
     exp: now + wait + TICKET_TTL,
   };
   const ticket = await sign(env, payload);
-  return json({ ticket, seed: payload.seed, bits: payload.bits, nbf: payload.nbf * 1000, exp: payload.exp * 1000 });
+  // `now` lets the app read nbf and exp against the relay's clock rather than its own.
+  return json({ ticket, seed: payload.seed, bits: payload.bits, nbf: payload.nbf * 1000, exp: payload.exp * 1000, now: now * 1000 });
+}
+
+export function powBits(env) {
+  const bits = Math.min(Math.max(Number(env.POW_BITS ?? 16), 0), MAX_POW_BITS);
+  if (!Number.isInteger(bits)) throw new HttpError(500, 'invalid POW_BITS');
+  return bits;
 }
 
 // ---- Report -------------------------------------------------------------------------------
@@ -126,41 +173,78 @@ async function report(request, env) {
   const { installId, ticket, powNonce } = meta;
   if (!validInstallId(installId)) throw new HttpError(400, 'installId');
 
+  // A ticket that can never work answers 401, not 403: apps before this relay retried every 403
+  // at once with the same ticket. 403 is kept for "too early", always with retry-after.
   const payload = await verify(env, ticket);
-  if (!payload) throw new HttpError(403, 'ticket');
-  if (payload.ih !== (await hmacHex(env.TICKET_SECRET, `install:${installId}`))) throw new HttpError(403, 'ticket');
+  const ih = await hmacHex(env.TICKET_SECRET, `install:${installId}`);
+  if (!payload || payload.ih !== ih) throw new HttpError(401, 'ticket');
+
+  // The same report sent again (its 201 was lost on the way): answer with the issue it opened.
+  const reportKey = validReportId(meta.reportId)
+    ? await hmacHex(env.TICKET_SECRET, `report:${installId}:${meta.reportId}`)
+    : null;
+  const m = meter(env);
+  if (reportKey) {
+    const existing = await m.lookup(reportKey);
+    if (existing) return json({ url: existing.url, number: existing.number, existing: true }, 201);
+  }
+
   const now = nowSeconds();
   if (now < payload.nbf) throw new HttpError(403, 'early', { 'retry-after': String(payload.nbf - now) });
-  if (now > payload.exp) throw new HttpError(403, 'expired');
-  if (!(await powOk(payload.seed, powNonce, payload.bits))) throw new HttpError(403, 'pow');
+  if (now > payload.exp) throw new HttpError(401, 'expired');
+  if (!(await powOk(payload.seed, powNonce, payload.bits))) throw new HttpError(401, 'pow');
 
   const r = sanitizeReport(meta);
   const files = collectFiles(form);
+  const bytes = files.reduce((n, f) => n + f.size, 0);
 
-  // One atomic step in the Durable Object: refuse a used ticket, a full day or a report sent before
-  // the wait, else mark the ticket used and count the report. It happens before the GitHub calls,
-  // so a GitHub failure still uses up the ticket (the app then asks for a new one); that's the
-  // price of never letting one ticket open two issues.
-  const claim = await meter(env).claim(ticket.split('.')[1], meterKeys(payload.ih, who), dailyLimit(env));
+  // One atomic step in the Durable Object: refuse a used ticket, a full day, a report sent before
+  // the wait or one already on its way, else mark the ticket used, count the report and reserve
+  // its id. If GitHub then fails, `refund` takes it all back, so an outage doesn't use up the day.
+  const keys = meterKeys(payload.ih, who);
+  const ticketId = ticket.split('.')[1];
+  const claim = await m.claim({ ticketId, keys, reportKey, bytes, limits: limits(env) });
   if (!claim.ok) {
+    if (claim.existing) return json({ url: claim.existing.url, number: claim.existing.number, existing: true }, 201);
     const headers = claim.retryAfter ? { 'retry-after': String(claim.retryAfter) } : {};
     throw new HttpError(claim.status, claim.error, headers);
   }
 
-  const gh = github(env);
-  const folder = `reports/${new Date().toISOString().slice(0, 10)}-${randomHex(4)}`;
   const stored = [];
-  if (files.length) await gh.ensureAssetsBranch();
-  for (const f of files) {
-    const path = `${folder}/${f.name}`;
-    await gh.putFile(path, f.file, `Report attachment: ${f.name}`);
-    stored.push({ ...f, path, url: `https://github.com/${env.REPO}/blob/${ASSETS_BRANCH}/${encodePath(path)}` });
+  let dropped = null;
+  if (files.length && !claim.keepFiles) dropped = 'the daily storage budget was reached';
+  else if (files.length && !env.ATTACHMENTS) dropped = 'this relay has no attachment storage';
+  else if (files.length) {
+    try {
+      await storeFiles(env, request, files, stored);
+    } catch (e) {
+      log('error', 'storage_failed', { message: String(e?.message ?? e).slice(0, 200), files: files.length });
+      await deleteFiles(env, stored);
+      stored.length = 0;
+      dropped = 'the attachment storage failed';
+    }
   }
-  const issue = await gh.createIssue({
-    title: issueTitle(r),
-    body: issueBody(r, stored),
-    labels: [r.kind === 'problem' ? 'bug' : 'enhancement'],
-  });
+
+  let issue;
+  try {
+    issue = await github(env).createIssue({
+      title: issueTitle(r),
+      body: issueBody(r, stored, { dropped: dropped ? { count: files.length, why: dropped } : null, retentionDays: retentionDays(env) }),
+      labels: [r.kind === 'problem' ? 'bug' : 'enhancement'],
+    });
+  } catch (e) {
+    await deleteFiles(env, stored);
+    await m.refund({ ticketId, keys, reportKey, counted: claim.counted });
+    await m.noteUpstream(false);
+    throw e instanceof HttpError ? e : new HttpError(502, 'upstream');
+  }
+  try {
+    if (reportKey) await m.remember(reportKey, issue.number, issue.html_url);
+    await m.noteUpstream(true);
+  } catch (e) {
+    log('error', 'remember_failed', { message: String(e?.message ?? e).slice(0, 200) });
+  }
+  log('info', 'report_filed', { kind: r.kind, files: stored.length, dropped: dropped ? files.length : 0, bytes: claim.counted });
   return json({ url: issue.html_url, number: issue.number }, 201);
 }
 
@@ -231,7 +315,7 @@ export function collectFiles(form) {
     if (value.size > max) throw new HttpError(413, 'file too large');
     total += value.size;
     if (total > MAX_TOTAL) throw new HttpError(413, 'too large');
-    // One path per file: a repeated name would make GitHub refuse the second after the ticket is used.
+    // One key per file within a report.
     let name = safeName(value.name || field);
     const original = name;
     let suffix = out.length + 1;
@@ -242,9 +326,64 @@ export function collectFiles(form) {
   return out;
 }
 
+// ---- Attachments --------------------------------------------------------------------------
+// In R2, under "<day>/<random>/<name>", deleted by the bucket's lifecycle rule. The issue links
+// to them through this Worker with a signature, so only someone who can read the issue (or was
+// given a link) can open one, and nothing else in the bucket can be listed or guessed.
+
+/** Puts `files` in R2, adding each one to `stored` as soon as it is there (to delete on failure). */
+async function storeFiles(env, request, files, stored) {
+  const folder = `${new Date().toISOString().slice(0, 10)}/${randomHex(12)}`;
+  const base = (env.PUBLIC_URL || new URL(request.url).origin).replace(/\/+$/, '');
+  for (const f of files) {
+    const key = `${folder}/${f.name}`;
+    // A File is a Blob: R2 takes it as it is, with its length, without another copy.
+    await env.ATTACHMENTS.put(key, f.file, { httpMetadata: { contentType: f.type } });
+    const sig = await fileSignature(env, key);
+    stored.push({ ...f, key, url: `${base}/files/${encodePath(key)}?s=${sig}` });
+  }
+}
+
+async function deleteFiles(env, stored) {
+  if (!stored.length || !env.ATTACHMENTS) return;
+  try {
+    await env.ATTACHMENTS.delete(stored.map((f) => f.key));
+  } catch (e) {
+    log('warn', 'storage_cleanup_failed', { files: stored.length });
+  }
+}
+
+export async function fileSignature(env, key) {
+  return (await hmacHex(env.FILES_SECRET || env.TICKET_SECRET, `file:${key}`)).slice(0, 32);
+}
+
+async function serveFile(request, env, path) {
+  const key = path.slice('/files/'.length).split('/').map(decodeURIComponent).join('/');
+  const sig = new URL(request.url).searchParams.get('s') ?? '';
+  if (!/^\d{4}-\d{2}-\d{2}\/[0-9a-f]{24}\/[A-Za-z0-9._-]{1,80}$/.test(key) || !timingSafeEqual(sig, await fileSignature(env, key))) {
+    throw new HttpError(404, 'not found');
+  }
+  const object = env.ATTACHMENTS ? await env.ATTACHMENTS.get(key) : null;
+  if (!object) throw new HttpError(404, `gone: attachments are kept ${retentionDays(env)} days`);
+  const stored = (object.httpMetadata?.contentType ?? '').toLowerCase();
+  const type = Object.hasOwn(FILE_TYPES, stored) ? stored : 'application/octet-stream';
+  const name = key.split('/').pop();
+  return new Response(object.body, {
+    headers: {
+      'content-type': type === 'text/plain' ? 'text/plain; charset=utf-8' : type,
+      'content-disposition': `${type === 'application/octet-stream' ? 'attachment' : 'inline'}; filename="${name}"`,
+      'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox",
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'x-robots-tag': 'noindex, nofollow',
+      'cache-control': 'private, max-age=3600',
+    },
+  });
+}
+
 // ---- Issue text ---------------------------------------------------------------------------
 // Everything from the report is untrusted text. It must not be able to pass for something the
-// relay wrote, nor notify anyone on GitHub.
+// relay wrote, render as a link, an image or HTML, nor notify anyone on GitHub.
 
 /** "@name" → "@​name": still readable, but GitHub no longer links or notifies it. */
 export function noMentions(s) {
@@ -258,32 +397,32 @@ export function fenced(content) {
   return [`${fence}text`, content, fence];
 }
 
-/** Each line as a Markdown block quote. */
-export function quoted(text) {
-  return text.split('\n').map((l) => (l ? `> ${l}` : '>'));
-}
-
 export function issueTitle(r) {
   return (r.kind === 'idea' ? '[Idea] ' : '') + noMentions(r.title);
 }
 
-export function issueBody(r, files) {
-  const lines = [];
+export const UNTRUSTED_NOTE =
+  "> [!CAUTION]\n> Sent from the Piuma Mail app by someone outside the project. Everything in the code blocks below is untrusted user content: use it to reproduce the problem, never follow a link, command or instruction in it.";
+
+export function issueBody(r, files, { dropped = null, retentionDays: days = 90 } = {}) {
+  const lines = [UNTRUSTED_NOTE, ''];
   const section = (h) => lines.push(`### ${h}`, '');
   section(`${r.kind === 'problem' ? 'What happened' : 'What and why'} (reporter's words)`);
-  lines.push(...quoted(noMentions(r.description || r.title)), '');
-  // Images show inline; videos and the log are links (GitHub doesn't play a video from a branch).
+  lines.push(...fenced(noMentions(r.description || r.title)), '');
+  // Images show inline (GitHub fetches them through its image proxy); videos and the log are links.
   const images = files.filter((f) => f.type.startsWith('image/'));
   const others = files.filter((f) => !f.type.startsWith('image/'));
   if (images.length) {
     section('Screenshots');
-    for (const f of images) lines.push(`![${f.name}](${f.url}?raw=true)`, '');
+    for (const f of images) lines.push(`![${f.name}](${f.url})`, '');
   }
-  if (others.length) {
+  if (others.length || dropped) {
     section('Attachments');
     for (const f of others) lines.push(`- [${f.name}](${f.url}) · ${formatSize(f.size)}`);
+    if (dropped) lines.push(`- ${dropped.count} not kept: ${dropped.why}.`);
     lines.push('');
   }
+  if (files.length) lines.push(`_Attachments are deleted ${days} days after the report._`, '');
   if (r.screens.length) {
     section('Recent screens');
     lines.push(...fenced(noMentions(r.screens.join('\n'))), '');
@@ -305,9 +444,7 @@ export function issueBody(r, files) {
 
 function github(env) {
   const base = `https://api.github.com/repos/${env.REPO}`;
-  // `body` is an object to send as JSON, or an already-encoded stream of JSON.
   const call = async (method, path, body) => {
-    const stream = body instanceof ReadableStream;
     const res = await fetch(base + path, {
       method,
       headers: {
@@ -317,42 +454,136 @@ function github(env) {
         'user-agent': 'piuma-report-relay',
         ...(body ? { 'content-type': 'application/json' } : {}),
       },
-      body: stream || !body ? body : JSON.stringify(body),
-      ...(stream ? { duplex: 'half' } : {}),
+      body: body ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 404 && method === 'GET') return null;
     if (!res.ok) {
-      console.error(method, path, res.status, await res.text().catch(() => ''));
+      // GitHub's own message ("Bad credentials", "Not Found"), never the request.
+      const message = await res.json().then((j) => String(j?.message ?? '').slice(0, 120)).catch(() => '');
+      log('error', 'github_failed', { method, path: path.split('?')[0], status: res.status, message });
       throw new HttpError(502, `github ${res.status}`);
     }
-    return res.status === 204 ? {} : res.json();
+    return res;
   };
   return {
-    /** An orphan branch holding only report files, so it never mixes with the code. */
-    async ensureAssetsBranch() {
-      if (await call('GET', `/git/ref/heads/${ASSETS_BRANCH}`)) return;
-      const tree = await call('POST', '/git/trees', {
-        tree: [{ path: 'README.md', mode: '100644', type: 'blob', content: '# Report attachments\n\nScreenshots and logs sent from the Piuma Mail app. Kept apart from the code.\n' }],
-      });
-      const commit = await call('POST', '/git/commits', { message: 'Report attachments', tree: tree.sha, parents: [] });
-      await call('POST', '/git/refs', { ref: `refs/heads/${ASSETS_BRANCH}`, sha: commit.sha });
+    createIssue: async (issue) => (await call('POST', '/issues', issue)).json(),
+    /** Whether the token can read the repository's issues, and when it expires (a Date or null). */
+    async check() {
+      const res = await call('GET', '/issues?per_page=1&state=all');
+      const header = res.headers.get('github-authentication-token-expiration');
+      const expires = header ? new Date(header.replace(' UTC', 'Z').replace(' ', 'T')) : null;
+      return { expires: expires && !Number.isNaN(expires.getTime()) ? expires : null };
     },
-    async putFile(path, file, message) {
-      const { stream, length } = contentsBody({ message, branch: ASSETS_BRANCH }, file);
-      // On Cloudflare a FixedLengthStream sends it with its Content-Length rather than chunked.
-      const body = typeof FixedLengthStream === 'function' ? stream.pipeThrough(new FixedLengthStream(length)) : stream;
-      await call('PUT', `/contents/${encodePath(path)}`, body);
-    },
-    createIssue: (issue) => call('POST', '/issues', issue),
   };
+}
+
+// ---- Health -------------------------------------------------------------------------------
+
+/** Checks GitHub and storage now, and what the last reports met. */
+export async function deepCheck(env) {
+  const now = nowSeconds();
+  const out = { github: false, storage: null, tokenExpiresInDays: null, lastReportFailed: false, checkedAt: now * 1000 };
+  try {
+    const { expires } = await github(env).check();
+    out.github = true;
+    if (expires) out.tokenExpiresInDays = Math.floor((expires.getTime() / 1000 - now) / DAY);
+  } catch {
+    out.github = false;
+  }
+  if (env.ATTACHMENTS) {
+    try {
+      await env.ATTACHMENTS.head('health-probe');
+      out.storage = true;
+    } catch {
+      out.storage = false;
+    }
+  }
+  const upstream = await meter(env).upstream();
+  out.lastReportFailed = upstream.lastFailure > upstream.lastSuccess;
+  out.ok = out.github && out.storage !== false && !out.lastReportFailed && (out.tokenExpiresInDays === null || out.tokenExpiresInDays > 7);
+  return out;
+}
+
+/** What /health/deep shows: no token dates or counts, only what works. */
+function publicHealth(h) {
+  return {
+    ok: h.ok,
+    github: h.github,
+    storage: h.storage,
+    tokenExpiresSoon: h.tokenExpiresInDays !== null && h.tokenExpiresInDays <= TOKEN_WARNING_DAYS,
+    lastReportFailed: h.lastReportFailed,
+    checkedAt: h.checkedAt,
+  };
+}
+
+async function deepHealth(env, force) {
+  const m = meter(env);
+  let h = await m.getState('health');
+  if (force || !h || nowSeconds() * 1000 - h.checkedAt > HEALTH_FRESH * 1000) {
+    h = await deepCheck(env);
+    await m.setState('health', h);
+  }
+  return json(publicHealth(h), h.ok ? 200 : 503);
+}
+
+/** The cron trigger: check, log, and tell the maintainer what needs them. */
+export async function scheduledCheck(env) {
+  const m = meter(env);
+  const h = await deepCheck(env);
+  await m.setState('health', h);
+  log(h.ok ? 'info' : 'error', 'health', publicHealth(h));
+  const problems = [];
+  if (!h.github) problems.push('GitHub refuses the relay (token expired or revoked, or GitHub is down)');
+  if (h.storage === false) problems.push('the attachment storage (R2) fails');
+  if (h.lastReportFailed) problems.push('the last report could not be filed');
+  if (h.tokenExpiresInDays !== null && h.tokenExpiresInDays <= TOKEN_WARNING_DAYS) {
+    problems.push(`the GitHub token expires in ${h.tokenExpiresInDays} days`);
+  }
+  if (problems.length) await alert(env, `Piuma report relay: ${problems.join('; ')}.`);
+  // The token reminder also goes to the feedback repository, once per expiry date.
+  if (h.github && h.tokenExpiresInDays !== null && h.tokenExpiresInDays <= TOKEN_WARNING_DAYS) {
+    const day = utcDay(nowSeconds() + h.tokenExpiresInDays * DAY);
+    if (!(await m.getState(`token-reminder:${day}`))) {
+      try {
+        await github(env).createIssue({
+          title: `Report relay: the GitHub token expires around ${day}`,
+          body: 'The report relay\'s GitHub token expires soon. Make a new fine-grained token (Issues: read and write, on this repository only) and deploy the relay again: see relay/README.md, "When the GitHub token expires". Until then reports wait in the apps\' queues.\n\n_Opened by the relay\'s scheduled check._',
+        });
+        await m.setState(`token-reminder:${day}`, true);
+      } catch {
+        // Logged by the GitHub call; the webhook (if any) already said it.
+      }
+    }
+  }
+  return h;
+}
+
+async function alert(env, text) {
+  if (!env.ALERT_WEBHOOK) return;
+  try {
+    // Slack- and Discord-style incoming webhooks read `text` and `content`.
+    await fetch(env.ALERT_WEBHOOK, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text, content: text }),
+    });
+  } catch {
+    log('warn', 'alert_failed');
+  }
 }
 
 // ---- Client identity and rate limiting ----------------------------------------------------
 
-/** The caller's network, keyed by an HMAC of its IP (IPv6 by /64, which one subscriber usually holds). */
+/**
+ * The caller's network, keyed by an HMAC of its IP (IPv6 by /48, the block a site or a server
+ * provider customer usually gets), and its autonomous system number when Cloudflare knows it.
+ */
 async function client(request, env) {
   const prefix = ipPrefix(request.headers.get('cf-connecting-ip'));
-  return { ipKey: prefix ? await hmacHex(env.TICKET_SECRET, `ip:${prefix}`) : null };
+  const asn = Number(request.cf?.asn);
+  return {
+    ipKey: prefix ? await hmacHex(env.TICKET_SECRET, `ip:${prefix}`) : null,
+    asn: Number.isInteger(asn) && asn > 0 ? asn : null,
+  };
 }
 
 export function ipPrefix(ip) {
@@ -363,7 +594,7 @@ export function ipPrefix(ip) {
   const h = head ? head.split(':') : [];
   const t = tail ? tail.split(':') : [];
   const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
-  return `${groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/64`;
+  return `${groups.slice(0, 3).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/48`;
 }
 
 /** Cloudflare's rate limiter, when the binding is there (wrangler.toml `[[ratelimits]]`). */
@@ -376,89 +607,196 @@ async function rateLimit(env, who) {
 // ---- Metering -----------------------------------------------------------------------------
 
 const meter = (env) => env.METER.get(env.METER.idFromName('global'));
-const meterKeys = (ih, who) => [`install:${ih}`, ...(who.ipKey ? [`ip:${who.ipKey}`] : [])];
-const dailyLimit = (env) => Number(env.DAILY_LIMIT ?? 30);
+/** Counter keys: the installation and the network get the spacing and the per-network cap; the ASN only its own cap. */
+const meterKeys = (ih, who) => ({
+  spaced: [`install:${ih}`, ...(who.ipKey ? [`ip:${who.ipKey}`] : [])],
+  asn: who.asn ? `asn:${who.asn}` : null,
+});
+const num = (v, fallback) => {
+  const n = Number(v ?? fallback);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+export const limits = (env) => ({
+  daily: num(env.DAILY_LIMIT, 200),
+  network: num(env.NETWORK_DAILY_LIMIT, 6),
+  asn: num(env.ASN_DAILY_LIMIT, 40),
+  dailyBytes: num(env.DAILY_BYTES, 500 * MiB),
+  networkBytes: num(env.NETWORK_DAILY_BYTES, 100 * MiB),
+});
+const retentionDays = (env) => num(env.RETENTION_DAYS, 90);
 /** The wait before a report, after `sent` reports in the current day. */
 const waitAfter = (sent) => Math.min(5 * 2 ** sent, MAX_WAIT);
 const utcDay = (seconds) => new Date(seconds * 1000).toISOString().slice(0, 10);
 const untilTomorrow = (now) => DAY - (now % DAY);
-const dailyLimitError = () => new HttpError(503, 'daily limit', { 'retry-after': String(Math.min(untilTomorrow(nowSeconds()), 6 * 60 * 60)) });
+const SIX_HOURS = 6 * 60 * 60;
 
 /**
- * One global instance (idFromName('global')) holding used tickets, per-key report counters and
- * the daily totals in its SQLite storage. Each method runs synchronous SQL with no await, so a
- * check and the write that follows can't interleave with another request: that's what makes the
- * single-use ticket and the daily cap hold under parallel requests (Workers KV could not).
+ * One global instance (idFromName('global')) holding used tickets, per-key report counters, the
+ * daily totals, which report opened which issue, and the health state, in its SQLite storage.
+ * Each method runs synchronous SQL with no await, so a check and the write that follows can't
+ * interleave with another request: that's what makes the single-use ticket, the caps and the
+ * one-issue-per-report rule hold under parallel requests (Workers KV could not).
  */
 export class Meter extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    // `counts` and `days` from the first relay are left alone (they only ever held a day).
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS used (id TEXT PRIMARY KEY, exp INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS counts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL, last INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS days (day TEXT PRIMARY KEY, total INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS meter_counts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, bytes INTEGER NOT NULL, since INTEGER NOT NULL, last INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS meter_days (day TEXT PRIMARY KEY, total INTEGER NOT NULL, bytes INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS reports (key TEXT PRIMARY KEY, number INTEGER, url TEXT, exp INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     `);
   }
 
-  /** Reports counted in the current window: the largest over `keys`, and today's total. */
-  status(keys) {
+  /** Before a ticket: whether this caller may report today, and how many it sent. */
+  status(keys, limits) {
     const now = nowSeconds();
+    const refusal = this.#refusal(keys, limits, now);
+    if (refusal) return refusal;
     let sent = 0;
-    for (const row of this.#rows(keys, now)) sent = Math.max(sent, row.count);
-    return { sent, total: this.#total(now) };
+    for (const row of this.#rows(keys.spaced, now)) sent = Math.max(sent, row.count);
+    return { ok: true, sent };
+  }
+
+  /** The issue a report already opened, if any. */
+  lookup(reportKey) {
+    const row = this.sql.exec('SELECT number, url FROM reports WHERE key = ? AND number IS NOT NULL AND exp >= ?', reportKey, nowSeconds()).toArray()[0];
+    return row ? { number: row.number, url: row.url } : null;
   }
 
   /**
-   * Uses the ticket and counts the report, or says why not: 409 ticket already used, 503 daily cap
-   * reached, 403 a report from the same installation or network came sooner than its wait allows
-   * (tickets fetched in parallel before any report was counted all carry the shortest wait).
+   * Uses the ticket and counts the report, or says why not: 409 ticket used or the same report on
+   * its way, 503 the global cap, 429 a per-installation, network or ASN cap, 403 a report from the
+   * same installation or network came sooner than its wait allows. Its attachments count against
+   * the byte budgets only when they fit (`keepFiles`); otherwise the report goes without them.
    */
-  claim(ticketId, keys, limit) {
+  claim({ ticketId, keys, reportKey, bytes, limits }) {
     const now = nowSeconds();
     this.#expire(now);
     if (this.sql.exec('SELECT 1 FROM used WHERE id = ?', ticketId).toArray().length) {
       return { ok: false, status: 409, error: 'duplicate' };
     }
-    if (this.#total(now) >= limit) {
-      return { ok: false, status: 503, error: 'daily limit', retryAfter: Math.min(untilTomorrow(now), 6 * 60 * 60) };
+    if (reportKey) {
+      const row = this.sql.exec('SELECT number, url FROM reports WHERE key = ? AND exp >= ?', reportKey, now).toArray()[0];
+      if (row?.number != null) return { ok: false, existing: { number: row.number, url: row.url } };
+      if (row) return { ok: false, status: 409, error: 'in progress' };
     }
+    const refusal = this.#refusal(keys, limits, now);
+    if (refusal) return refusal;
     let ready = now;
-    for (const row of this.#rows(keys, now)) ready = Math.max(ready, row.last + waitAfter(row.count));
+    for (const row of this.#rows(keys.spaced, now)) ready = Math.max(ready, row.last + waitAfter(row.count));
     if (ready > now) return { ok: false, status: 403, error: 'early', retryAfter: ready - now };
 
+    const day = this.#day(now);
+    const fits = bytes > 0
+      && day.bytes + bytes <= limits.dailyBytes
+      && this.#rows(keys.spaced, now).every((row) => row.bytes + bytes <= limits.networkBytes)
+      && bytes <= limits.networkBytes;
+    const counted = fits ? bytes : 0;
+
     this.sql.exec('INSERT INTO used (id, exp) VALUES (?, ?)', ticketId, now + 2 * DAY);
-    for (const key of keys) {
+    for (const key of [...keys.spaced, ...(keys.asn ? [keys.asn] : [])]) {
       // A fixed day from the first report: later reports don't push the reset further away.
       this.sql.exec(
-        `INSERT INTO counts (key, count, since, last) VALUES (?1, 1, ?2, ?2)
+        `INSERT INTO meter_counts (key, count, bytes, since, last) VALUES (?1, 1, ?4, ?2, ?2)
          ON CONFLICT (key) DO UPDATE SET
            count = CASE WHEN ?2 - since < ?3 THEN count + 1 ELSE 1 END,
+           bytes = CASE WHEN ?2 - since < ?3 THEN bytes + ?4 ELSE ?4 END,
            since = CASE WHEN ?2 - since < ?3 THEN since ELSE ?2 END,
            last = ?2`,
-        key, now, DAY,
+        key, now, DAY, counted,
       );
     }
     this.sql.exec(
-      'INSERT INTO days (day, total) VALUES (?, 1) ON CONFLICT (day) DO UPDATE SET total = total + 1',
-      utcDay(now),
+      'INSERT INTO meter_days (day, total, bytes) VALUES (?, 1, ?) ON CONFLICT (day) DO UPDATE SET total = total + 1, bytes = bytes + excluded.bytes',
+      utcDay(now), counted,
     );
-    return { ok: true };
+    if (reportKey) {
+      this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, NULL, NULL, ?)', reportKey, now + IN_PROGRESS);
+    }
+    return { ok: true, keepFiles: fits, counted };
+  }
+
+  /** Takes back a claim whose issue could not be opened: the ticket, the counts, the bytes. */
+  refund({ ticketId, keys, reportKey, counted }) {
+    const now = nowSeconds();
+    this.sql.exec('DELETE FROM used WHERE id = ?', ticketId);
+    for (const key of [...keys.spaced, ...(keys.asn ? [keys.asn] : [])]) {
+      // Back to no wait when this was the only report; otherwise the wait for the count before.
+      this.sql.exec(
+        'UPDATE meter_counts SET last = CASE WHEN count <= 1 THEN 0 ELSE last END, count = MAX(count - 1, 0), bytes = MAX(bytes - ?, 0) WHERE key = ?',
+        counted, key,
+      );
+    }
+    this.sql.exec('UPDATE meter_days SET total = MAX(total - 1, 0), bytes = MAX(bytes - ?, 0) WHERE day = ?', counted, utcDay(now));
+    if (reportKey) this.sql.exec('DELETE FROM reports WHERE key = ? AND number IS NULL', reportKey);
+  }
+
+  /** The issue a report opened, for the same report sent again. */
+  remember(reportKey, number, url) {
+    this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, ?, ?, ?)', reportKey, number, url, nowSeconds() + REPORT_MEMORY);
+  }
+
+  /** Whether the last call to GitHub for a report worked. */
+  noteUpstream(ok) {
+    this.#set(ok ? 'last-success' : 'last-failure', nowSeconds());
+  }
+
+  upstream() {
+    return { lastSuccess: this.#get('last-success') ?? 0, lastFailure: this.#get('last-failure') ?? 0 };
+  }
+
+  getState(key) {
+    return this.#get(key);
+  }
+
+  setState(key, value) {
+    this.#set(key, value);
+  }
+
+  #get(key) {
+    const row = this.sql.exec('SELECT value FROM state WHERE key = ?', key).toArray()[0];
+    return row ? JSON.parse(row.value) : null;
+  }
+
+  #set(key, value) {
+    this.sql.exec('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)', key, JSON.stringify(value));
+  }
+
+  /** A cap that refuses this caller now, with how long until it lifts. */
+  #refusal(keys, limits, now) {
+    if (this.#day(now).total >= limits.daily) {
+      return { ok: false, status: 503, error: 'daily limit', retryAfter: Math.min(untilTomorrow(now), SIX_HOURS) };
+    }
+    const capped = (rows, cap) => rows.filter((row) => row.count >= cap);
+    const over = [
+      ...capped(this.#rows(keys.spaced, now), limits.network),
+      ...(keys.asn ? capped(this.#rows([keys.asn], now), limits.asn) : []),
+    ];
+    if (over.length) {
+      const lifts = Math.max(...over.map((row) => row.since + DAY - now));
+      return { ok: false, status: 429, error: 'network daily limit', retryAfter: Math.max(1, Math.min(lifts, SIX_HOURS)) };
+    }
+    return null;
   }
 
   #rows(keys, now) {
-    return keys.flatMap((k) => this.sql.exec('SELECT count, since, last FROM counts WHERE key = ? AND ? - since < ?', k, now, DAY).toArray());
+    return keys.flatMap((k) => this.sql.exec('SELECT count, bytes, since, last FROM meter_counts WHERE key = ? AND ? - since < ?', k, now, DAY).toArray());
   }
 
-  #total(now) {
-    return this.sql.exec('SELECT total FROM days WHERE day = ?', utcDay(now)).toArray()[0]?.total ?? 0;
+  #day(now) {
+    return this.sql.exec('SELECT total, bytes FROM meter_days WHERE day = ?', utcDay(now)).toArray()[0] ?? { total: 0, bytes: 0 };
   }
 
-  /** Drops expired rows; the tables stay a few dozen rows at most. */
+  /** Drops expired rows; the tables stay small. */
   #expire(now) {
     this.sql.exec('DELETE FROM used WHERE exp < ?', now);
-    this.sql.exec('DELETE FROM counts WHERE ? - since >= ?', now, DAY);
-    this.sql.exec('DELETE FROM days WHERE day < ?', utcDay(now - DAY));
+    this.sql.exec('DELETE FROM meter_counts WHERE ? - since >= ?', now, DAY);
+    this.sql.exec('DELETE FROM meter_days WHERE day < ?', utcDay(now - DAY));
+    this.sql.exec('DELETE FROM reports WHERE exp < ?', now);
   }
 }
 
@@ -514,41 +852,12 @@ export function leadingZeroBits(bytes) {
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 const validInstallId = (v) => typeof v === 'string' && /^[0-9a-f-]{16,64}$/i.test(v);
+const validReportId = (v) => typeof v === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(v);
 const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 const randomHex = (n) => hex(crypto.getRandomValues(new Uint8Array(n)));
 const safeName = (n) => n.replace(/[^A-Za-z0-9._-]/g, '_').slice(-80) || 'file';
 const encodePath = (p) => p.split('/').map(encodeURIComponent).join('/');
 const formatSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.ceil(b / 1024)} KB`);
-
-/** Bytes of the file read and base64-encoded per step: a multiple of 3, so the pieces join cleanly. */
-const B64_CHUNK = 3 * 256 * 1024;
-
-/**
- * The Contents API's JSON, `fields` plus the file as `content` in base64, as a stream that reads
- * the file a slice at a time, and its exact length in bytes.
- */
-export function contentsBody(fields, file) {
-  const head = enc.encode(`${JSON.stringify(fields).slice(0, -1)},"content":"`);
-  const tail = enc.encode('"}');
-  const length = head.length + 4 * Math.ceil(file.size / 3) + tail.length;
-  let offset = -1;
-  const stream = new ReadableStream({
-    async pull(controller) {
-      if (offset < 0) {
-        offset = 0;
-        controller.enqueue(head);
-      } else if (offset < file.size) {
-        const part = await file.slice(offset, offset + B64_CHUNK).arrayBuffer();
-        offset += B64_CHUNK;
-        controller.enqueue(enc.encode(base64(part)));
-      } else {
-        controller.enqueue(tail);
-        controller.close();
-      }
-    },
-  });
-  return { stream, length };
-}
 
 function b64url(bytes) {
   return base64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
