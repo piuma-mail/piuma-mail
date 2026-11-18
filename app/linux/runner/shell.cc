@@ -2,7 +2,9 @@
 
 #include <dlfcn.h>
 #include <gio/gdesktopappinfo.h>
+#include <glib-unix.h>
 #include <glib/gstdio.h>
+#include <signal.h>
 
 #include <cstring>
 
@@ -56,6 +58,9 @@ const IndicatorApi* Indicators() {
 
 const char kDesktopId[] = APPLICATION_ID ".desktop";
 
+// How long the tray's Quit waits for Dart to end the session.
+constexpr guint kQuitWaitMs = 1000;
+
 }  // namespace
 
 struct _Shell {
@@ -67,6 +72,11 @@ struct _Shell {
   GPtrArray* waiting;
   gboolean keep_running;
   gboolean quitting;
+  // Quit was handed to GApplication: once only.
+  gboolean quit_sent;
+  // The running session's marker (core/src/feedback.rs, session_marker):
+  // removed here on the ways out that never reach Dart in time.
+  gchar* session_marker;
   gpointer indicator;
   GtkWidget* menu;
   GtkWidget* open_item;
@@ -81,12 +91,55 @@ static void send_open(Shell* self, FlValue* args) {
 
 void shell_present(Shell* self) { gtk_window_present(self->window); }
 
+// The session closed normally: a later start offers no crash report.
+static void end_session(Shell* self) {
+  if (self->session_marker != nullptr) g_unlink(self->session_marker);
+}
+
+static void finish_quit(Shell* self) {
+  if (self->quit_sent) return;
+  self->quit_sent = TRUE;
+  end_session(self);
+  g_application_quit(self->application);
+}
+
+static void on_quitting_answered(GObject* object, GAsyncResult* result,
+                                 gpointer data) {
+  g_autoptr(FlMethodResponse) response = fl_method_channel_invoke_method_finish(
+      FL_METHOD_CHANNEL(object), result, nullptr);
+  finish_quit(static_cast<Shell*>(data));
+}
+
+static gboolean on_quit_waited(gpointer data) {
+  finish_quit(static_cast<Shell*>(data));
+  return G_SOURCE_REMOVE;
+}
+
+// Quits for good (the tray's Quit, Dart's "quit", SIGTERM when the
+// session ends). g_application_quit never reaches Dart's exit request, so
+// Dart is told first ("quitting") and gets a moment to answer; the
+// session's marker goes either way.
 static void quit(Shell* self) {
+  if (self->quitting) return;
   self->quitting = TRUE;
   if (self->indicator != nullptr) {
     Indicators()->status(self->indicator, kPassive);
   }
-  g_application_quit(self->application);
+  fl_method_channel_invoke_method(self->channel, "quitting", nullptr, nullptr,
+                                  on_quitting_answered, self);
+  g_timeout_add(kQuitWaitMs, on_quit_waited, self);
+}
+
+// Signing out or shutting down (systemd stops the session's processes
+// with SIGTERM), or Ctrl-C in a terminal: a normal end, not a crash.
+static gboolean on_terminate(gpointer data) {
+  quit(static_cast<Shell*>(data));
+  return G_SOURCE_CONTINUE;
+}
+
+// The inbox's window is gone (closed without a tray): the app ends.
+static void on_destroy(GtkWidget*, gpointer data) {
+  end_session(static_cast<Shell*>(data));
 }
 
 static void on_open(GtkMenuItem*, gpointer data) {
@@ -295,6 +348,17 @@ static void on_method_call(FlMethodChannel* channel, FlMethodCall* call,
     result = fl_value_new_string(default_mail());
   } else if (g_strcmp0(method, "makeDefault") == 0) {
     result = fl_value_new_string(make_default());
+  } else if (g_strcmp0(method, "session") == 0) {
+    // Only ever the marker the engine names (an absolute path to a file
+    // called "running"), never another file to remove.
+    const gchar* marker = lookup_string(args, "marker");
+    g_autofree gchar* name =
+        marker != nullptr ? g_path_get_basename(marker) : nullptr;
+    if (marker != nullptr && g_path_is_absolute(marker) &&
+        g_strcmp0(name, "running") == 0) {
+      g_free(self->session_marker);
+      self->session_marker = g_strdup(marker);
+    }
   } else if (g_strcmp0(method, "quit") == 0) {
     fl_method_call_respond_success(call, nullptr, nullptr);
     quit(self);
@@ -329,6 +393,9 @@ Shell* shell_new(GApplication* application, GtkWindow* window, FlView* view) {
   gtk_widget_show_all(self->menu);
 
   g_signal_connect(window, "delete-event", G_CALLBACK(on_delete), self);
+  g_signal_connect(window, "destroy", G_CALLBACK(on_destroy), self);
+  g_unix_signal_add(SIGTERM, on_terminate, self);
+  g_unix_signal_add(SIGINT, on_terminate, self);
 
   g_autoptr(FlPluginRegistrar) registrar =
       fl_plugin_registry_get_registrar_for_plugin(FL_PLUGIN_REGISTRY(view),

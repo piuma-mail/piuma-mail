@@ -100,6 +100,17 @@ Shell::Shell(flutter::BinaryMessenger* messenger, HWND window)
           OpenDefaultAppsSettings();
           // The person chooses in Settings; nothing is known yet.
           result->Success(flutter::EncodableValue("unknown"));
+        } else if (method == "session") {
+          // Only ever the marker the engine names (an absolute path to a
+          // file called "running"), never another file to remove.
+          const std::wstring marker = FindText(args, "marker", L"");
+          const size_t slash = marker.find_last_of(L"\\/");
+          if (marker.size() > 3 && slash != std::wstring::npos &&
+              marker.compare(slash + 1, std::wstring::npos, L"running") == 0 &&
+              (marker[1] == L':' || marker.rfind(L"\\\\", 0) == 0)) {
+            session_marker_ = marker;
+          }
+          result->Success();
         } else if (method == "quit") {
           result->Success();
           Quit();
@@ -202,9 +213,19 @@ void Shell::Present() {
   ::SetForegroundWindow(window_);
 }
 
+void Shell::EndSession() {
+  if (!session_marker_.empty()) ::DeleteFileW(session_marker_.c_str());
+}
+
 void Shell::Quit() {
+  if (quitting_) return;
   quitting_ = true;
   ShowTray(false);
+  // Dart ends the session itself when it gets the exit request; told
+  // here too, and the marker goes now, in case the close never gets
+  // there (the window was already hidden in the tray).
+  channel_->InvokeMethod("quitting", nullptr);
+  EndSession();
   // Closed from the message loop, never from inside a callback of this
   // shell, which goes with the window.
   ::PostMessage(window_, WM_CLOSE, 0, 0);

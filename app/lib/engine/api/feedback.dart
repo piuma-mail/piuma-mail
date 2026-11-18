@@ -39,6 +39,12 @@ void feedbackSessionStart() =>
 void feedbackSessionEnd() =>
     RustLib.instance.api.crateApiFeedbackFeedbackSessionEnd();
 
+/// The running session's marker file, for the desktop shells to remove on
+/// the ways out that never reach Dart in time (signing out, shutting
+/// down, the tray's Quit). Empty before the engine opens.
+String feedbackSessionMarker() =>
+    RustLib.instance.api.crateApiFeedbackFeedbackSessionMarker();
+
 /// Adds a line to the recent log (cleaned before it is kept). `level` is
 /// "info", "warn" or "error".
 void feedbackLog({

@@ -1346,7 +1346,14 @@ pub fn session_started(dir: &Path) {
 
 /// The app is closing normally.
 pub fn session_ended(dir: &Path) {
-    let _ = std::fs::remove_file(dir.join(RUNNING_FILE));
+    let _ = std::fs::remove_file(session_marker(dir));
+}
+
+/// The file that says a session is running: the desktop shells remove it
+/// themselves on the ways out that never reach Dart in time (the tray's
+/// Quit on Linux, signing out or shutting down).
+pub fn session_marker(dir: &Path) -> std::path::PathBuf {
+    dir.join(RUNNING_FILE)
 }
 
 // ---- Relay -------------------------------------------------------------
@@ -2478,6 +2485,24 @@ mod tests {
         assert!(pending_crash(&dir)
             .unwrap()
             .contains("did not close normally"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_shell_removing_the_marker_ends_the_session_cleanly() {
+        // The tray's Quit on Linux, signing out on Windows: the shell
+        // deletes the marker itself, and the next start finds no crash.
+        let dir = temp_dir("session-marker");
+        session_started(&dir);
+        let marker = session_marker(&dir);
+        assert!(marker.exists());
+        assert!(marker.ends_with("running"));
+        std::fs::remove_file(&marker).unwrap();
+        session_started(&dir);
+        assert!(pending_crash(&dir).is_none());
+        // Ending twice (the shell, then Dart) is harmless.
+        session_ended(&dir);
+        session_ended(&dir);
         let _ = std::fs::remove_dir_all(dir);
     }
 

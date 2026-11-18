@@ -104,9 +104,40 @@ class Shell {
   }
 
   /// Quits for good, even while it keeps running in the tray.
-  static Future<void> quit() => _call<void>('quit');
+  static Future<void> quit() {
+    quitting();
+    return _call<void>('quit');
+  }
+
+  static VoidCallback? _onQuitting;
+
+  /// Tells the platform side where the running session's [marker] is, so
+  /// it can remove it on the ways out that never reach Dart in time
+  /// (signing out, shutting down), and what to do when it quits on its
+  /// own (the tray's Quit): [onQuitting], before it goes.
+  static Future<void> watchSession({
+    required String marker,
+    required VoidCallback onQuitting,
+  }) {
+    _onQuitting = onQuitting;
+    if (marker.isEmpty) return Future.value();
+    return _call<void>('session', {'marker': marker});
+  }
+
+  /// The app is about to quit: the platform side asks before it goes, and
+  /// waits (briefly) for the answer.
+  static void quitting() {
+    try {
+      _onQuitting?.call();
+    } catch (e) {
+      debugPrint('shell quitting: $e');
+    }
+  }
 
   /// Forgets what was sent, for tests.
   @visibleForTesting
-  static void reset() => _unread = null;
+  static void reset() {
+    _unread = null;
+    _onQuitting = null;
+  }
 }

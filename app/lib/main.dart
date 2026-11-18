@@ -26,6 +26,7 @@ import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
 import 'outside/arrivals.dart';
+import 'outside/shell.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
 import 'widgets/links.dart';
@@ -148,19 +149,31 @@ void _keepCrashes() {
 /// What stopped the app without a Dart or Rust error, kept like a crash to
 /// offer a report at this start: on Android, what the system recorded
 /// (stopped responding, native crashes); on the desktop, a last session
-/// that never closed normally.
+/// that never closed normally. Every way out ends the session: the window
+/// or Cmd-Q (asked to exit), the engine going away (detached), the tray's
+/// Quit (the shell asks first), and signing out or shutting down, where
+/// the shell removes the session's marker itself.
 void _watchExits() {
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    void end() {
+      try {
+        feedback.feedbackSessionEnd();
+      } catch (_) {}
+    }
+
     try {
       feedback.feedbackSessionStart();
+      Shell.watchSession(
+        marker: feedback.feedbackSessionMarker(),
+        onQuitting: end,
+      ).ignore();
     } catch (_) {}
     AppLifecycleListener(
       onExitRequested: () async {
-        try {
-          feedback.feedbackSessionEnd();
-        } catch (_) {}
+        end();
         return AppExitResponse.exit;
       },
+      onDetach: end,
     );
   }
   AndroidBackground.exitReasons().then((reasons) {

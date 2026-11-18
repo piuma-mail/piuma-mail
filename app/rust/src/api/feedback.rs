@@ -304,6 +304,16 @@ pub fn feedback_session_end() {
     }
 }
 
+/// The running session's marker file, for the desktop shells to remove on
+/// the ways out that never reach Dart in time (signing out, shutting
+/// down, the tray's Quit). Empty before the engine opens.
+#[frb(sync)]
+pub fn feedback_session_marker() -> String {
+    DIR.get()
+        .map(|d| feedback::session_marker(d).to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Adds a line to the recent log (cleaned before it is kept). `level` is
 /// "info", "warn" or "error".
 #[frb(sync)]
