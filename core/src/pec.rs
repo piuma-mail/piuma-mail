@@ -2,6 +2,13 @@
 //! that leaves a PEC mailbox. They are read from their headers (fixed by
 //! the Italian rules for PEC) and their short Italian text, kept apart from
 //! the inbox, and gathered on the message they are about for the Vault.
+//!
+//! Headers alone prove nothing: anyone can write them. A receipt counts
+//! only on a certified mailbox (whose provider wraps whatever arrives from
+//! outside the PEC system in an envelope of its own), only from the
+//! provider's certificate address, and it is proof only once the
+//! provider's S/MIME signature checks against [`ANCHORS`] ([`signed`]).
+//! Until then the Vault shows it as unverified.
 
 use std::sync::LazyLock;
 
@@ -10,7 +17,43 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// The header fields [`receipt`] reads, for an IMAP fetch.
-pub const HEADER_FIELDS: &str = "X-RICEVUTA X-RIFERIMENTO-MESSAGE-ID";
+pub const HEADER_FIELDS: &str = "X-RICEVUTA X-RIFERIMENTO-MESSAGE-ID X-TRASPORTO";
+
+/// The certificates PEC receipts must lead to, as PEM: see the file for
+/// where they come from and how they are updated.
+const ANCHORS_PEM: &str = include_str!("pec_anchors.pem");
+
+/// [`ANCHORS_PEM`], as DER.
+pub static ANCHORS: LazyLock<Vec<Vec<u8>>> = LazyLock::new(|| crate::smime::pem(ANCHORS_PEM));
+
+/// Whether an account is a certified (PEC) mailbox, by its server: the
+/// providers' own (Aruba, InfoCert's Legalmail, Poste, Namirial,
+/// Register…) all name it so.
+pub fn certified(account: &crate::model::Account) -> bool {
+    let crate::model::AccountKind::Imap { imap, .. } = &account.kind else {
+        return false;
+    };
+    let host = imap.host.to_ascii_lowercase();
+    host.split('.').any(|label| {
+        matches!(
+            label,
+            "pec" | "postecert" | "legalmail" | "cert" | "sicurezzapostale" | "arubapec"
+        )
+    })
+}
+
+/// The address a provider sends its receipts from.
+fn from_provider(m: &Message) -> bool {
+    m.from()
+        .and_then(|a| a.first())
+        .and_then(|a| a.address())
+        .is_some_and(|e| {
+            e.trim()
+                .to_ascii_lowercase()
+                .strip_prefix("posta-certificata@")
+                .is_some_and(|d| d.contains('.'))
+        })
+}
 
 /// What a receipt says about the message it refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -83,8 +126,13 @@ pub struct Receipt {
     pub reason: String,
 }
 
-/// The receipt `m` is, if it is one.
+/// The receipt `m` is, if it is one: the provider's, at the top of the
+/// message (a certified message received has X-Trasporto, and carries
+/// whatever its sender wrote inside it).
 pub fn receipt(m: &Message) -> Option<Receipt> {
+    if m.headers().get("X-Trasporto").is_some() || !from_provider(m) {
+        return None;
+    }
     let kind = Kind::from_header(
         m.headers()
             .get("X-Ricevuta")
@@ -152,6 +200,71 @@ fn reason(text: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Whether `m` (as `raw`) is a receipt signed by a PEC provider: a
+/// detached S/MIME signature over the message, by a certificate that
+/// leads to [`ANCHORS`] and names the address the receipt comes from.
+pub fn signed(m: &Message, raw: &[u8]) -> bool {
+    signed_with(m, raw, &ANCHORS)
+}
+
+pub(crate) fn signed_with(m: &Message, raw: &[u8], anchors: &[Vec<u8>]) -> bool {
+    if anchors.is_empty() || receipt(m).is_none() {
+        return false;
+    }
+    let Some(from) = m
+        .from()
+        .and_then(|a| a.first())
+        .and_then(|a| a.address())
+        .map(|e| e.trim().to_ascii_lowercase())
+    else {
+        return false;
+    };
+    let Some((content, p7s)) = detached(m, raw) else {
+        return false;
+    };
+    let Some(signer) = crate::smime::verify_detached(content, &p7s, anchors) else {
+        return false;
+    };
+    let domain = from.rsplit_once('@').map(|(_, d)| d).unwrap_or_default();
+    signer.emails.iter().any(|e| e == &from) || signer.hosts.iter().any(|h| h == domain)
+}
+
+/// The signed part of a multipart/signed message, as written, and its
+/// signature.
+fn detached<'a>(m: &Message, raw: &'a [u8]) -> Option<(&'a [u8], Vec<u8>)> {
+    let ct = m.root().content_type()?;
+    if !ct.ctype().eq_ignore_ascii_case("multipart")
+        || !ct.subtype()?.eq_ignore_ascii_case("signed")
+    {
+        return None;
+    }
+    let boundary = format!("--{}", ct.attribute("boundary")?);
+    let b = boundary.as_bytes();
+    let find = |from: usize| -> Option<usize> {
+        raw.get(from..)?
+            .windows(b.len() + 1)
+            .position(|w| w[0] == b'\n' && &w[1..] == b)
+            .map(|i| from + i + 1)
+    };
+    let first = find(0)?;
+    let start = first + raw.get(first..)?.iter().position(|&c| c == b'\n')? + 1;
+    let next = find(start)?;
+    // The line break before the next boundary belongs to it.
+    let mut end = next - 1;
+    if end > start && raw[end - 1] == b'\r' {
+        end -= 1;
+    }
+    let content = raw.get(start..end)?;
+    let p7s = m.root().parts().find_map(|p| {
+        let ct = p.content_type()?;
+        let sub = ct.subtype()?.to_ascii_lowercase();
+        (ct.ctype().eq_ignore_ascii_case("application")
+            && (sub == "pkcs7-signature" || sub == "x-pkcs7-signature"))
+            .then(|| p.decoded().to_vec())
+    })?;
+    Some((content, p7s))
+}
+
 /// The subject a receipt gives its message, without "CONSEGNA: " and the
 /// like.
 pub fn subject(receipt_subject: &str) -> &str {
@@ -205,6 +318,9 @@ pub struct Sent {
     /// Each receipt (mailbox, uid) worth keeping as proof: the deliveries,
     /// else the acceptance or the failure.
     pub proofs: Vec<(String, u32)>,
+    /// Every receipt the stage rests on carries its provider's checked
+    /// signature. Otherwise the stage is only what headers claim.
+    pub verified: bool,
 }
 
 /// One stored receipt, as [`gather`] reads it.
@@ -219,6 +335,8 @@ pub struct Stored {
     pub reason: String,
     pub subject: String,
     pub received_at: i64,
+    /// Its provider's signature checked ([`signed`]).
+    pub verified: bool,
 }
 
 /// The receipts of each sent message, gathered into one, newest first.
@@ -287,6 +405,13 @@ pub fn gather(receipts: Vec<Stored>) -> Vec<Sent> {
                 .map(|r| (r.mailbox.clone(), r.uid))
                 .collect()
         };
+        // What the stage rests on: the failure, the deliveries, or the
+        // acceptance.
+        let verified = match (failure, stage) {
+            (Some(f), _) => f.verified,
+            (None, Stage::Delivered) => of(Kind::Delivered).all(|r| r.verified),
+            (None, _) => of(Kind::Accepted).next().is_some_and(|r| r.verified),
+        };
         let last = g.last().expect("a group has a receipt");
         out.push(Sent {
             account: last.account,
@@ -302,6 +427,7 @@ pub fn gather(receipts: Vec<Stored>) -> Vec<Sent> {
                 .and_then(|f| f.recipients.first().cloned())
                 .unwrap_or_default(),
             proofs,
+            verified,
         });
     }
     out.sort_by_key(|s| std::cmp::Reverse(s.at));
@@ -348,7 +474,8 @@ mod tests {
     #[test]
     fn reads_a_delivery_and_a_failure() {
         let r = parse(
-            "Subject: CONSEGNA: Lease renewal 2027\r\n\
+            "From: posta-certificata@pec.aruba.it\r\n\
+             Subject: CONSEGNA: Lease renewal 2027\r\n\
              X-Ricevuta: avvenuta-consegna\r\n\
              X-Riferimento-Message-ID: opec1.20261019@pec.it\r\n\r\n\
              Il giorno 19/10/2026 alle ore 09:12:04 (+0200) il messaggio\r\n\
@@ -362,7 +489,8 @@ mod tests {
         assert_eq!(r.recipients, ["studio.rossi@pec.it"]);
 
         let r = parse(
-            "Subject: AVVISO DI MANCATA CONSEGNA: Formal notice\r\n\
+            "From: posta-certificata@pec.aruba.it\r\n\
+             Subject: AVVISO DI MANCATA CONSEGNA: Formal notice\r\n\
              X-Ricevuta: errore-consegna\r\n\
              X-Riferimento-Message-ID: <opec2@pec.it>\r\n\r\n\
              Il giorno 16/10/2026 alle ore 18:05:00 (+0200) nel messaggio\r\n\
@@ -380,11 +508,112 @@ mod tests {
     #[test]
     fn ordinary_mail_is_no_receipt() {
         assert_eq!(parse("Subject: CONSEGNA: hi\r\n\r\nhello\r\n"), None);
+        // Receipt headers from someone else than the provider.
+        assert_eq!(
+            parse(
+                "From: bank@example.org\r\nX-Ricevuta: avvenuta-consegna\r\n\
+                 X-Riferimento-Message-ID: <a@pec.it>\r\n\r\nx\r\n"
+            ),
+            None
+        );
         // A certified message received is the envelope, not a receipt.
         assert_eq!(
             parse("X-Trasporto: posta-certificata\r\nSubject: POSTA CERTIFICATA: hi\r\n\r\nx\r\n"),
             None
         );
+    }
+
+    const SIGNED: &str = include_str!("../tests/fixtures/pec/signed.eml");
+    const STRANGER: &str = include_str!("../tests/fixtures/pec/stranger.eml");
+    const TEST_ROOT: &str = include_str!("../tests/fixtures/pec/test-root.pem");
+
+    fn signed_by(raw: &str, anchors: &[Vec<u8>]) -> bool {
+        let m = MessageParser::default().parse(raw.as_bytes()).unwrap();
+        signed_with(&m, raw.as_bytes(), anchors)
+    }
+
+    #[test]
+    fn a_receipt_signed_by_its_provider_is_proof() {
+        let anchors = crate::smime::pem(TEST_ROOT);
+        assert_eq!(anchors.len(), 1);
+        assert!(parse(SIGNED).is_some());
+        assert!(signed_by(SIGNED, &anchors));
+        // Not without the provider's certificate among the anchors, as
+        // in the app until they are added.
+        assert!(!signed_by(SIGNED, &[]));
+        assert!(!signed(
+            &MessageParser::default().parse(SIGNED.as_bytes()).unwrap(),
+            SIGNED.as_bytes()
+        ));
+    }
+
+    #[test]
+    fn a_changed_or_unsigned_receipt_is_not() {
+        let anchors = crate::smime::pem(TEST_ROOT);
+        // One word of the signed text changed.
+        let changed = SIGNED.replace("consegnato nella", "consegnata nella");
+        assert_ne!(changed, SIGNED);
+        assert!(parse(&changed).is_some());
+        assert!(!signed_by(&changed, &anchors));
+        // The same headers with no signature at all.
+        let unsigned = ACCEPTED.replace(
+            "From: posta-certificata@pec.aruba.it",
+            "From: posta-certificata@pec.example.it",
+        );
+        assert!(parse(&unsigned).is_some());
+        assert!(!signed_by(&unsigned, &anchors));
+    }
+
+    #[test]
+    fn a_signature_from_another_ca_or_sender_is_not() {
+        let anchors = crate::smime::pem(TEST_ROOT);
+        // Signed, but by a certificate the anchors never issued.
+        assert!(!signed_by(STRANGER, &anchors));
+        // Signed by the provider, but sent as another address: the
+        // certificate names posta-certificata@pec.example.it.
+        let other = SIGNED.replace(
+            "From: posta-certificata@pec.example.it",
+            "From: posta-certificata@pec.other.example",
+        );
+        assert!(parse(&other).is_some());
+        assert!(!signed_by(&other, &anchors));
+        // From anyone else, it isn't a receipt at all.
+        let person = SIGNED.replace(
+            "From: posta-certificata@pec.example.it",
+            "From: help@pec.example.it",
+        );
+        assert_eq!(parse(&person), None);
+        assert!(!signed_by(&person, &anchors));
+    }
+
+    #[test]
+    fn only_certified_mailboxes_have_receipts() {
+        use crate::model::{Account, AccountKind, Security, Server};
+        let at = |host: &str| Account {
+            id: AccountId(1),
+            name: "Mail".into(),
+            email: "matteo@example.org".into(),
+            sender_name: String::new(),
+            color: "#2F8F83".into(),
+            kind: AccountKind::Imap {
+                imap: Server {
+                    host: host.into(),
+                    port: 993,
+                    security: Security::Tls,
+                },
+                smtp: Server {
+                    host: host.into(),
+                    port: 465,
+                    security: Security::Tls,
+                },
+                username: "matteo".into(),
+            },
+        };
+        assert!(certified(&at("imaps.pec.aruba.it")));
+        assert!(certified(&at("mbox.cert.legalmail.it")));
+        assert!(certified(&at("imaps.postecert.it")));
+        assert!(!certified(&at("imap.gmail.com")));
+        assert!(!certified(&at("imap.specchio.it")));
     }
 
     #[test]
@@ -399,6 +628,7 @@ mod tests {
 
     fn stored(uid: u32, kind: Kind, refers: &str, to: &[&str], at: i64) -> Stored {
         Stored {
+            verified: true,
             account: AccountId(1),
             mailbox: "INBOX".into(),
             uid,
@@ -438,5 +668,26 @@ mod tests {
         assert_eq!(sent[2].failed_to, "w@pec.it");
         assert_eq!(sent[2].reason, "casella piena");
         assert_eq!(sent[2].proofs, [("INBOX".to_owned(), 6)]);
+        assert!(sent.iter().all(|s| s.verified));
+    }
+
+    #[test]
+    fn a_stage_on_unsigned_receipts_is_unverified() {
+        let mut delivery = stored(2, Kind::Delivered, "<a>", &["x@pec.it"], 104);
+        delivery.verified = false;
+        let sent = gather(vec![
+            stored(1, Kind::Accepted, "<a>", &["x@pec.it"], 100),
+            delivery,
+        ]);
+        assert_eq!(sent[0].stage, Stage::Delivered);
+        assert!(!sent[0].verified);
+        let mut failure = stored(4, Kind::Failed, "<b>", &["y@pec.it"], 20);
+        failure.verified = false;
+        let sent = gather(vec![
+            stored(3, Kind::Accepted, "<b>", &["y@pec.it"], 10),
+            failure,
+        ]);
+        assert_eq!(sent[0].stage, Stage::Failed);
+        assert!(!sent[0].verified);
     }
 }

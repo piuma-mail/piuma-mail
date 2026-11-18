@@ -1664,6 +1664,16 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String unsubscribeMailTo(String address) {
+    return 'Para: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Assunto: $subject';
+  }
+
+  @override
   String get unsubscribePage => 'A página de cancelamento abre no navegador.';
 
   @override
@@ -2957,6 +2967,14 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get pecNote =>
       'Os recibos ficam fora da caixa de entrada e se juntam na mensagem a que pertencem. Recibo salva a prova assinada como arquivo.';
+
+  @override
+  String get pecUnverified => 'Não verificado';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Indica “$status”, mas não foi possível verificar a assinatura do provedor: não vale como prova.';
+  }
 
   @override
   String get pickDateTime => 'Escolher data e hora';

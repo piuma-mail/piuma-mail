@@ -49,8 +49,17 @@ document.addEventListener('click', function (e) {
   var href = a.href;
   if (href.indexOf('about:') === 0) return;
   e.preventDefault();
+  // A click the page made up is not the person's.
+  if (!e.isTrusted) return;
   window.chrome.webview.postMessage(href);
 }, true);
+document.addEventListener('mouseover', function (e) {
+  var a = e.target.closest && e.target.closest('a[href]');
+  window.chrome.webview.postMessage('#hover:' + (a ? a.href : ''));
+}, true);
+document.addEventListener('mouseleave', function () {
+  window.chrome.webview.postMessage('#hover:');
+});
 document.addEventListener('auxclick', function (e) {
   if (e.target.closest && e.target.closest('a[href]')) e.preventDefault();
 }, true);
@@ -106,10 +115,22 @@ class _WindowsPaperState extends State<WindowsPaper> {
               if (mounted && h != null) OriginalView.setHeight(context, h);
               return;
             }
+            if (m.startsWith('#hover:')) {
+              final url = m.substring('#hover:'.length);
+              if (mounted) {
+                OriginalView.hover(
+                  context,
+                  url.isEmpty || url.length > 2048 ? null : url,
+                );
+              }
+              return;
+            }
+            // Opens only right after the person pressed on the paper.
             widget.onLink(m);
           }),
         )
-        // Anything that gets past the script anyway: back to the email.
+        // Anything that gets past the script anyway: back to the email,
+        // and out only when it followed a press (OriginalView's gate).
         ..add(
           _controller.url.listen((url) {
             if (url.isEmpty ||
@@ -124,7 +145,8 @@ class _WindowsPaperState extends State<WindowsPaper> {
       await _controller.loadStringContent(widget.html);
       if (mounted) setState(() => _shown = true);
     } catch (_) {
-      // No WebView2 on this PC: the paper stays white.
+      // No WebView2 on this PC: the email shows in the clean view.
+      if (mounted) OriginalView.unavailable(context);
     }
   }
 

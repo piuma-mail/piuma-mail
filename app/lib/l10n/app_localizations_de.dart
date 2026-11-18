@@ -1667,6 +1667,16 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String unsubscribeMailTo(String address) {
+    return 'An: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Betreff: $subject';
+  }
+
+  @override
   String get unsubscribePage => 'Die Abmeldeseite öffnet sich im Browser.';
 
   @override
@@ -2962,6 +2972,14 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get pecNote =>
       'Quittungen bleiben aus dem Posteingang heraus und sammeln sich bei der Nachricht, zu der sie gehören. Quittung speichert den signierten Nachweis als Datei.';
+
+  @override
+  String get pecUnverified => 'Nicht verifiziert';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Zeigt „$status“, aber die Signatur des Anbieters ließ sich nicht prüfen: Das ist kein Nachweis.';
+  }
 
   @override
   String get pickDateTime => 'Datum und Uhrzeit wählen';

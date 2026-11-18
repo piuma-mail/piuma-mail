@@ -12,6 +12,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
+import '../widgets/link_target.dart';
 import '../widgets/links.dart';
 import '../widgets/switch.dart';
 
@@ -258,6 +259,13 @@ class _SpansState extends State<_Spans> {
             style: inMark ? style.merge(marked) : style,
             mouseCursor: tap != null ? SystemMouseCursors.click : null,
             recognizer: tap,
+            // Where it goes, whatever its text says.
+            onEnter: s.link == null
+                ? null
+                : (_) => LinkTarget.show(context, s.link),
+            onExit: s.link == null
+                ? null
+                : (_) => LinkTarget.show(context, null),
           ),
         );
       }
@@ -301,7 +309,9 @@ Future<void> openLink(
   String? shown,
 }) async {
   final uri = Uri.tryParse(link);
-  if (uri == null) return;
+  // Only web pages and addresses: nothing an email names opens another
+  // app on the device.
+  if (uri == null || !isMailLinkAllowed(uri)) return;
   if (shown != null || LinksAskFirst.of(context)) {
     final open = await showPiumaDialog<bool>(
       context,
@@ -310,7 +320,7 @@ Future<void> openLink(
     );
     if (open != true) return;
   }
-  await openExternalLink(uri);
+  await openMailLink(uri);
 }
 
 class _SuspiciousLink extends StatelessWidget {
@@ -489,6 +499,8 @@ class _BodyImageView extends StatelessWidget {
             ? framed
             : MouseRegion(
                 cursor: SystemMouseCursors.click,
+                onEnter: (_) => LinkTarget.show(context, image.link),
+                onExit: (_) => LinkTarget.show(context, null),
                 child: GestureDetector(
                   onTap: () => openBodyLink(context, image.link!),
                   child: framed,

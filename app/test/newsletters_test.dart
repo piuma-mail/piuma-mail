@@ -105,6 +105,32 @@ void main() {
     expect(find.text('Unsubscribed from Forma'), findsOneWidget);
   });
 
+  testWidgets('a mailto unsubscribe shows its message before it goes', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    source.leaveBy = const UnsubscribeInfo(
+      UnsubscribeKind.mail,
+      'leave@forma.example',
+      'Unsubscribe me',
+      'list=design-weekly id=7',
+    );
+    await tester.tap(find.text('Newsletters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(_forma));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unsubscribe'));
+    await tester.pumpAndSettle();
+    // What the list's header wrote, in full, before anything is sent.
+    expect(find.text('To: leave@forma.example'), findsOneWidget);
+    expect(find.text('Subject: Unsubscribe me'), findsOneWidget);
+    expect(find.text('list=design-weekly id=7'), findsOneWidget);
+    expect(source.unsubscribed, isEmpty);
+    await tester.tap(find.text('Unsubscribe').last);
+    await tester.pumpAndSettle();
+    expect(source.unsubscribed.single.subject, _forma);
+  });
+
   testWidgets('a sender can always go to the Inbox instead', (tester) async {
     final source = await _openDesktop(tester);
     await tester.tap(find.text('Unsubscribe'));

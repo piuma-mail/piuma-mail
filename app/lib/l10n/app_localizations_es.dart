@@ -1664,6 +1664,16 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String unsubscribeMailTo(String address) {
+    return 'Para: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Asunto: $subject';
+  }
+
+  @override
   String get unsubscribePage => 'Su página de baja se abre en el navegador.';
 
   @override
@@ -2956,6 +2966,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get pecNote =>
       'Los recibos no entran en la bandeja y se agrupan en el mensaje al que pertenecen. Recibo guarda la prueba firmada como archivo.';
+
+  @override
+  String get pecUnverified => 'Sin verificar';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Indica «$status», pero no se pudo comprobar la firma del proveedor: no sirve como prueba.';
+  }
 
   @override
   String get pickDateTime => 'Elegir fecha y hora';

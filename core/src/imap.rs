@@ -2392,6 +2392,7 @@ pub fn parse_body(raw: &[u8]) -> Body {
         calendar: calendar(&m),
         inline,
         auth: crate::sender_auth::trail(&m, raw),
+        receipt_signed: pec::signed(&m, raw),
     }
 }
 

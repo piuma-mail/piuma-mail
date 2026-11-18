@@ -164,10 +164,39 @@ pub enum UnsubscribeError {
     Network(#[from] reqwest::Error),
 }
 
+/// Whether a list can be left with one request, nothing shown: its
+/// headers ask for it, and the message proves they are the sender's
+/// (`proven`: a DKIM signature of the From domain covers them, as RFC
+/// 8058 section 4 requires, or DMARC passed for the message), and the
+/// address is a public https one ([`public_https`]). Otherwise the app
+/// opens the page, or shows the message it would send.
+pub fn one_click_allowed(list: &ListInfo, proven: bool) -> bool {
+    list.one_click && proven && public_https(&list.unsubscribe)
+}
+
+/// An https address on a public host name: not an IP address, nor a
+/// name that only means something on the local network.
+pub fn public_https(link: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(link) else {
+        return false;
+    };
+    let Some(url::Host::Domain(host)) = url.host() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && host.contains('.')
+        && ![".local", ".internal", ".localhost", ".lan", ".home.arpa"]
+            .iter()
+            .any(|s| host.ends_with(s))
+}
+
 /// Leaves a list with one POST, as RFC 8058 says: no cookies, no page.
 pub async fn one_click(link: &str) -> Result<(), UnsubscribeError> {
     let url = reqwest::Url::parse(link).map_err(|_| UnsubscribeError::BadAddress)?;
-    if url.scheme() != "https" {
+    if !public_https(link) {
         return Err(UnsubscribeError::BadAddress);
     }
     crate::tls::http_client()
@@ -256,6 +285,38 @@ mod tests {
         assert_eq!(mailto("mailto:u@shop.it").unwrap().subject, "unsubscribe");
         assert_eq!(mailto("https://shop.it/u"), None);
         assert_eq!(mailto("mailto:?subject=x"), None);
+    }
+
+    #[test]
+    fn one_click_needs_proof_and_a_public_address() {
+        let list = ListInfo {
+            newsletter: true,
+            unsubscribe: "https://shop.example/u?id=1".into(),
+            one_click: true,
+            ..ListInfo::default()
+        };
+        assert!(one_click_allowed(&list, true));
+        // Headers nothing vouches for: the page opens instead.
+        assert!(!one_click_allowed(&list, false));
+        for link in [
+            "https://192.168.1.1/reset",
+            "https://[::1]/x",
+            "https://router.local/x",
+            "https://intranet/x",
+            "https://user:pw@shop.example/u",
+            "http://shop.example/u",
+        ] {
+            let l = ListInfo {
+                unsubscribe: link.into(),
+                ..list.clone()
+            };
+            assert!(!one_click_allowed(&l, true), "{link}");
+        }
+        let no = ListInfo {
+            one_click: false,
+            ..list
+        };
+        assert!(!one_click_allowed(&no, true));
     }
 
     #[tokio::test]

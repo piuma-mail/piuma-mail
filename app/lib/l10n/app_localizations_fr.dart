@@ -1671,6 +1671,16 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String unsubscribeMailTo(String address) {
+    return 'À : $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Objet : $subject';
+  }
+
+  @override
   String get unsubscribePage =>
       'Leur page de désabonnement s’ouvre dans le navigateur.';
 
@@ -2965,6 +2975,14 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get pecNote =>
       'Les accusés restent hors de la boîte de réception et se regroupent sur le message auquel ils appartiennent. Accusé enregistre la preuve signée dans un fichier.';
+
+  @override
+  String get pecUnverified => 'Non vérifié';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Indique « $status », mais la signature du fournisseur n’a pas pu être vérifiée : ce n’est pas une preuve.';
+  }
 
   @override
   String get pickDateTime => 'Choisir la date et l’heure';

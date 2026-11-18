@@ -1,0 +1,65 @@
+From: posta-certificata@pec.example.it
+To: matteo@pec.example.it
+Subject: CONSEGNA: Lease renewal 2027
+X-Ricevuta: avvenuta-consegna
+X-Riferimento-Message-ID: <opec1.20261019@pec.example.it>
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----CD76522155CA9C06CF5FDE2C8FF121F7"
+
+This is an S/MIME signed message
+
+------CD76522155CA9C06CF5FDE2C8FF121F7
+Content-Type: multipart/mixed; boundary="inner"
+
+--inner
+Content-Type: text/plain; charset=utf-8
+
+Ricevuta di avvenuta consegna
+
+Il giorno 19/10/2026 alle ore 09:12:04 (+0200) il messaggio
+"Lease renewal 2027" proveniente da "matteo@pec.example.it"
+ed indirizzato a "studio.rossi@pec.example.it"
+è stato consegnato nella casella di destinazione.
+--inner--
+
+------CD76522155CA9C06CF5FDE2C8FF121F7
+Content-Type: application/x-pkcs7-signature; name="smime.p7s"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="smime.p7s"
+
+MIIGEAYJKoZIhvcNAQcCoIIGATCCBf0CAQExDzANBglghkgBZQMEAgEFADALBgkq
+hkiG9w0BBwGgggOAMIIDfDCCAmSgAwIBAgIUF1vzXo0cffjOfMvwUC3cisNifzYw
+DQYJKoZIhvcNAQELBQAwKjETMBEGA1UECgwKUGl1bWEgVGVzdDETMBEGA1UEAwwK
+b3RoZXItcm9vdDAeFw0yNjExMTgwMDM4NDdaFw00NjExMTMwMDM4NDdaMDUxIDAe
+BgNVBAoMF1BpdW1hIFRlc3QgUEVDIFByb3ZpZGVyMREwDwYDVQQDDAhzdHJhbmdl
+cjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAODe42C6DGu9nDEl3Zm/
+BnQlAqEeL8Izm2eYm+9qwsUrMD+Eejcq8XR96QIyrZu+kuWHJiy5J9P2pGEqdi1S
+dc4EaJq1KnED4Jsc3M3aDmeyXGjZUPf/s/1nAxBkI0uQaXYOVKIcFRxcA1+FMW85
+8CH3RbD2nwLYA7v5rheAwCemdqClrpnHZqaV5nf4KgBj4cAr9r8tz0/g/j94+izO
+OBVVz1rDRG7iR6UgqJOhrc5I9kkI61t5bRDwlNJTcc0MOzX3jbeWq7x0Yzta6H/j
+YUaa5eAOA1mpCNY8Uo3BDOxHRI3HvLYxAUNZfRG5cyyaAeW20x6jr8Uw7H70PE4X
+Fk0CAwEAAaOBjjCBizAMBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIGwDArBgNV
+HREEJDAigSBwb3N0YS1jZXJ0aWZpY2F0YUBwZWMuZXhhbXBsZS5pdDAdBgNVHQ4E
+FgQUmGp1YhSc+E/Vxj+Z9JthykgADJ0wHwYDVR0jBBgwFoAUL7AWyStxwu8MH5p2
+U8I/Bxe+CtcwDQYJKoZIhvcNAQELBQADggEBAGylfkMXaxfUL17i0gr0YPpxPDpX
+ajdIIWG+NdW4tIv4Rv72/dvQ01WIxx1mPRyPDSee3qXjWldBPVlKqZM7IQQSQDT+
+6rCmj5z1o996E/N5VwNgNeSsJiVBzkvByfKf/WYoaOvW46oNzXTW0AOujzZ8/z/b
+ANOKeAV1cCggruMtOuxtjHlb1/w89+eJU7Qp86smifOQeOV6ZaDEQonuLqQzDJGx
+IM3uezqSi3SzwDWO50Cr1D59tDcnJwk6URfVCt8zoidficRKZaT5QC4FNCfWlENl
+j7fi8xGL5NNPGtwuopx+RrRBOXwx2c2g9gvmoY8ottDGl4wgTI75mTHXjgoxggJU
+MIICUAIBATBCMCoxEzARBgNVBAoMClBpdW1hIFRlc3QxEzARBgNVBAMMCm90aGVy
+LXJvb3QCFBdb816NHH34znzL8FAt3IrDYn82MA0GCWCGSAFlAwQCAQUAoIHkMBgG
+CSqGSIb3DQEJAzELBgkqhkiG9w0BBwEwHAYJKoZIhvcNAQkFMQ8XDTI2MTExODAw
+Mzg0N1owLwYJKoZIhvcNAQkEMSIEII1/xPsZ5wrIaFJytT0LooPjpbvSW3Of8brq
+eUr5+fZJMHkGCSqGSIb3DQEJDzFsMGowCwYJYIZIAWUDBAEqMAsGCWCGSAFlAwQB
+FjALBglghkgBZQMEAQIwCgYIKoZIhvcNAwcwDgYIKoZIhvcNAwICAgCAMA0GCCqG
+SIb3DQMCAgFAMAcGBSsOAwIHMA0GCCqGSIb3DQMCAgEoMA0GCSqGSIb3DQEBAQUA
+BIIBADkzSZnhAW3tyxf39BZUvqO1ezVGbzyaMGNC2nbkYk6wcSA295vD0blsJQRe
+K2L5BMZoK+3uCKngZezvcjzQePx0oD0HdcqBHFNw5SvcLLJymRkcLNGnOqZexilp
+ewnYAp/aTXIx2kHdDtYtoBCHi1Nv+XLTSfLak7Byisy/AT0UiPohBsWr7F6d04Ac
+gnPPh2Yw42CgpB0lZluYdhJG5wXk/aEfxK287p7JkMa081BvINXEXz/f5v87V9nM
+QXFBzaIsrjDWGNmB/ExEGCOl/mq4wmnE+QRfCzzOuJUrGQet6dudgpFtad+eJORK
+kiFh9YMpvCHVDZ1grKx4wjTwEZc=
+
+------CD76522155CA9C06CF5FDE2C8FF121F7--
+

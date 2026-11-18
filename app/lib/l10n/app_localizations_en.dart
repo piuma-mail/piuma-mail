@@ -1654,6 +1654,16 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String unsubscribeMailTo(String address) {
+    return 'To: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Subject: $subject';
+  }
+
+  @override
   String get unsubscribePage => 'Their unsubscribe page opens in the browser.';
 
   @override
@@ -2940,6 +2950,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get pecNote =>
       'Receipts stay out of the inbox and gather on the message they belong to. Receipt saves the signed proof as a file.';
+
+  @override
+  String get pecUnverified => 'Unverified';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Says “$status”, but the provider’s signature couldn’t be checked: this isn’t proof.';
+  }
 
   @override
   String get pickDateTime => 'Pick date & time';

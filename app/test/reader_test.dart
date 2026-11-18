@@ -9,6 +9,7 @@ import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/readable.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/widgets/button.dart';
+import 'package:piuma_mail/widgets/link_target.dart';
 import 'package:piuma_mail/widgets/links.dart';
 import 'package:piuma_mail/widgets/switch.dart';
 
@@ -238,6 +239,96 @@ void main() {
         expect(tester.getSize(find.byType(OriginalView)).height, 1648);
       },
     );
+
+    testWidgets('a navigation the page starts by itself opens nothing', (
+      tester,
+    ) async {
+      final opened = <Uri>[];
+      final before = openExternalLink;
+      openExternalLink = (uri) async => opened.add(uri);
+      addTearDown(() => openExternalLink = before);
+      // A refresh, a form, a script: no press of the person's before it.
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            onLink('https://lume.example/');
+          });
+          return Text('${html.length} characters of HTML');
+        },
+      );
+      await _pump(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Check this link'), findsNothing);
+      expect(opened, isEmpty);
+      // A link the web view itself reports as clicked opens.
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) => GestureDetector(
+          onTap: () => OriginalView.clicked(context, 'https://lume.example/'),
+          child: const Text('Clicked in WebKit'),
+        ),
+      );
+      await tester.tap(find.text('Clean'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Original'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clicked in WebKit'));
+      await tester.pumpAndSettle();
+      if (find.text('Open anyway').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Open anyway'));
+        await tester.pumpAndSettle();
+      }
+      expect(opened, [Uri.parse('https://lume.example/')]);
+    });
+
+    testWidgets('a web view that can’t start gives way to the clean view', (
+      tester,
+    ) async {
+      addTearDown(() => originalPaperFailed = false);
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            OriginalView.unavailable(context);
+          });
+          return const SizedBox.expand();
+        },
+      );
+      await _pump(tester);
+      await tester.pumpAndSettle();
+      expect(find.byType(OriginalView), findsNothing);
+      expect(
+        find.textContaining('ceramics handmade in Faenza'),
+        findsOneWidget,
+      );
+      // And no switch back to a paper that can't show.
+      expect(find.byType(ViewSwitch), findsNothing);
+    });
+
+    testWidgets('the link under the pointer shows where it goes', (
+      tester,
+    ) async {
+      String? next = 'https://lume-login.example/account';
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) => GestureDetector(
+          onTap: () => OriginalView.hover(context, next),
+          child: const Text('Hover here'),
+        ),
+      );
+      await _pump(tester);
+      await tester.tap(find.text('Hover here'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(
+          LinkTargetLine,
+          'https://lume-login.example/account',
+        ),
+        findsOneWidget,
+      );
+      // Not a link that could open: nothing to show.
+      next = 'javascript:alert(1)';
+      await tester.tap(find.text('Hover here'));
+      await tester.pumpAndSettle();
+      expect(find.byType(LinkTargetLine), findsNothing);
+    });
 
     testWidgets('without a web view there is no button', (tester) async {
       originalPaper = null;

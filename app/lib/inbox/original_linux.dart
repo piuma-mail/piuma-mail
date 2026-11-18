@@ -37,8 +37,17 @@ void _listen() {
     final paper = _papers[args['id']];
     if (paper == null || !paper.mounted) return;
     if (call.method == 'link') {
+      // Only what WebKit itself reports as a clicked link comes here.
       final url = args['url'];
-      if (url is String) paper.widget.onLink(url);
+      if (url is String) OriginalView.clicked(paper.context, url);
+    } else if (call.method == 'hover') {
+      final url = args['url'];
+      OriginalView.hover(
+        paper.context,
+        url is String && url.isNotEmpty && url.length <= 2048 ? url : null,
+      );
+    } else if (call.method == 'unavailable') {
+      OriginalView.unavailable(paper.context);
     } else if (call.method == 'height') {
       final h = args['height'];
       if (h is num) OriginalView.setHeight(paper.context, h.toDouble());
