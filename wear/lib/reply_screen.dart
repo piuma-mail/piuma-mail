@@ -43,7 +43,8 @@ class _ReplyScreenState extends State<ReplyScreen> {
           Text(
             to,
             textAlign: TextAlign.center,
-            maxLines: 1,
+            // "Reply to Giulia Romano and 2 others" needs two lines.
+            maxLines: _all ? 2 : 1,
             overflow: TextOverflow.ellipsis,
             style: PiumaType.label.copyWith(letterSpacing: 0, color: c.muted),
           ),
