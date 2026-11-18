@@ -1586,6 +1586,24 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'May have been sent';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'The connection broke as it went. Check Sent before sending it again.';
+
+  @override
+  String get dataProblemTitle => 'Piuma couldn’t open its data';
+
+  @override
+  String get dataProblemBody =>
+      'Your mail is safe on your servers, and nothing here was changed. Try again; if it keeps happening, report it and attach what Piuma says.';
+
+  @override
+  String get dataProblemNewer =>
+      'This data was written by a newer version of Piuma. Update Piuma to open it; nothing here was changed.';
+
+  @override
   String get inOutbox => 'In the Outbox · it goes once you’re back online';
 
   @override

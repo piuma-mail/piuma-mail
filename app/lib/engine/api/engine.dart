@@ -8,9 +8,9 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `checked_list`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
 /// Opens (or creates) the local database. Call once at startup.
@@ -433,29 +433,12 @@ Future<String> saveAttachment({
 Future<Uint8List> fetchImage({required String url}) =>
     RustLib.instance.api.crateApiEngineFetchImage(url: url);
 
-/// The picture of a company sender (`PicturesToApprove`): its brand logo,
-/// or its website's icon, as a square PNG; none for people at mail
+/// The picture of a company sender (`PicturesToApprove`): its verified
+/// logo, or its website's icon, as a square PNG; none for people at mail
 /// providers, while "Sender pictures" is off, or when there is nothing.
-///
-/// A logo is only for the message [account_id], [mailbox], [uid], and only
-/// when that message's own DMARC check passed (`Store::logo_allowed`):
-/// never for a domain because some other message of it was verified. It
-/// is looked up only when [opened] (the person is reading that message),
-/// and kept per organization; a list shows it once it is kept. Icons are
-/// looked up once per domain, as before, when "Website icons" is on.
-Future<Uint8List?> senderPicture({
-  required String email,
-  PlatformInt64? accountId,
-  String? mailbox,
-  int? uid,
-  required bool opened,
-}) => RustLib.instance.api.crateApiEngineSenderPicture(
-  email: email,
-  accountId: accountId,
-  mailbox: mailbox,
-  uid: uid,
-  opened: opened,
-);
+/// Looked up once per domain and kept on the device.
+Future<Uint8List?> senderPicture({required String email}) =>
+    RustLib.instance.api.crateApiEngineSenderPicture(email: email);
 
 /// Always load a sender's images, or stop.
 Future<void> setSenderTrusted({required String email, required bool trusted}) =>
@@ -514,13 +497,27 @@ String signatureText({required SignatureInfo signature}) =>
     RustLib.instance.api.crateApiEngineSignatureText(signature: signature);
 
 /// Sends a message from one of the accounts and files a copy in Sent.
-/// When the server can't be reached, it waits in the outbox instead.
+/// It is kept in the outbox first, so it is never lost; when the server
+/// can't be reached it waits there instead.
 Future<SentMessage> sendMessage({required OutgoingMessage message}) =>
     RustLib.instance.api.crateApiEngineSendMessage(message: message);
 
+/// Keeps a message in the outbox to send once its Undo window
+/// (`undo_seconds`) has passed: from that moment it is on disk, and goes
+/// even if the app closes in the window (at the next start). Returns its
+/// outbox id, to take it back ([reopen_outgoing]) or to wait for it
+/// ([deliver_outgoing]).
+Future<PlatformInt64> sendWithUndo({
+  required OutgoingMessage message,
+  required int undoSeconds,
+}) => RustLib.instance.api.crateApiEngineSendWithUndo(
+  message: message,
+  undoSeconds: undoSeconds,
+);
+
 /// Keeps a message to send at `send_at` (Unix seconds), from this
-/// device: it waits in the outbox, dated for then, and goes at that time,
-/// or as soon as the app runs again after it. Returns its outbox id.
+/// device: it waits in the outbox and goes at that time, or as soon as
+/// the app runs again after it, dated when it goes. Returns its outbox id.
 Future<PlatformInt64> scheduleMessage({
   required OutgoingMessage message,
   required PlatformInt64 sendAt,
@@ -529,12 +526,20 @@ Future<PlatformInt64> scheduleMessage({
   sendAt: sendAt,
 );
 
+/// Sends one message of the outbox once its time has come (waiting for
+/// it: the end of an Undo window) and says what became of it. Taken back
+/// meanwhile, it doesn't go ([DeliveryKind::Gone]). Safe beside every
+/// other sender: whoever claims it first sends it, and the others learn
+/// what happened.
+Future<Delivery> deliverOutgoing({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiEngineDeliverOutgoing(id: id);
+
 /// The outbox, oldest first: one account's, or every account's.
 Future<List<OutboxItem>> outbox({PlatformInt64? accountId}) =>
     RustLib.instance.api.crateApiEngineOutbox(accountId: accountId);
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own.
+/// on its own. Not while it is being sent.
 Future<OutgoingMessage> reopenOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineReopenOutgoing(id: id);
 
@@ -543,7 +548,8 @@ Future<OutgoingMessage> reopenOutgoing({required PlatformInt64 id}) =>
 Future<void> sendOutboxNow() =>
     RustLib.instance.api.crateApiEngineSendOutboxNow();
 
-/// Deletes a message from the outbox without sending it.
+/// Deletes a message from the outbox without sending it. Not while it is
+/// being sent.
 Future<void> deleteOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineDeleteOutgoing(id: id);
 
@@ -814,8 +820,7 @@ Future<Unsubscribe> unsubscribeInfo({
 );
 
 /// Leaves the list a message came from, with one request or a message
-/// to its address (the one [unsubscribe_info] showed). A page to open is
-/// the app's to open.
+/// to its address. A page to open is the app's to open.
 Future<void> unsubscribe({
   required PlatformInt64 accountId,
   required String mailbox,
@@ -1368,6 +1373,59 @@ class Contact {
           name == other.name &&
           email == other.email &&
           messages == other.messages;
+}
+
+class Delivery {
+  final DeliveryKind kind;
+
+  /// With [DeliveryKind::Sent]: whether its copy is in Sent already.
+  final bool filed;
+
+  /// The server's words, for Refused, Insecure and MaybeSent.
+  final String detail;
+
+  const Delivery({
+    required this.kind,
+    required this.filed,
+    required this.detail,
+  });
+
+  @override
+  int get hashCode => kind.hashCode ^ filed.hashCode ^ detail.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Delivery &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          filed == other.filed &&
+          detail == other.detail;
+}
+
+/// What became of a message of the outbox ([deliver_outgoing]).
+enum DeliveryKind {
+  /// The server took it.
+  sent,
+
+  /// It waits in the outbox: the server can't be reached, or deferred it.
+  waiting,
+
+  /// It waits in the outbox: the server refused the password.
+  wrongPassword,
+
+  /// The server refused it; it stays in the outbox with the reason.
+  refused,
+
+  /// The connection could not be made secure (a certificate that
+  /// doesn't check out); it stays in the outbox with the reason.
+  insecure,
+
+  /// The server may have taken it; it stays in the outbox, marked so.
+  maybeSent,
+
+  /// Not in the outbox: taken back or deleted meanwhile.
+  gone,
 }
 
 class EngineError implements FrbException {
@@ -2093,11 +2151,16 @@ class OutboxItem {
   final String body;
   final PlatformInt64 queuedAt;
 
-  /// Why the server refused it; None while it only waits.
+  /// Why the server refused it, or why it may have gone; None while it
+  /// only waits.
   final String? error;
 
   /// When it goes, in Unix seconds, for mail sent later.
   final PlatformInt64? sendAt;
+  final OutboxState state;
+
+  /// Sent with Undo: [send_at] ends the Undo window.
+  final bool undo;
 
   const OutboxItem({
     required this.id,
@@ -2108,6 +2171,8 @@ class OutboxItem {
     required this.queuedAt,
     this.error,
     this.sendAt,
+    required this.state,
+    required this.undo,
   });
 
   @override
@@ -2119,7 +2184,9 @@ class OutboxItem {
       body.hashCode ^
       queuedAt.hashCode ^
       error.hashCode ^
-      sendAt.hashCode;
+      sendAt.hashCode ^
+      state.hashCode ^
+      undo.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2133,7 +2200,23 @@ class OutboxItem {
           body == other.body &&
           queuedAt == other.queuedAt &&
           error == other.error &&
-          sendAt == other.sendAt;
+          sendAt == other.sendAt &&
+          state == other.state &&
+          undo == other.undo;
+}
+
+enum OutboxState {
+  /// Waits for its time or for the server.
+  waiting,
+
+  /// On its way now.
+  sending,
+
+  /// The server refused it; [OutboxItem::error] says why.
+  refused,
+
+  /// The server may have taken it: the person checks Sent.
+  maybeSent,
 }
 
 class OutgoingFile {
@@ -2303,11 +2386,6 @@ class PecMessage {
   /// The folder the proofs are in.
   final String proofMailbox;
 
-  /// The receipts the stage rests on carry their provider's checked
-  /// signature. When false the stage is only what their headers claim,
-  /// and the Vault says so.
-  final bool verified;
-
   const PecMessage({
     required this.row,
     required this.subject,
@@ -2319,7 +2397,6 @@ class PecMessage {
     required this.failedTo,
     required this.proofs,
     required this.proofMailbox,
-    required this.verified,
   });
 
   @override
@@ -2333,8 +2410,7 @@ class PecMessage {
       reason.hashCode ^
       failedTo.hashCode ^
       proofs.hashCode ^
-      proofMailbox.hashCode ^
-      verified.hashCode;
+      proofMailbox.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2350,8 +2426,7 @@ class PecMessage {
           reason == other.reason &&
           failedTo == other.failedTo &&
           proofs == other.proofs &&
-          proofMailbox == other.proofMailbox &&
-          verified == other.verified;
+          proofMailbox == other.proofMailbox;
 }
 
 /// How far a message sent from a PEC mailbox has got.
@@ -2931,11 +3006,11 @@ enum SenderWarningKind { looksLike, brand, dmarcFailed }
 class SentMessage {
   final String messageId;
 
-  /// False when the copy could not be filed in Sent.
+  /// False when the copy is not in Sent yet (the outbox files it later).
   final bool filed;
 
-  /// The server could not be reached: it waits in the outbox and goes
-  /// once the connection is back.
+  /// It waits in the outbox: the server could not be reached, or it may
+  /// have gone and the person is to check.
   final bool queued;
 
   const SentMessage({
@@ -3340,22 +3415,10 @@ class Unsubscribe {
   /// The page, or the address the message goes to.
   final String address;
 
-  /// For [UnsubscribeKind::Mail]: the subject and text of the message
-  /// the list's header asks for, shown before it is sent from the
-  /// person's account.
-  final String subject;
-  final String body;
-
-  const Unsubscribe({
-    required this.kind,
-    required this.address,
-    required this.subject,
-    required this.body,
-  });
+  const Unsubscribe({required this.kind, required this.address});
 
   @override
-  int get hashCode =>
-      kind.hashCode ^ address.hashCode ^ subject.hashCode ^ body.hashCode;
+  int get hashCode => kind.hashCode ^ address.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3363,9 +3426,7 @@ class Unsubscribe {
       other is Unsubscribe &&
           runtimeType == other.runtimeType &&
           kind == other.kind &&
-          address == other.address &&
-          subject == other.subject &&
-          body == other.body;
+          address == other.address;
 }
 
 /// How a newsletter can be left.
