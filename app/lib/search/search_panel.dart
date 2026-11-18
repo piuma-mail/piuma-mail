@@ -1656,8 +1656,10 @@ class _Operator extends StatelessWidget {
       child: Container(
         height: tall ? 44 : 30,
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        alignment: Alignment.center,
-        child: Text.rich(
+        // As wide as its text, in a Wrap too.
+        child: Center(
+          widthFactor: 1,
+          child: Text.rich(
           TextSpan(
             children: [
               TextSpan(
@@ -1670,6 +1672,7 @@ class _Operator extends StatelessWidget {
                   style: PiumaType.small.copyWith(color: c.muted),
                 ),
             ],
+          ),
           ),
         ),
       ),
