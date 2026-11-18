@@ -28,23 +28,46 @@ static HOOK: Once = Once::new();
 /// included); a server that offers more is not believed.
 pub const MESSAGE_MAX: usize = 160 * 1024 * 1024;
 
-/// Notes where each panic happens, for [`shielded`] to log, then runs the
-/// hook that was there before. Safe to call any number of times; call it
-/// after any other hook is installed.
+/// The one place that decides what a panic prints: call it after any other
+/// hook is installed (the bridge's included), and it takes their place.
+/// Safe to call any number of times.
+///
+/// Each panic's place is noted for [`shielded`] and [`last_panic_place`].
+/// A release build then prints only that place: a panic's message can
+/// quote the mail being read ("byte index 4 is not a char boundary … of
+/// `…`"), and stderr ends up in the system log. Debug and test builds run
+/// the hook that was there before, with the whole message.
 pub fn install() {
     HOOK.call_once(|| {
         let previous = panic::take_hook();
         panic::set_hook(Box::new(move |info| {
-            if let Some(l) = info.location() {
+            let place = info.location().map(|l| (l.file(), l.line()));
+            if let Some((file, line)) = place {
                 // `file()` borrows from the panic; keep only file names the
                 // binary holds, which are 'static.
-                let file: &'static str = static_file(l.file());
-                LAST.with(|c| c.set(Some((file, l.line()))));
-                *LAST_ANYWHERE.lock().unwrap_or_else(|e| e.into_inner()) = Some((file, l.line()));
+                let file: &'static str = static_file(file);
+                LAST.with(|c| c.set(Some((file, line))));
+                *LAST_ANYWHERE.lock().unwrap_or_else(|e| e.into_inner()) = Some((file, line));
             }
-            previous(info);
+            if FULL_MESSAGES {
+                previous(info);
+            } else {
+                eprintln!("{}", place_only(place));
+            }
         }));
     });
+}
+
+/// Whether a panic prints its whole message: only where no one's mail is
+/// read.
+const FULL_MESSAGES: bool = cfg!(debug_assertions);
+
+/// What a release build prints for a panic: where, never what.
+fn place_only(place: Option<(&str, u32)>) -> String {
+    match place {
+        Some((file, line)) => format!("panic at {file}:{line}"),
+        None => "panic".to_owned(),
+    }
 }
 
 /// The source file of a panic, as a 'static string: locations from
@@ -165,6 +188,15 @@ mod tests {
         install();
         shielded("secret step", || (), || panic!("mail text: hunter2"));
         assert!(!crate::feedback::recent_log().contains("hunter2"));
+    }
+
+    #[test]
+    fn a_release_build_prints_the_place_only() {
+        assert_eq!(
+            place_only(Some(("core/src/reading.rs", 902))),
+            "panic at core/src/reading.rs:902"
+        );
+        assert_eq!(place_only(None), "panic");
     }
 
     #[test]

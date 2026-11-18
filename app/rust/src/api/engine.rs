@@ -465,8 +465,9 @@ pub fn init_app() {
     } else {
         log::LevelFilter::Warn
     });
-    // After the bridge's hook: notes where a panic happened, so the log
-    // can say where one message tripped a reader (never what it said).
+    // After the bridge's hook, and the only place that decides what a
+    // panic prints: where it happened, never the text of the mail it was
+    // reading (the whole message only in debug builds).
     piuma_core::guard::install();
 }
 
@@ -1558,6 +1559,61 @@ mod watcher_supervision_tests {
         let log = piuma_core::feedback::recent_log();
         assert!(log.contains("watcher stopped (panic"), "{log}");
         assert!(!log.contains("tripped"), "{log}");
+    }
+
+    /// Adapted from #76's test of the same name: since restarts start over
+    /// after a sync round that went through, not after a run of a given
+    /// length, a watcher that ran a long time without completing a round
+    /// keeps the growing wait, and the next one that completes a round
+    /// brings back the first wait.
+    #[test]
+    fn a_watcher_that_ran_long_restarts_from_the_first_wait() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let seen = starts.clone();
+        let first = Duration::from_secs(5);
+        runtime.block_on(keep_following(
+            AccountId(10),
+            move |worked| {
+                let mut starts = seen.lock().unwrap();
+                starts.push(tokio::time::Instant::now());
+                let run = starts.len();
+                async move {
+                    match run {
+                        // Ends at once.
+                        1 => Followed::Ended("gone".into()),
+                        // Runs an hour without a round: no reset.
+                        2 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            Followed::Ended("gone after a while".into())
+                        }
+                        // Runs an hour and gets through a round: reset.
+                        3 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            worked.store(true, Ordering::Relaxed);
+                            Followed::Ended("gone after a round".into())
+                        }
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            first,
+        ));
+        let starts = starts.lock().unwrap();
+        assert_eq!(starts.len(), 4);
+        // The wait between a run's end and the next start.
+        let wait = |i: usize, ran: u64| {
+            (starts[i + 1] - starts[i]).as_secs_f64() - ran as f64
+        };
+        // 5 s, then 10 s even after an hour's run, then 5 s after a round;
+        // each ±20 %.
+        assert!((4.0..=6.0).contains(&wait(0, 0)), "{starts:?}");
+        assert!((8.0..=12.0).contains(&wait(1, 3600)), "{starts:?}");
+        assert!((4.0..=6.0).contains(&wait(2, 3600)), "{starts:?}");
     }
 
     #[test]
