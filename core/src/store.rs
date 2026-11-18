@@ -79,7 +79,7 @@ pub const RECENT_SEARCHES_KEPT: usize = 5;
 /// nor from a machine-looking address ([`machine_address`]), with no Vault
 /// card unless a person forwarded it. A sender the person moved to People or Notifications
 /// stays where they put it.
-const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
+pub(crate) const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
     AND m.folder NOT IN ('sent', 'drafts', 'newsletters')
     AND lower(m.from_email) NOT IN (SELECT lower(email) FROM account)
     AND COALESCE((SELECT s.people FROM sender_side s WHERE s.email = lower(m.from_email)),
@@ -95,7 +95,7 @@ const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
 
 /// Leaves out the messages `m` of an account being removed: they go a
 /// few thousand at a time (`Store::maintain`), and leave the lists at once.
-const LIVE: &str = " AND m.account NOT IN (SELECT account FROM account_removal)";
+pub(crate) const LIVE: &str = " AND m.account NOT IN (SELECT account FROM account_removal)";
 
 /// The SQL that keeps what a [`ListFilter`] keeps of a list of messages `m`.
 fn section_sql(filter: impl Into<ListFilter>) -> String {
@@ -1142,6 +1142,48 @@ const MIGRATIONS: &[&str] = &[
 "#,
 ];
 
+/// `message.hidden` of a message a server search brought from outside
+/// what the sync covers (older than the oldest synced message of its
+/// folder, or past the folders and pages the sync reads): searches find
+/// it and it opens with its conversation, but folder lists, counts and
+/// suggestions leave it out, so old mail doesn't turn up in the Inbox.
+/// Once the sync comes down to it, it is ordinary mail (hidden 0) and
+/// leaves `server_found`. 1 is an action waiting to be undone.
+pub const OUTSIDE_SYNC: u8 = 2;
+
+/// What `hidden` goes back to when an action is undone or given up.
+const SHOWN: &str = "CASE WHEN EXISTS (SELECT 1 FROM server_found f
+    WHERE f.account = message.account AND f.mailbox = message.mailbox AND f.uid = message.uid)
+    THEN 2 ELSE 0 END";
+
+/// Saved searches (`saved_search`, kept on this device for now: the sync
+/// space can carry it later by `uuid`, last change winning by
+/// `updated_at`), and the messages a server search brought here
+/// (`server_found`), which the database's growth rules may let go first.
+const SEARCH_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS saved_search (
+        id         INTEGER PRIMARY KEY,
+        uuid       TEXT NOT NULL UNIQUE,
+        name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        query      TEXT NOT NULL,
+        position   INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS server_found (
+        account      INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        mailbox      TEXT NOT NULL,
+        uid          INTEGER NOT NULL,
+        uid_validity INTEGER NOT NULL,
+        found_at     INTEGER NOT NULL,
+        PRIMARY KEY (account, mailbox, uid)
+    );
+    CREATE TRIGGER IF NOT EXISTS server_found_gone AFTER DELETE ON message
+    BEGIN
+        DELETE FROM server_found
+         WHERE account = old.account AND mailbox = old.mailbox AND uid = old.uid;
+    END;
+";
+
 /// Number of the migration that made `written_to`, filled from the Sent
 /// mail already kept.
 const WRITTEN_TO: usize = 54;
@@ -2126,6 +2168,9 @@ impl Store {
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
         }
+        // Search's own tables, made here rather than as a numbered
+        // migration so branches adding migrations meanwhile don't clash.
+        tx.execute_batch(SEARCH_TABLES)?;
         // To, Cc, every Reply-To, Mail-Followup-To and List-Post, as JSON
         // (`envelope::Envelope`), for Reply all and the reader; NULL until
         // the headers are read, for mail kept before.
@@ -2872,7 +2917,10 @@ impl Store {
         hidden: bool,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE message SET hidden = ?4 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            &format!(
+                "UPDATE message SET hidden = CASE WHEN ?4 THEN 1 ELSE {SHOWN} END
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3"
+            ),
             params![account.0, mailbox, uid, hidden],
         )?;
         Ok(())
@@ -3087,7 +3135,7 @@ impl Store {
     pub fn unhide_all(&self) -> Result<()> {
         self.conn.execute(
             &format!(
-                "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
+                "UPDATE message SET hidden = {SHOWN} WHERE hidden = 1 AND NOT EXISTS (
                     SELECT 1 FROM pending_change p
                      WHERE p.account = message.account AND p.mailbox = message.mailbox
                        AND p.uid = message.uid AND p.change IN ({HIDING}))"
@@ -3595,7 +3643,7 @@ impl Store {
             }
             tx.execute(
                 &format!(
-                    "UPDATE message SET hidden = 0 WHERE EXISTS (
+                    "UPDATE message SET hidden = {SHOWN} WHERE EXISTS (
                         SELECT 1 FROM pending_change p
                          WHERE p.id = ?1
                            AND p.account = message.account AND p.mailbox = message.mailbox
@@ -3617,11 +3665,13 @@ impl Store {
     pub fn drop_renumbered(&self, account: AccountId, mailbox: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE message SET hidden = 0
+            &format!(
+                "UPDATE message SET hidden = {SHOWN}
               WHERE account = ?1 AND mailbox = ?2 AND hidden = 1 AND EXISTS (
                   SELECT 1 FROM pending_change p
                    WHERE p.account = message.account AND p.mailbox = message.mailbox
-                     AND p.uid = message.uid)",
+                     AND p.uid = message.uid)"
+            ),
             params![account.0, mailbox],
         )?;
         tx.execute(
@@ -4068,7 +4118,7 @@ impl Store {
             "SELECT account, mailbox, uid, from_name, from_email, subject, preview, received_at, flags,
                     message_id, refs, reply_to, to_list, folder
              FROM message
-             WHERE account = ?1 AND thread = ?2 AND hidden = 0 AND folder <> 'drafts'
+             WHERE account = ?1 AND thread = ?2 AND hidden IN (0, 2) AND folder <> 'drafts'
              ORDER BY received_at, mailbox = 'INBOX' DESC, uid",
         )?;
         let rows = stmt.query_map(params![account.0, thread], |r| {
@@ -4303,6 +4353,25 @@ impl Store {
             .prepare("SELECT email_id, uid FROM jmap_email WHERE account = ?1 AND mailbox = ?2")?;
         let rows = stmt.query_map(params![account.0, mailbox], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Where a JMAP email is kept here, in one of its folders, if it is.
+    pub fn jmap_email_at(
+        &self,
+        account: AccountId,
+        email_id: &str,
+    ) -> Result<Option<(String, u32)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT j.mailbox, j.uid FROM jmap_email j
+                   JOIN message m ON m.account = j.account AND m.mailbox = j.mailbox AND m.uid = j.uid
+                  WHERE j.account = ?1 AND j.email_id = ?2
+                  ORDER BY j.mailbox = 'INBOX' DESC LIMIT 1",
+                params![account.0, email_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
     }
 
     /// Gives new JMAP ids of a folder their local numbers, in order.
@@ -8381,30 +8450,48 @@ impl Store {
         if query.is_empty() {
             return Ok(Found::default());
         }
-        let (sql, mut args, fts) = search_where(query, " FROM message m");
+        let crate::search::Where { sql, args, fts } =
+            query.sql(" FROM message m", &self.search_folders(query)?);
         let total: u32 = self.conn.query_row(
             &format!("SELECT COUNT(*){sql}"),
             rusqlite::params_from_iter(&args),
             |r| r.get(0),
         )?;
-        let snippet = if fts {
-            "snippet(message_fts, 3, char(2), char(3), '…', 14)"
-        } else {
-            "''"
+        // The page first, by rowid alone; then each row with its
+        // snippet: snippet() for every match before the sort was most of
+        // the time of a common word.
+        let mut page_args = args.clone();
+        page_args.push(limit.into());
+        let rowids: Vec<i64> = {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT m.rowid {sql}
+                 ORDER BY m.received_at DESC, m.account, m.uid DESC
+                 LIMIT ?{}",
+                page_args.len()
+            ))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(&page_args), |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
         };
-        args.push(limit.into());
+        let (snippet, from, at) = if fts {
+            (
+                "snippet(message_fts, 3, char(2), char(3), '…', 14)",
+                " FROM message m JOIN message_fts ON message_fts.rowid = m.rowid
+                  WHERE message_fts MATCH ?1 AND m.rowid = ?2",
+                2,
+            )
+        } else {
+            ("''", " FROM message m WHERE m.rowid = ?1", 1)
+        };
         let mut stmt = self.conn.prepare(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list, {snippet},
                     EXISTS (SELECT 1 FROM attachment x
                             WHERE x.account = m.account AND x.mailbox = m.mailbox AND x.uid = m.uid)
-             {sql}
-             ORDER BY m.received_at DESC, m.account, m.uid DESC
-             LIMIT ?{}",
-            args.len()
+             {from}"
         ))?;
-        let hits = stmt
-            .query_map(rusqlite::params_from_iter(&args), |r| {
+        let mut hits = Vec::with_capacity(rowids.len());
+        for rowid in rowids {
+            let row = |r: &rusqlite::Row| {
                 let snippet: String = r.get(13)?;
                 Ok(Hit {
                     message: row_to_summary(r)?,
@@ -8416,8 +8503,15 @@ impl Store {
                     },
                     files: r.get(14)?,
                 })
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+            };
+            let hit = if at == 2 {
+                stmt.query_row(params![args[0], rowid], row)
+            } else {
+                stmt.query_row(params![rowid], row)
+            }
+            .optional()?;
+            hits.extend(hit);
+        }
         Ok(Found { total, hits })
     }
 
@@ -8430,9 +8524,9 @@ impl Store {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let (sql, mut args, _) = search_where(
-            query,
+        let crate::search::Where { sql, mut args, .. } = query.sql(
             " FROM message m JOIN attachment a USING (account, mailbox, uid)",
+            &self.search_folders(query)?,
         );
         args.push(limit.into());
         let mut stmt = self.conn.prepare(&format!(
@@ -8637,9 +8731,9 @@ impl Store {
     /// How many messages on this device a search looks through: all of
     /// them, or one account's with `account:`, or one group's with `group:`.
     pub fn indexed(&self, query: &Query) -> Result<u32> {
-        if query.account.is_none() && query.group.is_none() {
-            // Every row, counted on the smallest index, less the hidden
-            // ones from their own small one.
+        if query.account().is_none() && query.group().is_none() {
+            // Every row, counted on the smallest index, less the ones
+            // hidden for an undo from their own small one.
             return Ok(self.conn.query_row(
                 "SELECT (SELECT COUNT(*) FROM message)
                       - (SELECT COUNT(*) FROM message WHERE hidden = 1)",
@@ -8648,15 +8742,15 @@ impl Store {
             )?);
         }
         let group = query
-            .group
+            .group()
             .map_or(String::new(), |g| crate::groups::Within::Group(g).sql());
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
-                 WHERE m.hidden = 0 AND (?1 IS NULL OR m.account IN
+                 WHERE m.hidden IN (0, 2) AND (?1 IS NULL OR m.account IN
                     (SELECT id FROM account WHERE lower(name) = lower(?1) OR lower(email) = lower(?1))){group}"
             ),
-            params![query.account],
+            params![query.account()],
             |r| r.get(0),
         )?)
     }
@@ -8737,6 +8831,319 @@ impl Store {
              ON CONFLICT (job) DO UPDATE SET cursor = excluded.cursor",
             [now - i64::from(days) * 86_400],
         )?;
+        Ok(())
+    }
+
+    /// Where each folder a search names with `in:` is.
+    fn search_folders(&self, query: &Query) -> Result<crate::search::Folders> {
+        let mut out = crate::search::Folders::new();
+        for f in query.folders() {
+            let places = self.folders_named(f)?;
+            out.insert(
+                crate::search::folder_key(f),
+                places.into_iter().map(|(a, m)| (a.0, m)).collect(),
+            );
+        }
+        Ok(out)
+    }
+
+    /// The folders an `in:` value names, in every account: a job (`inbox`,
+    /// `sent`, `archive`, `drafts`, `snoozed`, `spam`), or a folder by its
+    /// name, its path ("Clients/Acme") or its server name, in any case.
+    pub fn folders_named(&self, value: &str) -> Result<Vec<(AccountId, String)>> {
+        use crate::search::folder_key;
+        let key = folder_key(value);
+        let mut out: Vec<(AccountId, String)> = Vec::new();
+        if key.is_empty() {
+            return Ok(out);
+        }
+        let mut add = |a: AccountId, m: String| {
+            if !out.iter().any(|(x, y)| *x == a && *y == m) {
+                out.push((a, m));
+            }
+        };
+        let accounts: Vec<AccountId> = self
+            .conn
+            .prepare("SELECT id FROM account ORDER BY id")?
+            .query_map([], |r| Ok(AccountId(r.get(0)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut roles = self
+            .conn
+            .prepare("SELECT role, mailbox FROM folder_role WHERE account = ?1")?;
+        for a in accounts {
+            if key == "inbox" {
+                add(a, "INBOX".into());
+            }
+            for row in roles.query_map(params![a.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })? {
+                let (role, mailbox) = row?;
+                if role == key || folder_key(&mailbox) == key {
+                    add(a, mailbox);
+                }
+            }
+            if let Some(junk) = self.junk_mailbox(a)? {
+                if matches!(key.as_str(), "spam" | "junk") || folder_key(&junk) == key {
+                    add(a, junk);
+                }
+            }
+            let mut path: Vec<String> = Vec::new();
+            for f in self.account_folders(a)? {
+                path.truncate(f.depth as usize);
+                path.push(f.name.clone());
+                if f.selectable
+                    && (folder_key(&path.join("/")) == key
+                        || folder_key(&f.name) == key
+                        || folder_key(&f.mailbox) == key)
+                {
+                    add(a, f.mailbox);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The messages at these places as search hits, newest first; ones
+    /// gone or hidden meanwhile are left out.
+    pub fn search_hits_at(&self, at: &[(AccountId, String, u32)]) -> Result<Vec<Hit>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
+                    m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
+                    EXISTS (SELECT 1 FROM attachment x
+                            WHERE x.account = m.account AND x.mailbox = m.mailbox AND x.uid = m.uid)
+               FROM message m
+              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3 AND m.hidden IN (0, 2)
+                {LIVE}"
+        ))?;
+        let mut hits: Vec<Hit> = Vec::new();
+        for (account, mailbox, uid) in at {
+            let hit = stmt
+                .query_row(params![account.0, mailbox, uid], |r| {
+                    Ok(Hit {
+                        message: row_to_summary(r)?,
+                        snippet: String::new(),
+                        files: r.get(13)?,
+                    })
+                })
+                .optional()?;
+            if let Some(hit) = hit {
+                let m = &hit.message;
+                // One message in two folders (Gmail keeps it in the inbox
+                // and All Mail) shows once: where it came first, and the
+                // inbox comes first.
+                let id = &m.reply.message_id;
+                if !hits.iter().any(|h| {
+                    h.message.account == m.account
+                        && ((h.message.mailbox == m.mailbox && h.message.uid == m.uid)
+                            || (!id.is_empty() && h.message.reply.message_id == *id))
+                }) {
+                    hits.push(hit);
+                }
+            }
+        }
+        hits.sort_by(|a, b| {
+            (b.message.received_at, a.message.account, b.message.uid).cmp(&(
+                a.message.received_at,
+                b.message.account,
+                a.message.uid,
+            ))
+        });
+        Ok(hits)
+    }
+
+    /// Notes messages a server search brought to this device, with their
+    /// folder's UIDVALIDITY (0 where ids don't change, as with JMAP): the
+    /// database's growth rules can tell them from synced mail, and
+    /// [`Self::forget_renumbered_found`] from mail of a renumbered folder.
+    pub fn note_server_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        uid_validity: u32,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO server_found (account, mailbox, uid, uid_validity, found_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                    uid_validity = excluded.uid_validity, found_at = excluded.found_at",
+            )?;
+            let mut hide = tx.prepare_cached(&format!(
+                "UPDATE message SET hidden = {OUTSIDE_SYNC}
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND hidden = 0"
+            ))?;
+            let now = crate::pending::now();
+            for uid in uids {
+                stmt.execute(params![account.0, mailbox, uid, uid_validity, now])?;
+                hide.execute(params![account.0, mailbox, uid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The messages of a folder a server search brought, not its sync.
+    pub fn server_found_uids(&self, account: AccountId, mailbox: &str) -> Result<HashSet<u32>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT uid FROM server_found WHERE account = ?1 AND mailbox = ?2")?;
+        let rows = stmt.query_map(params![account.0, mailbox], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// The newest message the sync of a folder brought (UID, received at),
+    /// leaving out what a server search brought: past it is mail the next
+    /// sync brings and announces, which a search must not take first.
+    pub fn newest_synced(&self, account: AccountId, mailbox: &str) -> Result<Option<(u32, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT MAX(uid), MAX(received_at) FROM message m
+                  WHERE account = ?1 AND mailbox = ?2 AND NOT EXISTS
+                    (SELECT 1 FROM server_found f
+                      WHERE f.account = m.account AND f.mailbox = m.mailbox AND f.uid = m.uid)",
+                params![account.0, mailbox],
+                |r| Ok(r.get::<_, Option<u32>>(0)?.zip(r.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// The oldest message the sync of a folder brought, leaving out what
+    /// a server search brought: the sync goes newest first, so from it up
+    /// the folder is all here.
+    pub fn lowest_synced(&self, account: AccountId, mailbox: &str) -> Result<Option<u32>> {
+        Ok(self.conn.query_row(
+            "SELECT MIN(uid) FROM message m
+              WHERE account = ?1 AND mailbox = ?2 AND NOT EXISTS
+                (SELECT 1 FROM server_found f
+                  WHERE f.account = m.account AND f.mailbox = m.mailbox AND f.uid = m.uid)",
+            params![account.0, mailbox],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Takes the messages a server search brought into a folder into its
+    /// synced mail once the sync has reached them (`from` and newer: the
+    /// sync goes newest first), or all of them when the whole folder is
+    /// synced (`from` = 0). They then show in the folder's list like the
+    /// rest, and the growth rules treat them as synced mail.
+    pub fn adopt_server_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        from: u32,
+    ) -> Result<usize> {
+        self.adopt_found_where(account, mailbox, "uid >= ?3", from)
+    }
+
+    /// As [`Self::adopt_server_found`], for these messages (JMAP: those the
+    /// sync of the folder listed).
+    pub fn adopt_server_found_uids(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+    ) -> Result<usize> {
+        let mut n = 0;
+        for uid in uids {
+            n += self.adopt_found_where(account, mailbox, "uid = ?3", *uid)?;
+        }
+        Ok(n)
+    }
+
+    fn adopt_found_where(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        which: &str,
+        value: u32,
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            &format!(
+                "UPDATE message SET hidden = 0
+                  WHERE account = ?1 AND mailbox = ?2 AND hidden = {OUTSIDE_SYNC} AND uid IN
+                    (SELECT uid FROM server_found WHERE account = ?1 AND mailbox = ?2 AND {which})"
+            ),
+            params![account.0, mailbox, value],
+        )?;
+        let n = tx.execute(
+            &format!("DELETE FROM server_found WHERE account = ?1 AND mailbox = ?2 AND {which}"),
+            params![account.0, mailbox, value],
+        )?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Forgets the messages a server search kept in a folder whose
+    /// UIDVALIDITY changed since: their numbers name other messages now.
+    /// Returns how many went.
+    pub fn forget_renumbered_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid_validity: u32,
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM message WHERE account = ?1 AND mailbox = ?2 AND uid IN
+                (SELECT uid FROM server_found
+                  WHERE account = ?1 AND mailbox = ?2 AND uid_validity <> ?3)",
+            params![account.0, mailbox, uid_validity],
+        )?)
+    }
+
+    /// The saved searches, in the person's order.
+    pub fn saved_searches(&self) -> Result<Vec<SavedSearch>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, uuid, name, query FROM saved_search ORDER BY position, id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SavedSearch {
+                id: r.get(0)?,
+                uuid: r.get(1)?,
+                name: r.get(2)?,
+                query: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Saves a search under a name, last; a search already saved under
+    /// that name (in any case) gets the new query instead. Returns its id.
+    pub fn save_search(&self, name: &str, query: &str) -> Result<i64> {
+        let name = name.trim();
+        let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut uuid = [0u8; 16];
+        getrandom::fill(&mut uuid).expect("the system has randomness");
+        let uuid: String = uuid.iter().map(|b| format!("{b:02x}")).collect();
+        Ok(self.conn.query_row(
+            "INSERT INTO saved_search (uuid, name, query, position, updated_at)
+             VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(position), 0) + 1 FROM saved_search), ?4)
+             ON CONFLICT (name) DO UPDATE SET query = excluded.query, updated_at = excluded.updated_at
+             RETURNING id",
+            params![uuid, name, query, crate::pending::now()],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Renames a saved search. False when another one has that name.
+    pub fn rename_saved_search(&self, id: i64, name: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE saved_search SET name = ?2, updated_at = ?3
+              WHERE id = ?1 AND NOT EXISTS
+                (SELECT 1 FROM saved_search WHERE name = ?2 AND id <> ?1)",
+            params![id, name.trim(), crate::pending::now()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Forgets a saved search.
+    pub fn delete_saved_search(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM saved_search WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -8929,6 +9336,17 @@ impl Store {
     }
 }
 
+/// A search kept under a name, shown in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSearch {
+    pub id: i64,
+    /// The same on every device, for the sync space to carry it later.
+    pub uuid: String,
+    pub name: String,
+    /// What was typed, operators included.
+    pub query: String,
+}
+
 /// The setting with how many days whole messages are kept; "0" for good.
 const KEEP_BODIES: &str = "storage.keep_days";
 
@@ -9015,73 +9433,6 @@ pub struct Found {
     /// How many messages match in all; `hits` holds the newest of them.
     pub total: u32,
     pub hits: Vec<Hit>,
-}
-
-/// The FROM and WHERE of a search over `from` (which names the message
-/// `m`), its arguments, and whether it matches words.
-fn search_where(query: &Query, from: &str) -> (String, Vec<rusqlite::types::Value>, bool) {
-    let fts = query.fts();
-    let mut sql = String::from(from);
-    let mut args: Vec<rusqlite::types::Value> = Vec::new();
-    // Numbered placeholders, so the account filter can use its value twice.
-    if let Some(expr) = &fts {
-        args.push(expr.clone().into());
-        sql.push_str(" JOIN message_fts ON message_fts.rowid = m.rowid WHERE message_fts MATCH ?1");
-    } else {
-        sql.push_str(" WHERE 1");
-    }
-    sql.push_str(" AND m.hidden = 0");
-    sql.push_str(LIVE);
-    if let Some(account) = &query.account {
-        args.push(account.clone().into());
-        let n = args.len();
-        sql.push_str(&format!(
-                " AND m.account IN (SELECT id FROM account WHERE lower(name) = lower(?{n}) OR lower(email) = lower(?{n}))"
-            ));
-    }
-    if let Some(group) = query.group {
-        sql.push_str(&crate::groups::Within::Group(group).sql());
-    }
-    if let Some(label) = &query.label {
-        args.push(label.clone().into());
-        sql.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM message_labels ml
-                     WHERE ml.account = m.account AND ml.mailbox = m.mailbox AND ml.uid = m.uid
-                       AND instr(' ' || ml.labels || ' ',
-                                 ' ' || (SELECT keyword FROM label WHERE name = ?{} COLLATE NOCASE) || ' ') > 0)",
-            args.len()
-        ));
-    }
-    if query.unread {
-        sql.push_str(" AND (m.flags & 1) = 0");
-    }
-    if let Some(after) = query.after {
-        args.push(after.into());
-        sql.push_str(&format!(" AND m.received_at >= ?{}", args.len()));
-    }
-    if let Some(before) = query.before {
-        args.push(before.into());
-        sql.push_str(&format!(" AND m.received_at < ?{}", args.len()));
-    }
-    if query.attachment {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM attachment a
-                     WHERE a.account = m.account AND a.mailbox = m.mailbox AND a.uid = m.uid)",
-        );
-    }
-    if query.vault {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM vault_card v
-                     WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid)",
-        );
-    }
-    if query.newsletter {
-        sql.push_str(" AND (m.newsletter = 1 OR m.folder = 'newsletters')");
-    }
-    if query.people {
-        sql.push_str(&format!(" AND {PEOPLE}"));
-    }
-    (sql, args, fts.is_some())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13006,6 +13357,315 @@ From: <help@bank.example>\r\n\r\nHi";
     }
 
     #[test]
+    fn search_finds_by_every_operator() {
+        let (mut store, p, w) = search_store();
+        // Recipients: To names, every address.
+        store
+            .set_recipients(
+                w,
+                "INBOX",
+                &[(1, "lume@tipografia.it w@example.org".into())],
+            )
+            .unwrap();
+        assert_eq!(subjects(&store, "to:lume"), ["Autumn catalog print quote"]);
+        assert_eq!(
+            subjects(&store, "cc:LUME@tipo"),
+            ["Autumn catalog print quote"]
+        );
+        assert_eq!(subjects(&store, "to:matteo").len(), 5);
+        assert!(subjects(&store, "cc:matteo").is_empty());
+        assert!(subjects(&store, "to:100%_").is_empty());
+        // Bcc is the server's to answer.
+        assert!(subjects(&store, "bcc:lume").is_empty());
+        // Subject only, and words left out.
+        assert_eq!(
+            subjects(&store, "subject:quote"),
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
+        );
+        assert_eq!(
+            subjects(&store, "quote -subject:print"),
+            ["Dinner on Friday?", "Service quote"]
+        );
+        assert_eq!(subjects(&store, "-quote"), ["Perché così"]);
+        // OR, also across kinds of terms.
+        assert_eq!(
+            subjects(&store, "from:sara OR from:davide"),
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
+        );
+        assert_eq!(
+            subjects(&store, "subject:dinner OR is:unread -print"),
+            ["Perché così", "Dinner on Friday?", "Service quote"]
+        );
+        // Read, unread, starred.
+        assert_eq!(
+            subjects(&store, "is:read"),
+            ["Dinner on Friday?", "Re: Print quote"]
+        );
+        assert_eq!(subjects(&store, "-is:unread"), subjects(&store, "is:read"));
+        store
+            .update_flags(
+                w,
+                "INBOX",
+                &[(
+                    2,
+                    Flags {
+                        seen: true,
+                        flagged: true,
+                        answered: false,
+                    },
+                )],
+            )
+            .unwrap();
+        assert_eq!(subjects(&store, "is:starred"), ["Re: Print quote"]);
+        assert_eq!(subjects(&store, "is:flagged"), ["Re: Print quote"]);
+        assert_eq!(
+            subjects(&store, "from:sara -is:starred"),
+            ["Autumn catalog print quote"]
+        );
+        // Files: by name, and sizes.
+        store
+            .set_listed_files(
+                w,
+                "INBOX",
+                &[(
+                    1,
+                    vec![Attachment {
+                        part: 2,
+                        name: "Quote-2026.PDF".into(),
+                        mime: "application/pdf".into(),
+                        size: 3 << 20,
+                        section: Some("2".into()),
+                        encoding: Some("base64".into()),
+                    }],
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            subjects(&store, "filename:pdf"),
+            ["Autumn catalog print quote"]
+        );
+        assert_eq!(
+            subjects(&store, "filename:quote-2026"),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "filename:%").is_empty());
+        assert_eq!(
+            subjects(&store, "larger:2M"),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "larger:4M").is_empty());
+        assert_eq!(subjects(&store, "smaller:1M").len(), 4);
+        assert_eq!(subjects(&store, "has:attachment -filename:doc").len(), 1);
+        // Labels, known or not.
+        let read = store.add_label("To read", "amber").unwrap();
+        store
+            .label_message(w, "INBOX", 2, &read.keyword, true)
+            .unwrap();
+        assert_eq!(subjects(&store, r#"label:"to read""#), ["Re: Print quote"]);
+        assert_eq!(
+            subjects(&store, r#"from:sara -label:"To read""#),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "label:nope").is_empty());
+        assert_eq!(subjects(&store, "from:sara -label:nope").len(), 2);
+        // Folders: jobs, names, paths, server names.
+        let mut acme = written(w, 7, 50, ("Ada", "ada@acme.com"), "Acme brief");
+        acme.mailbox = "INBOX.Clients.Acme".into();
+        let mut sent = written(p, 8, 60, ("Me", "p@example.org"), "Sent brief");
+        sent.mailbox = "Sent".into();
+        store.set_folder_role(p, Folder::Sent, "Sent").unwrap();
+        store.upsert_messages(&[acme, sent]).unwrap();
+        store
+            .set_account_folders(
+                w,
+                &[
+                    AccountFolder {
+                        mailbox: "INBOX.Clients".into(),
+                        name: "Clients".into(),
+                        depth: 0,
+                        selectable: false,
+                        unread: 0,
+                        total: 0,
+                        subscribed: true,
+                        delimiter: ".".into(),
+                    },
+                    AccountFolder {
+                        mailbox: "INBOX.Clients.Acme".into(),
+                        name: "Acme".into(),
+                        depth: 1,
+                        selectable: true,
+                        unread: 0,
+                        total: 0,
+                        subscribed: true,
+                        delimiter: ".".into(),
+                    },
+                ],
+            )
+            .unwrap();
+        for typed in [
+            "in:acme",
+            "in:Clients/Acme",
+            "in:CLIENTS/ACME/",
+            "in:INBOX/Clients/Acme",
+            "in:inbox.clients.acme",
+            "brief -in:inbox -in:sent",
+        ] {
+            assert_eq!(subjects(&store, typed), ["Acme brief"], "{typed}");
+        }
+        assert!(subjects(&store, "in:clients").is_empty());
+        assert!(subjects(&store, "in:nowhere").is_empty());
+        assert_eq!(subjects(&store, "in:sent"), ["Sent brief"]);
+        assert_eq!(subjects(&store, "brief in:sent OR in:acme").len(), 2);
+        assert_eq!(subjects(&store, "in:inbox").len(), 5);
+        assert_eq!(
+            store.folders_named("Acme").unwrap(),
+            [(w, "INBOX.Clients.Acme".to_owned())]
+        );
+        // Unicode words and senders.
+        assert_eq!(subjects(&store, "perche"), ["Perché così"]);
+        assert_eq!(subjects(&store, "from:città"), ["Perché così"]);
+    }
+
+    #[test]
+    fn saved_searches_and_server_finds() {
+        let (store, p, w) = search_store();
+        let a = store.save_search("Quotes", "  quote   from:sara ").unwrap();
+        let b = store.save_search("Unread", "is:unread").unwrap();
+        // The same name, in any case, keeps one search with the new query.
+        assert_eq!(store.save_search("quotes", "quote").unwrap(), a);
+        let saved = store.saved_searches().unwrap();
+        assert_eq!(
+            saved
+                .iter()
+                .map(|s| (s.id, s.name.as_str(), s.query.as_str()))
+                .collect::<Vec<_>>(),
+            [(a, "Quotes", "quote"), (b, "Unread", "is:unread")]
+        );
+        assert_eq!(saved[0].uuid.len(), 32);
+        assert_ne!(saved[0].uuid, saved[1].uuid);
+        assert!(!store.rename_saved_search(b, "QUOTES").unwrap());
+        assert!(store.rename_saved_search(b, " New mail ").unwrap());
+        assert_eq!(store.saved_searches().unwrap()[1].name, "New mail");
+        store.delete_saved_search(a).unwrap();
+        assert_eq!(store.saved_searches().unwrap().len(), 1);
+
+        // Server finds: shown newest first, gone ones left out, forgotten
+        // when their folder is renumbered.
+        let hits = store
+            .search_hits_at(&[
+                (w, "INBOX".into(), 1),
+                (p, "INBOX".into(), 4),
+                (p, "INBOX".into(), 99),
+                (w, "INBOX".into(), 1),
+            ])
+            .unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|h| h.message.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["Dinner on Friday?", "Autumn catalog print quote"]
+        );
+        store.note_server_found(w, "INBOX", &[1], 7).unwrap();
+        assert_eq!(store.forget_renumbered_found(w, "INBOX", 7).unwrap(), 0);
+        assert_eq!(store.forget_renumbered_found(w, "INBOX", 8).unwrap(), 1);
+        assert!(subjects(&store, "autumn").is_empty());
+        let left: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM server_found", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    /// What a server search brings from outside the sync stays out of
+    /// the folder's list and counts, but is found and opens; the sync
+    /// coming down to it makes it ordinary mail. It never counts as the
+    /// newest synced message (review of #88, findings 2 and 6).
+    #[test]
+    fn mail_found_on_the_server_stays_out_of_lists_until_synced() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        let mut old = msg(a, 2, 100, false);
+        old.subject = "Old invoice".into();
+        let mut newer = msg(a, 8, 900, false);
+        newer.subject = "Older than the sync, newer number".into();
+        store
+            .upsert_messages(&[msg(a, 5, 500, true), msg(a, 6, 600, true), old, newer])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[2, 8], 7).unwrap();
+        // The sync's newest and oldest leave the found ones out.
+        assert_eq!(store.newest_synced(a, "INBOX").unwrap(), Some((6, 600)));
+        assert_eq!(store.lowest_synced(a, "INBOX").unwrap(), Some(5));
+        assert_eq!(store.server_found_uids(a, "INBOX").unwrap(), [2, 8].into());
+        let listed = |store: &Store| -> Vec<u32> {
+            store
+                .unified(Folder::Inbox, None, 50)
+                .unwrap()
+                .iter()
+                .map(|m| m.uid)
+                .collect()
+        };
+        assert_eq!(listed(&store), [6, 5]);
+        assert_eq!(
+            store
+                .unread_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            0
+        );
+        // Found, and its conversation opens.
+        assert_eq!(subjects(&store, "invoice"), ["Old invoice"]);
+        assert_eq!(
+            store
+                .search_hits_at(&[(a, "INBOX".into(), 2)])
+                .unwrap()
+                .len(),
+            1
+        );
+        // An undo on it puts it back out of the list, not in it.
+        store.set_hidden(a, "INBOX", 2, true).unwrap();
+        assert!(subjects(&store, "invoice").is_empty());
+        store.set_hidden(a, "INBOX", 2, false).unwrap();
+        assert_eq!(listed(&store), [6, 5]);
+        // The sync came down to 5: 8 is inside what it covers now.
+        assert_eq!(store.adopt_server_found(a, "INBOX", 5).unwrap(), 1);
+        assert_eq!(listed(&store), [8, 6, 5]);
+        // The whole folder synced: the rest too.
+        assert_eq!(store.adopt_server_found(a, "INBOX", 0).unwrap(), 1);
+        assert_eq!(listed(&store), [8, 6, 5, 2]);
+        assert!(store.server_found_uids(a, "INBOX").unwrap().is_empty());
+    }
+
+    /// Gmail keeps one message in the inbox and All Mail: a server search
+    /// that finds both shows it once, from the inbox.
+    #[test]
+    fn one_message_in_two_folders_is_one_server_hit() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Gmail", "a@gmail.com", "#E0782F"))
+            .unwrap();
+        let mut inbox = msg(a, 3, 100, false);
+        inbox.reply.message_id = "<same@example.org>".into();
+        let mut all = inbox.clone();
+        all.mailbox = "[Gmail]/All Mail".into();
+        all.uid = 40;
+        store.upsert_messages(&[inbox, all]).unwrap();
+        let hits = store
+            .search_hits_at(&[(a, "INBOX".into(), 3), (a, "[Gmail]/All Mail".into(), 40)])
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].message.mailbox, "INBOX");
+    }
+
+    #[test]
     fn rules_sort_only_mail_that_arrives_after_the_first_look() {
         use crate::rules::{self, Action, Field, Op};
         let mut store = Store::open_in_memory().unwrap();
@@ -13339,6 +13999,59 @@ From: <help@bank.example>\r\n\r\nHi";
         let found = store.search(&Query::parse("updated"), 50).unwrap();
         assert_eq!(found.total, 50_000);
         eprintln!("searched in {:?}", start.elapsed());
+    }
+
+    /// Local search on 50,000 messages with bodies, timed (median of 9).
+    /// `cargo test --release -p piuma-core -- --ignored --nocapture
+    /// search_timings`.
+    #[test]
+    #[ignore]
+    fn search_timings() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        let words = [
+            "quote", "dinner", "invoice", "meeting", "catalog", "print", "trip", "lunch",
+        ];
+        let msgs: Vec<_> = (1..=50_000u32)
+            .map(|u| {
+                let mut m = msg(a, u, i64::from(u) * 60, false);
+                let w = words[u as usize % words.len()];
+                m.subject = format!("About the {w} {u}");
+                m.preview = format!("Here is the {w} we talked about, quickly");
+                m
+            })
+            .collect();
+        store.upsert_messages(&msgs).unwrap();
+        for m in &msgs {
+            let w = words[m.uid as usize % words.len()];
+            let body = format!(
+                "Hello, as promised here is the {w}. {} Let me know what you think \
+                 about the quote and the timing. Best, Julia",
+                "Some longer text to make the body look like real mail. ".repeat(12)
+            );
+            store.set_body(a, "INBOX", m.uid, &body).unwrap();
+        }
+        for q in [
+            "q",
+            "quote",
+            "quote OR dinner",
+            "from:julia quote",
+            "-quote is:unread",
+        ] {
+            let query = Query::parse(q);
+            let mut times: Vec<std::time::Duration> = (0..9)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let found = store.search(&query, 50).unwrap();
+                    assert!(found.hits.len() <= 50);
+                    start.elapsed()
+                })
+                .collect();
+            times.sort();
+            eprintln!("search {q:?}: {:?}", times[4]);
+        }
     }
 
     #[test]
@@ -15269,6 +15982,22 @@ From: <help@bank.example>\r\n\r\nHi";
             1
         );
         assert_eq!(store.search(&Query::parse("message"), 10).unwrap().total, 1);
+        // With no words too, and among what a server search brought.
+        assert_eq!(
+            store.search(&Query::parse("is:unread"), 10).unwrap().total,
+            1
+        );
+        assert!(store
+            .search_hits_at(&[(a, "INBOX".into(), 1)])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_hits_at(&[(b, "INBOX".into(), 1)])
+                .unwrap()
+                .len(),
+            1
+        );
         // Its address can be added again meanwhile.
         let again = store
             .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))

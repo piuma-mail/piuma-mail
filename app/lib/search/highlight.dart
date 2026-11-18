@@ -4,28 +4,37 @@ library;
 /// Operators the engine understands; their values are not words to mark.
 const _operators = {
   'from',
+  'to',
+  'cc',
+  'bcc',
   'account',
   'group',
+  'label',
   'is',
   'after',
   'before',
   'has',
   'in',
+  'filename',
+  'larger',
+  'smaller',
 };
 
-/// The words and "quoted phrases" of a search, operators left out.
+/// The words and "quoted phrases" of a search, operators, words left out
+/// with `-` and `OR` left out; a `subject:` value counts as words.
 List<String> searchWords(String query) {
   final words = <String>[];
   final current = StringBuffer();
   var quoted = false;
   void flush() {
-    final token = current.toString().trim();
+    var token = current.toString().trim();
     current.clear();
-    if (token.isEmpty) return;
+    if (token.isEmpty || token == 'OR' || token.startsWith('-')) return;
     final colon = token.indexOf(':');
-    if (colon > 0 &&
-        _operators.contains(token.substring(0, colon).toLowerCase())) {
-      return;
+    if (colon > 0) {
+      final key = token.substring(0, colon).toLowerCase();
+      if (_operators.contains(key)) return;
+      if (key == 'subject') token = token.substring(colon + 1);
     }
     if (_letter.hasMatch(token)) words.add(token);
   }
