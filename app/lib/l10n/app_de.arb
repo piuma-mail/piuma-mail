@@ -188,6 +188,9 @@
   "riskBodyDisguised": "{name} sieht aus wie ein {kind}, ist aber ein Programm. Programme aus E-Mails können dein Gerät übernehmen. Öffne es nur, wenn du es erwartet hast.",
   "riskBodyMacros": "{name} enthält Makros, die beim Öffnen starten können. Öffne es nur, wenn du es erwartet hast.",
   "riskBodyLocked": "{name} ist mit einem Passwort gesperrt, niemand kann hineinsehen. Öffne es nur, wenn du es erwartet hast.",
+  "riskWeb": "Eine Webseite",
+  "riskOpenWeb": "Diese Webseite öffnen?",
+  "riskBodyWeb": "{name} ist eine Webseite: Sie öffnet sich im Browser. Gib dort nie ein Passwort ein: Eine per E-Mail geschickte Seite kann wie jede Anmeldung aussehen.",
   "riskFileFrom": "{name} · {size} · von {email}",
   "settings": "Einstellungen",
   "backToMail": "Zurück zu den E-Mails",
@@ -1494,5 +1497,8 @@
   "calGoogleLabel": "iCal-Adresse von Google Kalender",
   "calGoogleHint": "In Google Kalender am Computer: Einstellungen › dein Kalender › Kalender integrieren › Privatadresse im iCal-Format. Schreibgeschützt; verbindet sich direkt.",
   "bundledReleaseNotes": "## E-Mail, leicht gemacht\n- Original-Layouts mit durchgehendem Scrollen und Bildsteuerung\n- Formatierungsleiste und Wechsel zum vollständigen Editor beim Antworten\n- Bewusstere horizontale Wischgesten\n- Absenderwarnungen bei Markenimitation und ähnlichen Domains\n- Monatlicher Tresor-CSV-Export mit USt-IdNr. des Händlers",
-  "notificationNotices": "{count, plural, =1{1 Hinweis} other{{count} Hinweise}}"
+  "notificationNotices": "{count, plural, =1{1 Hinweis} other{{count} Hinweise}}",
+  "listFailed": "Diese E-Mails konnten nicht angezeigt werden.",
+  "folderRefreshFailed": "Dieser Ordner konnte nicht vom Server aktualisiert werden.",
+  "changesDropped": "{count, plural, =1{Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.} other{Der Server hat {count} Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.}}"
 }

@@ -329,6 +329,10 @@
   "@riskBodyMacros": {"placeholders": {"name": {"type": "String"}}},
   "riskBodyLocked": "{name} is locked with a password, so nothing can look inside it. Open it only if you were expecting it.",
   "@riskBodyLocked": {"placeholders": {"name": {"type": "String"}}},
+  "riskWeb": "A web page",
+  "riskOpenWeb": "Open this web page?",
+  "riskBodyWeb": "{name} is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.",
+  "@riskBodyWeb": {"placeholders": {"name": {"type": "String"}}},
   "riskFileFrom": "{name} · {size} · from {email}",
   "@riskFileFrom": {"placeholders": {"name": {"type": "String"}, "size": {"type": "String"}, "email": {"type": "String"}}},
   "settings": "Settings",
@@ -2042,5 +2046,9 @@
   "calGoogleSub": "Read events and availability with an iCal link",
   "calGoogleLabel": "Google Calendar iCal address",
   "calGoogleHint": "In Google Calendar on a computer: Settings › your calendar › Integrate calendar › Secret address in iCal format. Read-only; connects directly.",
-  "bundledReleaseNotes": "## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers"
+  "bundledReleaseNotes": "## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers",
+  "listFailed": "Couldn’t show these emails.",
+  "folderRefreshFailed": "Couldn’t refresh this folder from the server.",
+  "changesDropped": "{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}",
+  "@changesDropped": {"placeholders": {"count": {"type": "int"}}}
 }

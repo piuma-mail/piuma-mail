@@ -106,7 +106,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [dtoa-short](https://github.com/upsuper/dtoa-short) | 0.3.5 | MPL-2.0 |
 | [ego-tree](https://github.com/rust-scraper/ego-tree) | 0.11.0 | ISC |
 | [either](https://github.com/rayon-rs/either) | 1.19.0 | MIT OR Apache-2.0 |
-| [email-encoding](https://github.com/lettre/email-encoding) | 0.4.2 | MIT OR Apache-2.0 |
+| [email-encoding](https://github.com/lettre/email-encoding) | 0.4.3 | MIT OR Apache-2.0 |
 | [email_address](https://github.com/johnstonskj/rust-email_address.git) | 0.2.9 | MIT |
 | [encodify](https://github.com/stalwartlabs/encodify) | 1.0.2 | Apache-2.0 OR MIT |
 | [endi](https://github.com/zeenix/endi) | 1.1.1 | MIT |
@@ -221,7 +221,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [keyring](https://github.com/hwchen/keyring-rs.git) | 3.6.3 | MIT OR Apache-2.0 |
 | [kurbo](https://github.com/linebender/kurbo) | 0.13.1 | Apache-2.0 OR MIT |
 | [lazy_static](https://github.com/rust-lang-nursery/lazy-static.rs) | 1.5.1 | MIT OR Apache-2.0 |
-| [lettre](https://github.com/lettre/lettre) | 0.11.23 | MIT |
+| [lettre](https://github.com/lettre/lettre) | 0.11.24 | MIT |
 | [libc](https://github.com/rust-lang/libc) | 0.2.189 | MIT OR Apache-2.0 |
 | [libdbus-sys](https://github.com/diwic/dbus-rs) | 0.2.7 | Apache-2.0/MIT |
 | [libredox](https://gitlab.redox-os.org/redox-os/libredox.git) | 0.1.25 | MIT |

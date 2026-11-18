@@ -8417,6 +8417,7 @@ impl SseDecode for crate::api::engine::FileRisk {
             1 => crate::api::engine::FileRisk::Disguised,
             2 => crate::api::engine::FileRisk::Macros,
             3 => crate::api::engine::FileRisk::Locked,
+            4 => crate::api::engine::FileRisk::Web,
             _ => unreachable!("Invalid variant for FileRisk: {}", inner),
         };
     }
@@ -10553,6 +10554,7 @@ impl SseDecode for crate::api::engine::SyncEventKind {
             2 => crate::api::engine::SyncEventKind::Offline,
             3 => crate::api::engine::SyncEventKind::SignInFailed,
             4 => crate::api::engine::SyncEventKind::OutboxSent,
+            5 => crate::api::engine::SyncEventKind::ChangesDropped,
             _ => unreachable!("Invalid variant for SyncEventKind: {}", inner),
         };
     }
@@ -12046,6 +12048,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::FileRisk {
             Self::Disguised => 1.into_dart(),
             Self::Macros => 2.into_dart(),
             Self::Locked => 3.into_dart(),
+            Self::Web => 4.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -13526,6 +13529,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::SyncEventKind {
             Self::Offline => 2.into_dart(),
             Self::SignInFailed => 3.into_dart(),
             Self::OutboxSent => 4.into_dart(),
+            Self::ChangesDropped => 5.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -14453,6 +14457,7 @@ impl SseEncode for crate::api::engine::FileRisk {
                 crate::api::engine::FileRisk::Disguised => 1,
                 crate::api::engine::FileRisk::Macros => 2,
                 crate::api::engine::FileRisk::Locked => 3,
+                crate::api::engine::FileRisk::Web => 4,
                 _ => {
                     unimplemented!("");
                 }
@@ -16098,6 +16103,7 @@ impl SseEncode for crate::api::engine::SyncEventKind {
                 crate::api::engine::SyncEventKind::Offline => 2,
                 crate::api::engine::SyncEventKind::SignInFailed => 3,
                 crate::api::engine::SyncEventKind::OutboxSent => 4,
+                crate::api::engine::SyncEventKind::ChangesDropped => 5,
                 _ => {
                     unimplemented!("");
                 }
