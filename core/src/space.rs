@@ -661,7 +661,7 @@ impl BodyBytes for mail_parser::Message<'_> {
 }
 
 /// A Date header for `at` seconds, in UTC.
-fn rfc2822(at: i64) -> String {
+pub(crate) fn rfc2822(at: i64) -> String {
     let days = at.div_euclid(86_400);
     let secs = at.rem_euclid(86_400);
     // Howard Hinnant's civil-from-days.

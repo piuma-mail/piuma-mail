@@ -1,0 +1,18 @@
+# PEC providers, one a line: a receipt's signer must be issued to one
+# of them (pec.rs). Written by tools/gen_pec_trust.py; don't edit by hand.
+# Generated: 2026-11-18
+# Source: https://www.agid.gov.it/it/piattaforme/posta-elettronica-certificata/elenco-gestori-pec (current providers, not the ceased ones)
+Aruba PEC S.p.A.
+Cedacri S.p.A.
+Consiglio Nazionale del Notariato
+IN.TE.S.A. S.p.A.
+Infocert S.p.A.
+Intesi Group S.p.A.
+Namirial S.p.A.
+Notartel S.p.A.
+Poste Italiane S.p.A.
+Postel S.p.A.
+ReeVo S.p.A.
+Register S.p.A.
+Telecom Italia Trust Technologies S.r.l. (già I.T. Telecom S.r.l.)
+Università degli studi di Napoli Federico II

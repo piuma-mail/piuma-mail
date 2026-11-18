@@ -267,11 +267,11 @@ pub enum AwayServer {
 }
 
 impl AwayServer {
-    pub fn for_account(account: &Account, password: &str) -> Self {
-        match SieveConfig::for_account(account, password) {
+    pub fn for_account(account: &Account, login: &crate::auth::Login) -> Self {
+        match SieveConfig::for_account(account, login) {
             Some(s) => AwayServer::Sieve(s),
             None => AwayServer::Jmap(
-                JmapConfig::for_account(account, password).expect("an IMAP or JMAP account"),
+                JmapConfig::for_account(account, login).expect("an IMAP or JMAP account"),
             ),
         }
     }

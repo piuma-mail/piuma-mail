@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import '../design/theme.dart';
+import '../mail/mail_source.dart' show MailRow;
 import '../mail/sender_pictures.dart';
 
 export '../mail/sender_pictures.dart';
@@ -28,11 +29,20 @@ class SenderPicture extends StatefulWidget {
     required this.email,
     required this.size,
     required this.letter,
+    this.row,
+    this.opened = false,
   });
 
   final String email;
   final double size;
   final Widget letter;
+
+  /// The message the picture stands beside: a brand logo shows only for
+  /// a message whose own sender check passed.
+  final MailRow? row;
+
+  /// The person is reading [row]: only then may its logo be looked up.
+  final bool opened;
 
   @override
   State<SenderPicture> createState() => _SenderPictureState();
@@ -51,19 +61,29 @@ class _SenderPictureState extends State<SenderPicture> {
   @override
   void didUpdateWidget(SenderPicture old) {
     super.didUpdateWidget(old);
-    if (old.email != widget.email) _ask();
+    if (old.email != widget.email ||
+        old.row?.key != widget.row?.key ||
+        old.opened != widget.opened) {
+      _ask();
+    }
   }
 
   void _ask() {
     final pictures = PictureScope.of(context);
     _pictures = pictures;
     final email = widget.email;
-    _image = pictures?.now(email);
+    final row = widget.row;
+    final opened = widget.opened;
+    _image = pictures?.now(email, row: row, opened: opened);
     if (pictures == null || _image != null || email.isEmpty) return;
     unawaited(
-      pictures.get(email).then((image) {
+      pictures.get(email, row: row, opened: opened).then((image) {
         if (!mounted || image == null) return;
-        if (_pictures != pictures || widget.email != email) return;
+        if (_pictures != pictures ||
+            widget.email != email ||
+            widget.row?.key != row?.key) {
+          return;
+        }
         setState(() => _image = image);
       }),
     );

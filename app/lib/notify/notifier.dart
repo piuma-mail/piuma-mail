@@ -1,9 +1,14 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
+import 'notice_seal.dart';
+import 'unread_badge.dart';
+
+export 'notice_seal.dart' show NoticeSeal, noticeSeal;
 
 /// One notification as the system shows it.
 class SystemNotice {
@@ -30,19 +35,22 @@ class SystemNotice {
   /// Shown without a sound (quiet hours).
   final bool silent;
 
-  /// Reply, Archive and Snooze, as on `Notifications`: for one email.
+  /// Reply, Archive and Snooze, as on `Notifications`, then Delete and
+  /// Mark read: for one email.
   final bool buttons;
 }
 
 /// The words on a notice's buttons, and what to do when one is pressed:
-/// [onAction] gets the notice's payload, the button ("reply", "archive"
-/// or "snooze") and, for Reply, the text typed into the notice, when the
-/// system has a field for it.
+/// [onAction] gets the notice's payload, the button ("reply", "archive",
+/// "snooze", "delete" or "read") and, for Reply, the text typed into the
+/// notice, when the system has a field for it.
 class NoticeButtons {
   const NoticeButtons({
     required this.reply,
     required this.archive,
     required this.snooze,
+    required this.delete,
+    required this.markRead,
     required this.send,
     required this.replyHint,
     required this.onAction,
@@ -51,13 +59,15 @@ class NoticeButtons {
   final String reply;
   final String archive;
   final String snooze;
+  final String delete;
+  final String markRead;
   final String send;
   final String replyHint;
   final void Function(String payload, String action, String? text) onAction;
 }
 
 /// The buttons, as the system hands them back.
-const noticeActions = ['reply', 'archive', 'snooze'];
+const noticeActions = ['reply', 'archive', 'snooze', 'delete', 'read'];
 
 /// Splits a system response into payload, button and typed text. Windows
 /// hands back the button's own arguments in place of the payload, so
@@ -77,6 +87,27 @@ const noticeActions = ['reply', 'archive', 'snooze'];
   final typed = r.input ?? r.data['reply'];
   final text = typed is String && typed.trim().isNotEmpty ? typed.trim() : null;
   return (payload: payload, action: action, text: text);
+}
+
+/// Acts on a clicked notice or one of its buttons, once its payload's
+/// seal checks ([NoticeSeal]): a payload made up by another app opens
+/// nothing.
+Future<void> handleNoticeResponse(
+  NotificationResponse r, {
+  required void Function(String payload) onOpen,
+  NoticeButtons? buttons,
+  NoticeSeal? seal,
+}) async {
+  final read = readNoticeResponse(r);
+  if (read == null) return;
+  final payload = await (seal ?? noticeSeal).open(read.payload);
+  if (payload == null) return;
+  final action = read.action;
+  if (action != null && buttons != null) {
+    buttons.onAction(payload, action, read.text);
+  } else {
+    onOpen(payload);
+  }
 }
 
 /// Shows notices through the operating system. Tests replace [notifier].
@@ -134,16 +165,8 @@ class SystemNotifier implements Notifier {
     _channel = channelLabel;
     _buttons = buttons;
     if (kIsWeb || _ready) return;
-    void respond(NotificationResponse r) {
-      final read = readNoticeResponse(r);
-      if (read == null) return;
-      final action = read.action;
-      if (action != null && buttons != null) {
-        buttons.onAction(read.payload, action, read.text);
-      } else {
-        onOpen(read.payload);
-      }
-    }
+    void respond(NotificationResponse r) =>
+        unawaited(handleNoticeResponse(r, onOpen: onOpen, buttons: buttons));
 
     final darwin = DarwinInitializationSettings(
       notificationCategories: [
@@ -159,6 +182,12 @@ class SystemNotifier implements Notifier {
               ),
               DarwinNotificationAction.plain('archive', buttons.archive),
               DarwinNotificationAction.plain('snooze', buttons.snooze),
+              DarwinNotificationAction.plain('read', buttons.markRead),
+              DarwinNotificationAction.plain(
+                'delete',
+                buttons.delete,
+                options: {DarwinNotificationActionOption.destructive},
+              ),
             ],
           ),
       ],
@@ -220,7 +249,7 @@ class SystemNotifier implements Notifier {
         id: n.id,
         title: n.title,
         body: body,
-        payload: n.payload,
+        payload: await noticeSeal.seal(n.payload),
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(
             subtitle: n.subject,
@@ -239,6 +268,8 @@ class SystemNotifier implements Notifier {
             _channel,
             silent: n.silent,
             category: AndroidNotificationCategory.email,
+            // Launchers that show a count on the icon read it here.
+            number: UnreadBadge.count > 0 ? UnreadBadge.count : null,
           ),
           linux: LinuxNotificationDetails(
             suppressSound: n.silent,
@@ -249,6 +280,8 @@ class SystemNotifier implements Notifier {
                 LinuxNotificationAction(key: 'reply', label: buttons.reply),
                 LinuxNotificationAction(key: 'archive', label: buttons.archive),
                 LinuxNotificationAction(key: 'snooze', label: buttons.snooze),
+                LinuxNotificationAction(key: 'read', label: buttons.markRead),
+                LinuxNotificationAction(key: 'delete', label: buttons.delete),
               ],
             ],
           ),
@@ -276,6 +309,16 @@ class SystemNotifier implements Notifier {
                 WindowsAction(
                   content: buttons.snooze,
                   arguments: 'snooze\t${n.payload}',
+                ),
+                // Windows shows five buttons at most: Send, Archive, Snooze,
+                // Mark read and Delete.
+                WindowsAction(
+                  content: buttons.markRead,
+                  arguments: 'read\t${n.payload}',
+                ),
+                WindowsAction(
+                  content: buttons.delete,
+                  arguments: 'delete\t${n.payload}',
                 ),
               ],
             ],

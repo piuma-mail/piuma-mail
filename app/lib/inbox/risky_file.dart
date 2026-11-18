@@ -23,10 +23,11 @@ String? riskNote(AppLocalizations l, MailAttachment a) => switch (a.risk) {
   FileRisk.disguised => l.riskDisguised(_posesAs(a.name)),
   FileRisk.macros => l.riskMacros,
   FileRisk.locked => l.riskLocked,
+  FileRisk.web => l.riskWeb,
 };
 
 /// Whether the file saved at [path] may open: a program, a file with
-/// macros or a locked archive asks first, with "Don't open" as the main
+/// macros, a web page or a locked archive asks first, with "Don't open" as the main
 /// button, as Check this link does. A dialog on the desktop, a sheet on
 /// the phone.
 Future<bool> mayOpenFile(
@@ -47,6 +48,7 @@ Future<bool> mayOpenFile(
     FileRisk.program || FileRisk.disguised => l.riskOpenProgram,
     FileRisk.macros => l.riskOpenFile,
     FileRisk.locked => l.riskOpenArchive,
+    FileRisk.web => l.riskOpenWeb,
   };
   final phone = MediaQuery.sizeOf(context).width < 600;
   Widget panel(BuildContext context) => _RiskyFile(
@@ -89,6 +91,7 @@ class _RiskyFile extends StatelessWidget {
       FileRisk.disguised => l.riskBodyDisguised(file.name, _posesAs(file.name)),
       FileRisk.macros => l.riskBodyMacros(file.name),
       FileRisk.locked => l.riskBodyLocked(file.name),
+      FileRisk.web => l.riskBodyWeb(file.name),
     };
     final open = PiumaButton(
       label: l.openAnyway,

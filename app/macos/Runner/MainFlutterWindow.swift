@@ -20,6 +20,8 @@ class MainFlutterWindow: NSWindow {
     OnDeviceModel.listen(flutterViewController.engine.binaryMessenger)
     Translate.listen(flutterViewController.engine.binaryMessenger)
     DeviceName.listen(flutterViewController.engine.binaryMessenger)
+    Shell.listen(flutterViewController.engine.binaryMessenger)
+    UnreadBadge.listen(flutterViewController.engine.binaryMessenger)
 
     // A message opened in a window of its own gets the plugins too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
@@ -29,6 +31,89 @@ class MainFlutterWindow: NSWindow {
     }
 
     super.awakeFromNib()
+  }
+}
+
+/// The app and the rest of macOS (lib/outside/ in Dart, over the
+/// "piuma/shell" channel): links and files the system opens with Piuma,
+/// and the default mail app. Links and files that come before Dart
+/// listens wait here.
+enum Shell {
+  private static var channel: FlutterMethodChannel?
+  private static var ready = false
+  private static var waiting: [[String]] = []
+
+  static func listen(_ messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "piuma/shell", binaryMessenger: messenger)
+    Shell.channel = channel
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "ready":
+        ready = true
+        let all = waiting
+        waiting.removeAll()
+        for words in all { send(words) }
+        result(nil)
+      case "defaultMail":
+        result(defaultMail())
+      case "makeDefault":
+        // macOS asks the person to confirm, then answers.
+        NSWorkspace.shared.setDefaultApplication(
+          at: Bundle.main.bundleURL, toOpenURLsWithScheme: "mailto"
+        ) { _ in
+          DispatchQueue.main.async { result(defaultMail()) }
+        }
+      case "quit":
+        result(nil)
+        NSApp.terminate(nil)
+      default:
+        // Keeping running and starting at sign-in are the Dock's and
+        // System Settings' on a Mac.
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  /// "piuma", "other" or "none": who opens mailto: links.
+  static func defaultMail() -> String {
+    guard let link = URL(string: "mailto:"),
+      let app = NSWorkspace.shared.urlForApplication(toOpen: link)
+    else { return "none" }
+    let ours = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
+    return app.standardizedFileURL.resolvingSymlinksInPath() == ours ? "piuma" : "other"
+  }
+
+  static func open(_ urls: [URL]) {
+    let words: [String] = urls.prefix(64).compactMap { url in
+      if url.isFileURL { return url.path }
+      if url.scheme?.lowercased() == "mailto" { return url.absoluteString }
+      return nil
+    }
+    if words.isEmpty { return }
+    if ready {
+      send(words)
+    } else if waiting.count < 16 {
+      waiting.append(words)
+    }
+  }
+
+  private static func send(_ words: [String]) {
+    channel?.invokeMethod("open", arguments: words)
+  }
+/// How many emails are unread, on the app's icon in the Dock; nothing
+/// while none is.
+enum UnreadBadge {
+  static func listen(_ messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "piuma/badge", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "set" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
+      NSApp.dockTile.badgeLabel = count > 0 ? (count > 99 ? "99+" : String(count)) : nil
+      result(nil)
+    }
   }
 }
 

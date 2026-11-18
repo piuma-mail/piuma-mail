@@ -257,7 +257,13 @@ void main() {
     await tester.enterText(find.byType(TextField), "I'm in!");
     await tester.tap(find.bySemanticsLabel('Send reply'));
     await tester.pumpAndSettle();
-    expect(find.text('Sending…'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Sending…'),
+      ),
+      findsOneWidget,
+    );
     // Still reading, the bar empty again.
     expect(find.byType(Reader), findsOneWidget);
     expect(find.text("I'm in!"), findsNothing);

@@ -18,8 +18,10 @@ use futures::TryStreamExt;
 use mail_parser::MessageParser;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::TlsConnector;
+
+use crate::auth::{sasl_initial, sasl_name, Credential, ImapSasl, Login};
+use crate::oauth::{Mechanism, TokenError};
+use crate::tls::Pin;
 
 use crate::groups;
 use crate::model::{AccountId, Flags, Folder, ListInfo, MessageSummary, ReplyInfo};
@@ -36,7 +38,8 @@ pub struct ImapConfig {
     pub port: u16,
     pub security: Security,
     pub username: String,
-    pub password: String,
+    /// The password or OAuth sign-in, and the certificates trusted.
+    pub login: Login,
 }
 
 impl fmt::Debug for ImapConfig {
@@ -52,14 +55,14 @@ impl fmt::Debug for ImapConfig {
 
 impl ImapConfig {
     /// The IMAP settings of an account, or None for non-IMAP accounts.
-    pub fn for_account(account: &crate::model::Account, password: &str) -> Option<Self> {
+    pub fn for_account(account: &crate::model::Account, login: &Login) -> Option<Self> {
         match &account.kind {
             crate::model::AccountKind::Imap { imap, username, .. } => Some(ImapConfig {
                 host: imap.host.clone(),
                 port: imap.port,
                 security: imap.security,
                 username: username.clone(),
-                password: password.to_owned(),
+                login: login.clone(),
             }),
             crate::model::AccountKind::Jmap { .. } => None,
         }
@@ -75,20 +78,57 @@ pub enum ImapError {
     },
     #[error("secure connection failed: {0}")]
     Tls(String),
+    /// The server's certificate was refused; the person may trust it.
+    #[error("{0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server rejected the user name or password")]
     Auth,
+    /// The OAuth provider could not give a token just now.
+    #[error("could not get a sign-in token: {0}")]
+    TokenUnavailable(String),
     #[error("the server is busy and will not accept the login just now: {0}")]
     Throttled(String),
     #[error("the server does not keep stable message ids in this folder")]
     NoUidValidity,
     #[error("IMAP: {0}")]
-    Protocol(#[from] async_imap::error::Error),
+    Protocol(#[source] async_imap::error::Error),
+    /// The server stopped answering: no reply to a command, a greeting
+    /// that never came, a transfer that stalled.
+    #[error("the server stopped answering")]
+    TimedOut,
+    /// The folder's UIDVALIDITY is not the one its messages were stored
+    /// under: their numbers now name other messages, so nothing is done
+    /// to them.
+    #[error("the server renumbered the folder's messages")]
+    Renumbered,
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("the message or attachment is no longer on the server")]
     Gone,
     #[error("the account has no folder for this")]
     NoFolder,
+    #[error("the message is larger than the app downloads")]
+    TooLarge,
+    /// A folder that holds the inbox or a folder with a job (Trash,
+    /// spam, Sent…) is not deleted.
+    #[error("the folder holds the inbox or a folder with a job")]
+    Protected,
+}
+
+impl From<async_imap::error::Error> for ImapError {
+    /// The connection's own deadline and budget (see [`crate::watchdog`])
+    /// come back as I/O errors: they get their own names.
+    fn from(e: async_imap::error::Error) -> Self {
+        match e {
+            async_imap::error::Error::Io(io) if crate::watchdog::stalled(&io) => {
+                ImapError::TimedOut
+            }
+            async_imap::error::Error::Io(io) if crate::watchdog::overflowed(&io) => {
+                ImapError::TooLarge
+            }
+            e => ImapError::Protocol(e),
+        }
+    }
 }
 
 impl ImapError {
@@ -99,6 +139,8 @@ impl ImapError {
             self,
             ImapError::Connect { .. }
                 | ImapError::Throttled(_)
+                | ImapError::TokenUnavailable(_)
+                | ImapError::TimedOut
                 | ImapError::Protocol(
                     async_imap::error::Error::Io(_) | async_imap::error::Error::ConnectionLost
                 )
@@ -121,7 +163,58 @@ pub struct Connection {
     idle: bool,
     moves: bool,
     uidplus: bool,
+    /// RFC 2087: the server says how full the mailbox is.
+    quota: bool,
+    /// Jobs the person gave folders of their choice: they win over the
+    /// server's marks and the usual names (see [`Self::learn_roles`]).
+    roles: Vec<(FolderRole, String)>,
+    /// The deadline and budget of the commands under way.
+    limits: Arc<crate::watchdog::Limits>,
+    timing: Timing,
 }
+
+/// How long the connection waits on the server, and how long the watcher
+/// waits before trying again. [`Timing::default`] everywhere but in tests,
+/// which shorten it.
+#[derive(Debug, Clone, Copy)]
+pub struct Timing {
+    /// To reach one of the server's addresses.
+    pub connect: Duration,
+    /// For the whole of connecting, the greeting, TLS and the login: a
+    /// server that trickles bytes still ends.
+    pub open: Duration,
+    /// Silence allowed while the greeting, TLS or the login is awaited.
+    pub handshake_stall: Duration,
+    /// Silence allowed while any later answer is awaited. Answers that
+    /// keep coming (a 100 MB message) may take as long as they need.
+    pub command_stall: Duration,
+    /// The watcher's first wait after a failure (see [`crate::backoff`]).
+    pub retry_first: Duration,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Timing {
+            connect: Duration::from_secs(15),
+            open: Duration::from_secs(60),
+            handshake_stall: Duration::from_secs(30),
+            command_stall: Duration::from_secs(90),
+            retry_first: crate::backoff::FIRST,
+        }
+    }
+}
+
+/// What one command may bring back, unless it says otherwise: well above
+/// any folder listing or flag refresh, well under async-imap's own 512 MiB
+/// per response.
+const RESPONSE_BUDGET: u64 = 256 * 1024 * 1024;
+/// A whole message or one part of it: the largest message the app takes,
+/// plus the lines around it.
+const MESSAGE_BUDGET: u64 = crate::guard::MESSAGE_MAX as u64 + 1024 * 1024;
+/// One note of the sync space; bigger ones are skipped.
+const SPACE_NOTE_MAX: u32 = 16 * 1024 * 1024;
+/// Every note of the sync space, read in one command.
+const SPACE_NOTES_BUDGET: u64 = 64 * 1024 * 1024;
 
 /// Messages fetched per round trip while downloading a folder.
 const BATCH: usize = 250;
@@ -172,45 +265,112 @@ pub const FOLDERS_EVERY: Duration = Duration::from_secs(5 * 60);
 impl Connection {
     /// Connects and logs in.
     pub async fn open(cfg: &ImapConfig) -> Result<Self> {
-        let tcp = TcpStream::connect((cfg.host.as_str(), cfg.port))
+        Self::open_timed(cfg, Timing::default()).await
+    }
+
+    /// [`Self::open`] with other deadlines, for tests.
+    #[doc(hidden)]
+    pub async fn open_timed(cfg: &ImapConfig, timing: Timing) -> Result<Self> {
+        tokio::time::timeout(timing.open, Self::open_now(cfg, timing))
             .await
-            .map_err(|source| ImapError::Connect {
-                host: cfg.host.clone(),
-                source,
-            })?;
+            .unwrap_or(Err(ImapError::TimedOut))
+    }
+
+    async fn open_now(cfg: &ImapConfig, timing: Timing) -> Result<Self> {
+        let tcp = connect(&cfg.host, cfg.port, timing.connect).await?;
         tcp.set_nodelay(true).ok();
+        crate::watchdog::keep_alive(&tcp);
+        let limits = crate::watchdog::Limits::new(timing.handshake_stall, RESPONSE_BUDGET);
+        let tcp = crate::watchdog::Watched::new(tcp, limits.clone());
 
         let stream: Box<dyn Io> = match cfg.security {
-            Security::Tls => Box::new(tls(&cfg.host, tcp).await?),
+            Security::Tls => Box::new(tls(&cfg.host, &cfg.login.pins, tcp).await?),
             Security::None => Box::new(tcp),
             Security::StartTls => {
                 let mut client = async_imap::Client::new(tcp);
                 greeting(&mut client).await?;
                 client.run_command_and_check_ok("STARTTLS", None).await?;
-                Box::new(tls(&cfg.host, client.into_inner()).await?)
+                Box::new(tls(&cfg.host, &cfg.login.pins, client.into_inner()).await?)
             }
         };
         let mut client = async_imap::Client::new(stream);
         if cfg.security != Security::StartTls {
             greeting(&mut client).await?;
         }
-        let mut session = client
-            .login(&cfg.username, &cfg.password)
-            .await
-            .map_err(|(e, _)| classify_login(e))?;
+        let mut session = sign_in(client, cfg).await?;
         let caps = session.capabilities().await?;
         // For reports: which of the capabilities that matter it has, by a
         // number, never its name.
         crate::feedback::note_server(crate::feedback::server_key(&cfg.host, &cfg.username), |c| {
             caps.has_str(c)
         });
+        limits.set_stall(timing.command_stall);
         Ok(Connection {
             session: Some(session),
             condstore: caps.has_str("CONDSTORE"),
             idle: caps.has_str("IDLE"),
             moves: caps.has_str("MOVE"),
             uidplus: caps.has_str("UIDPLUS"),
+            quota: caps.has_str("QUOTA"),
+            roles: Vec::new(),
+            limits,
+            timing,
         })
+    }
+
+    /// Selects `mailbox` to change its messages, after checking that the
+    /// numbers stored for them still name them. When the server renumbered
+    /// the folder (its UIDVALIDITY changed), the changes waiting for it are
+    /// dropped, the messages they had hidden show again, and this fails
+    /// with [`ImapError::Renumbered`]: nothing is done to whatever messages
+    /// carry those numbers now. The next sync rebuilds the folder.
+    ///
+    /// A SELECT answer without UIDVALIDITY can't say whether the numbers
+    /// still hold: nothing is done and nothing is dropped. The call fails
+    /// with [`ImapError::NoUidValidity`], which a queued change counts as a
+    /// refused try, so it waits and is given up (and its message shown)
+    /// only by the usual rules.
+    async fn select_checked(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<async_imap::types::Mailbox> {
+        let selected = self.session()?.select(mailbox).await?;
+        let stored = lock(store).mailbox_state(account, mailbox)?;
+        // A folder never synced has no numbers of ours to protect.
+        if let Some(stored) = stored {
+            match selected.uid_validity {
+                None => return Err(ImapError::NoUidValidity),
+                Some(now) if now != stored.uid_validity => {
+                    lock(store).drop_renumbered(account, mailbox)?;
+                    return Err(ImapError::Renumbered);
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(selected)
+    }
+
+    /// Reads which folders the person gave a job to, so the folder for a
+    /// role is theirs from now on. Calls that are given the store do it
+    /// themselves; call it before [`Self::append_draft`] or
+    /// [`Self::append_sent`].
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        self.roles = lock(store).role_choices(account)?;
+        Ok(())
+    }
+
+    /// The folder for `role` among `names`: the person's choice when it
+    /// is still there, else the one marked for it, else a usual name.
+    fn pick(&self, names: &[async_imap::types::Name], role: FolderRole) -> Option<String> {
+        let chosen = self.roles.iter().find(|(r, _)| *r == role);
+        if let Some((_, m)) = chosen {
+            if names.iter().any(|n| n.name() == m) {
+                return Some(m.clone());
+            }
+        }
+        pick_folder(names, role)
     }
 
     /// Acts as if the server had no MOVE, to test the COPY fallback.
@@ -327,13 +487,30 @@ impl Connection {
         // still arriving are history being filled in.
         let newest = local.iter().max().copied();
         let news = |uid: u32| prior.is_some() && newest.is_none_or(|n| uid > n);
-        for batch in missing.chunks(BATCH) {
+        for (i, batch) in missing.chunks(BATCH).enumerate() {
             let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
             let summaries: Vec<MessageSummary> = fetches
                 .iter()
                 .filter_map(|f| summary_with(f, account, mailbox, &html))
                 .collect();
-            lock(store).upsert_messages(&summaries)?;
+            {
+                let mut store = lock(store);
+                // Messages stored under no UIDVALIDITY could not be
+                // checked before acting on them: a first download that
+                // stops halfway keeps it already (no modseq yet, so the
+                // next round looks at every flag).
+                if prior.is_none() && i == 0 {
+                    store.set_mailbox_state(
+                        account,
+                        mailbox,
+                        MailboxState {
+                            uid_validity,
+                            highest_modseq: None,
+                        },
+                    )?;
+                }
+                store.upsert_messages(&summaries)?;
+            }
             let times: Vec<(u32, Option<i64>)> = fetches
                 .iter()
                 .filter_map(|f| Some((f.uid?, snooze_until(f))))
@@ -431,9 +608,19 @@ impl Connection {
                 let mut lists: Vec<(u32, ListInfo)> = fetches
                     .iter()
                     .filter_map(|f| {
-                        let m = MessageParser::default().parse_headers(f.header()?)?;
-                        recipients.push((f.uid?, groups::recipients(&m)));
-                        Some((f.uid?, newsletter::list_info(&m)))
+                        let uid = f.uid?;
+                        // One that trips the readers gets no list details,
+                        // and isn't asked again.
+                        let (to, list) = crate::guard::shielded(
+                            "list headers",
+                            || None,
+                            || {
+                                let m = MessageParser::default().parse_headers(f.header()?)?;
+                                Some((groups::recipients(&m), newsletter::list_info(&m)))
+                            },
+                        )?;
+                        recipients.push((uid, to));
+                        Some((uid, list))
                     })
                     .collect();
                 lock(store).set_recipients(account, mailbox, &recipients)?;
@@ -580,17 +767,10 @@ impl Connection {
         if let Some(body) = lock(store).full_body(account, mailbox, uid)? {
             return Ok(body);
         }
-        let session = self.session()?;
-        session.examine(mailbox).await?;
-        let fetches: Vec<Fetch> = session
-            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+        let body = self
+            .whole(mailbox, uid)
             .await?
-            .try_collect()
-            .await?;
-        let body = fetches
-            .iter()
-            .find_map(|f| f.body())
-            .map(parse_body)
+            .map(|raw| parse_body(&raw))
             .unwrap_or_default();
         lock(store).set_full_body(account, mailbox, uid, &body)?;
         Ok(body)
@@ -616,6 +796,9 @@ impl Connection {
             .map(str::parse)
             .collect::<std::result::Result<_, _>>()
             .map_err(|_| ImapError::Gone)?;
+        // No part is bigger than its message: what the server sends past
+        // that ends the command, whatever it said the size was.
+        let _cap = self.limits.cap(MESSAGE_BUDGET, RESPONSE_BUDGET);
         let session = self.session()?;
         session.examine(mailbox).await?;
         let fetches: Vec<Fetch> = session
@@ -632,17 +815,35 @@ impl Connection {
 
     /// One whole message as the server keeps it.
     pub async fn raw(&mut self, mailbox: &str, uid: u32) -> Result<Vec<u8>> {
+        self.whole(mailbox, uid).await?.ok_or(ImapError::Gone)
+    }
+
+    /// One whole message, after its size says it fits [`MESSAGE_MAX`]:
+    /// None when the server has no body for it.
+    ///
+    /// [`MESSAGE_MAX`]: crate::guard::MESSAGE_MAX
+    async fn whole(&mut self, mailbox: &str, uid: u32) -> Result<Option<Vec<u8>>> {
+        // RFC822.SIZE is the server's word: what it sends is counted too.
+        let _cap = self.limits.cap(MESSAGE_BUDGET, RESPONSE_BUDGET);
         let session = self.session()?;
         session.examine(mailbox).await?;
+        let sizes: Vec<Fetch> = session
+            .uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        if sizes.iter().any(|f| {
+            f.size
+                .is_some_and(|n| n as usize > crate::guard::MESSAGE_MAX)
+        }) {
+            return Err(ImapError::TooLarge);
+        }
         let fetches: Vec<Fetch> = session
             .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
             .await?
             .try_collect()
             .await?;
-        fetches
-            .iter()
-            .find_map(|f| f.body().map(<[u8]>::to_vec))
-            .ok_or(ImapError::Gone)
+        Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -670,8 +871,13 @@ impl Connection {
 
         // IDLE takes the session by value and gives it back when done.
         let mut handle = self.session.take().expect("checked above").idle();
+        let limits = self.limits.clone();
+        let stall = self.timing.command_stall;
         let outcome = async {
             handle.init().await?;
+            // Silence is what IDLE is: only our deadline below, and the
+            // system's keepalive probes, end it.
+            limits.set_stall(Duration::ZERO);
             let (wait, stop) = handle.wait_with_timeout(timeout);
             // async-imap starts its timeout over at every line, and servers
             // say "Still here" every few minutes: without a deadline of our
@@ -687,6 +893,7 @@ impl Connection {
             }
         }
         .await;
+        limits.set_stall(stall);
         self.session = Some(handle.done().await?);
         Ok(matches!(outcome?, IdleResponse::NewData(_)))
     }
@@ -696,7 +903,7 @@ impl Connection {
     /// The spam folder is never made: without one, this fails.
     pub async fn folder(&mut self, role: FolderRole) -> Result<String> {
         let names = self.list().await?;
-        if let Some(name) = pick_folder(&names, role) {
+        if let Some(name) = self.pick(&names, role) {
             return Ok(name);
         }
         if role == FolderRole::Junk {
@@ -717,7 +924,15 @@ impl Connection {
     ) -> Result<String> {
         let names = self.list().await?;
         let mailbox = new_folder_name(&names, &utf7_encode(name.trim()));
+        let delimiter = names
+            .iter()
+            .find_map(|n| n.delimiter())
+            .unwrap_or_default()
+            .to_owned();
         self.session()?.create(&mailbox).await?;
+        // Shown everywhere: a folder made and not subscribed is hidden by
+        // many apps. A server without subscriptions shows it anyway.
+        self.session()?.subscribe(&mailbox).await.ok();
         lock(store).add_account_folder(
             account,
             &crate::AccountFolder {
@@ -727,6 +942,8 @@ impl Connection {
                 selectable: true,
                 unread: 0,
                 total: 0,
+                subscribed: true,
+                delimiter,
             },
         )?;
         Ok(mailbox)
@@ -735,7 +952,7 @@ impl Connection {
     /// The folder with a job, when the account has one.
     pub async fn find_folder(&mut self, role: FolderRole) -> Result<Option<String>> {
         let names = self.list().await?;
-        Ok(pick_folder(&names, role))
+        Ok(self.pick(&names, role))
     }
 
     async fn list(&mut self) -> Result<Vec<async_imap::types::Name>> {
@@ -763,13 +980,41 @@ impl Connection {
         account: AccountId,
         round: Round,
     ) -> Result<usize> {
+        self.learn_roles(store, account)?;
         let names = self.list().await?;
-        let mut skip: HashSet<String> = [FolderRole::Trash]
-            .into_iter()
-            .filter_map(|r| pick_folder(&names, r))
-            .collect();
-        // Report spam moves mail there; the app offers it only when found.
-        lock(store).set_junk_mailbox(account, pick_folder(&names, FolderRole::Junk).as_deref())?;
+        // Subscribed folders show; the others on demand. A server where
+        // nothing is subscribed shows everything, as before.
+        let subscribed: HashSet<String> = match self.session()?.lsub(Some(""), Some("*")).await {
+            Ok(stream) => stream
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .map(|n| n.name().to_owned())
+                .collect(),
+            Err(_) => HashSet::new(),
+        };
+        let trash = self.pick(&names, FolderRole::Trash);
+        let junk = self.pick(&names, FolderRole::Junk);
+        let mut skip: HashSet<String> = trash.iter().chain(junk.iter()).cloned().collect();
+        skip.extend(self.roles.iter().map(|(_, m)| m.clone()));
+        {
+            let store = lock(store);
+            // Report spam moves mail there; the app offers it only when
+            // found. Delete in either deletes for good.
+            store.set_junk_mailbox(account, junk.as_deref())?;
+            store.set_trash_mailbox(account, trash.as_deref())?;
+            // Every folder, for the person to give one a job.
+            store.set_server_folders(
+                account,
+                &names
+                    .iter()
+                    .filter(|n| !is_space_folder(n.name()))
+                    .filter(|n| !n.attributes().contains(&NameAttribute::NoSelect))
+                    .map(|n| (n.name().to_owned(), shown_name(n)))
+                    .collect::<Vec<_>>(),
+            )?;
+        }
         // The sync space's folder stays hidden.
         skip.insert(crate::space::FOLDER.to_owned());
         skip.extend(space_folder_in(&names));
@@ -780,7 +1025,7 @@ impl Connection {
             (FolderRole::Drafts, Folder::Drafts),
             (FolderRole::Snoozed, Folder::Snoozed),
         ] {
-            let Some(name) = pick_folder(&names, role) else {
+            let Some(name) = self.pick(&names, role) else {
                 continue;
             };
             skip.insert(name.clone());
@@ -794,6 +1039,7 @@ impl Connection {
             .iter()
             .filter(|n| !n.attributes().iter().any(is_special))
             .map(|n| Listed {
+                subscribed: subscribed.is_empty() || subscribed.contains(n.name()),
                 name: n.name().to_owned(),
                 delimiter: n.delimiter().map(str::to_owned),
                 selectable: !n.attributes().contains(&NameAttribute::NoSelect)
@@ -839,9 +1085,232 @@ impl Connection {
         uids: &[u32],
         role: FolderRole,
     ) -> Result<String> {
+        self.learn_roles(store, account)?;
         let target = self.folder(role).await?;
+        // Already there: from Trash to Trash the server would copy them in
+        // again under new numbers. Nothing is done; deleting for good is
+        // only ever asked for by name (`erase`).
+        if target == mailbox {
+            return Ok(target);
+        }
         self.move_to(store, account, mailbox, uids, &target).await?;
         Ok(target)
+    }
+
+    /// Copies messages of one folder to `target`, by its server name; they
+    /// stay where they are. The copies show once `target` is looked at.
+    pub async fn copy_to(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        target: &str,
+    ) -> Result<()> {
+        if uids.is_empty() || target == mailbox {
+            return Ok(());
+        }
+        self.select_checked(store, account, mailbox).await?;
+        self.session()?.uid_copy(uid_set(uids), target).await?;
+        Ok(())
+    }
+
+    /// Stars messages of one folder (`\Flagged`), or takes the star off.
+    pub async fn set_flagged(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        flagged: bool,
+    ) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        self.select_checked(store, account, mailbox).await?;
+        let op = if flagged {
+            "+FLAGS.SILENT (\\Flagged)"
+        } else {
+            "-FLAGS.SILENT (\\Flagged)"
+        };
+        store_checked(self.session()?, &uid_set(uids), op).await
+    }
+
+    /// Deletes the messages of `mailbox` for good (Empty Trash, Empty
+    /// spam) and forgets them here: those `limit` allows (numbered below
+    /// the UIDNEXT the person was told the count with, so mail that came
+    /// after it stays, or only those that are here when the server
+    /// couldn't be counted); none with a change still waiting (a message
+    /// put back from Trash meanwhile). Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        limit: &EmptyLimit,
+    ) -> Result<usize> {
+        let uidplus = self.uidplus;
+        let selected = self.select_checked(store, account, mailbox).await?;
+        if selected.exists == 0 {
+            return Ok(0);
+        }
+        let waiting = lock(store).pending_uids(account, mailbox)?;
+        let session = self.session()?;
+        let mut uids: Vec<u32> = session
+            .uid_search("ALL")
+            .await?
+            .into_iter()
+            .filter(|u| limit.allows(*u) && !waiting.contains(u))
+            .collect();
+        uids.sort_unstable();
+        if uids.is_empty() {
+            return Ok(0);
+        }
+        expunge_only(session, &uids, uidplus).await?;
+        lock(store).remove_messages(account, mailbox, &uids)?;
+        Ok(uids.len())
+    }
+
+    /// How many messages `mailbox` holds on the server, and its UIDNEXT:
+    /// what [`Self::empty`] stops below.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Option<u32>)> {
+        let status = self
+            .session()?
+            .status(mailbox, "(MESSAGES UIDNEXT)")
+            .await?;
+        Ok((status.exists, status.uid_next))
+    }
+
+    /// Renames, deletes, subscribes to or unsubscribes from one of the
+    /// account's own folders. Deleting first moves its mail, and its
+    /// subfolders' mail, to Trash.
+    pub async fn change_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        change: &crate::pending::FolderChange,
+    ) -> Result<()> {
+        use crate::pending::FolderChange;
+        match change {
+            FolderChange::Rename(to) => {
+                if to == mailbox {
+                    return Ok(());
+                }
+                // Subscriptions don't follow the name on every server: a
+                // shown folder stays shown, a hidden one hidden.
+                let subscribed = match self.session()?.lsub(Some(""), Some(mailbox)).await {
+                    Ok(stream) => stream
+                        .try_collect::<Vec<_>>()
+                        .await
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|n| n.name() == mailbox),
+                    Err(_) => false,
+                };
+                self.session()?.rename(mailbox, to).await?;
+                if subscribed {
+                    self.session()?.unsubscribe(mailbox).await.ok();
+                    self.session()?.subscribe(to).await.ok();
+                }
+                Ok(())
+            }
+            FolderChange::Subscribe(true) => Ok(self.session()?.subscribe(mailbox).await?),
+            FolderChange::Subscribe(false) => Ok(self.session()?.unsubscribe(mailbox).await?),
+            FolderChange::Delete => self.delete_folder(store, account, mailbox).await,
+        }
+    }
+
+    /// Deletes a folder and its subfolders, deepest first, after moving
+    /// their mail to Trash.
+    async fn delete_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<()> {
+        self.learn_roles(store, account)?;
+        let names = self.list().await?;
+        let Some(folder) = names.iter().find(|n| n.name() == mailbox) else {
+            // Already gone.
+            return Ok(());
+        };
+        let mut gone: Vec<(String, bool)> = vec![(
+            mailbox.to_owned(),
+            !folder.attributes().contains(&NameAttribute::NoSelect),
+        )];
+        if let Some(d) = folder.delimiter() {
+            let prefix = format!("{mailbox}{d}");
+            gone.extend(
+                names
+                    .iter()
+                    .filter(|n| n.name().starts_with(&prefix))
+                    .map(|n| {
+                        (
+                            n.name().to_owned(),
+                            !n.attributes().contains(&NameAttribute::NoSelect),
+                        )
+                    }),
+            );
+        }
+        // Never the inbox or a folder with a job, nor one holding them:
+        // their mail would go, Trash itself first.
+        let special: Vec<String> = [
+            FolderRole::Sent,
+            FolderRole::Archive,
+            FolderRole::Drafts,
+            FolderRole::Trash,
+            FolderRole::Junk,
+            FolderRole::Snoozed,
+        ]
+        .into_iter()
+        .filter_map(|r| self.pick(&names, r))
+        .collect();
+        if gone
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("INBOX") || special.contains(n))
+        {
+            return Err(ImapError::Protected);
+        }
+        // Deepest first.
+        gone.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+        let trash = self.folder(FolderRole::Trash).await?;
+        let (moves, uidplus) = (self.moves, self.uidplus);
+        for (name, selectable) in &gone {
+            if *selectable {
+                let session = self.session()?;
+                let selected = session.select(name).await?;
+                if selected.exists > 0 {
+                    if moves {
+                        session.uid_mv("1:*", &trash).await?;
+                    } else {
+                        let uids: Vec<u32> = session.uid_search("ALL").await?.into_iter().collect();
+                        session.uid_copy(uid_set(&uids), &trash).await?;
+                        expunge_only(session, &uids, uidplus).await?;
+                    }
+                }
+                session.close().await.ok();
+            }
+            self.session()?.unsubscribe(name).await.ok();
+            self.session()?.delete(name).await?;
+            lock(store).clear_mailbox(account, name)?;
+        }
+        Ok(())
+    }
+
+    /// How full the mailbox is (RFC 2087, its storage in bytes), when the
+    /// server says.
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        if !self.quota {
+            return Ok(None);
+        }
+        let (_, quotas) = self.session()?.get_quota_root("INBOX").await?;
+        Ok(quotas
+            .iter()
+            .flat_map(|q| q.resources.iter())
+            .find(|r| r.name == async_imap::types::QuotaResourceName::Storage)
+            .filter(|r| r.limit > 0)
+            .map(|r| (r.usage.saturating_mul(1024), r.limit.saturating_mul(1024))))
     }
 
     /// Moves messages of one folder to `target`, by its server name, and
@@ -858,8 +1327,8 @@ impl Connection {
             return Ok(());
         }
         let (moves, uidplus) = (self.moves, self.uidplus);
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let set = uids
             .iter()
             .map(u32::to_string)
@@ -869,16 +1338,7 @@ impl Connection {
             session.uid_mv(&set, target).await?;
         } else {
             session.uid_copy(&set, target).await?;
-            let _: Vec<_> = session
-                .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-                .await?
-                .try_collect()
-                .await?;
-            if uidplus {
-                let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-            } else {
-                let _: Vec<_> = session.expunge().await?.try_collect().await?;
-            }
+            expunge_only(session, uids, uidplus).await?;
         }
         lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
@@ -899,8 +1359,8 @@ impl Connection {
             return Ok(());
         }
         let target = self.folder(FolderRole::Snoozed).await?;
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let old = snooze_keywords(session, uids).await?;
         // A server without keywords keeps the time on this device only.
         if !old.is_empty() {
@@ -948,8 +1408,8 @@ impl Connection {
         if uids.is_empty() {
             return Ok(());
         }
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let _: Vec<_> = session
             .uid_store(uid_set(uids), "-FLAGS.SILENT (\\Seen)")
             .await?
@@ -974,12 +1434,19 @@ impl Connection {
     }
 
     /// Marks messages of one folder read or unread on the server.
-    pub async fn set_seen(&mut self, mailbox: &str, uids: &[u32], seen: bool) -> Result<()> {
+    pub async fn set_seen(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        seen: bool,
+    ) -> Result<()> {
         if uids.is_empty() {
             return Ok(());
         }
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let set: Vec<String> = uids.iter().map(u32::to_string).collect();
         let op = if seen {
             "+FLAGS.SILENT (\\Seen)"
@@ -1009,12 +1476,12 @@ impl Connection {
         if uids.is_empty() {
             return Ok(());
         }
-        let session = self.session()?;
-        let selected = session.select(mailbox).await?;
+        let selected = self.select_checked(store, account, mailbox).await?;
         if !keeps_keywords(&selected) {
             lock(store).set_labels_local(account)?;
             return Ok(());
         }
+        let session = self.session()?;
         let op = format!("{}FLAGS.SILENT ({keyword})", if add { "+" } else { "-" });
         let _: Vec<_> = session
             .uid_store(uid_set(uids), op)
@@ -1027,15 +1494,22 @@ impl Connection {
     /// Tells the server's spam filter what the person said: `$Junk` on
     /// spam, `$NotJunk` on mail that isn't, each taking the other off. A
     /// folder that takes no new keywords is left as it is.
-    pub async fn mark_junk(&mut self, mailbox: &str, uids: &[u32], junk: bool) -> Result<()> {
+    pub async fn mark_junk(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        junk: bool,
+    ) -> Result<()> {
         if uids.is_empty() {
             return Ok(());
         }
-        let session = self.session()?;
-        let selected = session.select(mailbox).await?;
+        let selected = self.select_checked(store, account, mailbox).await?;
         if !keeps_keywords(&selected) {
             return Ok(());
         }
+        let session = self.session()?;
         let (on, off) = if junk {
             ("$Junk", "$NotJunk")
         } else {
@@ -1077,23 +1551,10 @@ impl Connection {
             return Ok(());
         }
         let uidplus = self.uidplus;
-        let session = self.session()?;
-        session.select(mailbox).await?;
-        let set = uids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let _: Vec<_> = session
-            .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-            .await?
-            .try_collect()
-            .await?;
-        if uidplus {
-            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-        } else {
-            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-        }
+        self.select_checked(store, account, mailbox).await?;
+        // A refusal must say so: forgotten here while kept there, the
+        // message would come back at the next sync.
+        expunge_only(self.session()?, uids, uidplus).await?;
         lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
     }
@@ -1110,8 +1571,25 @@ impl Connection {
         if mailbox.exists == 0 {
             return Ok(Vec::new());
         }
+        // Notes are small: one that says it is big is not ours, and all
+        // of them together have a budget whatever their sizes claim.
+        let sizes: Vec<Fetch> = session
+            .fetch("1:*", "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        let wanted: Vec<u32> = sizes
+            .iter()
+            .filter(|f| f.size.is_some_and(|n| n <= SPACE_NOTE_MAX))
+            .filter_map(|f| f.uid)
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _cap = self.limits.cap(SPACE_NOTES_BUDGET, RESPONSE_BUDGET);
+        let session = self.session()?;
         let fetches: Vec<Fetch> = session
-            .fetch("1:*", "(UID BODY.PEEK[])")
+            .uid_fetch(uid_set(&wanted), "(UID BODY.PEEK[])")
             .await?
             .try_collect()
             .await?;
@@ -1154,21 +1632,15 @@ impl Connection {
         };
         let session = self.session()?;
         session.select(&folder).await?;
-        let set = uids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let _: Vec<_> = session
-            .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-            .await?
-            .try_collect()
+        expunge_only(session, uids, uidplus).await
+    }
+
+    /// Puts a whole message in one of the account's folders, as read: an
+    /// email file imported by the person.
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        self.session()?
+            .append(folder, Some("(\\Seen)"), None, raw)
             .await?;
-        if uidplus {
-            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-        } else {
-            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-        }
         Ok(())
     }
 
@@ -1180,10 +1652,32 @@ impl Connection {
             .await?;
         Ok(folder)
     }
+
+    /// The Sent folder when it holds a message with this Message-ID
+    /// (angle brackets or not), else None.
+    pub async fn sent_has(&mut self, message_id: &str) -> Result<Option<String>> {
+        let id: String = message_id
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .chars()
+            .filter(|c| !matches!(c, '"' | '\\' | '\r' | '\n'))
+            .collect();
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let folder = self.folder(FolderRole::Sent).await?;
+        let session = self.session()?;
+        session.examine(&folder).await?;
+        let found = session
+            .uid_search(format!("HEADER Message-ID \"{id}\""))
+            .await?;
+        Ok((!found.is_empty()).then_some(folder))
+    }
 }
 
 /// Folders with a job, found by their RFC 6154 marker or a usual name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FolderRole {
     Sent,
     Archive,
@@ -1196,6 +1690,41 @@ pub enum FolderRole {
 }
 
 impl FolderRole {
+    /// The jobs the person can give a folder of their choice, when the
+    /// server's marks and the usual names got it wrong.
+    pub const CHOOSABLE: [FolderRole; 5] = [
+        FolderRole::Sent,
+        FolderRole::Drafts,
+        FolderRole::Trash,
+        FolderRole::Junk,
+        FolderRole::Archive,
+    ];
+
+    /// How settings name it.
+    pub fn tag(self) -> &'static str {
+        match self {
+            FolderRole::Sent => "sent",
+            FolderRole::Archive => "archive",
+            FolderRole::Trash => "trash",
+            FolderRole::Drafts => "drafts",
+            FolderRole::Snoozed => "snoozed",
+            FolderRole::Junk => "junk",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        [
+            FolderRole::Sent,
+            FolderRole::Archive,
+            FolderRole::Trash,
+            FolderRole::Drafts,
+            FolderRole::Snoozed,
+            FolderRole::Junk,
+        ]
+        .into_iter()
+        .find(|r| r.tag() == tag)
+    }
+
     fn markers(self) -> (NameAttribute<'static>, &'static [&'static str]) {
         match self {
             FolderRole::Sent => (
@@ -1264,10 +1793,11 @@ impl Round {
 
 /// A folder as LIST names it.
 #[derive(Debug, Clone)]
-struct Listed {
-    name: String,
-    delimiter: Option<String>,
-    selectable: bool,
+pub(crate) struct Listed {
+    pub(crate) name: String,
+    pub(crate) delimiter: Option<String>,
+    pub(crate) selectable: bool,
+    pub(crate) subscribed: bool,
 }
 
 /// Folders with a job the app already shows, or that hold no mail of
@@ -1285,6 +1815,21 @@ fn is_special(a: &NameAttribute<'_>) -> bool {
     )
 }
 
+/// What people read for a folder: its whole path, decoded, without a
+/// leading INBOX on servers that keep everything under it.
+fn shown_name(n: &async_imap::types::Name) -> String {
+    let name = n.name();
+    let shown = match n.delimiter() {
+        Some(d) if !d.is_empty() && inside_inbox(name) => {
+            crate::guard::strip_prefix_ci(name, "INBOX")
+                .and_then(|rest| rest.strip_prefix(d))
+                .unwrap_or(name)
+        }
+        _ => name,
+    };
+    utf7_decode(shown)
+}
+
 /// Usual names of the spam folder, for servers that don't mark it.
 const JUNK: &[&str] = &["Junk", "Spam", "Junk E-mail", "Posta indesiderata"];
 
@@ -1292,7 +1837,7 @@ const JUNK: &[&str] = &["Junk", "Spam", "Junk E-mail", "Posta indesiderata"];
 /// in `skip`, not spam. Servers that keep everything under INBOX
 /// ("INBOX.Clients") show it as a top folder; a parent the server doesn't
 /// list is added, as a folder that only holds others.
-fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
+pub(crate) fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
     let mut by_path: std::collections::BTreeMap<Vec<String>, crate::AccountFolder> =
         Default::default();
     for l in listed {
@@ -1320,6 +1865,8 @@ fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountF
                 selectable: false,
                 unread: 0,
                 total: 0,
+                subscribed: true,
+                delimiter: l.delimiter.clone().unwrap_or_default(),
             });
         }
         by_path.insert(
@@ -1331,6 +1878,8 @@ fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountF
                 selectable: l.selectable,
                 unread: 0,
                 total: 0,
+                subscribed: l.subscribed,
+                delimiter: l.delimiter.clone().unwrap_or_default(),
             },
         );
     }
@@ -1423,7 +1972,7 @@ fn space_folder_in(names: &[async_imap::types::Name]) -> Option<String> {
 }
 
 /// "Piuma Sync", or "INBOX.Piuma Sync" and the like.
-fn is_space_folder(name: &str) -> bool {
+pub(crate) fn is_space_folder(name: &str) -> bool {
     let f = crate::space::FOLDER;
     name == f
         || (name.len() == 6 + f.len()
@@ -1432,10 +1981,16 @@ fn is_space_folder(name: &str) -> bool {
             && name.ends_with(f))
 }
 
+/// "INBOX.Work" and the like: a name under INBOX, as the server sent it
+/// (raw UTF-8 from some), compared without cutting a character.
+pub(crate) fn inside_inbox(name: &str) -> bool {
+    name.len() > 6 && crate::guard::strip_prefix_ci(name, "INBOX").is_some()
+}
+
 fn new_folder_name(names: &[async_imap::types::Name], base: &str) -> String {
     let under_inbox = |n: &&async_imap::types::Name| {
         let name = n.name();
-        name.len() > 6 && name[..5].eq_ignore_ascii_case("INBOX") && n.delimiter().is_some()
+        inside_inbox(name) && n.delimiter().is_some()
     };
     let others: Vec<_> = names
         .iter()
@@ -1516,11 +2071,15 @@ pub enum WatchEvent {
     },
     /// The connection failed; the watcher retries on its own.
     Offline { account: AccountId, reason: String },
+    /// Changes made on this device that the server kept refusing were
+    /// given up: the messages are back as the server has them.
+    Dropped { account: AccountId, changes: usize },
 }
 
 /// Keeps `mailbox` of one account in sync forever: sync, wait for a change
 /// with IDLE (or poll), sync again. Reconnects with a growing pause after
-/// errors. Wrong credentials end the loop.
+/// errors (see [`crate::backoff`]). Wrong credentials, or a certificate
+/// that isn't trusted, end the loop.
 pub async fn watch(
     cfg: ImapConfig,
     store: Arc<Mutex<Store>>,
@@ -1528,11 +2087,28 @@ pub async fn watch(
     mailbox: String,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    let mut pause = Duration::from_secs(2);
+    watch_timed(cfg, store, account, mailbox, events, Timing::default()).await
+}
+
+/// [`watch`] with other deadlines and waits, for tests.
+#[doc(hidden)]
+pub async fn watch_timed(
+    cfg: ImapConfig,
+    store: Arc<Mutex<Store>>,
+    account: AccountId,
+    mailbox: String,
+    events: impl Fn(WatchEvent),
+    timing: Timing,
+) -> Result<()> {
+    let mut backoff = crate::backoff::Backoff::new(timing.retry_first);
+    // Whether the server answered this time: then the waits may grow past
+    // the minute meant for a server that can't be reached.
+    let mut answered;
     loop {
+        answered = false;
         let session = async {
-            let mut conn = Connection::open(&cfg).await?;
-            pause = Duration::from_secs(2);
+            let mut conn = Connection::open_timed(&cfg, timing).await?;
+            answered = true;
             let mut folders_synced: Option<std::time::Instant> = None;
             // A big mailbox comes down in rounds, the inbox first: each
             // round also takes the newest mail, and only the first one
@@ -1544,8 +2120,13 @@ pub async fn watch(
             // from what is already here, so the total stays put.
             let had = lock(&store).uids(account, &mailbox)?.len();
             let mut first = true;
+            let dropped = |changes: usize| {
+                if changes > 0 {
+                    events(WatchEvent::Dropped { account, changes });
+                }
+            };
             loop {
-                crate::pending::send(&mut conn, &store, account).await?;
+                dropped(crate::pending::send(&mut conn, &store, account).await?);
                 let flags = inbox_more == 0;
                 let mut report = conn
                     .sync_round(
@@ -1567,7 +2148,7 @@ pub async fn watch(
                     )
                     .await?;
                 if crate::rules::after_sync(&store, account, &mut report)? {
-                    crate::pending::send(&mut conn, &store, account).await?;
+                    dropped(crate::pending::send(&mut conn, &store, account).await?);
                 }
                 inbox_more = report.more;
                 let base = if first && inbox_more > 0 { had } else { filled };
@@ -1597,12 +2178,16 @@ pub async fn watch(
                     // IDLE watches the selected folder.
                     conn.session()?.select(&mailbox).await?;
                 }
+                // A whole round went through: the next failure is a new
+                // one, with a short wait.
+                backoff.reset();
                 if inbox_more + folders_more > 0 {
                     continue;
                 }
                 let started = std::time::Instant::now();
-                // Snoozed mail comes back, and mail sent later goes, on
-                // time, mail or no mail.
+                // Snoozed mail comes back, mail sent later goes, and a
+                // change the server refused is tried again, on time, mail
+                // or no mail.
                 let wake = lock(&store)
                     .next_due(account, crate::pending::now())?
                     .map(|at| Duration::from_secs((at - crate::pending::now()).max(1) as u64));
@@ -1620,23 +2205,58 @@ pub async fn watch(
         let result: Result<()> = tokio::select! {
             result = session => result,
             () = crate::network::wait() => {
-                pause = Duration::ZERO;
-                Ok(())
+                backoff.reset();
+                continue;
             }
         };
-        match result {
+        let pause = match result {
             Err(ImapError::Auth) => return Err(ImapError::Auth),
-            Err(e) => events(WatchEvent::Offline {
-                account,
-                reason: e.to_string(),
-            }),
-            Ok(()) => {}
-        }
+            // A certificate other than the one trusted is never retried
+            // quietly: the person has to look at it.
+            Err(e @ ImapError::Certificate(_)) => return Err(e),
+            Err(e) => {
+                events(WatchEvent::Offline {
+                    account,
+                    reason: e.to_string(),
+                });
+                backoff.fail(retry_cap(answered, &e))
+            }
+            Ok(()) => backoff.fail(crate::backoff::OFFLINE_MOST),
+        };
         tokio::select! {
             () = tokio::time::sleep(pause) => {}
-            () = crate::network::wait() => {}
+            () = crate::network::wait() => backoff.reset(),
         }
-        pause = (pause * 2).clamp(Duration::from_secs(2), Duration::from_secs(60));
+    }
+}
+
+/// How long the waits may grow after `e`: short while the server can't be
+/// reached, long once it answered and still failed (it would only fail
+/// again, and a server asked too often throttles or bans the account).
+fn retry_cap(answered: bool, e: &ImapError) -> Duration {
+    // Busy at the login is the server asking for room.
+    if matches!(e, ImapError::Throttled(_)) || (answered && !e.is_offline()) {
+        crate::backoff::ANSWERED_MOST
+    } else {
+        crate::backoff::OFFLINE_MOST
+    }
+}
+
+/// Which messages [`Connection::empty`] may delete.
+pub enum EmptyLimit {
+    /// Those numbered below this UIDNEXT, read with the count; every one
+    /// when the server gave none.
+    Below(Option<u32>),
+    /// Only these: the messages here, when the server couldn't be counted.
+    Only(HashSet<u32>),
+}
+
+impl EmptyLimit {
+    fn allows(&self, uid: u32) -> bool {
+        match self {
+            EmptyLimit::Below(below) => below.is_none_or(|b| uid < b),
+            EmptyLimit::Only(uids) => uids.contains(&uid),
+        }
     }
 }
 
@@ -1656,16 +2276,125 @@ where
     Ok(())
 }
 
-async fn tls<T>(host: &str, stream: T) -> Result<tokio_rustls::client::TlsStream<T>>
+async fn tls<T>(host: &str, pins: &[Pin], stream: T) -> Result<tokio_rustls::client::TlsStream<T>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let config = crate::tls::client_config().map_err(ImapError::Tls)?;
-    let name = ServerName::try_from(host.to_owned()).map_err(|e| ImapError::Tls(e.to_string()))?;
-    TlsConnector::from(Arc::new(config))
-        .connect(name, stream)
+    crate::tls::connect(host, pins, stream)
         .await
-        .map_err(|e| ImapError::Tls(e.to_string()))
+        .map_err(|f| match f {
+            crate::tls::Failure::Certificate(r) => ImapError::Certificate(r),
+            crate::tls::Failure::Stalled => ImapError::TimedOut,
+            crate::tls::Failure::Other(e) => ImapError::Tls(e),
+        })
+}
+
+type Client = async_imap::Client<Box<dyn Io>>;
+
+/// Logs in with the password, or authenticates with an OAuth token. A
+/// refused token gets one new one and one more try on the same
+/// connection; a second refusal is [`ImapError::Auth`], never a loop.
+async fn sign_in(client: Client, cfg: &ImapConfig) -> Result<Session> {
+    cfg.login
+        .may_send_to(&cfg.host, cfg.security != Security::None)
+        .map_err(ImapError::Tls)?;
+    let (mechanism, token) = match cfg.login.credential().await.map_err(token_error)? {
+        Credential::Password(password) => {
+            return client
+                .login(&cfg.username, password.as_str())
+                .await
+                .map_err(|(e, _)| classify_login(e));
+        }
+        Credential::Token { mechanism, token } => (mechanism, token),
+    };
+    let (e, client) = match authenticate(client, cfg, mechanism, &token).await {
+        Ok(session) => return Ok(session),
+        Err(failed) => failed,
+    };
+    let first = classify_token(e);
+    if !matches!(first, ImapError::Auth) {
+        return Err(first);
+    }
+    let Some(renewed) = cfg.login.renew().await else {
+        return Err(first);
+    };
+    let Credential::Token { mechanism, token } = renewed.map_err(token_error)? else {
+        return Err(first);
+    };
+    authenticate(client, cfg, mechanism, &token)
+        .await
+        .map_err(|(e, _)| classify_token(e))
+}
+
+// async-imap gives the client back with its error, as `login` does.
+#[allow(clippy::result_large_err)]
+async fn authenticate(
+    client: Client,
+    cfg: &ImapConfig,
+    mechanism: Mechanism,
+    token: &str,
+) -> std::result::Result<Session, (async_imap::error::Error, Client)> {
+    let sasl = ImapSasl {
+        mechanism,
+        initial: sasl_initial(mechanism, &cfg.username, token, &cfg.host, cfg.port),
+        sent: false,
+    };
+    client.authenticate(sasl_name(mechanism), sasl).await
+}
+
+/// A provider that refuses to give a token: for good means signing in
+/// again, a provider out of reach means trying later.
+pub(crate) fn token_error(e: TokenError) -> ImapError {
+    match e {
+        TokenError::Rejected(_) => ImapError::Auth,
+        TokenError::Offline(why) => ImapError::TokenUnavailable(why),
+    }
+}
+
+/// A `NO` to AUTHENTICATE with a token: the token was refused, unless
+/// the server says it is busy. Servers word it in many ways
+/// ("AUTHENTICATE failed.", "[AUTHENTICATIONFAILED] Invalid credentials").
+fn classify_token(e: async_imap::error::Error) -> ImapError {
+    match e {
+        async_imap::error::Error::No(text) => {
+            let lowered = text.to_ascii_lowercase();
+            if LOGIN_BUSY.iter().any(|w| lowered.contains(w))
+                && !LOGIN_DENIED.iter().any(|w| lowered.contains(w))
+            {
+                ImapError::Throttled(text)
+            } else {
+                ImapError::Auth
+            }
+        }
+        async_imap::error::Error::Bad(_) => ImapError::Auth,
+        e => ImapError::Protocol(e),
+    }
+}
+
+/// Connects to the first of the host's addresses that answers, each given
+/// `each` to do so: one address that drops packets (an IPv6 route that
+/// goes nowhere) doesn't hold up the others.
+async fn connect(host: &str, port: u16, each: Duration) -> Result<TcpStream> {
+    let failed = |source| ImapError::Connect {
+        host: host.to_owned(),
+        source,
+    };
+    let no_answer = || std::io::Error::new(std::io::ErrorKind::TimedOut, "no answer");
+    let addresses: Vec<std::net::SocketAddr> =
+        tokio::time::timeout(each, tokio::net::lookup_host((host, port)))
+            .await
+            .map_err(|_| failed(no_answer()))?
+            .map_err(failed)?
+            .collect();
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    for address in addresses {
+        match tokio::time::timeout(each, TcpStream::connect(address)).await {
+            Ok(Ok(tcp)) => return Ok(tcp),
+            Ok(Err(e)) => last = e,
+            Err(_) => last = no_answer(),
+        }
+    }
+    Err(failed(last))
 }
 
 /// Words that say the login failed because the credentials are wrong, the
@@ -1716,6 +2445,48 @@ fn classify_login(e: async_imap::error::Error) -> ImapError {
     } else {
         ImapError::Protocol(async_imap::error::Error::No(text))
     }
+}
+
+/// Deletes `uids` of the selected folder for good: `\Deleted`, then
+/// `UID EXPUNGE`. Without UIDPLUS only a plain EXPUNGE is there, which
+/// would also remove what another app marked `\Deleted` and meant to
+/// keep a while: those lose the mark for the moment and get it back.
+async fn expunge_only(session: &mut Session, uids: &[u32], uidplus: bool) -> Result<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let set = uid_set(uids);
+    store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
+    if uidplus {
+        let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
+        return Ok(());
+    }
+    let ours: HashSet<u32> = uids.iter().copied().collect();
+    let mut others: Vec<u32> = session
+        .uid_search("DELETED")
+        .await?
+        .into_iter()
+        .filter(|u| !ours.contains(u))
+        .collect();
+    others.sort_unstable();
+    if !others.is_empty() {
+        store_checked(session, &uid_set(&others), "-FLAGS.SILENT (\\Deleted)").await?;
+    }
+    let expunged: std::result::Result<Vec<_>, _> = session.expunge().await?.try_collect().await;
+    if !others.is_empty() {
+        store_checked(session, &uid_set(&others), "+FLAGS.SILENT (\\Deleted)").await?;
+    }
+    expunged?;
+    Ok(())
+}
+
+/// `UID STORE` that fails when the server answers NO: async-imap's own
+/// `uid_store` stream ends on the tagged answer whatever it says.
+async fn store_checked(session: &mut Session, set: &str, op: &str) -> Result<()> {
+    session
+        .run_command_and_check_ok(format!("UID STORE {set} {op}"))
+        .await?;
+    Ok(())
 }
 
 /// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
@@ -1826,9 +2597,15 @@ fn flags(f: &Fetch) -> Flags {
 /// Turns a FETCH of headers and the start of the body into a list row.
 /// Whether the fetched headers say a machine sent it.
 fn is_automated(f: &Fetch) -> bool {
-    MessageParser::default()
-        .parse_headers(f.header().unwrap_or_default())
-        .is_some_and(|m| notify::automated(&m))
+    crate::guard::shielded(
+        "automated check",
+        || false,
+        || {
+            MessageParser::default()
+                .parse_headers(f.header().unwrap_or_default())
+                .is_some_and(|m| notify::automated(&m))
+        },
+    )
 }
 
 /// A message's summary, with the preview made from its HTML part when
@@ -1850,9 +2627,34 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
     let uid = f.uid?;
     let mut raw = f.header().unwrap_or_default().to_vec();
     raw.extend_from_slice(f.text().unwrap_or_default());
+    // A message the parsers trip on is still listed, with what the
+    // server said of it, instead of stopping the sync.
+    let (from_name, from_email, to, subject, preview, reply, list) =
+        crate::guard::shielded("message summary", Default::default, || summary_fields(raw));
+    Some(MessageSummary {
+        account,
+        mailbox: mailbox.to_owned(),
+        uid,
+        from_name,
+        from_email,
+        to,
+        subject,
+        preview,
+        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
+        flags: flags(f),
+        reply,
+        list,
+    })
+}
+
+type SummaryFields = (String, String, String, String, String, ReplyInfo, ListInfo);
+
+/// Sender, recipients, subject, preview, reply and list details read from
+/// the start of a message.
+fn summary_fields(raw: Vec<u8>) -> SummaryFields {
     let raw = close_parts(raw);
     let parsed = MessageParser::default().parse(&raw);
-    let (from_name, from_email, to, subject, preview, reply, list) = match &parsed {
+    match &parsed {
         Some(m) => {
             let from = m.from().and_then(|a| a.first());
             let from_email = from
@@ -1882,21 +2684,7 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
             )
         }
         None => Default::default(),
-    };
-    Some(MessageSummary {
-        account,
-        mailbox: mailbox.to_owned(),
-        uid,
-        from_name,
-        from_email,
-        to,
-        subject,
-        preview,
-        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
-        flags: flags(f),
-        reply,
-        list,
-    })
+    }
 }
 
 /// The start of a message, cut where the preview fetch stopped, made whole
@@ -2003,6 +2791,7 @@ fn reply_info(m: &mail_parser::Message, from_email: &str) -> ReplyInfo {
         references: references.join(" "),
         reply_to,
         recipients: groups::recipients(m),
+        envelope: Some(crate::envelope::Envelope::from_message(m)),
     }
 }
 
@@ -2031,9 +2820,11 @@ fn first_html(m: &mail_parser::Message) -> Option<String> {
 
 /// The preview of a body as the reader draws it.
 pub(crate) fn reader_preview(text: &str, html: Option<&str>) -> String {
-    clean_preview(&crate::reading::plain_text(&crate::reading::readable(
-        text, html,
-    )))
+    crate::guard::shielded("preview", String::new, || {
+        clean_preview(&crate::reading::plain_text(&crate::reading::readable(
+            text, html,
+        )))
+    })
 }
 
 /// One line of plain words: no quoted replies, no runs of spaces, no
@@ -2189,7 +2980,8 @@ async fn fetch_heads(
 ) -> Result<(Vec<Fetch>, HashMap<u32, String>)> {
     let query = |bytes: usize| {
         format!(
-            "(UID FLAGS INTERNALDATE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO MIME-VERSION CONTENT-TYPE CONTENT-TRANSFER-ENCODING {} {} {} {} {})] BODY.PEEK[TEXT]<0.{bytes}>)",
+            "(UID FLAGS INTERNALDATE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO MIME-VERSION CONTENT-TYPE CONTENT-TRANSFER-ENCODING {} {} {} {} {} {})] BODY.PEEK[TEXT]<0.{bytes}>)",
+            crate::envelope::HEADER_FIELDS,
             notify::HEADER_FIELDS,
             crate::automation::HEADER_FIELDS,
             newsletter::HEADER_FIELDS,
@@ -2237,9 +3029,15 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
         };
         let mut raw = f.header().unwrap_or_default().to_vec();
         raw.extend_from_slice(f.text().unwrap_or_default());
-        let reached = MessageParser::default()
-            .parse(&close_parts(raw))
-            .is_some_and(|m| first_html(&m).is_some());
+        let reached = crate::guard::shielded(
+            "html part check",
+            || true,
+            || {
+                MessageParser::default()
+                    .parse(&close_parts(raw))
+                    .is_some_and(|m| first_html(&m).is_some())
+            },
+        );
         if !reached {
             wanted
                 .entry(part.section.clone())
@@ -2280,7 +3078,9 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
                     continue;
                 };
                 let cut = data.len() >= bytes;
-                let preview = reader_preview("", Some(&part.decode(data, cut)));
+                let preview = crate::guard::shielded("html preview", String::new, || {
+                    reader_preview("", Some(&part.decode(data, cut)))
+                });
                 if !preview.is_empty() {
                     out.insert(uid, preview);
                 } else if cut {
@@ -2422,7 +3222,29 @@ async fn fetch_bodies(
     Ok(cached)
 }
 
+/// Text and HTML of a whole message. When the readers trip on it, what a
+/// plain reading gives is kept instead, so the message counts as read and
+/// is never fetched and parsed again in a loop.
 pub fn parse_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("message body", || plain_body(raw), || parse_body_whole(raw))
+}
+
+/// The text part alone, as the parser gives it: the fallback of a body
+/// the readers couldn't handle.
+fn plain_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("plain message body", Body::default, || {
+        let text = MessageParser::default()
+            .parse(raw)
+            .and_then(|m| m.body_text(0).map(|t| t.into_owned()))
+            .unwrap_or_default();
+        Body {
+            text,
+            ..Body::default()
+        }
+    })
+}
+
+pub(crate) fn parse_body_whole(raw: &[u8]) -> Body {
     let Some(m) = MessageParser::default().parse(raw) else {
         return Body::default();
     };
@@ -2462,6 +3284,7 @@ pub fn parse_body(raw: &[u8]) -> Body {
         calendar: calendar(&m),
         inline,
         auth: crate::sender_auth::trail(&m, raw),
+        receipt_signed: pec::signed(&m, raw),
     }
 }
 
@@ -2488,7 +3311,11 @@ fn inline_images(m: &mail_parser::Message, html: &str) -> Vec<InlineImage> {
             continue;
         }
         let data = part.decoded();
-        if data.is_empty() || data.len() > INLINE_MAX || total + data.len() > INLINE_TOTAL {
+        if data.is_empty()
+            || data.len() > INLINE_MAX
+            || total + data.len() > INLINE_TOTAL
+            || !crate::images::fits(&data)
+        {
             continue;
         }
         total += data.len();
@@ -2825,11 +3652,39 @@ pub fn file_name(name: &str) -> String {
         })
         .collect();
     let clean = clean.trim().trim_start_matches('.').trim();
+    let clean: String = clean.chars().take(120).collect();
+    // Windows drops a final dot or space, so "a.exe." would open as "a.exe".
+    let clean = clean.trim_end_matches(['.', ' ']).trim();
     if clean.is_empty() {
-        "attachment".into()
-    } else {
-        clean.chars().take(120).collect()
+        return "attachment".into();
     }
+    // "NUL", "con.txt", "COM1.pdf" name devices on Windows, not files:
+    // saving there would report success and keep nothing.
+    let stem = clean.split('.').next().unwrap_or(clean).trim_end();
+    if windows_device(stem) {
+        format!("_{clean}")
+    } else {
+        clean.to_owned()
+    }
+}
+
+/// Whether a name (without its extension) is one of Windows' devices.
+fn windows_device(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let (Some(head), Some(digit)) = (upper.get(..3), upper.get(3..)) else {
+        return false;
+    };
+    matches!(head, "COM" | "LPT")
+        && matches!(
+            digit,
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
 }
 
 /// Namespace tag used by the attachment-ID schema migration.
@@ -2870,6 +3725,54 @@ pub(crate) fn attachment_data_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_names_under_inbox_are_compared_by_character() {
+        // The fifth byte falls inside "é".
+        assert!(!inside_inbox("INBO\u{e9}xx"));
+        assert!(inside_inbox("INBOX.Work"));
+        assert!(inside_inbox("inbox/Work"));
+        assert!(!inside_inbox("Work"));
+    }
+
+    #[test]
+    fn windows_device_names_and_trailing_dots_are_neutralised() {
+        assert_eq!(file_name("NUL"), "_NUL");
+        assert_eq!(file_name("con.txt"), "_con.txt");
+        assert_eq!(file_name("Com1.pdf"), "_Com1.pdf");
+        assert_eq!(file_name("lpt9"), "_lpt9");
+        assert_eq!(file_name("aux .doc"), "_aux .doc");
+        assert_eq!(file_name("invoice.exe."), "invoice.exe");
+        assert_eq!(file_name("report . . "), "report");
+        assert_eq!(file_name("console.txt"), "console.txt");
+        assert_eq!(file_name("COM10.txt"), "COM10.txt");
+        assert_eq!(file_name("..."), "attachment");
+    }
+
+    #[test]
+    fn a_body_the_readers_trip_on_is_kept_as_plain_text() {
+        crate::guard::install();
+        let raw = b"Subject: x\r\nContent-Type: text/plain\r\n\r\nHello there\r\n";
+        let body = crate::guard::shielded(
+            "test body",
+            || plain_body(raw),
+            || -> Body { panic!("a reader tripped") },
+        );
+        assert_eq!(body.text.trim(), "Hello there");
+        assert!(body.html.is_none());
+    }
+
+    #[test]
+    fn inline_pictures_too_big_to_draw_are_left_out() {
+        let huge = crate::images::tests::png_header(20_000, 20_000);
+        let raw = format!(
+            "Content-Type: multipart/related; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:p@x\">\r\n--b\r\nContent-Type: image/png\r\nContent-ID: <p@x>\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n--b--\r\n",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &huge)
+        );
+        let body = parse_body(raw.as_bytes());
+        assert!(body.html.is_some());
+        assert!(body.inline.is_empty());
+    }
 
     #[test]
     fn calendar_decodes_its_declared_charset() {
@@ -3009,6 +3912,7 @@ mod tests {
             name: name.into(),
             delimiter: Some(d.into()),
             selectable,
+            subscribed: true,
         };
         let skip: HashSet<String> = ["INBOX.Sent".to_owned()].into();
         let listed = [

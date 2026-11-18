@@ -233,7 +233,13 @@ void main() {
     expect(giulia.buttons, isTrue);
     _fake.press(giulia, 'reply', "I'm in!");
     await tester.pumpAndSettle();
-    expect(find.text('Sending…'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Sending…'),
+      ),
+      findsOneWidget,
+    );
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
     final reply = source.sent.single;
@@ -256,6 +262,49 @@ void main() {
     _fake.press(dad, 'snooze');
     await tester.pumpAndSettle();
     expect(find.textContaining('Snoozed until tomorrow'), findsOneWidget);
+  });
+
+  testWidgets('a notice for one email also has Delete and Mark read', (
+    tester,
+  ) async {
+    final source = await _inbox(tester);
+    Future<(MailRow, SystemNotice)> notice(String subject) async {
+      final row = (await source.page(
+        0,
+        10,
+      )).firstWhere((r) => r.subject == subject);
+      source.arrive([
+        MailNotice(
+          accountId: row.accountId,
+          mailbox: row.mailbox,
+          uid: row.uid,
+          sender: row.fromName,
+          senderEmail: row.fromEmail,
+          subject: row.subject,
+        ),
+      ]);
+      await tester.pump();
+      return (row, _fake.shown.last);
+    }
+
+    expect(noticeActions, containsAll(['delete', 'read']));
+
+    // Mark read only marks it read: it stays in the inbox.
+    final (dinner, giulia) = await notice('Dinner on Friday?');
+    _fake.press(giulia, 'read');
+    await tester.pumpAndSettle();
+    expect(source.seenSet.last.$1.key, dinner.key);
+    expect(source.seenSet.last.$2, isTrue);
+    expect(source.applied, isEmpty);
+
+    // Delete does what Delete does, with Undo.
+    final (review, luca) = await notice('Mockup v3 review');
+    _fake.press(luca, 'delete');
+    await tester.pumpAndSettle();
+    expect(find.text('Moved to Trash'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(source.applied.last, (review, MessageAction.delete));
   });
 
   testWidgets('Settings › Notifications changes what comes', (tester) async {

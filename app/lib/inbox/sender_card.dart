@@ -15,6 +15,7 @@ import '../widgets/route.dart';
 import '../widgets/verified.dart';
 import 'attachments.dart' show FilePreview;
 import 'message_list.dart' show initials;
+import 'newsletters.dart' show confirmUnsubscribeMail;
 import 'sections.dart' show rowTime;
 
 /// What the person picked on a sender's card.
@@ -195,8 +196,13 @@ class _SenderCardState extends State<SenderCard> {
   Future<void> _leave() async {
     if (_unsubscribe.kind == UnsubscribeKind.page) {
       final uri = Uri.tryParse(_unsubscribe.address);
-      if (uri != null) await openExternalLink(uri);
+      if (uri != null) await openMailLink(uri);
       if (mounted) setState(() => _leaving = _Leaving.page);
+      return;
+    }
+    // The message goes from the person's account: they see it first.
+    if (_unsubscribe.kind == UnsubscribeKind.mail &&
+        !await confirmUnsubscribeMail(context, widget.row, _unsubscribe)) {
       return;
     }
     try {
@@ -207,15 +213,19 @@ class _SenderCardState extends State<SenderCard> {
     }
   }
 
-  /// Moves what the newsletter sent before to Trash.
+  /// Moves what the newsletter sent before to Trash. What is already in
+  /// Trash or spam stays where it is, and isn't counted.
   Future<void> _clear() async {
-    final found = await widget.source.search('from:$_email', limit: 1000);
+    final source = widget.source;
+    final found = await source.search('from:$_email', limit: 1000);
     final rows = [
       for (final h in found.hits)
-        if (h.row.fromEmail.toLowerCase() == _email.toLowerCase()) h.row,
+        if (h.row.fromEmail.toLowerCase() == _email.toLowerCase() &&
+            !source.deletesForGood(h.row.accountId, h.row.mailbox))
+          h.row,
     ];
     if (rows.isNotEmpty) {
-      await widget.source.apply(rows, MessageAction.delete);
+      await source.apply(rows, MessageAction.delete);
     }
     if (!mounted) return;
     setState(() {
@@ -263,6 +273,7 @@ class _SenderCardState extends State<SenderCard> {
             children: [
               SenderPicture(
                 email: row.fromEmail,
+                row: row,
                 size: 52,
                 letter: PiumaAvatar(initials: initials(row.sender), size: 52),
               ),
@@ -434,6 +445,7 @@ class _SenderCardState extends State<SenderCard> {
                     Center(
                       child: SenderPicture(
                         email: row.fromEmail,
+                        row: row,
                         size: 84,
                         letter: PiumaAvatar(
                           initials: initials(row.sender),

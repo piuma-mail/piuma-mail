@@ -28,13 +28,20 @@ AccountInfo updateAccount({
 );
 
 /// Checks new servers with the account's password, keeps them, and
-/// follows the account through them from now on.
+/// follows the account through them from now on. `trusted` are
+/// certificates the person chose to trust for the new servers, after a
+/// [ErrorKind::Certificate]: kept only once the check went through.
+///
+/// An account that signs in with a provider's page keeps that provider's
+/// servers, over TLS: its token never goes anywhere else.
 Future<void> setAccountServers({
   required PlatformInt64 accountId,
   required AccountServers servers,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiAccountsSetAccountServers(
   accountId: accountId,
   servers: servers,
+  trusted: trusted,
 );
 
 /// [`UnsentMail`] of an account, asked before removing it.

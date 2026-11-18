@@ -19,8 +19,10 @@ import 'phone_parts.dart' show ComposeFab;
 import 'pictures.dart';
 import 'sections.dart';
 import 'snooze.dart';
+import 'mailbox_actions.dart';
 import 'swipe.dart';
 import 'waiting.dart';
+import '../widgets/button.dart';
 
 /// Row and header heights are fixed, so a 50,000-message inbox lays out
 /// without measuring rows it does not show.
@@ -89,7 +91,19 @@ class MessageList extends StatefulWidget {
     this.top = const [],
     this.swipeHint = false,
     this.onNoticeArchive,
+    this.rightSwipe,
+    this.leftSwipe,
+    this.dragRows,
   });
+
+  /// The swipes as the person set them, in place of [swipeAs] and
+  /// [leftSwipeAs] when given.
+  final SwipeSide? rightSwipe;
+  final SwipeSide? leftSwipe;
+
+  /// On the desktop, what dragging [row] carries to a folder: the picked
+  /// rows when it is one of them, else the row. Null: rows don't drag.
+  final List<MailRow> Function(MailRow row)? dragRows;
 
   /// Slivers above the rows that scroll with them: the phone's folding
   /// header and what sits under it (`HomeToApprove`, variant 2).
@@ -257,6 +271,14 @@ class MessageListState extends State<MessageList>
   int _generation = 0;
   bool _loaded = false;
 
+  /// The first read of the list failed and nothing is on screen: the
+  /// list says so, with Try again, instead of waiting for ever.
+  bool _failed = false;
+
+  /// Pages that could not be read while scrolling: the rows around them
+  /// stay, and the page offers Try again in its place.
+  final _failedPages = <int>{};
+
   /// Where the last click landed, for Shift+click ranges.
   int? _anchor;
 
@@ -358,12 +380,14 @@ class MessageListState extends State<MessageList>
       // Another list: its rows come in on their own, never under the
       // old ones (Inbox rows under "Archive").
       _loaded = false;
+      _failed = false;
       _sections = const [];
       _outbox = const [];
       _snoozed = const [];
       _reminded = const [];
       _pages.clear();
       _loading.clear();
+      _failedPages.clear();
       _fromMemory();
       reload();
     }
@@ -381,6 +405,10 @@ class MessageListState extends State<MessageList>
     _reading++;
     try {
       await _read();
+      if (_failed && mounted) setState(() => _failed = false);
+    } catch (_) {
+      // Rows already on screen stay; a list with none says it failed.
+      if (mounted && !_loaded) setState(() => _failed = true);
     } finally {
       _reading--;
       if (_reading == 0 && _changedAgain && mounted) {
@@ -421,14 +449,15 @@ class MessageListState extends State<MessageList>
           ..clear()
           ..[0] = first;
         _loading.clear();
+        _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
       return;
     }
-    if (folder == MailFolder.waiting) {
+    if (folder == MailFolder.waiting || folder == MailFolder.starred) {
       // Newest first, in one list with no headers: what was sent in the
-      // last 30 days, so never long.
+      // last 30 days, or what was starred.
       final all = await widget.source.page(
         0,
         1 << 30,
@@ -447,6 +476,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
+        _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
@@ -488,6 +518,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
+        _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
@@ -574,7 +605,13 @@ class MessageListState extends State<MessageList>
       _snoozed = snoozed;
       _reminded = reminded;
       _remindedHeader = l.sectionToday;
-      _sections = plan.sections(counts);
+      // Sorted otherwise than newest first, dates don't head the rows.
+      _sections = widget.source.listPrefs.value.order == ListOrder.newest
+          ? plan.sections(counts)
+          : [
+              if (counts.isNotEmpty && counts.fold(0, (a, b) => a + b) > 0)
+                InboxSection('', counts.fold(0, (a, b) => a + b)),
+            ];
       _aliases.clear();
       _people.clear();
       _pages
@@ -590,6 +627,7 @@ class MessageListState extends State<MessageList>
         widget.group,
       );
       _loading.clear();
+      _failedPages.clear();
       _folding = const {};
     });
     (_lastLists[widget.source] ??= {})[_shown!] = (
@@ -708,6 +746,8 @@ class MessageListState extends State<MessageList>
       final i = index % _pageSize;
       return i < rows.length ? rows[i] : null;
     }
+    // A page that failed waits for its Try again, not for the next frame.
+    if (_failedPages.contains(page)) return null;
     if (_loading.add(page)) {
       final gen = _generation;
       widget.source
@@ -721,13 +761,22 @@ class MessageListState extends State<MessageList>
             unread: widget.unread,
             group: widget.group,
           )
-          .then((rows) {
-            if (!mounted || gen != _generation) return;
-            setState(() {
-              _pages[page] = rows;
-              _loading.remove(page);
-            });
-          });
+          .then(
+            (rows) {
+              if (!mounted || gen != _generation) return;
+              setState(() {
+                _pages[page] = rows;
+                _loading.remove(page);
+              });
+            },
+            onError: (Object _) {
+              if (!mounted || gen != _generation) return;
+              setState(() {
+                _loading.remove(page);
+                _failedPages.add(page);
+              });
+            },
+          );
     }
     return null;
   }
@@ -759,11 +808,51 @@ class MessageListState extends State<MessageList>
   int get _itemCount =>
       _sections.fold(0, (sum, s) => sum + (_headless(s) ? 0 : 1) + s.count);
 
+  /// Reads one page again after it failed.
+  void _retryPage(int page) => setState(() => _failedPages.remove(page));
+
+  /// Reads the list again after a failure.
+  void _retry() {
+    setState(() {
+      _failed = false;
+      _pages.clear();
+      _loading.clear();
+      _failedPages.clear();
+      _generation++;
+    });
+    reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final locale = Localizations.localeOf(context).toLanguageTag();
     final now = widget.now();
     _labelled = {for (final l in LabelScope.of(context)) l.keyword};
+    if (_failed) {
+      final c = PiumaTheme.of(context);
+      final l = AppLocalizations.of(context);
+      return _underTop(
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.phone ? 20 : 22, 18, 22, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l.listFailed,
+                style: PiumaType.small.copyWith(color: c.muted),
+              ),
+              const SizedBox(height: 12),
+              PiumaButton(
+                label: l.tryAgain,
+                kind: PiumaButtonKind.secondary,
+                size: PiumaButtonSize.compact,
+                onPressed: _retry,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (_loaded &&
         _itemCount == 0 &&
         _outbox.isEmpty &&
@@ -906,7 +995,18 @@ class MessageListState extends State<MessageList>
               }
               if (_hiddenNotice(item.row)) return const SizedBox.shrink();
               final row = _row(item.row);
-              if (row == null) return const _RowPlaceholder();
+              if (row == null) {
+                final page = item.row ~/ _pageSize;
+                // A page that failed says so on its first row.
+                if (_failedPages.contains(page) &&
+                    item.row == page * _pageSize) {
+                  return _PageFailed(
+                    phone: widget.phone,
+                    onRetry: () => _retryPage(page),
+                  );
+                }
+                return const _RowPlaceholder();
+              }
               final run = _noticeRun(item.row);
               if (_groupNotices &&
                   run.isNotEmpty &&
@@ -1032,24 +1132,42 @@ class MessageListState extends State<MessageList>
               );
               final swipe = widget.onSwipe;
               if (swipe != null) _askHint(row);
+              final right = widget.rightSwipe;
+              final left = widget.leftSwipe;
+              final drag = widget.dragRows;
               final Widget shown = swipe == null
-                  ? dimmed
+                  ? (drag == null || widget.phone
+                        ? dimmed
+                        : DraggableRows(rows: () => drag(row), child: dimmed))
                   : SwipeToArchive(
                       key: ValueKey(row.key),
                       label:
+                          right?.label ??
                           widget.swipeAs?.label ??
                           AppLocalizations.of(context).archive,
-                      icon: widget.swipeAs?.icon ?? PiumaIcon.archive,
+                      icon:
+                          right?.icon ??
+                          widget.swipeAs?.icon ??
+                          PiumaIcon.archive,
+                      tone: right?.tone ?? SwipeTone.ok,
+                      archiveStays: right?.stays ?? false,
+                      rightOff: right?.off ?? false,
                       onArchive: () => swipe(row),
                       snoozeLabel:
+                          left?.label ??
                           widget.leftSwipeAs?.label ??
                           AppLocalizations.of(context).actionSnooze,
-                      snoozeIcon: widget.leftSwipeAs?.icon ?? PiumaIcon.clock,
-                      snoozeStays: widget.leftSwipeAs != null,
-                      onSnooze: widget.onSnoozeSwipe == null
+                      snoozeIcon:
+                          left?.icon ??
+                          widget.leftSwipeAs?.icon ??
+                          PiumaIcon.clock,
+                      snoozeTone: left?.tone ?? SwipeTone.warn,
+                      snoozeStays: left?.stays ?? widget.leftSwipeAs != null,
+                      onSnooze:
+                          widget.onSnoozeSwipe == null || (left?.off ?? false)
                           ? null
                           : () => widget.onSnoozeSwipe!(row),
-                      hint: row.key == _hintRow,
+                      hint: row.key == _hintRow && !(right?.off ?? false),
                       child: dimmed,
                     );
               if (!_folding.contains(row.key)) return shown;
@@ -1179,8 +1297,14 @@ class OutboxTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final refused = item.error != null;
-    final tone = refused ? c.danger : c.muted;
+    final refused = item.state == OutboxState.refused;
+    // May have gone: a warning, not a failure (`Outbox`, maybe sent).
+    final maybe = item.state == OutboxState.maybeSent;
+    final tone = refused
+        ? c.danger
+        : maybe
+        ? c.warn
+        : c.muted;
     final size = phone ? 42.0 : 38.0;
     const line = TextStyle(fontSize: 14, height: 1.45);
     final tile = Container(
@@ -1200,9 +1324,9 @@ class OutboxTile extends StatelessWidget {
             child: SizedBox.square(
               dimension: size,
               child: Center(
-                child: refused
+                child: refused || maybe
                     ? Text(
-                        '!',
+                        maybe ? '?' : '!',
                         style: line.copyWith(
                           color: tone,
                           fontWeight: FontWeight.w600,
@@ -1236,10 +1360,18 @@ class OutboxTile extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Text(switch ((refused, item.sendAt)) {
-                      (true, _) => l.outboxNotSent,
-                      (false, final at?) => snoozeWhen(
-                        at,
+                    Text(switch (item.state) {
+                      OutboxState.maybeSent => l.outboxMaybeSent,
+                      OutboxState.refused => l.outboxNotSent,
+                      OutboxState.sending => l.sending,
+                      // In its Undo window it is on its way; past it
+                      // (offline) it only waits.
+                      _ when item.undo =>
+                        item.sendAt?.isAfter(now ?? DateTime.now()) ?? false
+                            ? l.sending
+                            : l.outboxWaiting,
+                      _ when item.sendAt != null => snoozeWhen(
+                        item.sendAt!,
                         now ?? DateTime.now(),
                         l,
                         Localizations.localeOf(context).toLanguageTag(),
@@ -1256,7 +1388,12 @@ class OutboxTile extends StatelessWidget {
                 ),
                 Text(
                   refused
-                      ? l.outboxRefused(item.error!)
+                      ? l.outboxRefused(item.error ?? '')
+                      : maybe
+                      ? l.outboxMaybeSentCheck
+                      // A Redirect has no text of its own: it says what it is.
+                      : item.redirect
+                      ? l.outboxRedirectLine
                       : item.body.trim().split('\n').first,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1454,6 +1591,41 @@ class _SyncPlaceholderState extends State<SyncPlaceholder>
   }
 }
 
+/// In place of a page of rows that could not be read: what happened, and
+/// Try again, in the row's own height.
+class _PageFailed extends StatelessWidget {
+  const _PageFailed({required this.onRetry, this.phone = false});
+
+  final VoidCallback onRetry;
+  final bool phone;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: phone ? 20 : 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              l.listFailed,
+              style: PiumaType.small.copyWith(color: c.muted),
+            ),
+          ),
+          const SizedBox(width: 12),
+          PiumaButton(
+            label: l.tryAgain,
+            kind: PiumaButtonKind.secondary,
+            size: PiumaButtonSize.compact,
+            onPressed: onRetry,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RowPlaceholder extends StatelessWidget {
   const _RowPlaceholder();
 
@@ -1573,7 +1745,12 @@ class _InboxRowTileState extends State<InboxRowTile> {
       child: Semantics(
         selected: selected,
         button: true,
-        label: unread ? l.messageUnread : null,
+        label: unread || row.starred
+            ? [
+                if (unread) l.messageUnread,
+                if (row.starred) l.messageStarred,
+              ].join(', ')
+            : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: (_) => _press(true),
@@ -1671,6 +1848,7 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                     initials: initials(row.listName),
                                     // Your own mail shows who it went to.
                                     email: outgoing ? '' : row.fromEmail,
+                                    row: row,
                                     dot: account?.color,
                                     dots: widget.accountColors,
                                     ring: selected ? c.sel : c.surface,
@@ -1756,6 +1934,15 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                       ),
                                     ),
                                   const SizedBox(width: 8),
+                                  // Starred: the star before the time.
+                                  if (row.starred) ...[
+                                    PiumaIconView(
+                                      PiumaIcon.star,
+                                      size: phone ? 14 : 13,
+                                      color: c.warn,
+                                    ),
+                                    const SizedBox(width: 6),
+                                  ],
                                   Text(
                                     time,
                                     style: TextStyle(
@@ -2037,6 +2224,7 @@ class _Avatar extends StatelessWidget {
   const _Avatar({
     required this.initials,
     this.email = '',
+    this.row,
     this.dot,
     this.dots = const [],
     required this.ring,
@@ -2046,6 +2234,9 @@ class _Avatar extends StatelessWidget {
 
   /// Whose picture replaces the letters once it is on the device.
   final String email;
+
+  /// The message the row is: a brand logo is only ever its own.
+  final MailRow? row;
   final List<Color> dots;
   final Color? dot;
   final Color ring;
@@ -2062,6 +2253,7 @@ class _Avatar extends StatelessWidget {
         children: [
           SenderPicture(
             email: email,
+            row: row,
             size: size,
             letter: Container(
               width: size,

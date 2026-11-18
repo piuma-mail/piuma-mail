@@ -11,11 +11,13 @@ import '../design/tokens.g.dart';
 import '../inbox/service_states.dart' show showSignInAgain;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../onboarding/account_errors.dart';
 import '../onboarding/add_account_screen.dart' show SecurityPicker;
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
+import 'quota_card.dart';
 
 /// An account's details, as on `FeaturesToApprove` (section 2): its name,
 /// color, From name and default signature, how its connection is going,
@@ -407,7 +409,11 @@ class _AccountPageState extends State<AccountPage> {
               null => l.accountConnecting,
             },
       servers: failed ? null : serverLines,
-      note: failed ? l.accountPasswordRefused : null,
+      note: failed
+          ? (health.certificate
+                ? l.accountCertificateRefused
+                : l.accountPasswordRefused)
+          : null,
       action: failed
           ? PiumaButton(
               label: l.signInAgain,
@@ -419,7 +425,11 @@ class _AccountPageState extends State<AccountPage> {
                 phone: phone,
               ),
             )
-          : servers != null && servers.jmapUrl == null
+          // An account that signs in with a provider's page keeps the
+          // provider's servers: its sign-in goes nowhere else.
+          : servers != null &&
+                servers.jmapUrl == null &&
+                widget.source.accountOAuth(_account.id) == null
           ? _TextLink(label: l.accountEditServers, onTap: _editServers)
           : null,
     );
@@ -564,6 +574,7 @@ class _AccountPageState extends State<AccountPage> {
         details,
         const SizedBox(height: 14),
         connection,
+        QuotaCard(source: widget.source, accountId: _account.id),
         if (awayCard != null) ...[const SizedBox(height: 14), awayCard],
         const SizedBox(height: 14),
         alert,
@@ -850,6 +861,13 @@ class _ServersFormState extends State<_ServersForm> {
   bool _checking = false;
   String? _error;
 
+  /// The certificate a server showed, refused, for the person to trust.
+  CertificateProblem? _certificate;
+
+  /// Certificates the person trusted for the new servers: kept by the
+  /// engine only once they check out.
+  final _trusted = <TrustedCertificate>[];
+
   @override
   void dispose() {
     for (final t in [_imapHost, _imapPort, _smtpHost, _smtpPort, _username]) {
@@ -860,39 +878,57 @@ class _ServersFormState extends State<_ServersForm> {
 
   Future<void> _save() async {
     final l = AppLocalizations.of(context);
+    final imapPort = validPort(_imapPort.text);
+    final smtpPort = validPort(_smtpPort.text);
+    if (imapPort == null || smtpPort == null) {
+      setState(() {
+        _error = l.errorPort;
+        _certificate = null;
+      });
+      return;
+    }
     final servers = AccountServers(
-      imap: MailServer(
-        _imapHost.text.trim(),
-        int.tryParse(_imapPort.text.trim()) ?? 993,
-        _imapSecurity,
-      ),
-      smtp: MailServer(
-        _smtpHost.text.trim(),
-        int.tryParse(_smtpPort.text.trim()) ?? 465,
-        _smtpSecurity,
-      ),
+      imap: MailServer(_imapHost.text.trim(), imapPort, _imapSecurity),
+      smtp: MailServer(_smtpHost.text.trim(), smtpPort, _smtpSecurity),
       username: _username.text.trim(),
     );
     setState(() {
       _checking = true;
       _error = null;
+      _certificate = null;
     });
     try {
-      await widget.source.setAccountServers(widget.accountId, servers);
+      await widget.source.setAccountServers(
+        widget.accountId,
+        servers,
+        trusted: List.of(_trusted),
+      );
       if (mounted) Navigator.of(context).pop(servers);
     } on AddAccountException catch (e) {
       if (!mounted) return;
       setState(() {
         _checking = false;
-        _error = switch (e.error) {
-          AddAccountError.wrongPassword => l.errorWrongPassword,
-          AddAccountError.unreachable => l.errorUnreachable,
-          AddAccountError.insecure => l.errorInsecure,
-          AddAccountError.keychain => l.errorKeychain,
-          AddAccountError.other => l.errorOther,
-        };
+        _error = accountErrorText(l, e.error);
+        _certificate = e.certificate;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = l.errorOther;
       });
     }
+  }
+
+  /// Saves again trusting the refused certificate too. It is kept for
+  /// the account only if the new servers check out with it.
+  Future<void> _trust() async {
+    final cert = _certificate;
+    if (cert == null || !cert.canTrust || _checking) return;
+    _trusted
+      ..removeWhere((t) => t.host.toLowerCase() == cert.host.toLowerCase())
+      ..add(cert.trusted);
+    await _save();
   }
 
   @override
@@ -952,7 +988,8 @@ class _ServersFormState extends State<_ServersForm> {
     }
 
     final error = _error;
-    return Padding(
+    // Scrolls when a refused certificate makes it taller than the screen.
+    return SingleChildScrollView(
       padding: EdgeInsets.symmetric(horizontal: widget.phone ? 20 : 0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -993,6 +1030,10 @@ class _ServersFormState extends State<_ServersForm> {
           if (error != null) ...[
             const SizedBox(height: 12),
             Text(error, style: PiumaType.small.copyWith(color: c.danger)),
+          ],
+          if (_certificate case final cert?) ...[
+            const SizedBox(height: 12),
+            CertificateCard(problem: cert, onTrust: _checking ? null : _trust),
           ],
           const SizedBox(height: 20),
           Row(

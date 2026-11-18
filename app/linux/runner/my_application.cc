@@ -9,10 +9,18 @@
 
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 #include "original_paper.h"
+#include "shell.h"
+#include "unread_badge.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  // The inbox's window, once made: a second launch brings it forward.
+  GtkWindow* window;
+  // Later launches, the tray, closing to the tray (lib/outside/).
+  Shell* shell;
+  // Started at sign-in: the window waits for the tray or a launch.
+  gboolean start_hidden;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -22,18 +30,29 @@ static void register_app_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) paper =
       fl_plugin_registry_get_registrar_for_plugin(registry, "OriginalPaper");
   original_paper_register(paper);
+  g_autoptr(FlPluginRegistrar) badge =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "UnreadBadge");
+  unread_badge_register(badge);
 }
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
+  if (self->start_hidden) return;
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+  // One Piuma per person: two would both sync, notify and send the outbox
+  // on one database. Launched again, the open window comes forward.
+  if (self->window != nullptr) {
+    shell_present(self->shell);
+    return;
+  }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -89,6 +108,8 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   register_app_plugins(FL_PLUGIN_REGISTRY(view));
+  // The inbox's window only: reader windows have no shell.
+  self->shell = shell_new(application, window, view);
 
   // A message opened in a window of its own gets the plugins too.
   desktop_multi_window_plugin_set_window_created_callback(
@@ -100,25 +121,61 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
-// Implements GApplication::local_command_line.
-static gboolean my_application_local_command_line(GApplication* application,
-                                                  gchar*** arguments,
-                                                  int* exit_status) {
-  MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
-
-  g_autoptr(GError) error = nullptr;
-  if (!g_application_register(application, nullptr, &error)) {
-    g_warning("Failed to register: %s", error->message);
-    *exit_status = 1;
-    return TRUE;
+// A later launch's words with every relative path made whole against
+// that launch's own folder (it ran somewhere else than this instance):
+// flags, URIs (mailto:, file:) and absolute paths stay as they are.
+static gchar** resolve_paths(GApplicationCommandLine* command_line,
+                             gchar** given) {
+  GPtrArray* out = g_ptr_array_new();
+  for (gchar** a = given; *a != nullptr; a++) {
+    gchar* word = nullptr;
+    g_autofree gchar* scheme = g_uri_parse_scheme(*a);
+    if ((*a)[0] != '\0' && (*a)[0] != '-' && scheme == nullptr &&
+        !g_path_is_absolute(*a) && g_strcmp0(*a, "multi_window") != 0) {
+      g_autoptr(GFile) file =
+          g_application_command_line_create_file_for_arg(command_line, *a);
+      word = g_file_get_path(file);
+    }
+    g_ptr_array_add(out, word != nullptr ? word : g_strdup(*a));
   }
+  g_ptr_array_add(out, nullptr);
+  return reinterpret_cast<gchar**>(g_ptr_array_free(out, FALSE));
+}
 
+// Implements GApplication::command_line. Runs in the first instance only:
+// GApplication hands it the command line of every later launch (from
+// their own process, over D-Bus) instead of starting a second app.
+static gint my_application_command_line(GApplication* application,
+                                        GApplicationCommandLine* command_line) {
+  MyApplication* self = MY_APPLICATION(application);
+  g_auto(GStrv) arguments =
+      g_application_command_line_get_arguments(command_line, nullptr);
+  // Strip out the first argument as it is the binary name.
+  gchar** given = arguments[0] != nullptr ? arguments + 1 : arguments;
+  gboolean background = FALSE;
+  gboolean link = FALSE;
+  for (gchar** a = given; *a != nullptr; a++) {
+    if (g_strcmp0(*a, "--background") == 0) background = TRUE;
+    if (g_ascii_strncasecmp(*a, "mailto:", 7) == 0) link = TRUE;
+  }
+  // Never with a mailto: link, as on Windows: a link written to break out
+  // of its quotes could carry the flag and leave the window hidden.
+  if (link) background = FALSE;
+  // The first launch's arguments start the app, Dart reads them in
+  // main(); later ones never replace them (nor leak).
+  if (self->dart_entrypoint_arguments == nullptr) {
+    self->dart_entrypoint_arguments = g_strdupv(given);
+    self->start_hidden = background;
+    g_application_activate(application);
+    return 0;
+  }
+  // Signing in again has nothing to bring forward.
+  if (background) return 0;
+  // A later launch: a mailto: link, an .eml file, files to send.
+  g_auto(GStrv) resolved = resolve_paths(command_line, given);
+  shell_forward(self->shell, resolved);
   g_application_activate(application);
-  *exit_status = 0;
-
-  return TRUE;
+  return 0;
 }
 
 // Implements GApplication::startup.
@@ -148,14 +205,18 @@ static void my_application_dispose(GObject* object) {
 
 static void my_application_class_init(MyApplicationClass* klass) {
   G_APPLICATION_CLASS(klass)->activate = my_application_activate;
-  G_APPLICATION_CLASS(klass)->local_command_line =
-      my_application_local_command_line;
+  G_APPLICATION_CLASS(klass)->command_line = my_application_command_line;
   G_APPLICATION_CLASS(klass)->startup = my_application_startup;
   G_APPLICATION_CLASS(klass)->shutdown = my_application_shutdown;
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  self->window = nullptr;
+  self->shell = nullptr;
+  self->start_hidden = FALSE;
+  self->dart_entrypoint_arguments = nullptr;
+}
 
 MyApplication* my_application_new() {
   // Set the program name to the application ID, which helps various systems
@@ -166,5 +227,6 @@ MyApplication* my_application_new() {
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                     G_APPLICATION_HANDLES_COMMAND_LINE,
+                                     nullptr));
 }

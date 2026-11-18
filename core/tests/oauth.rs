@@ -1,0 +1,485 @@
+//! Signing in with OAuth, end to end against servers inside the test: the
+//! browser's way back to the loopback listener, the code for tokens, the
+//! tokens renewed before they run out and after a server refused one, and
+//! XOAUTH2 and OAUTHBEARER over IMAP and SMTP. Nothing calls a real
+//! provider.
+
+mod support;
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use piuma_core::auth::Login;
+use piuma_core::cert;
+use piuma_core::imap::{check_login, ImapConfig, ImapError};
+use piuma_core::oauth::{
+    challenge, Client, FlowError, Loopback, Mechanism, Request, Session, Stored, TokenError,
+};
+use piuma_core::smtp::{ready, send, Draft, SendError, SmtpConfig};
+use piuma_core::tls::Pin;
+use piuma_core::Security;
+use support::{imap_server, provider, smtp_server, token_server, Shown, Valid, FIRST_CERT};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+fn client() -> Client {
+    Client {
+        client_id: "test-client".into(),
+        client_secret: None,
+        tenant: None,
+    }
+}
+
+fn stored(refresh: &str) -> Stored {
+    Stored {
+        provider: "test".into(),
+        client: client(),
+        refresh_token: refresh.into(),
+    }
+}
+
+/// A sign-in against the test's token endpoint; `kept` gets every new
+/// refresh token the provider sends.
+fn session(
+    base: &str,
+    mechanism: Mechanism,
+    refresh: &str,
+) -> (Arc<Session>, Arc<Mutex<Vec<String>>>) {
+    let kept: Arc<Mutex<Vec<String>>> = Arc::default();
+    let keep = kept.clone();
+    let s = Session::with_provider(provider(base, mechanism), stored(refresh), move |s| {
+        keep.lock().unwrap().push(s.refresh_token.clone());
+        Ok(())
+    });
+    (Arc::new(s), kept)
+}
+
+/// The test servers' certificate, as the person would trust it: tokens
+/// only go over TLS.
+fn tls() -> Option<Shown> {
+    Some(Arc::new(Mutex::new(FIRST_CERT)))
+}
+
+fn trusted(login: Login) -> Login {
+    login.with_pins(vec![Pin {
+        host: "localhost".into(),
+        sha256: cert::sha256(FIRST_CERT),
+    }])
+}
+
+fn imap(port: u16, login: Login) -> ImapConfig {
+    ImapConfig {
+        host: "localhost".into(),
+        port,
+        security: Security::Tls,
+        username: "me@example.org".into(),
+        login: trusted(login),
+    }
+}
+
+fn valid(token: &str) -> Valid {
+    Arc::new(Mutex::new(token.into()))
+}
+
+/// The browser coming back: a GET to the loopback listener. Returns the
+/// status line.
+async fn browser(redirect: &str, target: &str) -> String {
+    let port: u16 = redirect.rsplit(':').next().unwrap().parse().unwrap();
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    tcp.write_all(format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut reply = String::new();
+    tcp.read_to_string(&mut reply).await.unwrap();
+    reply.lines().next().unwrap_or("").to_owned()
+}
+
+fn query(url: &str) -> HashMap<String, String> {
+    url::Url::parse(url)
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect()
+}
+
+#[tokio::test]
+async fn the_browser_comes_back_with_a_code_for_tokens() {
+    let (base, forms) = token_server(false).await;
+    let p = provider(&base, Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let redirect = loopback.redirect_uri();
+    assert!(redirect.starts_with("http://127.0.0.1:"));
+    let request = Request::new(&p, &client(), "me@example.org", &redirect);
+    let state = query(&request.url)["state"].clone();
+    let asked_challenge = query(&request.url)["code_challenge"].clone();
+
+    let waiting = tokio::spawn(async move {
+        let code = loopback.wait(&request, Duration::from_secs(10)).await;
+        (code, request)
+    });
+    // A spare connection that never sends anything holds nothing up.
+    let _idle = TcpStream::connect(redirect.trim_start_matches("http://"))
+        .await
+        .unwrap();
+    // The browser also asks for an icon: not the redirect.
+    assert!(browser(&redirect, "/favicon.ico").await.contains("404"));
+    let status = browser(&redirect, &format!("/?code=the-code&state={state}")).await;
+    assert!(status.contains("200"), "{status}");
+    let (code, request) = waiting.await.unwrap();
+    assert_eq!(code.unwrap(), "the-code");
+
+    let grant = request.exchange("the-code").await.unwrap();
+    assert_eq!(grant.access_token.as_str(), "access-code");
+    assert_eq!(
+        grant.refresh_token.as_deref().map(|s| s.as_str()),
+        Some("refresh-0")
+    );
+    let form = forms.lock().unwrap()[0].clone();
+    assert_eq!(form["grant_type"], "authorization_code");
+    assert_eq!(form["code"], "the-code");
+    assert_eq!(form["redirect_uri"], redirect);
+    assert_eq!(form["client_id"], "test-client");
+    // PKCE: the verifier sent now matches the challenge sent before.
+    assert_eq!(challenge(&form["code_verifier"]), asked_challenge);
+}
+
+#[tokio::test]
+async fn an_answer_with_another_state_is_refused_and_the_wait_goes_on() {
+    let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let redirect = loopback.redirect_uri();
+    let request = Request::new(&p, &client(), "", &redirect);
+    let state = query(&request.url)["state"].clone();
+    let waiting =
+        tokio::spawn(async move { loopback.wait(&request, Duration::from_secs(10)).await });
+    // Stray or hostile local requests, with a wrong state or none, don't
+    // end the sign-in.
+    for target in [
+        "/?code=forged&state=not-this-one",
+        "/?code=forged",
+        "/?error=access_denied&state=nope",
+        "/",
+    ] {
+        let status = browser(&redirect, target).await;
+        assert!(status.contains("400"), "{target}: {status}");
+    }
+    assert!(!waiting.is_finished());
+    // The browser's real answer still gets through.
+    let status = browser(&redirect, &format!("/?code=the-code&state={state}")).await;
+    assert!(status.contains("200"), "{status}");
+    assert_eq!(waiting.await.unwrap(), Ok("the-code".into()));
+}
+
+#[tokio::test]
+async fn only_wrong_answers_until_the_time_runs_out() {
+    let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let redirect = loopback.redirect_uri();
+    let request = Request::new(&p, &client(), "", &redirect);
+    let waiting =
+        tokio::spawn(async move { loopback.wait(&request, Duration::from_millis(800)).await });
+    browser(&redirect, "/?code=forged&state=not-this-one").await;
+    assert_eq!(waiting.await.unwrap(), Err(FlowError::Timeout));
+}
+
+#[tokio::test]
+async fn a_refusal_on_the_providers_page_is_reported() {
+    let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let redirect = loopback.redirect_uri();
+    let request = Request::new(&p, &client(), "", &redirect);
+    let state = query(&request.url)["state"].clone();
+    let waiting =
+        tokio::spawn(async move { loopback.wait(&request, Duration::from_secs(10)).await });
+    browser(
+        &redirect,
+        &format!("/?error=access_denied&error_description=The+user+said+no&state={state}"),
+    )
+    .await;
+    assert_eq!(
+        waiting.await.unwrap(),
+        Err(FlowError::Denied("access_denied: The user said no".into()))
+    );
+}
+
+#[tokio::test]
+async fn nobody_signing_in_times_out() {
+    let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let request = Request::new(&p, &client(), "", &loopback.redirect_uri());
+    assert_eq!(
+        loopback.wait(&request, Duration::from_millis(200)).await,
+        Err(FlowError::Timeout)
+    );
+}
+
+#[tokio::test]
+async fn tokens_are_renewed_before_they_run_out() {
+    let (base, forms) = token_server(true).await;
+    let (s, kept) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    // Plenty of time left: no trip to the provider.
+    s.seed("fresh".to_owned().into(), 3600).await;
+    assert_eq!(s.access_token().await.unwrap().as_str(), "fresh");
+    assert!(forms.lock().unwrap().is_empty());
+    // A minute left: renewed before use.
+    s.seed("almost-gone".to_owned().into(), 60).await;
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    assert_eq!(forms.lock().unwrap()[0]["refresh_token"], "refresh-0");
+    // Only providers that want them get the scopes again.
+    assert!(!forms.lock().unwrap()[0].contains_key("scope"));
+    // Microsoft sends a new refresh token each time: it is kept.
+    assert_eq!(*kept.lock().unwrap(), ["refresh-1"]);
+    assert_eq!(s.stored().await.refresh_token, "refresh-1");
+    // And the new one is used next.
+    s.renew().await.unwrap();
+    assert_eq!(forms.lock().unwrap()[1]["refresh_token"], "refresh-1");
+}
+
+#[tokio::test]
+async fn an_endless_token_lifetime_is_capped_not_a_crash() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "huge");
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    // Good for a while (capped at 30 days): no second trip.
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    assert_eq!(forms.lock().unwrap().len(), 1);
+    s.seed("x".to_owned().into(), u64::MAX).await;
+}
+
+#[tokio::test]
+async fn a_new_refresh_token_not_kept_is_kept_again_at_each_use() {
+    let (base, _) = token_server(true).await;
+    let tries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = tries.clone();
+    // The keychain refuses twice, then takes it.
+    let s = Session::with_provider(
+        provider(&base, Mechanism::Xoauth2),
+        stored("refresh-0"),
+        move |s| {
+            let mut t = seen.lock().unwrap();
+            t.push(s.refresh_token.clone());
+            if t.len() < 3 {
+                Err("keychain locked".into())
+            } else {
+                Ok(())
+            }
+        },
+    );
+    // The new token works for this run all the same.
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    assert!(s.unsaved().await);
+    s.access_token().await.unwrap();
+    assert!(s.unsaved().await);
+    s.access_token().await.unwrap();
+    assert!(!s.unsaved().await);
+    assert_eq!(
+        *tries.lock().unwrap(),
+        ["refresh-1", "refresh-1", "refresh-1"]
+    );
+    s.access_token().await.unwrap();
+    assert_eq!(tries.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn a_revoked_sign_in_asks_to_sign_in_again() {
+    let (base, _) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "revoked");
+    assert_eq!(
+        s.access_token().await.unwrap_err(),
+        TokenError::Rejected("invalid_grant: AADSTS70000: revoked".into())
+    );
+    let (port, _) = imap_server(valid("access-1"), tls()).await;
+    let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
+    assert!(matches!(err, ImapError::Auth), "{err:?}");
+}
+
+#[tokio::test]
+async fn an_unreachable_provider_is_offline_not_a_refusal() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", closed.local_addr().unwrap().port());
+    drop(closed);
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    let (port, _) = imap_server(valid("access-1"), tls()).await;
+    let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
+    assert!(matches!(err, ImapError::TokenUnavailable(_)), "{err:?}");
+    assert!(err.is_offline());
+}
+
+#[tokio::test]
+async fn imap_signs_in_with_xoauth2() {
+    let (base, _) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
+    check_login(&imap(port, Login::oauth(s))).await.unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["XOAUTH2 user=me@example.org\x01auth=Bearer access-1\x01\x01"]
+    );
+}
+
+#[tokio::test]
+async fn imap_signs_in_with_oauthbearer() {
+    let (base, _) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Oauthbearer, "refresh-0");
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
+    check_login(&imap(port, Login::oauth(s))).await.unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [format!(
+            "OAUTHBEARER n,a=me@example.org,\x01host=localhost\x01port={port}\x01auth=Bearer access-1\x01\x01"
+        )]
+    );
+}
+
+#[tokio::test]
+async fn imap_renews_a_refused_token_once() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    // The token in hand looks good for an hour, but the server says
+    // AUTHENTICATIONFAILED (revoked early, a password change…).
+    s.seed("stale".to_owned().into(), 3600).await;
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
+    check_login(&imap(port, Login::oauth(s))).await.unwrap();
+    let tried: Vec<_> = seen.lock().unwrap().clone();
+    assert_eq!(tried.len(), 2);
+    assert!(tried[0].contains("Bearer stale"));
+    assert!(tried[1].contains("Bearer access-1"));
+    assert_eq!(forms.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn imap_gives_up_after_the_second_refusal() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    let (port, seen) = imap_server(valid("nothing-works"), tls()).await;
+    let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
+    assert!(matches!(err, ImapError::Auth), "{err:?}");
+    // One token, one renewal, one more try: no loop.
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(forms.lock().unwrap().len(), 2);
+}
+
+fn smtp(port: u16, login: Login) -> SmtpConfig {
+    SmtpConfig {
+        host: "localhost".into(),
+        port,
+        security: Security::Tls,
+        username: "me@example.org".into(),
+        login: trusted(login),
+    }
+}
+
+fn draft() -> Draft {
+    Draft {
+        from_email: "me@example.org".into(),
+        to: vec!["luca@example.org".into()],
+        subject: "Signed in with a token".into(),
+        body: "Hello.".into(),
+        ..Draft::default()
+    }
+}
+
+#[tokio::test]
+async fn smtp_sends_with_xoauth2_and_oauthbearer() {
+    for (mechanism, name) in [
+        (Mechanism::Xoauth2, "XOAUTH2"),
+        (Mechanism::Oauthbearer, "OAUTHBEARER"),
+    ] {
+        let (base, _) = token_server(false).await;
+        let (s, _) = session(&base, mechanism, "refresh-0");
+        let (port, seen, delivered) = smtp_server(valid("access-1"), tls()).await;
+        send(&smtp(port, Login::oauth(s)), &ready(&draft()).unwrap())
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].starts_with(name), "{seen:?}");
+        assert!(seen[0].contains("auth=Bearer access-1\x01"));
+        assert!(delivered.lock().unwrap()[0].contains("Subject: Signed in with a token"));
+    }
+}
+
+#[tokio::test]
+async fn smtp_renews_a_refused_token_once_then_stops() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+    s.seed("stale".to_owned().into(), 3600).await;
+    let (port, seen, delivered) = smtp_server(valid("access-1"), tls()).await;
+    let login = Login::oauth(s);
+    send(&smtp(port, login.clone()), &ready(&draft()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(delivered.lock().unwrap().len(), 1);
+
+    let (port, seen, delivered) = smtp_server(valid("nothing-works"), tls()).await;
+    let err = send(&smtp(port, login), &ready(&draft()).unwrap())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Auth), "{err:?}");
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert!(delivered.lock().unwrap().is_empty());
+    // One renewal for each refusal, never more.
+    assert_eq!(forms.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn passwords_still_sign_in() {
+    let (port, _) = imap_server(valid("unused"), tls()).await;
+    check_login(&imap(port, "test".into())).await.unwrap();
+    let err = check_login(&imap(port, "wrong".into())).await.unwrap_err();
+    assert!(matches!(err, ImapError::Auth), "{err:?}");
+    let (port, _, delivered) = smtp_server(valid("unused"), tls()).await;
+    send(&smtp(port, "test".into()), &ready(&draft()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(delivered.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_token_never_goes_in_the_clear_or_to_another_server() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+
+    // Without TLS: refused before anything is sent.
+    let (port, seen) = imap_server(valid("access-1"), None).await;
+    let clear = ImapConfig {
+        security: Security::None,
+        ..imap(port, Login::oauth(s.clone()))
+    };
+    let err = check_login(&clear).await.unwrap_err();
+    assert!(
+        matches!(&err, ImapError::Tls(why) if why.contains("secure")),
+        "{err:?}"
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    let (port, seen, delivered) = smtp_server(valid("access-1"), None).await;
+    let clear = SmtpConfig {
+        security: Security::None,
+        ..smtp(port, Login::oauth(s.clone()))
+    };
+    let err = send(&clear, &ready(&draft()).unwrap()).await.unwrap_err();
+    assert!(matches!(err, SendError::Tls { .. }), "{err:?}");
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(delivered.lock().unwrap().is_empty());
+
+    // Over TLS, but to a server that isn't the provider's.
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
+    let elsewhere = ImapConfig {
+        host: "127.0.0.1".into(),
+        login: Login::oauth(s.clone()).with_pins(vec![Pin {
+            host: "127.0.0.1".into(),
+            sha256: cert::sha256(FIRST_CERT),
+        }]),
+        ..imap(port, Login::oauth(s))
+    };
+    let err = check_login(&elsewhere).await.unwrap_err();
+    assert!(
+        matches!(&err, ImapError::Tls(why) if why.contains("own servers")),
+        "{err:?}"
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    // No token was even asked for.
+    assert!(forms.lock().unwrap().is_empty());
+}

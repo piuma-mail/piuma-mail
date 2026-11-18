@@ -14,16 +14,19 @@ import java.util.Calendar
 /**
  * Reply, Archive and Snooze on a new-mail notice (`Notifications`), done
  * without opening the app: the engine reads the message, then archives,
- * snoozes or answers it, and the notice goes away.
+ * snoozes or answers it, and the notice goes away. Android shows three
+ * buttons on a phone, so Delete and Mark read are offered where there is
+ * room for them: on a paired watch, with the other three.
  */
 class NoticeActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.getStringExtra(ACTION) ?: return
-        val payload = intent.getStringExtra(PAYLOAD) ?: return
+        // Only a payload this app sealed: the reply's intent is mutable.
+        val payload = NoticeSeal.open(context, intent.getStringExtra(PAYLOAD)) ?: return
         val id = intent.getIntExtra(ID, 0)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(REPLY)?.toString().orEmpty()
-        if (action == "reply" && text.isBlank()) return
+        if ((action == "reply" || action == "replyAll") && text.isBlank()) return
         val pending = goAsync()
         Thread {
             val done = try {
@@ -85,17 +88,21 @@ class NoticeActions : BroadcastReceiver() {
             return at.timeInMillis / 1000
         }
 
-        /** Adds the three buttons to the notice [id] for one email. */
-        fun add(context: Context, builder: Notification.Builder, id: Int, payload: String, sender: String) {
+        /**
+         * Adds the three buttons to the notice [id] for one email, and on a
+         * paired watch Delete and Mark read too, and Reply all when the
+         * email went to [others] more people than Reply reaches.
+         */
+        fun add(context: Context, builder: Notification.Builder, id: Int, payload: String, sender: String, others: Int = 0) {
             fun intent(action: String, code: Int, mutable: Boolean = false): PendingIntent {
                 val i = Intent(context, NoticeActions::class.java)
                     .putExtra(ACTION, action)
-                    .putExtra(PAYLOAD, payload)
+                    .putExtra(PAYLOAD, NoticeSeal.seal(context, payload))
                     .putExtra(ID, id)
                 // RemoteInput fills the reply in, so that one must be mutable.
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                     if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
-                return PendingIntent.getBroadcast(context, id * 4 + code, i, flags)
+                return PendingIntent.getBroadcast(context, id * 8 + code, i, flags)
             }
             val icon = Icon.createWithResource(context, R.drawable.ic_notification)
             val input = RemoteInput.Builder(REPLY)
@@ -105,21 +112,45 @@ class NoticeActions : BroadcastReceiver() {
             fun Notification.Action.Builder.means(semantic: Int) = apply {
                 if (Build.VERSION.SDK_INT >= 28) setSemanticAction(semantic)
             }
-            builder.addAction(
-                Notification.Action.Builder(icon, context.getString(R.string.notice_reply), intent("reply", 1, mutable = true))
-                    .addRemoteInput(input)
-                    .means(Notification.Action.SEMANTIC_ACTION_REPLY)
+            val reply = Notification.Action.Builder(icon, context.getString(R.string.notice_reply), intent("reply", 1, mutable = true))
+                .addRemoteInput(input)
+                .means(Notification.Action.SEMANTIC_ACTION_REPLY)
+                .setAllowGeneratedReplies(false)
+                .build()
+            val archive = Notification.Action.Builder(icon, context.getString(R.string.notice_archive), intent("archive", 2))
+                .means(Notification.Action.SEMANTIC_ACTION_ARCHIVE)
+                .build()
+            val snooze = Notification.Action.Builder(icon, context.getString(R.string.notice_snooze), intent("snooze", 3))
+                .build()
+            val delete = Notification.Action.Builder(icon, context.getString(R.string.notice_delete), intent("delete", 4))
+                .means(Notification.Action.SEMANTIC_ACTION_DELETE)
+                .build()
+            val read = Notification.Action.Builder(icon, context.getString(R.string.notice_read), intent("read", 5))
+                .means(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ)
+                .build()
+            val replyAll = if (others > 0) {
+                val everyone = RemoteInput.Builder(REPLY)
+                    .setLabel(context.getString(R.string.notice_reply_all_hint, sender, others))
+                    .build()
+                Notification.Action.Builder(icon, context.getString(R.string.notice_reply_all), intent("replyAll", 6, mutable = true))
+                    .addRemoteInput(everyone)
                     .setAllowGeneratedReplies(false)
-                    .build(),
-            )
-            builder.addAction(
-                Notification.Action.Builder(icon, context.getString(R.string.notice_archive), intent("archive", 2))
-                    .means(Notification.Action.SEMANTIC_ACTION_ARCHIVE)
-                    .build(),
-            )
-            builder.addAction(
-                Notification.Action.Builder(icon, context.getString(R.string.notice_snooze), intent("snooze", 3))
-                    .build(),
+                    .build()
+            } else {
+                null
+            }
+            builder.addAction(reply)
+            builder.addAction(archive)
+            builder.addAction(snooze)
+            // A watch shows what is added here in place of the three.
+            builder.extend(
+                Notification.WearableExtender()
+                    .addAction(reply)
+                    .apply { if (replyAll != null) addAction(replyAll) }
+                    .addAction(archive)
+                    .addAction(read)
+                    .addAction(delete)
+                    .addAction(snooze),
             )
         }
     }

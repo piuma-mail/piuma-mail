@@ -7,7 +7,6 @@ use piuma_core::remote::{Remote, RemoteError};
 use piuma_core::{preview, AccountId};
 
 use super::engine::{engine, store, EngineError, ErrorKind};
-use crate::credentials;
 
 /// Files fetched for a preview at most, in bytes.
 const PREVIEW_MAX_BYTES: u64 = 40 * 1024 * 1024;
@@ -44,7 +43,7 @@ async fn fetch(
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let store_ref = engine.store.clone();
     let data = engine
         .runtime
