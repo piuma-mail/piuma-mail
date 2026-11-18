@@ -267,7 +267,11 @@ impl Store {
     /// is never inferred (an account's removal removes them). A change made
     /// here goes on top of the newest version `remote` (the space) has of
     /// the row. Before the first merge, rows the space already has are left
-    /// to it. Returns whether anything changed.
+    /// to it. With `stale_before` (this device last merged before the
+    /// space's horizon), a row stamped before it that the space no longer
+    /// has was removed elsewhere, its tombstone dropped since: it is
+    /// removed here too, not written back. Returns whether anything
+    /// changed.
     #[allow(clippy::too_many_arguments)]
     pub fn space_scan(
         &mut self,
@@ -277,6 +281,7 @@ impl Store {
         device: &str,
         now_ms: i64,
         remote: Option<&Tables>,
+        stale_before: Option<i64>,
     ) -> Result<bool> {
         let adopt = remote.filter(|_| !local.started);
         let (rows, _) = self.space_rows(secrets, !local.started)?;
@@ -368,7 +373,21 @@ impl Store {
                     continue;
                 }
                 let new_cols = fresh.get(table);
+                // Rows made here since the last merge are new, not stale.
+                let last_merge = local.last_merge;
+                let gone_there = |p: &Row| {
+                    stale_before.is_some_and(|h| p.s.t < h && p.s.t <= last_merge)
+                        && remote.is_some_and(|r| r.get(table).and_then(|t| t.get(gid)).is_none())
+                };
                 match prev {
+                    Some(p) if !p.del && gone_there(&p) => {
+                        local
+                            .doc
+                            .entry(table.clone())
+                            .or_default()
+                            .insert(gid.clone(), Row::tombstone(p.s));
+                        local.here.insert(key);
+                    }
                     Some(mut p) if !p.del => {
                         if local.here.contains(&key)
                             && new_cols.is_some_and(|c| c.iter().any(|c| p.v.contains_key(c)))
@@ -536,13 +555,16 @@ impl Store {
     /// whose account wasn't here yet), and removals. An account is removed
     /// only through the bookkeeping in `local` (see [Applied::remove]),
     /// and never while mail waits to leave with it, or when it holds the
-    /// space (`home`): the person is asked.
+    /// space (`home`): the person is asked. `local` is saved in the same
+    /// transaction (its passwords as `digest`s), so what came in and what
+    /// this device knows of the space never part.
     pub fn space_apply(
         &mut self,
         local: &mut Local,
         merged: &Tables,
         won: &BTreeSet<(String, String)>,
         home: Option<&str>,
+        digest: &dyn Fn(&str, &str) -> String,
     ) -> Result<Applied> {
         let (_, mut index) = self.space_rows(&[], false)?;
         let mut out = Applied::default();
@@ -614,6 +636,21 @@ impl Store {
                         }
                     }
                 }
+                if spec.table == "label" {
+                    // As removing it here: its rules have nothing left to
+                    // put on (their removal travels from here as well).
+                    let keyword: Option<String> = tx
+                        .query_row("SELECT keyword FROM label WHERE rowid = ?1", [rowid], |r| {
+                            r.get(0)
+                        })
+                        .optional()?;
+                    if let Some(k) = keyword {
+                        tx.execute(
+                            "DELETE FROM rule WHERE action = 'label' AND target = ?1",
+                            [k],
+                        )?;
+                    }
+                }
                 tx.execute(
                     &format!("DELETE FROM {} WHERE rowid = ?1", spec.table),
                     [rowid],
@@ -636,6 +673,14 @@ impl Store {
                 continue;
             };
             let cols = columns(&tx, spec.table)?;
+            let required: Vec<String> = {
+                let mut stmt =
+                    tx.prepare("SELECT name FROM pragma_table_info(?1) WHERE \"notnull\" = 1")?;
+                let names = stmt
+                    .query_map([spec.table], |r| r.get(0))?
+                    .collect::<std::result::Result<Vec<String>, _>>()?;
+                names
+            };
             for (gid, row) in rows.iter().filter(|(_, r)| !r.del) {
                 let key = Local::key(spec.table, gid);
                 let wanted = won.contains(&(spec.table.to_owned(), gid.clone()))
@@ -661,6 +706,11 @@ impl Store {
                             None => values.push((c.clone(), rusqlite::types::Value::Null)),
                             Some(g) => match index.get(&Local::key(target, g)) {
                                 Some(&id) => values.push((c.clone(), id.into())),
+                                // Gone, or not here yet: an optional link
+                                // is left empty, a required one waits.
+                                None if !required.contains(c) => {
+                                    values.push((c.clone(), rusqlite::types::Value::Null))
+                                }
                                 None => {
                                     ok = false;
                                     break;
@@ -721,20 +771,36 @@ impl Store {
                             params.push(id.into());
                         }
                         let verb = match spec.table {
-                            // One label by name, one setting by key.
-                            "label" | "setting" => "INSERT OR REPLACE",
+                            // One setting by key.
+                            "setting" => "INSERT OR REPLACE",
                             _ => "INSERT",
                         };
                         let marks = vec!["?"; names.len()].join(", ");
-                        tx.execute(
-                            &format!(
-                                "{verb} INTO {} ({}) VALUES ({marks})",
-                                spec.table,
-                                names.join(", ")
-                            ),
-                            rusqlite::params_from_iter(params),
-                        )
-                        .map(|_| tx.last_insert_rowid())
+                        let sql = format!(
+                            "{verb} INTO {} ({}) VALUES ({marks})",
+                            spec.table,
+                            names.join(", ")
+                        );
+                        let mut done = tx
+                            .execute(&sql, rusqlite::params_from_iter(params.clone()))
+                            .map(|_| tx.last_insert_rowid());
+                        // Another label here has the name (by another
+                        // keyword): both stay, this one as "Work (2)".
+                        if done.is_err() && spec.table == "label" {
+                            if let Some(i) = names.iter().position(|n| *n == "name") {
+                                let base = row.v.get("name").and_then(Value::as_str).unwrap_or("");
+                                for n in 2..10 {
+                                    params[i] = format!("{base} ({n})").into();
+                                    done = tx
+                                        .execute(&sql, rusqlite::params_from_iter(params.clone()))
+                                        .map(|_| tx.last_insert_rowid());
+                                    if done.is_ok() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        done
                     }
                 };
                 // A row this version can't take (a column it lacks a value
@@ -785,6 +851,13 @@ impl Store {
             // Newsletters may have been turned on or off on another device.
             refile_inbox(&tx)?;
         }
+        // What this device now knows of the space goes with what came in.
+        let mut kept = local.clone();
+        crate::space_sync::strip(&mut kept.doc, digest);
+        tx.execute(
+            "INSERT OR REPLACE INTO space_state (key, value) VALUES (?1, ?2)",
+            params![STATE, serde_json::to_string(&kept).expect("serializes")],
+        )?;
         tx.commit()?;
         for gid in &local.removing {
             if let Some(&id) = index.get(&Local::key("account", gid)) {

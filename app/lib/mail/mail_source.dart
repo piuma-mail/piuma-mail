@@ -1752,6 +1752,7 @@ class SyncState {
     this.rollback = false,
     this.outdated = false,
     this.held = const [],
+    this.recoveryChanged = false,
   });
 
   /// The address whose mailbox holds the space; null while sync is off.
@@ -1772,6 +1773,10 @@ class SyncState {
   /// Accounts removed on another device that wait for the person here,
   /// because something still has to leave with them.
   final List<HeldRemoval> held;
+
+  /// Two devices were unlinked at once: the recovery phrase changed and the
+  /// person hasn't seen the new one.
+  final bool recoveryChanged;
 
   bool get on => home != null;
 }

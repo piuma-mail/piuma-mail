@@ -43,6 +43,7 @@ pub mod smtp;
 pub mod space;
 pub mod space_merge;
 pub mod space_sync;
+pub mod space_trust;
 pub mod store;
 pub mod tls;
 mod tokens_g;

@@ -6315,4 +6315,11 @@ class AppLocalizationsIt extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Scrivi la nuova frase di recupero';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Due dispositivi sono stati scollegati nello stesso momento, quindi il tuo spazio ha una nuova chiave e una nuova frase di recupero. Quella che avevi scritto non funziona più.';
 }

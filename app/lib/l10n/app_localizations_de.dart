@@ -6305,4 +6305,12 @@ class AppLocalizationsDe extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String get syncRecoveryChangedTitle =>
+      'Schreib deine neue Wiederherstellungsphrase auf';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Zwei Geräte wurden gleichzeitig getrennt, deshalb hat dein Bereich einen neuen Schlüssel und eine neue Wiederherstellungsphrase. Die aufgeschriebene funktioniert nicht mehr.';
 }

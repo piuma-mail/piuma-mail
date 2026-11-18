@@ -9171,6 +9171,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{kind, select, phone{For security, confirm from a device that\'s already paired: your phone, active {ago}.} tablet{For security, confirm from a device that\'s already paired: your tablet, active {ago}.} other{For security, confirm from a device that\'s already paired: your computer, active {ago}.}}'**
   String pairConfirmFromDevice(String kind, String ago);
+
+  /// No description provided for @syncRecoveryChangedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down your new recovery phrase'**
+  String get syncRecoveryChangedTitle;
+
+  /// No description provided for @syncRecoveryChangedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Two devices were unlinked at the same time, so your space got a new key and a new recovery phrase. The one you wrote down no longer works.'**
+  String get syncRecoveryChangedBody;
 }
 
 class _AppLocalizationsDelegate

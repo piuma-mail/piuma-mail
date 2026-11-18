@@ -6287,4 +6287,12 @@ class AppLocalizationsEs extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String get syncRecoveryChangedTitle =>
+      'Apunta tu nueva frase de recuperación';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Se desvincularon dos dispositivos a la vez, así que tu espacio tiene una clave y una frase de recuperación nuevas. La que apuntaste ya no sirve.';
 }

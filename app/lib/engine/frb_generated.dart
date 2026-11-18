@@ -10036,8 +10036,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SyncInfo dco_decode_sync_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return SyncInfo(
       home: dco_decode_opt_String(arr[0]),
       syncedAt: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -10045,6 +10045,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rollback: dco_decode_bool(arr[3]),
       outdated: dco_decode_bool(arr[4]),
       held: dco_decode_list_held_account(arr[5]),
+      recoveryChanged: dco_decode_bool(arr[6]),
     );
   }
 
@@ -13106,6 +13107,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_rollback = sse_decode_bool(deserializer);
     var var_outdated = sse_decode_bool(deserializer);
     var var_held = sse_decode_list_held_account(deserializer);
+    var var_recoveryChanged = sse_decode_bool(deserializer);
     return SyncInfo(
       home: var_home,
       syncedAt: var_syncedAt,
@@ -13113,6 +13115,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       rollback: var_rollback,
       outdated: var_outdated,
       held: var_held,
+      recoveryChanged: var_recoveryChanged,
     );
   }
 
@@ -15846,6 +15849,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.rollback, serializer);
     sse_encode_bool(self.outdated, serializer);
     sse_encode_list_held_account(self.held, serializer);
+    sse_encode_bool(self.recoveryChanged, serializer);
   }
 
   @protected

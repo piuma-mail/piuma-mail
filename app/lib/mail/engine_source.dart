@@ -383,6 +383,7 @@ class EngineMailSource extends MailSource {
     return SyncState(
       rollback: s.rollback,
       outdated: s.outdated,
+      recoveryChanged: s.recoveryChanged,
       held: [
         for (final h in s.held)
           HeldRemoval(

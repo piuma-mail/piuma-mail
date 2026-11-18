@@ -5,7 +5,8 @@
 //! The transport only stores and lists notes ([Transport]): today the
 //! hidden folder of one of the person's mailboxes ([Folder]), later a
 //! self-hosted companion. What is merged, the generation and the schema
-//! rule live here and in [crate::space_merge], and know nothing of IMAP.
+//! rule live here and in [crate::space_merge], and know nothing of IMAP;
+//! which copies are taken, by who signed them, in [crate::space_trust].
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -15,8 +16,10 @@ use crate::feedback::{log, Level};
 use crate::remote::{Remote, RemoteError};
 use crate::space::{
     self, Device, Key, Note, PairAnswer, PairRequest, Pairing, SealedSpace, Space, SpaceError,
+    Unlink,
 };
-use crate::space_merge::{self, Guard, Local, Tables, FORMAT, SCHEMA, SECRETS};
+use crate::space_merge::{self, Local, Tables, FORMAT, SCHEMA, SECRETS};
+use crate::space_trust::{self, Trust};
 use crate::store::Applied;
 use crate::Store;
 
@@ -41,8 +44,8 @@ pub enum SyncError {
     #[error("another space is in this mailbox")]
     Taken,
     /// Every copy of the space this device can open is older than what it
-    /// accepted, or sealed with a key that was replaced: someone put an
-    /// old copy back. Nothing is taken in or written.
+    /// took, or not signed by a linked device: someone put an old copy
+    /// back, or an unlinked device wrote one. Nothing is taken in.
     #[error("only an older copy of the space was found")]
     Rollback,
 }
@@ -182,60 +185,77 @@ pub async fn about(t: &mut impl Transport) -> Result<Option<space::About>> {
     Ok(newest(&t.notes().await?).map(|s| s.about.clone()))
 }
 
-/// The content key this device accepted last, from its guard.
-fn guarded_key(me: &Me, guard: &Guard) -> Option<Key> {
-    let sealed = hex(&guard.key)?;
-    let plain = space::open(&space::local_key(&me.secret, "guard"), &sealed).ok()?;
-    <[u8; 32]>::try_from(plain.as_slice()).ok().map(Key)
-}
-
-fn guard_for(me: &Me, space: &Space) -> Guard {
-    let sealed = space::seal(
-        &space::local_key(&me.secret, "guard"),
-        &space.content_key().0,
-    );
-    Guard {
-        generation: space.content.generation,
-        key: sealed.iter().map(|b| format!("{b:02x}")).collect(),
+/// This device as it writes itself in the space: with its signing key.
+fn device(me: &Me) -> Device {
+    Device {
+        sign: space::sign_public(&me.secret),
+        ..me.device.clone()
     }
 }
 
-fn hex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || s.is_empty() {
-        return None;
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
-        .collect()
+fn b64(data: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
-/// The copies of the space this device takes, merged into the newest.
+fn unb64(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
+/// How a device opens the stored copies.
+enum Opener<'a> {
+    /// With its own wrap: a linked device.
+    Me(&'a Me),
+    /// With the content key a pairing handed over.
+    Key(&'a Key),
+    /// With the recovery phrase.
+    Recovery(&'a Key),
+}
+
+impl Opener<'_> {
+    fn open(&self, sealed: &SealedSpace) -> std::result::Result<Space, SpaceError> {
+        match self {
+            Opener::Me(me) => Space::open_as(sealed, &me.device.id, &me.secret),
+            Opener::Key(key) => Space::open_with(sealed, key),
+            Opener::Recovery(key) => Space::open_recovery(sealed, key),
+        }
+    }
+}
+
+/// The copies of the space this device takes, merged.
 struct Opened {
+    /// The newest copy taken, with the rows of the others merged in, the
+    /// devices of all of them less the unlinked, and the signed unlinks.
     space: Space,
     /// Every stored copy, to replace when writing.
     ids: Vec<String>,
-    /// Copies left out as older ones.
+    /// Copies left out.
     refused: u32,
+    /// What this device trusts after taking them.
+    trust: Trust,
+    /// The content key and recovery phrase changed in the merge: two
+    /// unlinks at once, or one the newest copy's key didn't follow.
+    rotated: bool,
+    /// The newest copy taken, as stored, to put back if the folder ever
+    /// holds only older ones.
+    sealed: Option<SealedSpace>,
+    /// This device is joining: it writes itself in whatever else changed.
+    joining: bool,
 }
 
-/// Opens the stored copies with `open`, keeps those `guard` allows (see
-/// [space_merge::acceptable]) and sealed with the newest one's key, and
-/// merges their rows. A space only in the old format comes out converted.
-fn open_copies(
-    notes: &[(String, Note)],
-    guard: &Guard,
-    current: Option<&Key>,
-    open: impl Fn(&SealedSpace) -> std::result::Result<Space, SpaceError>,
-) -> Result<Opened> {
+/// Opens the stored copies, keeps those [space_trust::judge] takes, and
+/// merges them. A space only in the old format (unsigned) comes out
+/// converted, for a device that never took a newer one.
+fn open_copies(notes: &[(String, Note)], trust: &Trust, opener: Opener<'_>) -> Result<Opened> {
     let ids: Vec<String> = notes
         .iter()
         .filter(|(_, n)| matches!(n, Note::Space(_)))
         .map(|(id, _)| id.clone())
         .collect();
-    let mut refused = 0;
+    let mut failed = 0;
     let mut not_linked = false;
-    let mut opened = Vec::new();
+    let mut opened: Vec<(SealedSpace, Space)> = Vec::new();
     let mut v1 = Vec::new();
     for (_, note) in notes {
         let Note::Space(sealed) = note else { continue };
@@ -243,70 +263,108 @@ fn open_copies(
             v1.push(sealed);
             continue;
         }
-        match open(sealed) {
-            Ok(s) => {
-                if space_merge::acceptable(
-                    s.content.generation,
-                    &s.content_key().0,
-                    &s.content.previous,
-                    guard.generation,
-                    current.map(|k| &k.0),
-                ) {
-                    opened.push(s);
-                } else {
-                    refused += 1;
-                }
-            }
+        match opener.open(sealed) {
+            Ok(s) => opened.push((sealed.clone(), s)),
             Err(SpaceError::NotLinked) => not_linked = true,
             Err(SpaceError::Newer) => return Err(SpaceError::Newer.into()),
-            Err(_) => refused += 1,
+            Err(_) => failed += 1,
         }
     }
     if opened.is_empty() {
-        // Only the old format: converted, unless a newer one was accepted
-        // here before (then it is an old copy put back).
-        if v1.is_empty() || guard.generation > 0 || not_linked || refused > 0 {
-            return Err(if not_linked {
-                SpaceError::NotLinked.into()
-            } else if refused > 0 || guard.generation > 0 {
-                log_refused(refused.max(1));
-                SyncError::Rollback
-            } else {
-                SyncError::NoSpace
-            });
-        }
-        let mut last = Err(SyncError::NoSpace);
-        for sealed in v1.into_iter().rev() {
-            match open(sealed) {
-                Ok(space) => {
-                    return Ok(Opened {
-                        space,
-                        ids,
-                        refused,
-                    })
+        if !v1.is_empty() && trust.generation == 0 && !not_linked {
+            let mut last = Err(SyncError::NoSpace);
+            for sealed in v1.into_iter().rev() {
+                match opener.open(sealed) {
+                    Ok(space) => {
+                        // Its devices are trusted by id; each sets its
+                        // signing key with its first signed copy.
+                        let trust = Trust {
+                            devices: space
+                                .content
+                                .devices
+                                .iter()
+                                .map(|d| (d.id.clone(), String::new()))
+                                .collect(),
+                            ..Trust::default()
+                        };
+                        return Ok(Opened {
+                            space,
+                            ids,
+                            refused: failed,
+                            trust,
+                            rotated: false,
+                            sealed: None,
+                            joining: false,
+                        });
+                    }
+                    Err(e) => last = Err(e.into()),
                 }
-                Err(e) => last = Err(e.into()),
             }
+            return last;
         }
-        return last;
+        return Err(if not_linked {
+            SpaceError::NotLinked.into()
+        } else if failed > 0 || !v1.is_empty() {
+            log_refused(failed.max(1));
+            SyncError::Rollback
+        } else {
+            SyncError::NoSpace
+        });
     }
-    opened.sort_by_key(|s| s.content.generation);
-    let mut top = opened.pop().expect("one at least");
-    for other in opened {
-        if other.content_key() != top.content_key() {
-            // From before the key changed: what it had, the change carried.
-            refused += 1;
-            continue;
-        }
-        space_merge::merge(&mut top.content.tables, &other.content.tables);
-    }
+    let pairs: Vec<(&SealedSpace, &Space)> = opened.iter().map(|(a, b)| (a, b)).collect();
+    let verdict = space_trust::judge(trust, &pairs);
+    let refused = verdict.refused + failed;
     if refused > 0 {
         log_refused(refused);
     }
+    let Some(&top) = verdict.accepted.iter().max_by(|a, b| {
+        let (sa, ca) = &opened[**a];
+        let (sb, cb) = &opened[**b];
+        (ca.content.generation, &sa.signer).cmp(&(cb.content.generation, &sb.signer))
+    }) else {
+        return Err(if not_linked {
+            SpaceError::NotLinked.into()
+        } else {
+            SyncError::Rollback
+        });
+    };
+    let (top_sealed, mut space) = opened[top].clone();
+    let revoked = &verdict.trust.revoked;
+    for &i in &verdict.accepted {
+        let other = &opened[i].1;
+        space.content.horizon = space.content.horizon.max(other.content.horizon);
+        if i == top {
+            continue;
+        }
+        space_merge::merge(&mut space.content.tables, &other.content.tables);
+        for d in &other.content.devices {
+            match space.content.devices.iter_mut().find(|x| x.id == d.id) {
+                Some(x) => {
+                    x.last_seen = x.last_seen.max(d.last_seen);
+                    if x.vouch.is_empty() && !d.vouch.is_empty() {
+                        x.by.clone_from(&d.by);
+                        x.vouch.clone_from(&d.vouch);
+                        x.sign.clone_from(&d.sign);
+                    }
+                }
+                None => space.content.devices.push(d.clone()),
+            }
+        }
+    }
+    space.content.devices.retain(|d| !revoked.contains(&d.id));
+    space.content.unlinked = verdict.unlinked;
+    let rotated = verdict.rotate;
+    if rotated {
+        space.rotate();
+    }
     Ok(Opened {
-        space: top,
+        space,
         ids,
         refused,
+        trust: verdict.trust,
+        rotated,
+        sealed: Some(top_sealed),
+        joining: false,
     })
 }
 
@@ -314,33 +372,49 @@ fn log_refused(n: u32) {
     log(
         Level::Warn,
         "space",
-        &format!("refused {n} older copies of the sync space"),
+        &format!("refused {n} copies of the sync space: older, or not signed by a linked device"),
     );
 }
 
-/// Opens the space as this device, as its guard allows.
-async fn open_checked(t: &mut impl Transport, me: &Me, guard: &Guard) -> Result<Opened> {
+/// Opens the space as this device, as its trust allows.
+async fn open_checked(t: &mut impl Transport, me: &Me, trust: &Trust) -> Result<Opened> {
     let notes = t.notes().await?;
     if !notes.iter().any(|(_, n)| matches!(n, Note::Space(_))) {
         return Err(SyncError::NoSpace);
     }
-    let current = guarded_key(me, guard);
-    open_copies(&notes, guard, current.as_ref(), |s| {
-        Space::open_as(s, &me.device.id, &me.secret)
-    })
+    open_copies(&notes, trust, Opener::Me(me))
 }
 
 /// Opens the space as this device.
 pub async fn open(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Result<Space> {
-    let guard = lock(store).space_local()?.guard;
-    Ok(open_checked(t, me, &guard).await?.space)
+    let trust = lock(store).space_local()?.trust;
+    Ok(open_checked(t, me, &trust).await?.space)
 }
 
-/// Writes `space` and drops the copies it replaces.
-async fn put(t: &mut impl Transport, space: &Space, older: &[String]) -> Result<()> {
-    t.put(&Note::Space(space.seal())).await?;
+/// Seals `space` as `me` (its device entry signed and vouched for),
+/// writes it and drops the copies it replaces. Returns it as stored.
+async fn put(
+    t: &mut impl Transport,
+    space: &mut Space,
+    me: &Me,
+    older: &[String],
+) -> Result<SealedSpace> {
+    let mut dev = device(me);
+    if let Some(d) = space.content.devices.iter().find(|d| d.id == dev.id) {
+        if !d.vouch.is_empty() && d.sign == dev.sign {
+            dev.by.clone_from(&d.by);
+            dev.vouch.clone_from(&d.vouch);
+        }
+    }
+    if dev.vouch.is_empty() {
+        // The device that made the space, or one the old format listed.
+        space::vouch(&mut dev, &me.device.id, &me.secret);
+    }
+    space.link(&dev);
+    let sealed = space.seal(&me.device.id, &me.secret);
+    t.put(&Note::Space(sealed.clone())).await?;
     t.remove(older).await?;
-    Ok(())
+    Ok(sealed)
 }
 
 /// What a sync round did.
@@ -356,8 +430,11 @@ pub struct Report {
     /// The space was written by a newer version: this device reads what it
     /// understands, and writes nothing until it is updated.
     pub outdated: bool,
-    /// Older copies of the space left out.
+    /// Copies of the space left out: older, or not signed by a linked
+    /// device.
     pub refused: u32,
+    /// The merge changed the recovery phrase.
+    pub recovery_changed: bool,
 }
 
 #[derive(Debug)]
@@ -395,7 +472,7 @@ fn hydrate(doc: &mut Tables, remote: &Tables) {
 }
 
 /// Passwords as this device keeps them: a digest in place of the value.
-fn strip(doc: &mut Tables, digest: &dyn Fn(&str, &str) -> String) {
+pub(crate) fn strip(doc: &mut Tables, digest: &dyn Fn(&str, &str) -> String) {
     if let Some(secrets) = doc.get_mut(SECRETS) {
         for (gid, row) in secrets.iter_mut() {
             if let Some(v) = row.v.remove("value") {
@@ -421,9 +498,19 @@ fn digest_for(me: &Me) -> impl Fn(&str, &str) -> String {
     move |gid: &str, value: &str| space::digest(&key, gid, value)
 }
 
-/// Merges `opened` with this store, puts in what came from other devices,
-/// and writes the result when it holds something the space doesn't (or
-/// this device is new to it, or due to mark itself as seen).
+/// Saves `local` with its passwords as digests.
+fn save(store: &Mutex<Store>, local: &Local, me: &Me) -> Result<()> {
+    let mut kept = local.clone();
+    strip(&mut kept.doc, &digest_for(me));
+    lock(store).set_space_local(&kept)?;
+    Ok(())
+}
+
+/// Merges `opened` with this store, puts in what came from other devices
+/// and keeps the merged state in one transaction, then writes the result
+/// when it holds something the space doesn't (or this device is new to
+/// it, or due to mark itself as seen).
+#[allow(clippy::too_many_arguments)]
 async fn settle(
     t: &mut impl Transport,
     store: &Mutex<Store>,
@@ -437,9 +524,21 @@ async fn settle(
         space: mut remote,
         ids,
         refused,
+        mut trust,
+        rotated,
+        sealed,
+        joining,
     } = opened;
     let now_ms = space_merge::now_ms();
     let digest = digest_for(me);
+    // A device whose clock runs ahead wins no write for that: its stamps
+    // come back to this clock's, and this device's next ones go past them.
+    let clamped = space_merge::clamp(&mut remote.content.tables, now_ms + space_merge::MAX_SKEW);
+    local.observe(&remote.content.tables);
+    // Away since before the horizon: older rows the space no longer has
+    // were removed, their tombstones gone.
+    let stale = (local.started && local.last_merge < remote.content.horizon)
+        .then_some(remote.content.horizon);
     lock(store).space_scan(
         &mut local,
         secrets,
@@ -447,49 +546,62 @@ async fn settle(
         &me.device.id,
         now_ms,
         Some(&remote.content.tables),
+        stale,
     )?;
-    local.observe(&remote.content.tables);
     hydrate(&mut local.doc, &remote.content.tables);
     let mut merged = local.doc.clone();
     let won = space_merge::merge(&mut merged, &remote.content.tables);
-    let applied = lock(store).space_apply(&mut local, &merged, &won, home)?;
-    let horizon = space_merge::horizon(remote.content.devices.iter().map(|d| d.last_seen), now_ms);
-    space_merge::compact(&mut merged, horizon);
+    let horizon = space_merge::horizon(remote.content.devices.iter().map(|d| d.last_seen), now_ms)
+        .max(remote.content.horizon);
+    let mut kept = merged.clone();
+    space_merge::compact(&mut kept, horizon);
     let outdated = remote.content.schema > SCHEMA;
-    let rows = writable(&merged);
-    let differs = !space_merge::same(&rows, &remote.content.tables);
+    trust.me(&device(me));
+    local.trust = trust;
+    local.started = true;
+    local.last_merge = now_ms;
+    local.refused = refused;
+    local.outdated = outdated;
+    local.recovery_changed |= rotated;
+    if let Some(s) = &sealed {
+        local.last_copy = b64(&s.to_bytes());
+    }
+    local.doc = kept.clone();
+    // What came in and what this device now knows of the space, together:
+    // a crash after this never takes merged rows for changes made here.
+    let applied = lock(store).space_apply(&mut local, &merged, &won, home, &digest)?;
+    let rows = writable(&kept);
+    let differs = clamped || !space_merge::same(&rows, &remote.content.tables);
     let now = space::now();
-    let stale = remote
+    let stale_seen = remote
         .content
         .devices
         .iter()
         .find(|d| d.id == me.device.id)
-        .is_none_or(|d| now - d.last_seen >= TOUCH_EVERY);
-    let pushed = !outdated && (differs || stale || ids.len() > 1 || remote.converted());
+        .is_none_or(|d| now - d.last_seen >= TOUCH_EVERY || d.vouch.is_empty());
+    let pushed = !outdated
+        && (joining || differs || stale_seen || ids.len() > 1 || remote.converted() || rotated);
     if pushed {
         remote.content.tables = rows;
-        remote.content.generation += 1;
+        remote.content.generation = local.trust.generation + 1;
+        remote.content.horizon = horizon;
         remote.content.format = FORMAT;
         remote.content.schema = SCHEMA;
         remote.content.updated_at = now;
         remote.content.updated_by.clone_from(&me.device.id);
-        remote.link(&me.device);
-        put(t, &remote, &ids).await?;
+        let sealed = put(t, &mut remote, me, &ids).await?;
+        local.trust.generation = remote.content.generation;
+        local.last_copy = b64(&sealed.to_bytes());
         local.unpushed = false;
+        save(store, &local, me)?;
     }
-    local.doc = merged;
-    strip(&mut local.doc, &digest);
-    local.started = true;
-    local.guard = guard_for(me, &remote);
-    local.refused = refused;
-    local.outdated = outdated;
-    lock(store).set_space_local(&local)?;
     Ok(Report {
         space: remote,
         pushed,
         applied,
         outdated,
         refused,
+        recovery_changed: local.recovery_changed,
     })
 }
 
@@ -498,6 +610,10 @@ async fn settle(
 /// `secrets` are this device's passwords, by account address (or
 /// `secret:calendar-<id>`); `home` the address whose mailbox holds the
 /// space, which is never removed by a round.
+///
+/// When the folder holds only copies this device refuses (older ones put
+/// back, or copies from an unlinked device), it puts back the newest copy
+/// it took, so the folder heals, and says [SyncError::Rollback].
 pub async fn round(
     t: &mut impl Transport,
     store: &Mutex<Store>,
@@ -505,8 +621,8 @@ pub async fn round(
     me: &Me,
     home: Option<&str>,
 ) -> Result<Round> {
-    let local = lock(store).space_local()?;
-    let opened = match open_checked(t, me, &local.guard).await {
+    let mut local = lock(store).space_local()?;
+    let opened = match open_checked(t, me, &local.trust).await {
         Err(SyncError::Space(SpaceError::NotLinked)) => return Ok(Round::Unlinked),
         Err(SyncError::Space(SpaceError::Newer)) => return Ok(Round::Newer),
         Err(SyncError::NoSpace) => {
@@ -515,11 +631,41 @@ pub async fn round(
                 .map(Round::Moved)
                 .ok_or(SyncError::NoSpace)
         }
+        Err(SyncError::Rollback) => {
+            heal(t, &local).await?;
+            local.refused = local.refused.max(1);
+            save(store, &local, me)?;
+            return Err(SyncError::Rollback);
+        }
         r => r?,
     };
     Ok(Round::Done(Box::new(
         settle(t, store, &secrets, me, home, opened, local).await?,
     )))
+}
+
+/// Puts back the newest copy this device took, signed by whoever wrote
+/// it, in place of the refused ones.
+async fn heal(t: &mut impl Transport, local: &Local) -> Result<()> {
+    let Some(sealed) = unb64(&local.last_copy).and_then(|b| SealedSpace::from_bytes(&b).ok())
+    else {
+        return Ok(());
+    };
+    let refused: Vec<String> = t
+        .notes()
+        .await?
+        .into_iter()
+        .filter(|(_, n)| matches!(n, Note::Space(_)))
+        .map(|(id, _)| id)
+        .collect();
+    t.put(&Note::Space(sealed)).await?;
+    t.remove(&refused).await?;
+    log(
+        Level::Warn,
+        "space",
+        "put back the newest copy of the sync space",
+    );
+    Ok(())
 }
 
 /// Whether this device changed something the space doesn't have yet,
@@ -539,6 +685,7 @@ pub fn dirty(store: &Mutex<Store>, secrets: &[(String, String)], me: &Me) -> Res
         &me.device.id,
         space_merge::now_ms(),
         None,
+        None,
     )?;
     strip(&mut local.doc, &digest);
     s.set_space_local(&local)?;
@@ -549,6 +696,17 @@ pub fn dirty(store: &Mutex<Store>, secrets: &[(String, String)], me: &Me) -> Res
 /// person, an older copy refused, a newer version's space.
 pub fn state(store: &Mutex<Store>) -> Result<Local> {
     Ok(lock(store).space_local()?)
+}
+
+/// The person saw the recovery phrase that a merge changed.
+pub fn recovery_seen(store: &Mutex<Store>) -> Result<()> {
+    let s = lock(store);
+    let mut local = s.space_local()?;
+    if local.recovery_changed {
+        local.recovery_changed = false;
+        s.set_space_local(&local)?;
+    }
+    Ok(())
 }
 
 /// The person confirmed removing an account another device removed: the
@@ -615,9 +773,12 @@ pub async fn create(
         &me.device.id,
         space_merge::now_ms(),
         None,
+        None,
     )?;
+    let mut dev = device(me);
+    space::vouch(&mut dev, &me.device.id, &me.secret);
     let (mut space, recovery) = Space::create(
-        &me.device,
+        &dev,
         space::Content {
             generation: 1,
             updated_at: space::now(),
@@ -626,7 +787,6 @@ pub async fn create(
             ..Default::default()
         },
     );
-    space.link(&me.device);
     let older: Vec<String> = t
         .notes()
         .await?
@@ -634,12 +794,14 @@ pub async fn create(
         .filter(|(_, n)| matches!(n, Note::Space(_)))
         .map(|(id, _)| id)
         .collect();
-    put(t, &space, &older).await?;
-    strip(&mut local.doc, &digest);
+    let sealed = put(t, &mut space, me, &older).await?;
     local.started = true;
     local.unpushed = false;
-    local.guard = guard_for(me, &space);
-    lock(store).set_space_local(&local)?;
+    local.last_merge = space_merge::now_ms();
+    local.trust = Trust::from_space(&space);
+    local.trust.me(&dev);
+    local.last_copy = b64(&sealed.to_bytes());
+    save(store, &local, me)?;
     Ok(recovery)
 }
 
@@ -666,7 +828,8 @@ pub async fn relocate(
     me: &Me,
 ) -> Result<Space> {
     let mut local = lock(store).space_local()?;
-    let mut space = open_checked(from, me, &local.guard).await?.space;
+    let opened = open_checked(from, me, &local.trust).await?;
+    let mut space = opened.space;
     let there = to.notes().await?;
     if let Some(sealed) = newest(&there) {
         if Space::open_as(sealed, &me.device.id, &me.secret).is_err() {
@@ -676,27 +839,28 @@ pub async fn relocate(
     // What an earlier stay left there (an old copy, a note it moved on).
     let stale: Vec<String> = there.into_iter().map(|(id, _)| id).collect();
     to.remove(&stale).await?;
-    space.content.generation += 1;
-    space.link(&me.device);
-    put(to, &space, &[]).await?;
+    space.content.generation = opened.trust.generation.max(space.content.generation) + 1;
+    let sealed = put(to, &mut space, me, &[]).await?;
     let old: Vec<String> = from.notes().await?.into_iter().map(|(id, _)| id).collect();
     from.put(&Note::Moved(to_mailbox.to_owned())).await?;
     from.remove(&old).await?;
-    local.guard = guard_for(me, &space);
-    lock(store).set_space_local(&local)?;
+    local.trust = opened.trust;
+    local.trust.generation = space.content.generation;
+    local.last_copy = b64(&sealed.to_bytes());
+    save(store, &local, me)?;
     Ok(space)
 }
 
 /// On the new device: posts a pairing request with `code` and returns
 /// what waits for the answer.
 pub async fn request(t: &mut impl Transport, code: &str, me: &Me) -> Result<Pairing> {
-    post(t, space::pair_start(code, &me.device)).await
+    post(t, space::pair_start(code, &device(me))).await
 }
 
 /// [request] with a scanned invite's code: the device that showed it
 /// answers on its own.
 pub async fn request_qr(t: &mut impl Transport, code: &str, me: &Me) -> Result<Pairing> {
-    post(t, space::pair_start_qr(code, &me.device)).await
+    post(t, space::pair_start_qr(code, &device(me))).await
 }
 
 async fn post(t: &mut impl Transport, pairing: Pairing) -> Result<Pairing> {
@@ -721,9 +885,9 @@ pub async fn answer(t: &mut impl Transport, pairing: &Pairing) -> Result<Option<
     Ok(None)
 }
 
-/// On the new device: waits for the answer, then links itself and takes
-/// the space in. `secrets` are the passwords it has (the mailbox it
-/// signed in to).
+/// On the new device: waits for the answer, then links itself, vouched
+/// for by the device that approved it, and takes the space in. `secrets`
+/// are the passwords it has (the mailbox it signed in to).
 #[allow(clippy::too_many_arguments)]
 pub async fn join(
     t: &mut impl Transport,
@@ -741,17 +905,20 @@ pub async fn join(
         tokio::time::sleep(every).await;
     };
     let request = pairing.request.id.clone();
-    let key = pairing.finish(&answer)?;
+    let mut dev = pairing.request.device.clone();
+    let answered = pairing.finish(&answer)?;
+    let key = answered.key()?;
+    dev.by.clone_from(&answered.by);
+    dev.vouch.clone_from(&answered.vouch);
     let notes = t.notes().await?;
-    let opened = open_copies(&notes, &Guard::default(), None, |s| {
-        Space::open_with(s, &key)
-    })?;
-    let report = start(t, store, &secrets, me, home, opened).await?;
+    let opened = open_copies(&notes, &Trust::default(), Opener::Key(&key))?;
+    let report = start(t, store, &secrets, me, home, opened, dev).await?;
     clean_pairing(t, &request).await?;
     Ok(report)
 }
 
-/// On a new device with the recovery phrase in place of a code.
+/// On a new device with the recovery phrase in place of a code: it
+/// vouches for itself with the phrase.
 pub async fn recover(
     t: &mut impl Transport,
     phrase: &str,
@@ -765,23 +932,33 @@ pub async fn recover(
     if !notes.iter().any(|(_, n)| matches!(n, Note::Space(_))) {
         return Err(SyncError::NoSpace);
     }
-    let opened = open_copies(&notes, &Guard::default(), None, |s| {
-        Space::open_recovery(s, &recovery)
-    })?;
-    start(t, store, &secrets, me, home, opened).await
+    let opened = open_copies(&notes, &Trust::default(), Opener::Recovery(&recovery))?;
+    let mut dev = device(me);
+    space::vouch(
+        &mut dev,
+        space::RECOVERY,
+        &space::recovery_signer(&recovery),
+    );
+    start(t, store, &secrets, me, home, opened, dev).await
 }
 
 /// A device joins: what it held before stays, and joins the space beside
 /// what the space has (which wins where both have the same row).
+#[allow(clippy::too_many_arguments)]
 async fn start(
     t: &mut impl Transport,
     store: &Mutex<Store>,
     secrets: &[(String, String)],
     me: &Me,
     home: Option<&str>,
-    opened: Opened,
+    mut opened: Opened,
+    dev: Device,
 ) -> Result<Report> {
     lock(store).space_forget()?;
+    // In the list, with whoever vouched for it, before it writes.
+    opened.space.link(&dev);
+    opened.trust.me(&dev);
+    opened.joining = true;
     settle(t, store, secrets, me, home, opened, Local::default()).await
 }
 
@@ -791,6 +968,17 @@ pub async fn requests(t: &mut impl Transport) -> Result<Vec<PairRequest>> {
     let mut waiting = waiting(t.notes().await?);
     waiting.retain(|r| !r.qr());
     Ok(waiting)
+}
+
+/// The content key, as this device's trust allows, to hand to a new
+/// device.
+async fn content_key(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Result<Key> {
+    let trust = lock(store).space_local()?.trust;
+    Ok(open_checked(t, me, &trust)
+        .await?
+        .space
+        .content_key()
+        .clone())
 }
 
 /// On the linked device showing QR invites: answers every request made
@@ -806,7 +994,7 @@ pub async fn answer_invite(
     me: &Me,
 ) -> Result<Vec<String>> {
     let notes = t.notes().await?;
-    let asking: Vec<(PairRequest, &String)> = waiting(notes.clone())
+    let asking: Vec<(PairRequest, &String)> = waiting(notes)
         .into_iter()
         .filter_map(|r| {
             let tag = r.invite.as_deref()?;
@@ -817,15 +1005,11 @@ pub async fn answer_invite(
     if asking.is_empty() {
         return Ok(Vec::new());
     }
-    let guard = lock(store).space_local()?.guard;
-    let current = guarded_key(me, &guard);
-    let space = open_copies(&notes, &guard, current.as_ref(), |s| {
-        Space::open_as(s, &me.device.id, &me.secret)
-    })?
-    .space;
+    let key = content_key(t, store, me).await?;
+    let dev = device(me);
     let mut names = Vec::new();
     for (r, code) in asking {
-        let answer = space::pair_answer(code, &r, &me.device.name, space.content_key());
+        let answer = space::pair_answer(code, &r, &dev, &me.secret, &key);
         t.put(&Note::Answer(answer)).await?;
         names.push(r.device.name);
     }
@@ -855,7 +1039,7 @@ fn waiting(notes: Vec<(String, Note)>) -> Vec<PairRequest> {
 }
 
 /// On a linked device: approves the request `id`, still waiting, with the
-/// code the person typed. Reads the folder once, for a quick answer.
+/// code the person typed, and vouches for the device that asked.
 pub async fn approve_waiting(
     t: &mut impl Transport,
     store: &Mutex<Store>,
@@ -863,20 +1047,11 @@ pub async fn approve_waiting(
     code: &str,
     me: &Me,
 ) -> Result<()> {
-    let notes = t.notes().await?;
-    let request = waiting(notes.clone())
+    let request = waiting(t.notes().await?)
         .into_iter()
         .find(|r| r.id == id)
         .ok_or(SyncError::Expired)?;
-    let guard = lock(store).space_local()?.guard;
-    let current = guarded_key(me, &guard);
-    let space = open_copies(&notes, &guard, current.as_ref(), |s| {
-        Space::open_as(s, &me.device.id, &me.secret)
-    })?
-    .space;
-    let answer = space::pair_answer(code, &request, &me.device.name, space.content_key());
-    t.put(&Note::Answer(answer)).await?;
-    Ok(())
+    approve(t, store, &request, code, me).await
 }
 
 /// On a linked device: approves a request with the code the person typed.
@@ -887,8 +1062,8 @@ pub async fn approve(
     code: &str,
     me: &Me,
 ) -> Result<()> {
-    let space = open(t, store, me).await?;
-    let answer = space::pair_answer(code, request, &me.device.name, space.content_key());
+    let key = content_key(t, store, me).await?;
+    let answer = space::pair_answer(code, request, &device(me), &me.secret, &key);
     t.put(&Note::Answer(answer)).await?;
     Ok(())
 }
@@ -933,25 +1108,41 @@ pub fn passwords_in(space: &Space) -> Vec<String> {
     out
 }
 
-/// Unlinks a device: a new content key and recovery phrase.
+/// Unlinks a device: a signed statement that refuses its copies from now
+/// on, a new content key and recovery phrase.
 pub async fn unlink(
     t: &mut impl Transport,
     store: &Mutex<Store>,
-    device: &str,
+    device_id: &str,
     me: &Me,
 ) -> Result<Unlinked> {
     let mut local = lock(store).space_local()?;
-    let opened = open_checked(t, me, &local.guard).await?;
+    let opened = open_checked(t, me, &local.trust).await?;
     let mut space = opened.space;
     let exposed = passwords_in(&space);
-    let recovery = space.unlink(device);
-    space.content.generation += 1;
+    let generation = opened.trust.generation.max(space.content.generation) + 1;
+    let recovery = space.unlink(device_id);
+    space.content.unlinked.push(Unlink::new(
+        device_id,
+        &me.device.id,
+        generation,
+        &me.secret,
+    ));
+    space.content.generation = generation;
     space.content.updated_at = space::now();
     space.content.updated_by.clone_from(&me.device.id);
-    space.link(&me.device);
-    put(t, &space, &opened.ids).await?;
-    local.guard = guard_for(me, &space);
-    lock(store).set_space_local(&local)?;
+    let sealed = put(t, &mut space, me, &opened.ids).await?;
+    local.trust = opened.trust;
+    local.trust.revoked.insert(device_id.to_owned());
+    local.trust.devices.remove(device_id);
+    local.trust.generation = generation;
+    local.trust.recovery = space::sign_public(&space::recovery_signer(&recovery))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    local.last_copy = b64(&sealed.to_bytes());
+    local.recovery_changed = false;
+    save(store, &local, me)?;
     Ok(Unlinked {
         recovery,
         exposed,
@@ -959,13 +1150,13 @@ pub async fn unlink(
     })
 }
 
-/// Turns sync off on this device: it leaves the space, whose key stays
-/// with the others (this device was trusted, so nothing changes for
-/// them). The last device deletes the space from the mailbox. Returns
-/// whether it was the last.
+/// Turns sync off on this device: it leaves the space with a signed
+/// statement, and its copies count no more. The key stays with the others
+/// (this device was trusted, so nothing changes for them). The last device
+/// deletes the space from the mailbox. Returns whether it was the last.
 pub async fn leave(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Result<bool> {
-    let guard = lock(store).space_local()?.guard;
-    let opened = open_checked(t, me, &guard).await?;
+    let trust = lock(store).space_local()?.trust;
+    let opened = open_checked(t, me, &trust).await?;
     let mut space = opened.space;
     space.content.devices.retain(|d| d.id != me.device.id);
     let last = space.content.devices.is_empty();
@@ -973,8 +1164,17 @@ pub async fn leave(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Res
         let all: Vec<String> = t.notes().await?.into_iter().map(|(id, _)| id).collect();
         t.remove(&all).await?;
     } else {
-        space.content.generation += 1;
-        put(t, &space, &opened.ids).await?;
+        let generation = opened.trust.generation.max(space.content.generation) + 1;
+        space.content.unlinked.push(Unlink::new(
+            &me.device.id,
+            &me.device.id,
+            generation,
+            &me.secret,
+        ));
+        space.content.generation = generation;
+        let sealed = space.seal(&me.device.id, &me.secret);
+        t.put(&Note::Space(sealed)).await?;
+        t.remove(&opened.ids).await?;
     }
     lock(store).space_forget()?;
     Ok(last)
@@ -1013,6 +1213,9 @@ mod tests {
                 kind: "laptop".into(),
                 last_seen: 0,
                 public: space::public_key(&secret),
+                sign: space::sign_public(&secret),
+                by: String::new(),
+                vouch: Vec::new(),
             },
             secret,
         }

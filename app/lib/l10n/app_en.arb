@@ -2069,5 +2069,7 @@
   "pairStep1Device": "{kind, select, phone{Your phone will show “{title}”} tablet{Your tablet will show “{title}”} other{Your computer will show “{title}”}}",
   "@pairStep1Device": {"placeholders": {"kind": {"type": "String"}, "title": {"type": "String"}}},
   "pairConfirmFromDevice": "{kind, select, phone{For security, confirm from a device that's already paired: your phone, active {ago}.} tablet{For security, confirm from a device that's already paired: your tablet, active {ago}.} other{For security, confirm from a device that's already paired: your computer, active {ago}.}}",
-  "@pairConfirmFromDevice": {"placeholders": {"kind": {"type": "String"}, "ago": {"type": "String"}}}
+  "@pairConfirmFromDevice": {"placeholders": {"kind": {"type": "String"}, "ago": {"type": "String"}}},
+  "syncRecoveryChangedTitle": "Write down your new recovery phrase",
+  "syncRecoveryChangedBody": "Two devices were unlinked at the same time, so your space got a new key and a new recovery phrase. The one you wrote down no longer works."
 }

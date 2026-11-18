@@ -1511,5 +1511,7 @@
   "pairCodeBodyDevice": "{kind, select, phone{Öffne Piuma auf deinem Telefon und gib den Code ein.} tablet{Öffne Piuma auf deinem Tablet und gib den Code ein.} other{Öffne Piuma auf deinem Computer und gib den Code ein.}}",
   "pairWaitingDevice": "{kind, select, phone{Warte auf die Bestätigung deines Telefons…} tablet{Warte auf die Bestätigung deines Tablets…} other{Warte auf die Bestätigung deines Computers…}}",
   "pairStep1Device": "{kind, select, phone{Dein Telefon zeigt „{title}“} tablet{Dein Tablet zeigt „{title}“} other{Dein Computer zeigt „{title}“}}",
-  "pairConfirmFromDevice": "{kind, select, phone{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Telefon, aktiv {ago}.} tablet{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Tablet, aktiv {ago}.} other{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Computer, aktiv {ago}.}}"
+  "pairConfirmFromDevice": "{kind, select, phone{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Telefon, aktiv {ago}.} tablet{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Tablet, aktiv {ago}.} other{Bestätige zur Sicherheit auf einem bereits verknüpften Gerät: deinem Computer, aktiv {ago}.}}",
+  "syncRecoveryChangedTitle": "Schreib deine neue Wiederherstellungsphrase auf",
+  "syncRecoveryChangedBody": "Zwei Geräte wurden gleichzeitig getrennt, deshalb hat dein Bereich einen neuen Schlüssel und eine neue Wiederherstellungsphrase. Die aufgeschriebene funktioniert nicht mehr."
 }

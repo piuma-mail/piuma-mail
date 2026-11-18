@@ -43,6 +43,8 @@ getrandom = "0.4.3"
 zeroize = { version = "1.9.1", features = ["derive"] }
 bip39 = { version = "3.0.0", default-features = false, features = ["std"] }
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+# Signatures of the devices that write the sync space.
+ed25519-dalek = "3.0.0"
 resvg = { version = "0.49", default-features = false }
 # The preview saved inside office documents, for the Attachments board.
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2"] }

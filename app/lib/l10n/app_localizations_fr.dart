@@ -6306,4 +6306,12 @@ class AppLocalizationsFr extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String get syncRecoveryChangedTitle =>
+      'Notez votre nouvelle phrase de récupération';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Deux appareils ont été dissociés en même temps : votre espace a une nouvelle clé et une nouvelle phrase de récupération. Celle que vous aviez notée ne fonctionne plus.';
 }

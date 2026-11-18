@@ -9,10 +9,9 @@
 //! stays as a tombstone until every linked device has seen it (see
 //! [horizon]), so a removal is never inferred from a row being absent.
 //!
-//! The space also carries a generation, counted up on every write, inside
-//! the sealed (authenticated) content: each device keeps the highest one
-//! it accepted and the content key it used, and refuses an older copy or
-//! one sealed with a key it saw replaced ([Guard]).
+//! Stamps further ahead of a device's clock than [MAX_SKEW] are brought
+//! back ([clamp]). Who may write, and which copies are taken, is
+//! [crate::space_trust]'s.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,9 +33,10 @@ pub const SCHEMA: u32 = 1;
 /// [Local] keeps a keyed digest in their place.
 pub const SECRETS: &str = "secret";
 
-/// Earlier content keys a space keeps, so a device that missed an unlink
-/// still follows the new key.
-pub const KEPT_KEYS: usize = 16;
+/// How far ahead of this device's clock a stamp may be, in milliseconds:
+/// later ones are brought back to it, so a device whose clock runs ahead
+/// can't win every write from then on.
+pub const MAX_SKEW: i64 = 10 * 60 * 1000;
 
 /// Tombstones are kept at least this long, in milliseconds, and until
 /// every linked device has been seen since.
@@ -601,8 +601,22 @@ pub struct Local {
     pub columns: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub clock: Stamp,
+    /// The devices this device trusts and the newest generation it took
+    /// ([crate::space_trust]).
     #[serde(default)]
-    pub guard: Guard,
+    pub trust: crate::space_trust::Trust,
+    /// The newest copy this device took or wrote, as stored (sealed and
+    /// signed, in base64): put back when the folder holds only older ones.
+    #[serde(default)]
+    pub last_copy: String,
+    /// When this device last merged, in milliseconds: before the space's
+    /// horizon, it takes the space's word for older rows.
+    #[serde(default)]
+    pub last_merge: i64,
+    /// A merge changed the content key and the recovery phrase (two unlinks
+    /// at once): the person writes the new phrase down.
+    #[serde(default)]
+    pub recovery_changed: bool,
     /// Accounts another device removed that this one keeps until the
     /// person says (mail waiting to go out, drafts, queued changes), with
     /// their rows whose removal waits too ("table/gid").
@@ -657,47 +671,17 @@ impl Local {
     }
 }
 
-/// What a device accepted last: the generation and the content key
-/// (sealed with a key only this device can make). Empty until the first
-/// open.
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Guard {
-    pub generation: u64,
-    /// The content key, sealed for this device, in hex.
-    #[serde(default)]
-    pub key: String,
-}
-
-impl std::fmt::Debug for Guard {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Guard({})", self.generation)
+/// Brings stamps later than `limit` (this device's clock plus
+/// [MAX_SKEW]) back to it. Returns whether any moved.
+pub fn clamp(tables: &mut Tables, limit: i64) -> bool {
+    let mut moved = false;
+    for row in tables.values_mut().flat_map(|t| t.values_mut()) {
+        if row.s.t > limit {
+            row.s.t = limit;
+            moved = true;
+        }
     }
-}
-
-/// Whether a copy of generation `generation`, sealed with `key` and naming
-/// `previous` keys, may be taken by a device whose guard holds
-/// (`accepted`, `current`). The same key at the same or a later
-/// generation, or a later generation whose writer knew `current` (it is
-/// among `previous`). An unlinked device knows only keys that were
-/// replaced, so it can't make one.
-pub fn acceptable(
-    generation: u64,
-    key: &[u8; 32],
-    previous: &[String],
-    accepted: u64,
-    current: Option<&[u8; 32]>,
-) -> bool {
-    let Some(current) = current else {
-        return true;
-    };
-    if generation < accepted {
-        return false;
-    }
-    if key == current {
-        return true;
-    }
-    let hex: String = current.iter().map(|b| format!("{b:02x}")).collect();
-    generation > accepted && previous.contains(&hex)
+    moved
 }
 
 #[cfg(test)]
@@ -828,29 +812,16 @@ mod tests {
     }
 
     #[test]
-    fn a_device_accepts_only_what_follows_what_it_saw() {
-        let k1 = [1u8; 32];
-        let k2 = [2u8; 32];
-        let hex1: String = k1.iter().map(|b| format!("{b:02x}")).collect();
-        assert!(acceptable(3, &k1, &[], 0, None));
-        assert!(acceptable(5, &k1, &[], 5, Some(&k1)));
-        assert!(!acceptable(4, &k1, &[], 5, Some(&k1)));
-        // A new key only from a writer that knew the one in use.
-        assert!(acceptable(
-            6,
-            &k2,
-            std::slice::from_ref(&hex1),
-            5,
-            Some(&k1)
-        ));
-        assert!(!acceptable(6, &k2, &[], 5, Some(&k1)));
-        // After the change, the old key is refused, at any generation.
-        assert!(!acceptable(
-            99,
-            &k1,
-            std::slice::from_ref(&hex1),
-            6,
-            Some(&k2)
-        ));
+    fn a_clock_far_ahead_is_brought_back() {
+        let mut t = Tables::new();
+        t.entry("t".into())
+            .or_default()
+            .insert("1".into(), row(10_000_000, "a", "x"));
+        t.entry("t".into())
+            .or_default()
+            .insert("2".into(), row(5, "a", "y"));
+        assert!(clamp(&mut t, 1_000));
+        assert_eq!((t["t"]["1"].s.t, t["t"]["2"].s.t), (1_000, 5));
+        assert!(!clamp(&mut t, 1_000));
     }
 }

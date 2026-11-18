@@ -58,6 +58,9 @@ pub struct SyncInfo {
     pub outdated: bool,
     /// Accounts removed on another device that wait for the person here.
     pub held: Vec<HeldAccount>,
+    /// Two devices were unlinked at once: the recovery phrase changed
+    /// again, and the person hasn't seen the new one yet.
+    pub recovery_changed: bool,
 }
 
 /// An account another device removed, kept here until the person says:
@@ -210,6 +213,9 @@ fn me() -> Result<Me, EngineError> {
             kind: kind.to_owned(),
             last_seen: 0,
             public: space::public_key(&secret),
+            sign: space::sign_public(&secret),
+            by: String::new(),
+            vouch: Vec::new(),
         },
         secret,
     })
@@ -272,12 +278,17 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
         })
         .unwrap_or_default();
     let home = setting(HOME)?;
-    let (rollback, outdated, held) = if home.is_some() {
+    let (rollback, outdated, held, recovery_changed) = if home.is_some() {
         let local = space_sync::state(&engine()?.store)?;
         let held = held_here(&local)?;
-        (local.refused > 0, local.outdated, held)
+        (
+            local.refused > 0,
+            local.outdated,
+            held,
+            local.recovery_changed,
+        )
     } else {
-        (false, false, Vec::new())
+        (false, false, Vec::new(), false)
     };
     Ok(SyncInfo {
         home,
@@ -286,6 +297,7 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
         rollback,
         outdated,
         held,
+        recovery_changed,
     })
 }
 
@@ -691,8 +703,9 @@ pub async fn sync_phrase() -> Result<String, EngineError> {
     run(async move {
         let me = me()?;
         let (mut imap, mailbox) = home().await?;
-        let space =
-            space_sync::open(&mut Folder::new(&mut imap, &mailbox), &engine()?.store, &me).await?;
+        let store = &engine()?.store;
+        let space = space_sync::open(&mut Folder::new(&mut imap, &mailbox), store, &me).await?;
+        space_sync::recovery_seen(store)?;
         space
             .recovery()
             .map(|k| k.phrase())

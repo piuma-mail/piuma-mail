@@ -168,6 +168,19 @@ void main() {
     expect(source.kept, [2]);
   });
 
+  testWidgets('a recovery phrase a merge changed is offered to write down', (
+    tester,
+  ) async {
+    await _settings(
+      tester,
+      demo: _Held(now: _now, synced: true, recoveryChanged: true),
+    );
+    expect(find.text('Write down your new recovery phrase'), findsOneWidget);
+    await tester.tap(find.text('Show').first);
+    await _settle(tester);
+    expect(find.text('I wrote them down'), findsOneWidget);
+  });
+
   testWidgets('an old copy put back, and a newer version, are told', (
     tester,
   ) async {
@@ -442,10 +455,12 @@ class _Held extends DemoMailSource {
     super.synced,
     this.rollback = false,
     this.outdated = false,
+    this.recoveryChanged = false,
   });
 
   final bool rollback;
   final bool outdated;
+  final bool recoveryChanged;
   final removed = <int>[];
   final kept = <int>[];
 
@@ -458,8 +473,9 @@ class _Held extends DemoMailSource {
       devices: s.devices,
       rollback: rollback,
       outdated: outdated,
+      recoveryChanged: recoveryChanged,
       held: [
-        if (!rollback && removed.isEmpty && kept.isEmpty)
+        if (!rollback && !recoveryChanged && removed.isEmpty && kept.isEmpty)
           const HeldRemoval(
             accountId: 2,
             email: 'matteo@studio.it',

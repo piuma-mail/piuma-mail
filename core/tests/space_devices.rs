@@ -5,7 +5,9 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use piuma_core::groups::AddressGroup;
 use piuma_core::outbox::Outgoing;
+use piuma_core::signature::Signature;
 use piuma_core::smtp::{ready, Draft};
 use piuma_core::space::{self, Device, Key, Note, Space};
 use piuma_core::space_merge::{self, SCHEMA};
@@ -31,6 +33,9 @@ fn dev(name: &str) -> Dev {
                 kind: "laptop".into(),
                 last_seen: 0,
                 public: space::public_key(&secret),
+                sign: space::sign_public(&secret),
+                by: String::new(),
+                vouch: Vec::new(),
             },
             secret,
         },
@@ -384,7 +389,8 @@ async fn an_old_copy_put_back_after_an_unlink_is_refused() {
         .unwrap();
     theme.v.insert("value".into(), "forged".into());
     theme.s.t = i64::MAX / 2;
-    let forged = forged.seal();
+    // Signed by the old phone, which still knows its own key.
+    let forged = forged.seal(&c.me.device.id, &c.me.secret);
     for d in [&a, &b] {
         t.put(&Note::Space(old.clone())).await.unwrap();
         t.put(&Note::Space(forged.clone())).await.unwrap();
@@ -392,7 +398,9 @@ async fn an_old_copy_put_back_after_an_unlink_is_refused() {
         assert_eq!(r.refused, 2);
         assert_eq!(d.get("appearance.theme").as_deref(), Some("light"));
     }
-    // Only old copies left: refused as a whole, nothing taken.
+    // Only old copies left: refused as a whole, nothing taken, and the
+    // newest copy A took goes back in their place.
+    a.round(&mut t).await;
     let all: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
     t.remove(&all).await.unwrap();
     t.put(&Note::Space(old)).await.unwrap();
@@ -402,6 +410,10 @@ async fn an_old_copy_put_back_after_an_unlink_is_refused() {
         Err(SyncError::Rollback)
     ));
     assert_eq!(a.get("appearance.theme").as_deref(), Some("light"));
+    assert_eq!(spaces(&t).len(), 1);
+    let r = b.round(&mut t).await;
+    assert_eq!(r.refused, 0);
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("light"));
 }
 
 #[tokio::test]
@@ -437,7 +449,9 @@ async fn a_device_on_an_older_schema_drops_nothing_it_does_not_know() {
         .insert("future_field".into(), serde_json::json!({"a": 1}));
     s.content.generation += 1;
     let ids: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
-    t.put(&Note::Space(s.seal())).await.unwrap();
+    t.put(&Note::Space(s.seal(&a.me.device.id, &a.me.secret)))
+        .await
+        .unwrap();
     t.remove(&ids).await.unwrap();
 
     // The older device changes the same account and writes.
@@ -461,7 +475,9 @@ async fn a_device_on_an_older_schema_drops_nothing_it_does_not_know() {
     s.content.schema = SCHEMA + 1;
     s.content.generation += 1;
     let ids: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
-    t.put(&Note::Space(s.seal())).await.unwrap();
+    t.put(&Note::Space(s.seal(&a.me.device.id, &a.me.secret)))
+        .await
+        .unwrap();
     t.remove(&ids).await.unwrap();
     b.set("notify.mode", "people");
     b.note();
@@ -599,4 +615,483 @@ async fn passwords_reach_a_new_device_and_follow_a_change() {
         piuma_core::store::SecretIn::Account(id, pw) if *id == w && *pw == format!("pw-{WORK}")
     )));
     assert_eq!(r.applied.added, [w]);
+}
+
+/// The space's newest copy, opened by `d`.
+async fn open(t: &mut Memory, d: &Dev) -> Space {
+    space_sync::open(t, &d.store, &d.me).await.unwrap()
+}
+
+/// Replaces the stored copies with `space`, signed by `d`.
+async fn replace(t: &mut Memory, space: &Space, d: &Dev) {
+    let ids: Vec<String> = spaces(t).into_iter().map(|(id, _)| id).collect();
+    t.put(&Note::Space(space.seal(&d.me.device.id, &d.me.secret)))
+        .await
+        .unwrap();
+    t.remove(&ids).await.unwrap();
+}
+
+/// A copy of what the folder holds, as another view of it.
+async fn fork(t: &Memory) -> Memory {
+    let mut m = Memory::new();
+    for (_, n) in t.snapshot() {
+        m.put(&n).await.unwrap();
+    }
+    m
+}
+
+fn linked(t: &Memory, d: &Dev) -> Vec<String> {
+    let Some((_, Note::Space(s))) = spaces(t).pop() else {
+        return Vec::new();
+    };
+    match Space::open_as(&s, &d.me.device.id, &d.me.secret) {
+        Ok(s) => s.content.devices.into_iter().map(|d| d.name).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn two_devices_unlinking_at_once_lock_nobody_else_out() {
+    let (a, b, e, f) = (
+        dev("Mac"),
+        dev("Pixel"),
+        dev("Old phone"),
+        dev("Old tablet"),
+    );
+    for d in [&a, &b, &e, &f] {
+        d.add(HOME);
+    }
+    let (t, _) = space(&[&a, &b, &e, &f]).await;
+    // A unlinks the old phone while B, from the same copy, unlinks the old
+    // tablet: two copies of the same generation, with two new keys.
+    let (mut ta, mut tb) = (fork(&t).await, fork(&t).await);
+    space_sync::unlink(&mut ta, &a.store, &e.me.device.id, &a.me)
+        .await
+        .unwrap();
+    space_sync::unlink(&mut tb, &b.store, &f.me.device.id, &b.me)
+        .await
+        .unwrap();
+    let mut t = Memory::new();
+    for m in [&ta, &tb] {
+        for (_, n) in spaces(m) {
+            t.put(&n).await.unwrap();
+        }
+    }
+    a.set("appearance.theme", "dark");
+    let r = a.round(&mut t).await;
+    assert_eq!(r.refused, 0);
+    assert!(r.recovery_changed);
+    b.set("notify.mode", "people");
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    for d in [&a, &b] {
+        assert_eq!(d.get("appearance.theme").as_deref(), Some("dark"));
+        assert_eq!(d.get("notify.mode").as_deref(), Some("people"));
+    }
+    let mut names = linked(&t, &a);
+    names.sort();
+    assert_eq!(names, ["Mac", "Pixel"]);
+    // Neither unlinked device opens the space, though each knew one of
+    // the two new keys.
+    for d in [&e, &f] {
+        assert!(matches!(
+            space_sync::round(&mut t, &d.store, d.secrets(), &d.me, Some(HOME)).await,
+            Ok(Round::Unlinked)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn a_device_that_missed_an_unlink_is_not_taken_over() {
+    let (a, b, c) = (dev("Mac"), dev("Pixel"), dev("Old phone"));
+    for d in [&a, &b, &c] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b, &c]).await;
+    // What the old phone keeps from before.
+    let mut forged = open(&mut t, &c).await;
+    // B is away; A unlinks the old phone and changes something.
+    space_sync::unlink(&mut t, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    a.set("appearance.theme", "light");
+    a.round(&mut t).await;
+    // The old phone writes, with the old key, for every device it knew,
+    // claiming a generation far ahead and the same setting.
+    forged.content.generation += 50;
+    let theme = space_merge::natural_id(
+        space_merge::spec("setting").unwrap(),
+        &serde_json::json!({"key": "appearance.theme"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    let mut v = serde_json::Map::new();
+    v.insert("key".into(), "appearance.theme".into());
+    v.insert("value".into(), "forged".into());
+    forged
+        .content
+        .tables
+        .entry("setting".into())
+        .or_default()
+        .insert(
+            theme,
+            space_merge::Row {
+                s: space_merge::Stamp {
+                    t: space_merge::now_ms() + 1_000,
+                    c: 0,
+                    d: c.me.device.id.clone(),
+                },
+                del: false,
+                v,
+            },
+        );
+    t.put(&Note::Space(forged.seal(&c.me.device.id, &c.me.secret)))
+        .await
+        .unwrap();
+    // B comes back: A's signed unlink keeps the old phone out, whatever its
+    // copy claims.
+    let r = b.round(&mut t).await;
+    assert_eq!(r.refused, 1);
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("light"));
+    // And from then on, at any generation.
+    forged.content.generation += 1_000;
+    t.put(&Note::Space(forged.seal(&c.me.device.id, &c.me.secret)))
+        .await
+        .unwrap();
+    assert_eq!(b.round(&mut t).await.refused, 1);
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("light"));
+}
+
+#[tokio::test]
+async fn a_copy_claiming_a_far_generation_is_refused_and_the_folder_heals() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    a.set("appearance.theme", "dark");
+    a.round(&mut t).await;
+    b.round(&mut t).await;
+    // Even signed by a linked device, a jump past the bound is refused.
+    let mut far = open(&mut t, &a).await;
+    far.content.generation += space_piuma_jump();
+    replace(&mut t, &far, &a).await;
+    assert!(matches!(
+        space_sync::round(&mut t, &b.store, b.secrets(), &b.me, Some(HOME)).await,
+        Err(SyncError::Rollback)
+    ));
+    // B put back the newest copy it took: A reads it again.
+    assert!(a.round(&mut t).await.refused == 0);
+}
+
+fn space_piuma_jump() -> u64 {
+    piuma_core::space_trust::MAX_JUMP + 10
+}
+
+#[tokio::test]
+async fn a_folder_left_with_an_older_copy_heals() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    let before = spaces(&t);
+    a.set("appearance.theme", "dark");
+    a.round(&mut t).await;
+    // The provider serves the older copy only.
+    let all: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
+    t.remove(&all).await.unwrap();
+    for (_, n) in before {
+        t.put(&n).await.unwrap();
+    }
+    assert!(matches!(
+        space_sync::round(&mut t, &a.store, a.secrets(), &a.me, Some(HOME)).await,
+        Err(SyncError::Rollback)
+    ));
+    // A put its newest copy back: B takes the change.
+    b.round(&mut t).await;
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("dark"));
+}
+
+#[tokio::test]
+async fn a_clock_far_ahead_does_not_win_every_write() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    a.set("appearance.theme", "dark");
+    a.round(&mut t).await;
+    // A's clock is a year ahead: its row says so.
+    let mut s = open(&mut t, &a).await;
+    for r in s.content.tables.get_mut("setting").unwrap().values_mut() {
+        r.s.t += 365 * 86_400 * 1000;
+    }
+    s.content.generation += 1;
+    replace(&mut t, &s, &a).await;
+    // B changes the same setting afterwards: its change wins.
+    tick().await;
+    b.set("appearance.theme", "light");
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    for d in [&a, &b] {
+        assert_eq!(d.get("appearance.theme").as_deref(), Some("light"));
+    }
+    // No stamp in the space is far ahead any more.
+    let limit = space_merge::now_ms() + space_merge::MAX_SKEW;
+    let s = open(&mut t, &a).await;
+    assert!(s
+        .content
+        .tables
+        .values()
+        .flat_map(|t| t.values())
+        .all(|r| r.s.t <= limit));
+}
+
+#[tokio::test]
+async fn a_device_away_past_the_horizon_brings_no_removed_row_back() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    b.set("appearance.theme", "dark");
+    let (mut t, _) = space(&[&b, &a]).await;
+    assert_eq!(a.get("appearance.theme").as_deref(), Some("dark"));
+    // B goes away. A removes the setting; long after, the tombstone is
+    // dropped and the space records the horizon.
+    a.store
+        .lock()
+        .unwrap()
+        .remove_setting("appearance.theme")
+        .unwrap();
+    a.round(&mut t).await;
+    let mut s = open(&mut t, &a).await;
+    for table in s.content.tables.values_mut() {
+        table.retain(|_, r| !r.del);
+    }
+    s.content.horizon = space_merge::now_ms();
+    s.content.generation += 1;
+    replace(&mut t, &s, &a).await;
+    // B comes back: it removes the setting instead of writing it back.
+    tick().await;
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    assert_eq!(b.get("appearance.theme"), None);
+    assert_eq!(a.get("appearance.theme"), None);
+}
+
+/// A folder that takes nothing new: the device stops between putting
+/// rows in and writing.
+struct Broken(Memory);
+
+impl Transport for Broken {
+    async fn notes(&mut self) -> space_sync::Result<Vec<(String, Note)>> {
+        self.0.notes().await
+    }
+
+    async fn put(&mut self, _: &Note) -> space_sync::Result<()> {
+        Err(SyncError::NoSpace)
+    }
+
+    async fn remove(&mut self, ids: &[String]) -> space_sync::Result<()> {
+        self.0.remove(ids).await
+    }
+}
+
+#[tokio::test]
+async fn stopping_between_taking_rows_in_and_writing_loses_nothing() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    a.set("appearance.theme", "dark");
+    a.round(&mut t).await;
+    // B takes A's change in, then can't write (killed, offline).
+    b.set("notify.mode", "people");
+    let mut broken = Broken(t.clone());
+    assert!(
+        space_sync::round(&mut broken, &b.store, b.secrets(), &b.me, Some(HOME))
+            .await
+            .is_err()
+    );
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("dark"));
+    // Next time, what came from A is not taken for B's own change.
+    b.round(&mut t).await;
+    let s = open(&mut t, &a).await;
+    let theme = s.content.tables["setting"]
+        .values()
+        .find(|r| r.v.get("key").and_then(|k| k.as_str()) == Some("appearance.theme"))
+        .unwrap();
+    assert_eq!(theme.s.d, a.me.device.id);
+    a.round(&mut t).await;
+    assert_eq!(a.get("notify.mode").as_deref(), Some("people"));
+}
+
+#[tokio::test]
+async fn a_device_away_through_many_unlinks_still_follows() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, mut phrase) = space(&[&a, &b]).await;
+    // B is away while twenty devices come and are unlinked, each changing
+    // the key.
+    for i in 0..20 {
+        let x = dev(&format!("Phone {i}"));
+        x.add(HOME);
+        space_sync::recover(
+            &mut t,
+            &phrase.phrase(),
+            &x.store,
+            x.secrets(),
+            &x.me,
+            Some(HOME),
+        )
+        .await
+        .unwrap();
+        phrase = space_sync::unlink(&mut t, &a.store, &x.me.device.id, &a.me)
+            .await
+            .unwrap()
+            .recovery;
+    }
+    a.set("appearance.theme", "dark");
+    a.round(&mut t).await;
+    let r = b.round(&mut t).await;
+    assert_eq!(r.refused, 0);
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("dark"));
+}
+
+#[tokio::test]
+async fn a_link_to_a_row_removed_elsewhere_is_left_empty() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    let h = a.add(HOME);
+    b.add(HOME);
+    let sig = a
+        .store
+        .lock()
+        .unwrap()
+        .save_signature(&Signature {
+            account: h,
+            label: "Work".into(),
+            name: "Matteo".into(),
+            ..Signature::default()
+        })
+        .unwrap();
+    let (mut t, _) = space(&[&a, &b]).await;
+    // A removes the signature; B, not knowing yet, makes a group with it.
+    a.store.lock().unwrap().delete_signature(sig).unwrap();
+    a.round(&mut t).await;
+    let on_b = b.store.lock().unwrap().signatures().unwrap()[0].id;
+    b.store
+        .lock()
+        .unwrap()
+        .save_address_group(&AddressGroup {
+            name: "Clients".into(),
+            color: "#2F8F83".into(),
+            signature: Some(on_b),
+            notify: true,
+            ..AddressGroup::default()
+        })
+        .unwrap();
+    b.note();
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    let groups = a.store.lock().unwrap().address_groups().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].signature, None);
+}
+
+#[tokio::test]
+async fn a_device_nobody_vouched_for_is_not_heard() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    a.round(&mut t).await;
+    // Someone with the content key (not a linked device) adds itself and
+    // writes: no linked device vouched for it.
+    let x = dev("Stranger");
+    let mut s = open(&mut t, &a).await;
+    s.link(&x.me.device);
+    s.content.generation += 1;
+    s.content
+        .extra
+        .insert("note".into(), "from a stranger".into());
+    t.put(&Note::Space(s.seal(&x.me.device.id, &x.me.secret)))
+        .await
+        .unwrap();
+    let r = b.round(&mut t).await;
+    assert_eq!(r.refused, 1);
+    assert!(!r.space.content.extra.contains_key("note"));
+}
+
+#[tokio::test]
+async fn a_label_removed_elsewhere_takes_its_rules_along() {
+    use piuma_core::rules::{Action, Field, Op, Rule};
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let label = a
+        .store
+        .lock()
+        .unwrap()
+        .add_label("Clients", "coral")
+        .unwrap();
+    let (mut t, _) = space(&[&a, &b]).await;
+    // While A removes the label, B makes a rule that puts it on.
+    a.store.lock().unwrap().remove_label(label.id).unwrap();
+    a.round(&mut t).await;
+    b.store
+        .lock()
+        .unwrap()
+        .save_rule(&Rule {
+            id: 0,
+            account: None,
+            field: Field::Sender,
+            op: Op::Contains,
+            value: "@acme.it".into(),
+            action: Action::Label(label.keyword.clone()),
+            enabled: true,
+            last_run: None,
+            matched: 0,
+        })
+        .unwrap();
+    // B's rule goes with the label there; the removal reaches A next.
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    for d in [&a, &b] {
+        let s = d.store.lock().unwrap();
+        assert!(s.labels().unwrap().is_empty());
+        assert!(s.rules().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn the_same_label_made_on_two_devices_is_one() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    a.store.lock().unwrap().add_label("Work", "coral").unwrap();
+    b.store.lock().unwrap().add_label("work", "teal").unwrap();
+    a.round(&mut t).await;
+    b.round(&mut t).await;
+    a.round(&mut t).await;
+    for d in [&a, &b] {
+        let labels = d.store.lock().unwrap().labels().unwrap();
+        assert_eq!(labels.len(), 1);
+    }
+    let (la, lb) = (
+        a.store.lock().unwrap().labels().unwrap()[0].clone(),
+        b.store.lock().unwrap().labels().unwrap()[0].clone(),
+    );
+    assert_eq!((la.name, la.color), (lb.name, lb.color));
 }

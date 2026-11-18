@@ -10709,6 +10709,7 @@ impl SseDecode for crate::api::sync::SyncInfo {
         let mut var_rollback = <bool>::sse_decode(deserializer);
         let mut var_outdated = <bool>::sse_decode(deserializer);
         let mut var_held = <Vec<crate::api::sync::HeldAccount>>::sse_decode(deserializer);
+        let mut var_recoveryChanged = <bool>::sse_decode(deserializer);
         return crate::api::sync::SyncInfo {
             home: var_home,
             synced_at: var_syncedAt,
@@ -10716,6 +10717,7 @@ impl SseDecode for crate::api::sync::SyncInfo {
             rollback: var_rollback,
             outdated: var_outdated,
             held: var_held,
+            recovery_changed: var_recoveryChanged,
         };
     }
 }
@@ -13760,6 +13762,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncInfo {
             self.rollback.into_into_dart().into_dart(),
             self.outdated.into_into_dart().into_dart(),
             self.held.into_into_dart().into_dart(),
+            self.recovery_changed.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -16381,6 +16384,7 @@ impl SseEncode for crate::api::sync::SyncInfo {
         <bool>::sse_encode(self.rollback, serializer);
         <bool>::sse_encode(self.outdated, serializer);
         <Vec<crate::api::sync::HeldAccount>>::sse_encode(self.held, serializer);
+        <bool>::sse_encode(self.recovery_changed, serializer);
     }
 }
 

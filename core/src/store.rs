@@ -8048,18 +8048,19 @@ From: <help@bank.example>\r\n\r\nHi";
         let digest = |g: &str, v: &str| format!("{g}:{v}");
         let now = space_merge::now_ms();
         let mut a = from.space_local().unwrap();
-        from.space_scan(&mut a, &[], &digest, "from", now, None)
+        from.space_scan(&mut a, &[], &digest, "from", now, None, None)
             .unwrap();
         a.started = true;
         from.set_space_local(&a).unwrap();
         let mut b = to.space_local().unwrap();
         let adopt = a.doc.clone();
-        to.space_scan(&mut b, &[], &digest, "to", now, Some(&adopt))
+        to.space_scan(&mut b, &[], &digest, "to", now, Some(&adopt), None)
             .unwrap();
         b.observe(&a.doc);
         let mut merged = b.doc.clone();
         let won = space_merge::merge(&mut merged, &a.doc);
-        to.space_apply(&mut b, &merged, &won, None).unwrap();
+        to.space_apply(&mut b, &merged, &won, None, &digest)
+            .unwrap();
         b.doc = merged;
         b.started = true;
         to.set_space_local(&b).unwrap();

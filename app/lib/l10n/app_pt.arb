@@ -1511,5 +1511,7 @@
   "pairCodeBodyDevice": "{kind, select, phone{Abra o Piuma no seu celular e digite o código.} tablet{Abra o Piuma no seu tablet e digite o código.} other{Abra o Piuma no seu computador e digite o código.}}",
   "pairWaitingDevice": "{kind, select, phone{Aguardando seu celular confirmar…} tablet{Aguardando seu tablet confirmar…} other{Aguardando seu computador confirmar…}}",
   "pairStep1Device": "{kind, select, phone{Seu celular vai mostrar “{title}”} tablet{Seu tablet vai mostrar “{title}”} other{Seu computador vai mostrar “{title}”}}",
-  "pairConfirmFromDevice": "{kind, select, phone{Por segurança, confirme em um dispositivo já vinculado: seu celular, ativo {ago}.} tablet{Por segurança, confirme em um dispositivo já vinculado: seu tablet, ativo {ago}.} other{Por segurança, confirme em um dispositivo já vinculado: seu computador, ativo {ago}.}}"
+  "pairConfirmFromDevice": "{kind, select, phone{Por segurança, confirme em um dispositivo já vinculado: seu celular, ativo {ago}.} tablet{Por segurança, confirme em um dispositivo já vinculado: seu tablet, ativo {ago}.} other{Por segurança, confirme em um dispositivo já vinculado: seu computador, ativo {ago}.}}",
+  "syncRecoveryChangedTitle": "Anote sua nova frase de recuperação",
+  "syncRecoveryChangedBody": "Dois dispositivos foram desvinculados ao mesmo tempo, então seu espaço ganhou uma nova chave e uma nova frase de recuperação. A que você anotou não funciona mais."
 }

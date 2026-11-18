@@ -431,6 +431,10 @@ class SyncInfo {
   /// Accounts removed on another device that wait for the person here.
   final List<HeldAccount> held;
 
+  /// Two devices were unlinked at once: the recovery phrase changed
+  /// again, and the person hasn't seen the new one yet.
+  final bool recoveryChanged;
+
   const SyncInfo({
     this.home,
     this.syncedAt,
@@ -438,6 +442,7 @@ class SyncInfo {
     required this.rollback,
     required this.outdated,
     required this.held,
+    required this.recoveryChanged,
   });
 
   @override
@@ -447,7 +452,8 @@ class SyncInfo {
       devices.hashCode ^
       rollback.hashCode ^
       outdated.hashCode ^
-      held.hashCode;
+      held.hashCode ^
+      recoveryChanged.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -459,7 +465,8 @@ class SyncInfo {
           devices == other.devices &&
           rollback == other.rollback &&
           outdated == other.outdated &&
-          held == other.held;
+          held == other.held &&
+          recoveryChanged == other.recoveryChanged;
 }
 
 /// The QR code "Link a new device" shows, as on `QrPairToApprove`.

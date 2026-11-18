@@ -882,6 +882,9 @@ fn me(name: &str, kind: &str) -> Me {
             kind: kind.into(),
             last_seen: 0,
             public: space::public_key(&secret),
+            sign: space::sign_public(&secret),
+            by: String::new(),
+            vouch: Vec::new(),
         },
         secret,
     }

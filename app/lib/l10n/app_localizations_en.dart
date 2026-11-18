@@ -6253,4 +6253,11 @@ class AppLocalizationsEn extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Write down your new recovery phrase';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Two devices were unlinked at the same time, so your space got a new key and a new recovery phrase. The one you wrote down no longer works.';
 }

@@ -160,6 +160,8 @@ class _SyncPageState extends State<SyncPage> {
       final phrase = await widget.source.recoveryPhrase();
       if (!mounted) return;
       await showRecoveryPhrase(context, phrase, phone: widget.phone);
+      // Seen: a notice that it changed goes.
+      _reload();
     } catch (e) {
       if (mounted) setState(() => _error = _failure(e));
     }
@@ -410,6 +412,21 @@ class _SyncPageState extends State<SyncPage> {
                     kind: PiumaButtonKind.danger,
                     onPressed: _busy ? null : () => _settle(h, remove: true),
                   ),
+              ],
+            ),
+          ],
+          if (s.recoveryChanged) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.lock,
+              title: l.syncRecoveryChangedTitle,
+              body: l.syncRecoveryChangedBody,
+              actions: [
+                PiumaButton(
+                  label: l.syncShow,
+                  kind: PiumaButtonKind.secondary,
+                  onPressed: _showPhrase,
+                ),
               ],
             ),
           ],

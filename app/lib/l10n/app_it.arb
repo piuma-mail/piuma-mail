@@ -1521,5 +1521,7 @@
   "pairCodeBodyDevice": "{kind, select, phone{Apri Piuma sul tuo telefono e scrivi il codice.} tablet{Apri Piuma sul tuo tablet e scrivi il codice.} other{Apri Piuma sul tuo computer e scrivi il codice.}}",
   "pairWaitingDevice": "{kind, select, phone{In attesa della conferma del tuo telefono…} tablet{In attesa della conferma del tuo tablet…} other{In attesa della conferma del tuo computer…}}",
   "pairStep1Device": "{kind, select, phone{Il tuo telefono mostrerà “{title}”} tablet{Il tuo tablet mostrerà “{title}”} other{Il tuo computer mostrerà “{title}”}}",
-  "pairConfirmFromDevice": "{kind, select, phone{Per sicurezza, conferma da un dispositivo già collegato: il tuo telefono, attivo {ago}.} tablet{Per sicurezza, conferma da un dispositivo già collegato: il tuo tablet, attivo {ago}.} other{Per sicurezza, conferma da un dispositivo già collegato: il tuo computer, attivo {ago}.}}"
+  "pairConfirmFromDevice": "{kind, select, phone{Per sicurezza, conferma da un dispositivo già collegato: il tuo telefono, attivo {ago}.} tablet{Per sicurezza, conferma da un dispositivo già collegato: il tuo tablet, attivo {ago}.} other{Per sicurezza, conferma da un dispositivo già collegato: il tuo computer, attivo {ago}.}}",
+  "syncRecoveryChangedTitle": "Scrivi la nuova frase di recupero",
+  "syncRecoveryChangedBody": "Due dispositivi sono stati scollegati nello stesso momento, quindi il tuo spazio ha una nuova chiave e una nuova frase di recupero. Quella che avevi scritto non funziona più."
 }
