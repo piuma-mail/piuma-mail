@@ -763,7 +763,7 @@ pub struct Scope<'a> {
     /// This account's addresses in each group, by group id.
     pub groups: &'a HashMap<i64, Vec<String>>,
     /// Whether an `in:` value names where the search runs.
-    pub folder: &'a dyn Fn(&str) -> InFolder,
+    pub folder: &'a (dyn Fn(&str) -> InFolder + Send + Sync),
 }
 
 /// An `in:` value, where a server search runs.
@@ -1301,7 +1301,7 @@ mod tests {
     fn scope_with<'a>(
         labels: &'a HashMap<String, String>,
         groups: &'a HashMap<i64, Vec<String>>,
-        folder: &'a dyn Fn(&str) -> InFolder,
+        folder: &'a (dyn Fn(&str) -> InFolder + Send + Sync),
     ) -> Scope<'a> {
         Scope {
             account_name: "Work",
@@ -1508,7 +1508,7 @@ mod tests {
             for clause in &q.clauses {
                 assert!(!clause.any.is_empty(), "{input:?}");
             }
-            for folder in [&yes as &dyn Fn(&str) -> InFolder, &ids] {
+            for folder in [&yes as &(dyn Fn(&str) -> InFolder + Send + Sync), &ids] {
                 if let ServerAsk::Ask(s) = q.for_server(&scope_with(&labels, &groups, folder)) {
                     let criteria = s.imap(round % 2 == 0);
                     assert!(!criteria.contains('\n') || criteria.contains("+}\r\n"));
