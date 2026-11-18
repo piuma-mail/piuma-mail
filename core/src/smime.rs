@@ -328,8 +328,7 @@ fn may_issue(c: &Cert<'_>) -> bool {
 /// signatures, and its extended usages, if it lists them, e-mail.
 fn may_sign(c: &Cert<'_>) -> bool {
     c.usage.is_some_and(|u| u & DIGITAL_SIGNATURE != 0)
-        && c
-            .extended
+        && c.extended
             .as_ref()
             .is_none_or(|e| e.iter().any(|o| *o == EMAIL_PROTECTION))
 }
@@ -496,7 +495,10 @@ mod tests {
         let anchors = pem(ROOT);
         let signer = verify_detached(CONTENT.as_bytes(), P7S, &anchors, NOW).unwrap();
         assert_eq!(signer.emails, ["posta-certificata@pec.example.it"]);
-        assert_eq!(signer.organization.as_deref(), Some("Piuma Test PEC Provider"));
+        assert_eq!(
+            signer.organization.as_deref(),
+            Some("Piuma Test PEC Provider")
+        );
         // In 2050 every certificate here has expired: nothing new checks.
         assert_eq!(
             verify_detached(CONTENT.as_bytes(), P7S, &anchors, 2_524_608_000),

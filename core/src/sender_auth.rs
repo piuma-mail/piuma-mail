@@ -357,9 +357,7 @@ fn foreign(trail: &Trail, trust: &Trust) -> usize {
     trail
         .steps
         .iter()
-        .position(|s| {
-            matches!(s, Step::Received { by: Some(h), .. } if named(h) && !trust.own(h))
-        })
+        .position(|s| matches!(s, Step::Received { by: Some(h), .. } if named(h) && !trust.own(h)))
         .unwrap_or(trail.steps.len())
 }
 
@@ -1030,7 +1028,8 @@ From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
         assert!(!check(&bare, "imap.studio.it"));
         // A hop between the server's own machines, on a private address,
         // is not.
-        let inside = "Received: from mx.studio.it (mx.studio.it [10.0.0.5]) by mbox.studio.it with LMTP\r\n\
+        let inside =
+            "Received: from mx.studio.it (mx.studio.it [10.0.0.5]) by mbox.studio.it with LMTP\r\n\
 Authentication-Results: mx.studio.it; dmarc=pass header.from=bank.example\r\n\
 Received: from mail.bank.example (mail.bank.example [192.0.2.1]) by mx.studio.it with ESMTPS\r\n\
 From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
@@ -1095,7 +1094,9 @@ From: <news@shop.example>\r\nList-Unsubscribe: <https://shop.example/u>\r\nList-
             )
         };
         let sig = |b: &str, h: &str| {
-            format!("DKIM-Signature: v=1; a=rsa-sha256; d=shop.example; s=s1; h={h}; bh=x; b={b}\r\n")
+            format!(
+                "DKIM-Signature: v=1; a=rsa-sha256; d=shop.example; s=s1; h={h}; bh=x; b={b}\r\n"
+            )
         };
         let covered = "From:List-Unsubscribe:List-Unsubscribe-Post";
         let one = sig("AbCdEf12345", covered);
