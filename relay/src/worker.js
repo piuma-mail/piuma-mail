@@ -408,7 +408,12 @@ export async function fileSignature(env, key) {
 }
 
 async function serveFile(request, env, path) {
-  const key = path.slice('/files/'.length).split('/').map(decodeURIComponent).join('/');
+  let key;
+  try {
+    key = path.slice('/files/'.length).split('/').map(decodeURIComponent).join('/');
+  } catch {
+    throw new HttpError(404, 'not found'); // a malformed %-escape: no such file, not a relay error
+  }
   const sig = new URL(request.url).searchParams.get('s') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}\/[0-9a-f]{24}\/[A-Za-z0-9._-]{1,80}$/.test(key) || !timingSafeEqual(sig, await fileSignature(env, key))) {
     throw new HttpError(404, 'not found');

@@ -294,7 +294,7 @@ test('attachment links serve the file while it is kept, and nothing else', async
   const logUrl = body.match(/\((https:\/\/relay\.test\/files\/[^)]+logs\.txt\?s=[0-9a-f]+)\)/)[1];
   assert.equal((await worker.fetch(new Request(logUrl), e)).headers.get('content-type'), 'text/plain; charset=utf-8');
   // A wrong signature, another key, or a path out of the folder: not found.
-  for (const url of [shot.replace(/s=[0-9a-f]/, 's=x'), shot.replace('screenshot.png', 'logs.txt'), 'https://relay.test/files/../x?s=0', 'https://relay.test/files/a?s=0']) {
+  for (const url of [shot.replace(/s=[0-9a-f]/, 's=x'), shot.replace('screenshot.png', 'logs.txt'), 'https://relay.test/files/../x?s=0', 'https://relay.test/files/a?s=0', 'https://relay.test/files/%E0%A4%A?s=0']) {
     assert.equal((await worker.fetch(new Request(url), e)).status, 404, url);
   }
   // Once the lifecycle rule has deleted it, the link says so.

@@ -37,7 +37,7 @@ To limit abuse, the relay also processes your IP address and a random id the app
 installed. It keeps only keyed hashes of them (the network as an IPv4 address or IPv6 /48 block, and
 the provider's network number), for at most two days, to space out and cap reports. So that people
 who already use the app can still report while someone floods the relay, it also keeps the keyed
-hash of the installation's id with the time of its first request: for 7 days, or 90 days after
+hash of the installation's id with the time of its first report: for 7 days, or 90 days after
 its last report.
 
 ## Where it goes
@@ -68,7 +68,7 @@ providers.
   deleted when it is no longer needed, at the latest **two years** after it is closed (a scheduled
   job deletes older closed issues).
 - **The relay's counters:** at most two days. Which report opened which issue (an id the app makes,
-  hashed): 30 days, so a report sent twice opens one issue. When the installation first asked (its
+  hashed): 30 days, so a report sent twice opens one issue. When the installation first reported (its
   id, hashed): 7 days, or 90 days after its last report.
 - **On your device:** Your reports keeps your reports until you delete them. Deleting a report there
   removes only the copy on your device; the app then offers to ask for the issue to be erased too.
