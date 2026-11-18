@@ -388,6 +388,47 @@ impl Remote {
         })
     }
 
+    /// Reads which folders the person gave a job to (Sent, Drafts,
+    /// Trash, spam, Archive), so this connection uses theirs.
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.learn_roles(store, account)?,
+            Remote::Jmap(c) => c.learn_roles(store, account)?,
+        }
+        Ok(())
+    }
+
+    /// Deletes every message of a folder for good (Empty Trash, Empty
+    /// spam). Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<usize> {
+        Ok(match self {
+            Remote::Imap(c) => c.empty(store, account, mailbox).await?,
+            Remote::Jmap(c) => c.empty(store, account, mailbox).await?,
+        })
+    }
+
+    /// How many messages a folder holds on the server.
+    pub async fn count(&mut self, mailbox: &str) -> Result<u32> {
+        Ok(match self {
+            Remote::Imap(c) => c.count(mailbox).await?,
+            Remote::Jmap(c) => c.count(mailbox).await?,
+        })
+    }
+
+    /// How full the mailbox is, in bytes used and allowed, when the
+    /// server says.
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        Ok(match self {
+            Remote::Imap(c) => c.quota().await?,
+            Remote::Jmap(c) => c.quota().await?,
+        })
+    }
+
     pub async fn append_draft(&mut self, raw: &[u8]) -> Result<String> {
         Ok(match self {
             Remote::Imap(c) => c.append_draft(raw).await?,

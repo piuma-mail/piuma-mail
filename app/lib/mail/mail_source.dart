@@ -57,6 +57,9 @@ enum MailFolder {
 
   /// Every email with one label, wherever it is (`LabelsToApprove`).
   label,
+
+  /// Every starred email, wherever it is but Trash, spam and Drafts.
+  starred,
 }
 
 /// A colored word on emails, shared across accounts (`LabelsToApprove`).
@@ -406,6 +409,7 @@ class AccountFolder {
     this.selectable = true,
     this.unread = 0,
     this.total = 0,
+    this.subscribed = true,
   });
 
   /// What the server calls it, e.g. "Clients/Acme": what opens it.
@@ -423,6 +427,9 @@ class AccountFolder {
 
   /// How many emails it holds on the server.
   final int total;
+
+  /// Subscribed: shown in the lists. The others show on demand.
+  final bool subscribed;
 }
 
 /// The folders of [list] that share [folder]'s parent, [folder] among them,
@@ -489,6 +496,81 @@ List<AccountFolder> withFolderOrder(
     end++;
   }
   return (start, end);
+}
+
+/// A job a folder does for an account.
+enum SpecialRole { sent, drafts, trash, junk, archive }
+
+/// The folder doing one job for an account.
+class SpecialFolder {
+  const SpecialFolder(this.role, this.mailbox, {this.chosen = false});
+
+  final SpecialRole role;
+
+  /// Its server name; null while no folder does that job.
+  final String? mailbox;
+
+  /// The person chose it, rather than the server's marks or its name.
+  final bool chosen;
+}
+
+/// How a list is sorted.
+enum ListOrder { newest, oldest, sender }
+
+/// What a swipe on a row does.
+enum SwipeChoice { archive, snooze, delete, read, star, move, nothing }
+
+/// How the lists look (Settings › Appearance): newest first, in
+/// conversations, Archive to the right and Snooze to the left until
+/// changed.
+class ListPrefs {
+  const ListPrefs({
+    this.order = ListOrder.newest,
+    this.threads = true,
+    this.swipeRight = SwipeChoice.archive,
+    this.swipeLeft = SwipeChoice.snooze,
+  });
+
+  final ListOrder order;
+  final bool threads;
+  final SwipeChoice swipeRight;
+  final SwipeChoice swipeLeft;
+
+  ListPrefs copyWith({
+    ListOrder? order,
+    bool? threads,
+    SwipeChoice? swipeRight,
+    SwipeChoice? swipeLeft,
+  }) => ListPrefs(
+    order: order ?? this.order,
+    threads: threads ?? this.threads,
+    swipeRight: swipeRight ?? this.swipeRight,
+    swipeLeft: swipeLeft ?? this.swipeLeft,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListPrefs &&
+      other.order == order &&
+      other.threads == threads &&
+      other.swipeRight == swipeRight &&
+      other.swipeLeft == swipeLeft;
+
+  @override
+  int get hashCode => Object.hash(order, threads, swipeRight, swipeLeft);
+}
+
+/// How full a mailbox is, in bytes.
+class MailQuota {
+  const MailQuota(this.used, this.limit);
+  final int used;
+  final int limit;
+
+  /// From 0 to 1.
+  double get share => limit <= 0 ? 0 : (used / limit).clamp(0, 1);
+
+  /// Nearly full: a gentle word in the account's settings.
+  bool get nearlyFull => share >= 0.9;
 }
 
 /// What a rule looks at. The body is its first words as it arrives, all
@@ -674,6 +756,7 @@ class MailRow {
     this.waitingFor = const [],
     this.labels = const [],
     this.remindAt,
+    this.starred = false,
   });
 
   /// Empty for a single-account row; otherwise every server copy.
@@ -740,6 +823,9 @@ class MailRow {
   /// if nobody has replied by then. Null without a reminder.
   final DateTime? remindAt;
 
+  /// Starred (IMAP `\Flagged`, JMAP `$flagged`).
+  final bool starred;
+
   bool get isConversation => messages > 1 && thread.isNotEmpty;
 
   MailRow withSeen(bool seen) => copyWith(seen: seen);
@@ -753,6 +839,7 @@ class MailRow {
     List<String>? waitingFor,
     List<String>? labels,
     Object? remindAt = _unchanged,
+    bool? starred,
   }) => MailRow(
     copies: copies,
     accountId: accountId,
@@ -781,6 +868,7 @@ class MailRow {
     remindAt: identical(remindAt, _unchanged)
         ? this.remindAt
         : remindAt as DateTime?,
+    starred: starred ?? this.starred,
   );
 
   /// Name if the sender has one, otherwise the address.
@@ -2422,6 +2510,86 @@ abstract class MailSource {
   /// The account's spam folder, by its server name, once a sync found
   /// one; null when it has none, and Report spam isn't offered.
   String? junkMailbox(int accountId) => null;
+
+  /// The account's Trash, by its server name, once a sync found it.
+  String? trashMailbox(int accountId) => null;
+
+  /// Whether Delete in [mailbox] deletes for good, with no Undo: in Trash
+  /// and in spam, where moving to Trash would only put it back.
+  bool deletesForGood(int accountId, String mailbox) =>
+      mailbox == trashMailbox(accountId) || mailbox == junkMailbox(accountId);
+
+  /// Deletes emails for good: they leave the lists at once and their
+  /// servers delete them (at the next sync when offline). No Undo: the
+  /// app asks first.
+  Future<void> deleteForever(List<MailRow> rows) async {}
+
+  /// Stars emails, or takes their stars off: at once here, then on their
+  /// servers.
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {}
+
+  /// Copies emails to one of their account's folders; they stay where
+  /// they are.
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {}
+
+  /// How many emails a folder holds: what its server says, or what is
+  /// here when it can't be reached.
+  Future<int> folderTotal(int accountId, String mailbox) async => 0;
+
+  /// Empty Trash, Empty spam: every email of the folder goes for good.
+  /// Returns how many.
+  Future<int> emptyFolder(int accountId, String mailbox) async => 0;
+
+  /// Renames one of the account's own folders.
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {}
+
+  /// What deleting a folder takes with it: its emails and its
+  /// subfolders' (they go to Trash), and how many subfolders.
+  ({int emails, int subfolders}) folderContents(
+    int accountId,
+    String mailbox,
+  ) => (emails: 0, subfolders: 0);
+
+  /// Deletes one of the account's own folders with its subfolders; their
+  /// emails go to Trash first.
+  Future<void> deleteFolder(int accountId, String mailbox) async {}
+
+  /// Shows one of the account's own folders in the lists, or hides it.
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {}
+
+  /// Which folder does each job for an account.
+  List<SpecialFolder> specialFolders(int accountId) => const [];
+
+  /// Every folder of the account's server, to give one a job: its server
+  /// name and its whole path as people read it.
+  List<({String mailbox, String name})> serverFolders(int accountId) =>
+      const [];
+
+  /// Gives a job to a folder of the person's choice; null goes back to
+  /// the one the server marks or names.
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {}
+
+  /// How the lists look: their order, conversations or single emails,
+  /// and what each swipe does.
+  ValueListenable<ListPrefs> get listPrefs => _defaultListPrefs;
+  static final _defaultListPrefs = ValueNotifier(const ListPrefs());
+
+  Future<void> setListPrefs(ListPrefs prefs) async {}
+
+  /// How full the account's mailbox was when its server last said; null
+  /// when it never said.
+  MailQuota? quota(int accountId) => null;
+
+  /// Asks the server how full the mailbox is.
+  Future<MailQuota?> refreshQuota(int accountId) async => quota(accountId);
 
   /// Snoozes messages until [until]: they leave the lists at once, wait
   /// in their account's Snoozed folder and come back to the inbox, unread.

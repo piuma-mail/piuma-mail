@@ -294,11 +294,15 @@ impl From<InboxTab> for Section {
 }
 
 /// What a list keeps: [tab], and with [unread] only the conversations
-/// with something unread.
-fn filter(tab: Option<InboxTab>, unread: bool) -> ListFilter {
+/// with something unread; sorted, and grouped in conversations or not, as
+/// the person set the lists (see [`crate::api::mailbox::list_settings`]).
+pub(crate) fn filter(store: &Store, tab: Option<InboxTab>, unread: bool) -> ListFilter {
+    let view = store.list_settings().unwrap_or_default();
     ListFilter {
         section: tab.map_or(Section::All, Section::from),
         unread,
+        order: view.order,
+        flat: !view.threads,
     }
 }
 
@@ -830,10 +834,11 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.conversation_count(
+    let store = store()?;
+    Ok(store.conversation_count(
         folder.into(),
         within(account, group, address),
-        filter(tab, unread),
+        filter(&store, tab, unread),
     )?)
 }
 
@@ -868,14 +873,9 @@ pub fn folder_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     let scope = within(account, group, address);
+    let view = filter(&store, tab, unread);
     store
-        .conversations_page(
-            folder.into(),
-            scope.clone(),
-            filter(tab, unread),
-            offset,
-            limit,
-        )?
+        .conversations_page(folder.into(), scope.clone(), view, offset, limit)?
         .into_iter()
         .map(|mut c| {
             let copies = store.combined_copies(&c.latest, folder.into(), &scope)?;
@@ -907,6 +907,10 @@ pub fn folder_page(
             );
             if !copies.is_empty() {
                 row.seen = seen;
+            }
+            if view.flat {
+                row.thread.clear();
+                row.messages = 1;
             }
             row.copies = refs;
             Ok(row)
@@ -1225,7 +1229,7 @@ pub fn folder_counts_between(
 ) -> Result<Vec<u32>, EngineError> {
     let store = store()?;
     let within = within(account, group, address);
-    let section = filter(tab, unread);
+    let section = filter(&store, tab, unread);
     edges
         .windows(2)
         .map(|w| {
@@ -1278,6 +1282,17 @@ fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
     // A watcher stopped meanwhile leaves nothing behind.
     if let Some(kind) = kind.filter(|_| watched.contains(&id)) {
         waiting.push((id, kind));
+    }
+}
+
+/// Changes a server kept refusing were given up while sent from the app:
+/// the app tells the person, as when the watcher gave them up.
+pub(crate) fn changes_dropped(id: AccountId, changes: usize) {
+    if changes > 0 {
+        emit(SyncEvent {
+            removed: changes as u32,
+            ..SyncEvent::new(SyncEventKind::ChangesDropped, id.0)
+        });
     }
 }
 
@@ -3574,6 +3589,7 @@ pub async fn save_draft(message: OutgoingMessage) -> Result<MessageRef, EngineEr
         .runtime
         .spawn(async move {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let folder = conn.append_draft(&to_append).await?;
             if let Some(e) = &earlier_here {
                 conn.erase(&shared, id, &e.mailbox, &[e.uid]).await?;
@@ -3683,6 +3699,7 @@ fn save_waiting_drafts(account: Account, password: String) {
         let mut elsewhere = Vec::new();
         let saved = async {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let mut folder = None;
             for d in &waiting {
                 let into = conn.append_draft(&d.raw).await?;
@@ -3977,6 +3994,15 @@ pub async fn apply_message_action(
             on_server.push(m);
         }
     }
+    // Delete in Trash or spam is for good: moved to Trash it would only
+    // come back under a new number.
+    if action == MessageAction::Delete {
+        let forever;
+        (forever, on_server) = crate::api::mailbox::split_for_good(on_server)?;
+        if !forever.is_empty() {
+            crate::api::mailbox::delete_forever(forever).await?;
+        }
+    }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();
     for m in on_server {
         by_account
@@ -4086,6 +4112,8 @@ pub struct AccountFolderInfo {
     pub unread: u32,
     /// How many emails it holds on the server.
     pub total: u32,
+    /// Subscribed: shown in the lists; the others show on demand.
+    pub subscribed: bool,
 }
 
 /// An account's own folders (not Inbox, Sent, Archive, Drafts, Trash or
@@ -4101,6 +4129,7 @@ pub fn account_folders(account_id: i64) -> Result<Vec<AccountFolderInfo>, Engine
             selectable: f.selectable,
             unread: f.unread,
             total: f.total,
+            subscribed: f.subscribed,
         })
         .collect())
 }
@@ -4140,7 +4169,9 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
 
 /// How many conversations one of an account's folders lists here.
 pub fn mailbox_count(account_id: i64, mailbox: String) -> Result<u32, EngineError> {
-    Ok(store()?.mailbox_count(AccountId(account_id), &mailbox)?)
+    let store = store()?;
+    let view = filter(&store, None, false);
+    Ok(store.mailbox_count(AccountId(account_id), &mailbox, view)?)
 }
 
 /// Rows `offset..offset+limit` of one of an account's folders, newest
@@ -4153,7 +4184,13 @@ pub fn mailbox_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     Ok(store
-        .mailbox_page(AccountId(account_id), &mailbox, offset, limit)?
+        .mailbox_page(
+            AccountId(account_id),
+            &mailbox,
+            filter(&store, None, false),
+            offset,
+            limit,
+        )?
         .into_iter()
         .map(|c| {
             with_files(
@@ -4179,7 +4216,15 @@ pub fn mailbox_counts_between(
     let account = AccountId(account_id);
     edges
         .windows(2)
-        .map(|w| Ok(store.mailbox_count_between(account, &mailbox, w[1], w[0])?))
+        .map(|w| {
+            Ok(store.mailbox_count_between(
+                account,
+                &mailbox,
+                filter(&store, None, false),
+                w[1],
+                w[0],
+            )?)
+        })
         .collect()
 }
 

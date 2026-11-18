@@ -149,6 +149,11 @@ pub struct Connection {
     idle: bool,
     moves: bool,
     uidplus: bool,
+    /// RFC 2087: the server says how full the mailbox is.
+    quota: bool,
+    /// Jobs the person gave folders of their choice: they win over the
+    /// server's marks and the usual names (see [`Self::learn_roles`]).
+    roles: Vec<(FolderRole, String)>,
     /// The deadline and budget of the commands under way.
     limits: Arc<crate::watchdog::Limits>,
     timing: Timing,
@@ -288,6 +293,8 @@ impl Connection {
             idle: caps.has_str("IDLE"),
             moves: caps.has_str("MOVE"),
             uidplus: caps.has_str("UIDPLUS"),
+            quota: caps.has_str("QUOTA"),
+            roles: Vec::new(),
             limits,
             timing,
         })
@@ -315,6 +322,27 @@ impl Connection {
             }
         }
         Ok(selected)
+    }
+
+    /// Reads which folders the person gave a job to, so the folder for a
+    /// role is theirs from now on. Calls that are given the store do it
+    /// themselves; call it before [`Self::append_draft`] or
+    /// [`Self::append_sent`].
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        self.roles = lock(store).role_choices(account)?;
+        Ok(())
+    }
+
+    /// The folder for `role` among `names`: the person's choice when it
+    /// is still there, else the one marked for it, else a usual name.
+    fn pick(&self, names: &[async_imap::types::Name], role: FolderRole) -> Option<String> {
+        let chosen = self.roles.iter().find(|(r, _)| *r == role);
+        if let Some((_, m)) = chosen {
+            if names.iter().any(|n| n.name() == m) {
+                return Some(m.clone());
+            }
+        }
+        pick_folder(names, role)
     }
 
     /// Acts as if the server had no MOVE, to test the COPY fallback.
@@ -784,7 +812,7 @@ impl Connection {
     /// The spam folder is never made: without one, this fails.
     pub async fn folder(&mut self, role: FolderRole) -> Result<String> {
         let names = self.list().await?;
-        if let Some(name) = pick_folder(&names, role) {
+        if let Some(name) = self.pick(&names, role) {
             return Ok(name);
         }
         if role == FolderRole::Junk {
@@ -805,7 +833,15 @@ impl Connection {
     ) -> Result<String> {
         let names = self.list().await?;
         let mailbox = new_folder_name(&names, &utf7_encode(name.trim()));
+        let delimiter = names
+            .iter()
+            .find_map(|n| n.delimiter())
+            .unwrap_or_default()
+            .to_owned();
         self.session()?.create(&mailbox).await?;
+        // Shown everywhere: a folder made and not subscribed is hidden by
+        // many apps. A server without subscriptions shows it anyway.
+        self.session()?.subscribe(&mailbox).await.ok();
         lock(store).add_account_folder(
             account,
             &crate::AccountFolder {
@@ -815,6 +851,8 @@ impl Connection {
                 selectable: true,
                 unread: 0,
                 total: 0,
+                subscribed: true,
+                delimiter,
             },
         )?;
         Ok(mailbox)
@@ -823,7 +861,7 @@ impl Connection {
     /// The folder with a job, when the account has one.
     pub async fn find_folder(&mut self, role: FolderRole) -> Result<Option<String>> {
         let names = self.list().await?;
-        Ok(pick_folder(&names, role))
+        Ok(self.pick(&names, role))
     }
 
     async fn list(&mut self) -> Result<Vec<async_imap::types::Name>> {
@@ -851,13 +889,41 @@ impl Connection {
         account: AccountId,
         round: Round,
     ) -> Result<usize> {
+        self.learn_roles(store, account)?;
         let names = self.list().await?;
-        let mut skip: HashSet<String> = [FolderRole::Trash]
-            .into_iter()
-            .filter_map(|r| pick_folder(&names, r))
-            .collect();
-        // Report spam moves mail there; the app offers it only when found.
-        lock(store).set_junk_mailbox(account, pick_folder(&names, FolderRole::Junk).as_deref())?;
+        // Subscribed folders show; the others on demand. A server where
+        // nothing is subscribed shows everything, as before.
+        let subscribed: HashSet<String> = match self.session()?.lsub(Some(""), Some("*")).await {
+            Ok(stream) => stream
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .map(|n| n.name().to_owned())
+                .collect(),
+            Err(_) => HashSet::new(),
+        };
+        let trash = self.pick(&names, FolderRole::Trash);
+        let junk = self.pick(&names, FolderRole::Junk);
+        let mut skip: HashSet<String> = trash.iter().chain(junk.iter()).cloned().collect();
+        skip.extend(self.roles.iter().map(|(_, m)| m.clone()));
+        {
+            let store = lock(store);
+            // Report spam moves mail there; the app offers it only when
+            // found. Delete in either deletes for good.
+            store.set_junk_mailbox(account, junk.as_deref())?;
+            store.set_trash_mailbox(account, trash.as_deref())?;
+            // Every folder, for the person to give one a job.
+            store.set_server_folders(
+                account,
+                &names
+                    .iter()
+                    .filter(|n| !is_space_folder(n.name()))
+                    .filter(|n| !n.attributes().contains(&NameAttribute::NoSelect))
+                    .map(|n| (n.name().to_owned(), shown_name(n)))
+                    .collect::<Vec<_>>(),
+            )?;
+        }
         // The sync space's folder stays hidden.
         skip.insert(crate::space::FOLDER.to_owned());
         skip.extend(space_folder_in(&names));
@@ -868,7 +934,7 @@ impl Connection {
             (FolderRole::Drafts, Folder::Drafts),
             (FolderRole::Snoozed, Folder::Snoozed),
         ] {
-            let Some(name) = pick_folder(&names, role) else {
+            let Some(name) = self.pick(&names, role) else {
                 continue;
             };
             skip.insert(name.clone());
@@ -882,6 +948,7 @@ impl Connection {
             .iter()
             .filter(|n| !n.attributes().iter().any(is_special))
             .map(|n| Listed {
+                subscribed: subscribed.is_empty() || subscribed.contains(n.name()),
                 name: n.name().to_owned(),
                 delimiter: n.delimiter().map(str::to_owned),
                 selectable: !n.attributes().contains(&NameAttribute::NoSelect)
@@ -927,9 +994,202 @@ impl Connection {
         uids: &[u32],
         role: FolderRole,
     ) -> Result<String> {
+        self.learn_roles(store, account)?;
         let target = self.folder(role).await?;
+        // From Trash to Trash: the server would copy them in again under
+        // new numbers. Deleting there is for good.
+        if role == FolderRole::Trash && target == mailbox {
+            self.erase(store, account, mailbox, uids).await?;
+            return Ok(target);
+        }
         self.move_to(store, account, mailbox, uids, &target).await?;
         Ok(target)
+    }
+
+    /// Copies messages of one folder to `target`, by its server name; they
+    /// stay where they are. The copies show once `target` is looked at.
+    pub async fn copy_to(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        target: &str,
+    ) -> Result<()> {
+        if uids.is_empty() || target == mailbox {
+            return Ok(());
+        }
+        self.select_checked(store, account, mailbox).await?;
+        self.session()?.uid_copy(uid_set(uids), target).await?;
+        Ok(())
+    }
+
+    /// Stars messages of one folder (`\Flagged`), or takes the star off.
+    pub async fn set_flagged(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        flagged: bool,
+    ) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+        self.select_checked(store, account, mailbox).await?;
+        let op = if flagged {
+            "+FLAGS.SILENT (\\Flagged)"
+        } else {
+            "-FLAGS.SILENT (\\Flagged)"
+        };
+        store_checked(self.session()?, &uid_set(uids), op).await
+    }
+
+    /// Deletes every message of `mailbox` for good (Empty Trash, Empty
+    /// spam) and forgets them here. Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<usize> {
+        let uidplus = self.uidplus;
+        let selected = self.select_checked(store, account, mailbox).await?;
+        if selected.exists == 0 {
+            lock(store).clear_mailbox(account, mailbox)?;
+            return Ok(0);
+        }
+        let session = self.session()?;
+        let mut uids: Vec<u32> = session.uid_search("ALL").await?.into_iter().collect();
+        uids.sort_unstable();
+        if uids.is_empty() {
+            return Ok(0);
+        }
+        let set = uid_set(&uids);
+        store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
+        if uidplus {
+            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
+        } else {
+            let _: Vec<_> = session.expunge().await?.try_collect().await?;
+        }
+        lock(store).remove_messages(account, mailbox, &uids)?;
+        Ok(uids.len())
+    }
+
+    /// How many messages `mailbox` holds on the server.
+    pub async fn count(&mut self, mailbox: &str) -> Result<u32> {
+        let status = self.session()?.status(mailbox, "(MESSAGES)").await?;
+        Ok(status.exists)
+    }
+
+    /// Renames, deletes, subscribes to or unsubscribes from one of the
+    /// account's own folders. Deleting first moves its mail, and its
+    /// subfolders' mail, to Trash.
+    pub async fn change_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        change: &crate::pending::FolderChange,
+    ) -> Result<()> {
+        use crate::pending::FolderChange;
+        match change {
+            FolderChange::Rename(to) => {
+                if to == mailbox {
+                    return Ok(());
+                }
+                self.session()?.rename(mailbox, to).await?;
+                // Subscriptions don't follow the name on every server.
+                if let Ok(()) = self.session()?.unsubscribe(mailbox).await {
+                    self.session()?.subscribe(to).await.ok();
+                }
+                Ok(())
+            }
+            FolderChange::Subscribe(true) => Ok(self.session()?.subscribe(mailbox).await?),
+            FolderChange::Subscribe(false) => Ok(self.session()?.unsubscribe(mailbox).await?),
+            FolderChange::Delete => self.delete_folder(store, account, mailbox).await,
+        }
+    }
+
+    /// Deletes a folder and its subfolders, deepest first, after moving
+    /// their mail to Trash.
+    async fn delete_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<()> {
+        self.learn_roles(store, account)?;
+        let names = self.list().await?;
+        let Some(folder) = names.iter().find(|n| n.name() == mailbox) else {
+            // Already gone.
+            return Ok(());
+        };
+        let mut gone: Vec<(String, bool)> = vec![(
+            mailbox.to_owned(),
+            !folder.attributes().contains(&NameAttribute::NoSelect),
+        )];
+        if let Some(d) = folder.delimiter() {
+            let prefix = format!("{mailbox}{d}");
+            gone.extend(
+                names
+                    .iter()
+                    .filter(|n| n.name().starts_with(&prefix))
+                    .map(|n| {
+                        (
+                            n.name().to_owned(),
+                            !n.attributes().contains(&NameAttribute::NoSelect),
+                        )
+                    }),
+            );
+        }
+        // Deepest first.
+        gone.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
+        let trash = self.folder(FolderRole::Trash).await?;
+        let (moves, uidplus) = (self.moves, self.uidplus);
+        for (name, selectable) in &gone {
+            if *selectable && *name != trash {
+                let session = self.session()?;
+                let selected = session.select(name).await?;
+                if selected.exists > 0 {
+                    if moves {
+                        session.uid_mv("1:*", &trash).await?;
+                    } else {
+                        session.uid_copy("1:*", &trash).await?;
+                        let _: Vec<_> = session
+                            .uid_store("1:*", "+FLAGS.SILENT (\\Deleted)")
+                            .await?
+                            .try_collect()
+                            .await?;
+                        if uidplus {
+                            let _: Vec<_> = session.uid_expunge("1:*").await?.try_collect().await?;
+                        } else {
+                            let _: Vec<_> = session.expunge().await?.try_collect().await?;
+                        }
+                    }
+                }
+                session.close().await.ok();
+            }
+            self.session()?.unsubscribe(name).await.ok();
+            self.session()?.delete(name).await?;
+            lock(store).clear_mailbox(account, name)?;
+        }
+        Ok(())
+    }
+
+    /// How full the mailbox is (RFC 2087, its storage in bytes), when the
+    /// server says.
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        if !self.quota {
+            return Ok(None);
+        }
+        let (_, quotas) = self.session()?.get_quota_root("INBOX").await?;
+        Ok(quotas
+            .iter()
+            .flat_map(|q| q.resources.iter())
+            .find(|r| r.name == async_imap::types::QuotaResourceName::Storage)
+            .filter(|r| r.limit > 0)
+            .map(|r| (r.usage.saturating_mul(1024), r.limit.saturating_mul(1024))))
     }
 
     /// Moves messages of one folder to `target`, by its server name, and
@@ -1186,11 +1446,9 @@ impl Connection {
             .map(u32::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        let _: Vec<_> = session
-            .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-            .await?
-            .try_collect()
-            .await?;
+        // A refusal must say so: forgotten here while kept there, the
+        // message would come back at the next sync.
+        store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
         if uidplus {
             let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
         } else {
@@ -1302,7 +1560,7 @@ impl Connection {
 }
 
 /// Folders with a job, found by their RFC 6154 marker or a usual name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FolderRole {
     Sent,
     Archive,
@@ -1315,6 +1573,41 @@ pub enum FolderRole {
 }
 
 impl FolderRole {
+    /// The jobs the person can give a folder of their choice, when the
+    /// server's marks and the usual names got it wrong.
+    pub const CHOOSABLE: [FolderRole; 5] = [
+        FolderRole::Sent,
+        FolderRole::Drafts,
+        FolderRole::Trash,
+        FolderRole::Junk,
+        FolderRole::Archive,
+    ];
+
+    /// How settings name it.
+    pub fn tag(self) -> &'static str {
+        match self {
+            FolderRole::Sent => "sent",
+            FolderRole::Archive => "archive",
+            FolderRole::Trash => "trash",
+            FolderRole::Drafts => "drafts",
+            FolderRole::Snoozed => "snoozed",
+            FolderRole::Junk => "junk",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        [
+            FolderRole::Sent,
+            FolderRole::Archive,
+            FolderRole::Trash,
+            FolderRole::Drafts,
+            FolderRole::Snoozed,
+            FolderRole::Junk,
+        ]
+        .into_iter()
+        .find(|r| r.tag() == tag)
+    }
+
     fn markers(self) -> (NameAttribute<'static>, &'static [&'static str]) {
         match self {
             FolderRole::Sent => (
@@ -1387,6 +1680,7 @@ pub(crate) struct Listed {
     pub(crate) name: String,
     pub(crate) delimiter: Option<String>,
     pub(crate) selectable: bool,
+    pub(crate) subscribed: bool,
 }
 
 /// Folders with a job the app already shows, or that hold no mail of
@@ -1402,6 +1696,21 @@ fn is_special(a: &NameAttribute<'_>) -> bool {
             | NameAttribute::Sent
             | NameAttribute::Trash
     )
+}
+
+/// What people read for a folder: its whole path, decoded, without a
+/// leading INBOX on servers that keep everything under it.
+fn shown_name(n: &async_imap::types::Name) -> String {
+    let name = n.name();
+    let shown = match n.delimiter() {
+        Some(d) if !d.is_empty() && inside_inbox(name) => {
+            crate::guard::strip_prefix_ci(name, "INBOX")
+                .and_then(|rest| rest.strip_prefix(d))
+                .unwrap_or(name)
+        }
+        _ => name,
+    };
+    utf7_decode(shown)
 }
 
 /// Usual names of the spam folder, for servers that don't mark it.
@@ -1439,6 +1748,8 @@ pub(crate) fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crat
                 selectable: false,
                 unread: 0,
                 total: 0,
+                subscribed: true,
+                delimiter: l.delimiter.clone().unwrap_or_default(),
             });
         }
         by_path.insert(
@@ -1450,6 +1761,8 @@ pub(crate) fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crat
                 selectable: l.selectable,
                 unread: 0,
                 total: 0,
+                subscribed: l.subscribed,
+                delimiter: l.delimiter.clone().unwrap_or_default(),
             },
         );
     }
@@ -1921,6 +2234,15 @@ fn classify_login(e: async_imap::error::Error) -> ImapError {
 }
 
 /// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
+/// `UID STORE` that fails when the server answers NO: async-imap's own
+/// `uid_store` stream ends on the tagged answer whatever it says.
+async fn store_checked(session: &mut Session, set: &str, op: &str) -> Result<()> {
+    session
+        .run_command_and_check_ok(format!("UID STORE {set} {op}"))
+        .await?;
+    Ok(())
+}
+
 fn uid_set(uids: &[u32]) -> String {
     let mut sorted = uids.to_vec();
     sorted.sort_unstable();
@@ -3340,6 +3662,7 @@ mod tests {
             name: name.into(),
             delimiter: Some(d.into()),
             selectable,
+            subscribed: true,
         };
         let skip: HashSet<String> = ["INBOX.Sent".to_owned()].into();
         let listed = [

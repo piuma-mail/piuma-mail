@@ -73,6 +73,31 @@ class DemoMailSource extends MailSource {
         messageId: '<demo-junk-1@piuma.mail>',
       ),
     ];
+    // Two deleted emails in Work's Trash.
+    _own['Trash'] = [
+      MailRow(
+        accountId: _work.id,
+        mailbox: 'Trash',
+        uid: 9101,
+        fromName: 'Print Shop',
+        fromEmail: 'orders@printshop.it',
+        subject: 'Your proof is ready',
+        preview: 'The proof of your business cards is attached.',
+        receivedAt: this.now.subtract(const Duration(days: 2)),
+        seen: true,
+      ),
+      MailRow(
+        accountId: _work.id,
+        mailbox: 'Trash',
+        uid: 9102,
+        fromName: 'Coworking Nord',
+        fromEmail: 'hello@coworkingnord.it',
+        subject: 'Events this week',
+        preview: 'Breakfast on Tuesday, a talk on Thursday.',
+        receivedAt: this.now.subtract(const Duration(days: 4)),
+        seen: true,
+      ),
+    ];
     if (groups) {
       _groups.addAll([
         const MailGroup(
@@ -891,6 +916,222 @@ class DemoMailSource extends MailSource {
   @override
   String? junkMailbox(int accountId) => junkFolders ? 'Junk' : null;
 
+  @override
+  String? trashMailbox(int accountId) => junkFolders ? 'Trash' : null;
+
+  /// Starred rows, by key.
+  late final Set<Object> _starred = {
+    // Two of the inbox, as on the board.
+    for (final r in _rows.skip(1).take(2)) r.key,
+  };
+
+  /// What was starred or unstarred, for tests.
+  final List<(MailRow, bool)> starredSet = [];
+
+  @override
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {
+    for (final r in rows) {
+      starred ? _starred.add(r.key) : _starred.remove(r.key);
+      starredSet.add((r, starred));
+    }
+    _changes.add(null);
+  }
+
+  /// What was deleted for good, for tests.
+  final List<MailRow> erased = [];
+
+  @override
+  Future<void> deleteForever(List<MailRow> rows) async {
+    for (final r in rows) {
+      erased.add(r);
+      _gone.add(r.key);
+      _own[r.mailbox]?.removeWhere((o) => o.key == r.key);
+    }
+    _changes.add(null);
+  }
+
+  /// What was copied where, for tests.
+  final List<(MailRow, String)> copied = [];
+
+  @override
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {
+    for (final row in rows) {
+      copied.add((row, mailbox));
+      (_own[mailbox] ??= []).insert(
+        0,
+        row.copyWith(mailbox: mailbox, uid: 50000 + copied.length),
+      );
+    }
+    _changes.add(null);
+  }
+
+  @override
+  Future<int> folderTotal(int accountId, String mailbox) async =>
+      _ownList(accountId, mailbox).length;
+
+  /// Folders emptied, for tests.
+  final List<String> emptied = [];
+
+  @override
+  Future<int> emptyFolder(int accountId, String mailbox) async {
+    final n = _ownList(accountId, mailbox).length;
+    emptied.add(mailbox);
+    _own[mailbox]?.removeWhere((r) => r.accountId == accountId);
+    _changes.add(null);
+    return n;
+  }
+
+  /// Folders renamed (server name to name), deleted and hidden, by
+  /// account.
+  final _renamed = <String, String>{};
+  final _deletedFolders = <String>{};
+  final _hiddenFolders = <String>{'Archive 2019'};
+
+  @override
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {
+    _renamed[mailbox] = name.trim();
+    _changes.add(null);
+  }
+
+  @override
+  ({int emails, int subfolders}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
+    var emails = 0, subfolders = 0;
+    for (final f in _workFolders) {
+      if (f.mailbox == mailbox) emails += f.total;
+      if (f.mailbox.startsWith('$mailbox/')) {
+        emails += f.total;
+        subfolders++;
+      }
+    }
+    return (emails: emails, subfolders: subfolders);
+  }
+
+  @override
+  Future<void> deleteFolder(int accountId, String mailbox) async {
+    _deletedFolders.add(mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {
+    subscribed ? _hiddenFolders.remove(mailbox) : _hiddenFolders.add(mailbox);
+    _changes.add(null);
+  }
+
+  final _chosenRoles = <(int, SpecialRole), String>{};
+
+  @override
+  List<SpecialFolder> specialFolders(int accountId) => [
+    for (final (role, found) in [
+      (SpecialRole.sent, 'Sent'),
+      (SpecialRole.drafts, 'Drafts'),
+      (SpecialRole.trash, junkFolders ? 'Trash' : null),
+      (SpecialRole.junk, junkMailbox(accountId)),
+      (SpecialRole.archive, 'Archive'),
+    ])
+      SpecialFolder(
+        role,
+        _chosenRoles[(accountId, role)] ?? found,
+        chosen: _chosenRoles.containsKey((accountId, role)),
+      ),
+  ];
+
+  @override
+  List<({String mailbox, String name})> serverFolders(int accountId) => [
+    for (final name in ['Archive', 'Drafts', 'Junk', 'Sent', 'Trash'])
+      (mailbox: name, name: name),
+    if (accountId == _work.id)
+      for (final f in _workFolders) (mailbox: f.mailbox, name: f.mailbox),
+  ];
+
+  @override
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {
+    if (mailbox == null) {
+      _chosenRoles.remove((accountId, role));
+    } else {
+      _chosenRoles[(accountId, role)] = mailbox;
+    }
+    _changes.add(null);
+  }
+
+  final _listPrefs = ValueNotifier(const ListPrefs());
+
+  @override
+  ValueListenable<ListPrefs> get listPrefs => _listPrefs;
+
+  @override
+  Future<void> setListPrefs(ListPrefs prefs) async {
+    _listPrefs.value = prefs;
+    _changes.add(null);
+  }
+
+  /// Rows as the list settings sort and group them.
+  List<MailRow> _arranged(List<MailRow> rows) {
+    final prefs = _listPrefs.value;
+    var out = rows;
+    if (!prefs.threads) out = [for (final r in rows) _single(r)];
+    switch (prefs.order) {
+      case ListOrder.newest:
+        break;
+      case ListOrder.oldest:
+        out = [...out]..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+      case ListOrder.sender:
+        out = [...out]
+          ..sort((a, b) {
+            final by = a.sender.toLowerCase().compareTo(b.sender.toLowerCase());
+            return by != 0 ? by : b.receivedAt.compareTo(a.receivedAt);
+          });
+    }
+    return out;
+  }
+
+  /// [r] as a row of its own, outside its conversation.
+  static MailRow _single(MailRow r) => MailRow(
+    copies: r.copies,
+    accountId: r.accountId,
+    mailbox: r.mailbox,
+    uid: r.uid,
+    fromName: r.fromName,
+    fromEmail: r.fromEmail,
+    subject: r.subject,
+    preview: r.preview,
+    receivedAt: r.receivedAt,
+    seen: r.seen,
+    messageId: r.messageId,
+    references: r.references,
+    replyTo: r.replyTo,
+    to: r.to,
+    folder: r.folder,
+    listed: r.listed,
+    snoozedUntil: r.snoozedUntil,
+    files: r.files,
+    pictures: r.pictures,
+    invite: r.invite,
+    waitingFor: r.waitingFor,
+    labels: r.labels,
+    remindAt: r.remindAt,
+    starred: r.starred,
+  );
+
+  @override
+  MailQuota? quota(int accountId) => switch (accountId) {
+    // Work is nearly full, as a gentle warning shows.
+    2 => const MailQuota(14200 * 1024 * 1024, 15360 * 1024 * 1024),
+    1 => const MailQuota(2100 * 1024 * 1024, 15360 * 1024 * 1024),
+    _ => null,
+  };
+
   void _applyOne(MailRow row, MessageAction action) {
     applied.add((row, action));
     if (action == MessageAction.notJunk) {
@@ -927,8 +1168,9 @@ class DemoMailSource extends MailSource {
 
   final _movedToArchive = <MailRow>[];
 
-  /// Work's own folders, as in `AccountFolders`.
+  /// Work's own folders, as in `AccountFolders`, and one hidden.
   static const _workFolders = [
+    AccountFolder(mailbox: 'Archive 2019', name: 'Archive 2019', total: 640),
     AccountFolder(mailbox: 'Clients', name: 'Clients'),
     AccountFolder(mailbox: 'Clients/Acme', name: 'Acme', depth: 1, total: 46),
     AccountFolder(
@@ -958,16 +1200,22 @@ class DemoMailSource extends MailSource {
 
   @override
   Future<List<AccountFolder>> folders(int accountId) async {
+    bool deleted(String m) =>
+        _deletedFolders.any((d) => m == d || m.startsWith('$d/'));
     var list = [
       if (accountId == _work.id)
         for (final f in _workFolders)
-          AccountFolder(
-            mailbox: f.mailbox,
-            name: f.name,
-            depth: f.depth,
-            unread: (_own[f.mailbox] ?? const []).where((r) => !r.seen).length,
-            total: f.total + (_own[f.mailbox]?.length ?? 0),
-          ),
+          if (!deleted(f.mailbox))
+            AccountFolder(
+              mailbox: f.mailbox,
+              name: _renamed[f.mailbox] ?? f.name,
+              depth: f.depth,
+              unread: (_own[f.mailbox] ?? const [])
+                  .where((r) => !r.seen)
+                  .length,
+              total: f.total + (_own[f.mailbox]?.length ?? 0),
+              subscribed: !_hiddenFolders.contains(f.mailbox),
+            ),
       ...?_made[accountId],
     ];
     for (final order in _folderOrders[accountId] ?? const <List<String>>[]) {
@@ -1194,6 +1442,13 @@ class DemoMailSource extends MailSource {
   List<MailRow> _messages(MailFolder folder) => switch (folder) {
     MailFolder.inbox => _visible,
     MailFolder.label => const [],
+    MailFolder.starred =>
+      [
+          ..._visible,
+          ..._messages(MailFolder.archive),
+          ..._messages(MailFolder.sent),
+        ].where((r) => _starred.contains(r.key)).toList()
+        ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt)),
     MailFolder.sent =>
       [
           ..._sentNow.reversed,
@@ -1584,11 +1839,13 @@ class DemoMailSource extends MailSource {
     bool unread = false,
     GroupScope? group,
   }) async =>
-      (folder == MailFolder.label
-              ? await labelled(mailbox ?? '')
-              : account != null && mailbox != null
-              ? _ownList(account, mailbox)
-              : _list(folder, account, tab, group, unread))
+      _arranged(
+            folder == MailFolder.label
+                ? await labelled(mailbox ?? '')
+                : account != null && mailbox != null
+                ? _ownList(account, mailbox)
+                : _list(folder, account, tab, group, unread),
+          )
           .skip(offset)
           .take(limit)
           .map(_withLabels)
@@ -1600,7 +1857,10 @@ class DemoMailSource extends MailSource {
 
   MailRow _withLabels(MailRow r) {
     final labels = _rowLabels[r.key];
-    return labels == null ? r : r.copyWith(labels: labels);
+    final starred = _starred.contains(r.key);
+    return labels == null && !starred
+        ? r
+        : r.copyWith(labels: labels, starred: starred);
   }
 
   void _seedLabels() {

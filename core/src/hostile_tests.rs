@@ -318,11 +318,13 @@ fn server_names_and_replies_never_panic() {
                 name: s.clone(),
                 delimiter: Some(delimiter.into()),
                 selectable: true,
+                subscribed: true,
             },
             crate::imap::Listed {
                 name: format!("INBOX{delimiter}{s}"),
                 delimiter: Some(delimiter.into()),
                 selectable: rng.below(2) == 0,
+                subscribed: rng.below(2) == 0,
             },
         ];
         let _ = crate::imap::own_folders(&listed, &none);
@@ -361,7 +363,7 @@ fn server_names_and_replies_never_panic() {
                 ..Default::default()
             },
         ];
-        let _ = crate::jmap::own_folders(&mailboxes);
+        let _ = crate::jmap::own_folders(&mailboxes, &[]);
         let _ = crate::jmap::method_responses(&answer, ["Email/get", "Mailbox/get"]);
     }
 }

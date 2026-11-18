@@ -42,6 +42,12 @@ struct Server {
     headers: bool,
     /// The away message (RFC 8621 section 8), on servers that keep one.
     vacation: Option<Value>,
+    /// Folders inside others: child id to parent id.
+    parents: BTreeMap<String, String>,
+    /// Folders not subscribed to; the rest are.
+    unsubscribed: BTreeSet<String>,
+    /// Bytes used and allowed, on servers that keep quotas (RFC 9425).
+    quota: Option<(u64, u64)>,
 }
 
 impl Server {
@@ -173,19 +179,70 @@ impl Server {
         let one = |v: Value| vec![(name.to_owned(), v)];
         match name {
             "Mailbox/get" => one(json!({ "list": self.mailboxes.iter().map(|(id, name, role)|
-                json!({ "id": id, "name": name, "role": role })).collect::<Vec<_>>() })),
+                json!({ "id": id, "name": name, "role": role,
+                        "parentId": self.parents.get(id),
+                        "isSubscribed": !self.unsubscribed.contains(id),
+                        "totalEmails": self.emails.values().filter(|e| e.mailboxes.contains(id)).count() }))
+                .collect::<Vec<_>>() })),
             "Mailbox/set" => {
-                let new = &args["create"]["new"];
-                let id = match new["role"].as_str() {
-                    Some(role) => format!("mb-{role}"),
-                    None => format!("mb-{}", self.mailboxes.len() + 1),
-                };
-                self.mailboxes.push((
-                    id.clone(),
-                    new["name"].as_str().unwrap().into(),
-                    new["role"].as_str().map(str::to_owned),
-                ));
-                one(json!({ "created": { "new": { "id": id } } }))
+                let mut answer = json!({});
+                if let Some(new) = args["create"].get("new") {
+                    let id = match new["role"].as_str() {
+                        Some(role) => format!("mb-{role}"),
+                        None => format!("mb-{}", self.mailboxes.len() + 1),
+                    };
+                    self.mailboxes.push((
+                        id.clone(),
+                        new["name"].as_str().unwrap().into(),
+                        new["role"].as_str().map(str::to_owned),
+                    ));
+                    answer["created"] = json!({ "new": { "id": id } });
+                }
+                let mut updated = serde_json::Map::new();
+                for (id, patch) in args["update"].as_object().into_iter().flatten() {
+                    let Some(m) = self.mailboxes.iter_mut().find(|(m, _, _)| m == id) else {
+                        continue;
+                    };
+                    if let Some(name) = patch["name"].as_str() {
+                        m.1 = name.into();
+                    }
+                    match patch["isSubscribed"].as_bool() {
+                        Some(true) => {
+                            self.unsubscribed.remove(id);
+                        }
+                        Some(false) => {
+                            self.unsubscribed.insert(id.clone());
+                        }
+                        None => {}
+                    }
+                    updated.insert(id.clone(), Value::Null);
+                }
+                answer["updated"] = Value::Object(updated);
+                let mut destroyed = Vec::new();
+                let mut not = serde_json::Map::new();
+                for id in args["destroy"].as_array().into_iter().flatten() {
+                    let id = id.as_str().unwrap().to_owned();
+                    let kept = args["onDestroyRemoveEmails"].as_bool() != Some(true);
+                    if self.parents.values().any(|p| *p == id) {
+                        not.insert(id, json!({ "type": "mailboxHasChild" }));
+                    } else if kept && self.emails.values().any(|e| e.mailboxes.contains(&id)) {
+                        not.insert(id, json!({ "type": "mailboxHasEmail" }));
+                    } else {
+                        self.mailboxes.retain(|(m, _, _)| *m != id);
+                        self.parents.remove(&id);
+                        destroyed.push(id);
+                    }
+                }
+                answer["destroyed"] = json!(destroyed);
+                answer["notDestroyed"] = Value::Object(not);
+                one(answer)
+            }
+            "Quota/get" => {
+                let (used, limit) = self.quota.unwrap();
+                one(json!({ "list": [
+                    { "id": "q0", "resourceType": "count", "scope": "account", "used": 3, "hardLimit": 50 },
+                    { "id": "q1", "resourceType": "octets", "scope": "account", "used": used, "hardLimit": limit },
+                ] }))
             }
             "Email/query" => {
                 let mailbox = args["filter"]["inMailbox"].as_str().unwrap();
@@ -387,6 +444,9 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
                     json!({ "urn:ietf:params:jmap:core": { "maxObjectsInGet": 3 } });
                 if state.lock().unwrap().vacation.is_some() {
                     capabilities["urn:ietf:params:jmap:vacationresponse"] = json!({});
+                }
+                if state.lock().unwrap().quota.is_some() {
+                    capabilities["urn:ietf:params:jmap:quota"] = json!({});
                 }
                 let session = json!({
                     "capabilities": capabilities,
@@ -1303,4 +1363,165 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     )
     .await
     .is_err());
+}
+
+/// Managing the mailbox over JMAP: stars, copies, deleting for good in
+/// Trash, Empty Trash, folders renamed, hidden and deleted, a folder of
+/// the person's choice for a job, and quota.
+#[tokio::test]
+async fn manages_the_mailbox() {
+    let (server, cfg) = start().await;
+    {
+        let mut s = server.lock().unwrap();
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.mailboxes.push(("mb-old".into(), "Old".into(), None));
+        s.mailboxes.push(("mb-sub".into(), "2026".into(), None));
+        s.mailboxes.push(("mb-bin".into(), "Bin".into(), None));
+        s.parents.insert("mb-sub".into(), "mb-misc".into());
+        s.unsubscribed.insert("mb-old".into());
+        s.add("mb-trash", "Ana <ana@example.org>", "Old news", 1, true);
+        s.add("mb-trash", "Ana <ana@example.org>", "Older news", 1, true);
+        s.add("mb-sub", "Leo <leo@example.org>", "Plans", 1, true);
+        s.quota = Some((900, 1000));
+    }
+    let (store, account) = store_with_account(&cfg);
+    let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
+    remote.sync_folders(&store, account).await.unwrap();
+    remote
+        .sync_mailbox(&store, account, "INBOX")
+        .await
+        .unwrap();
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(s.trash_mailbox(account).unwrap().as_deref(), Some("mb-trash"));
+        let folders: Vec<(String, u32, bool)> = s
+            .account_folders(account)
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.mailbox, f.depth, f.subscribed))
+            .collect();
+        assert!(folders.contains(&("mb-old".into(), 0, false)));
+        assert!(folders.contains(&("mb-sub".into(), 1, true)));
+    }
+    let lunch = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 1)
+        .unwrap()[0]
+        .uid;
+    let trashed: Vec<u32> = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    {
+        let s = store.lock().unwrap();
+        s.queue_flags(&[(account, "INBOX".into(), lunch)], true)
+            .unwrap();
+        s.queue_change(
+            account,
+            "INBOX",
+            lunch,
+            piuma_core::pending::Change::CopyTo("mb-misc".into()),
+        )
+        .unwrap();
+        s.queue_erase(account, "mb-trash", &trashed[..1]).unwrap();
+        s.rename_folder(account, "mb-misc", "Paperwork").unwrap();
+        s.subscribe_folder(account, "mb-old", true).unwrap();
+    }
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    {
+        let s = server.lock().unwrap();
+        let lunch = &s.emails["M5"];
+        assert!(lunch.keywords.contains("$flagged"));
+        // One email, now in two folders.
+        assert!(lunch.mailboxes.contains("mb-in") && lunch.mailboxes.contains("mb-misc"));
+        assert_eq!(
+            s.emails
+                .values()
+                .filter(|e| e.mailboxes.contains("mb-trash"))
+                .count(),
+            1
+        );
+        assert!(s.mailboxes.iter().any(|(id, name, _)| id == "mb-misc" && name == "Paperwork"));
+        assert!(!s.unsubscribed.contains("mb-old"));
+    }
+    // JMAP names folders by id: the rename keeps every name here.
+    assert_eq!(
+        store.lock().unwrap().account_folder(account, "mb-misc").unwrap().unwrap().name,
+        "Paperwork"
+    );
+    assert!(store.lock().unwrap().pending_changes(account).unwrap().is_empty());
+
+    // Deleted with its subfolder: their email goes to Trash first.
+    store
+        .lock()
+        .unwrap()
+        .delete_folder(account, "mb-misc")
+        .unwrap();
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    {
+        let s = server.lock().unwrap();
+        assert!(!s.mailboxes.iter().any(|(id, _, _)| id == "mb-misc" || id == "mb-sub"));
+        // Plans, and the copy of Lunch, which stays in the inbox too.
+        assert_eq!(
+            s.emails
+                .values()
+                .filter(|e| e.mailboxes.contains("mb-trash"))
+                .count(),
+            3
+        );
+        assert!(s.emails["M5"].mailboxes.contains("mb-in"));
+    }
+
+    // Empty Trash: Lunch is in the inbox too, and stays there.
+    assert_eq!(remote.count("mb-trash").await.unwrap(), 3);
+    assert_eq!(remote.empty(&store, account, "mb-trash").await.unwrap(), 3);
+    {
+        let s = server.lock().unwrap();
+        assert!(!s.emails.values().any(|e| e.mailboxes.contains("mb-trash")));
+        assert_eq!(s.emails["M5"].mailboxes, ["mb-in".to_owned()].into());
+    }
+
+    // Delete in Trash is for good, even sent as a move there.
+    {
+        let mut s = server.lock().unwrap();
+        s.add("mb-trash", "Ana <ana@example.org>", "Again", 2, true);
+    }
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    let again = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    remote
+        .move_messages(&store, account, "mb-trash", &again, FolderRole::Trash)
+        .await
+        .unwrap();
+    assert!(!server
+        .lock()
+        .unwrap()
+        .emails
+        .values()
+        .any(|e| e.mailboxes.contains("mb-trash")));
+
+    // A folder of the person's choice for Trash.
+    store
+        .lock()
+        .unwrap()
+        .set_role_choice(account, FolderRole::Trash, Some("mb-bin"))
+        .unwrap();
+    remote.sync_folders(&store, account).await.unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(s.trash_mailbox(account).unwrap().as_deref(), Some("mb-bin"));
+        assert!(s.account_folder(account, "mb-bin").unwrap().is_none());
+    }
+    remote
+        .move_messages(&store, account, "INBOX", &[lunch], FolderRole::Trash)
+        .await
+        .unwrap();
+    assert!(server.lock().unwrap().emails["M5"].mailboxes.contains("mb-bin"));
+
+    assert_eq!(remote.quota().await.unwrap(), Some((900, 1000)));
 }

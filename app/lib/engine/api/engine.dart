@@ -8,7 +8,7 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `changes_dropped`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
@@ -979,6 +979,9 @@ class AccountFolderInfo {
   /// How many emails it holds on the server.
   final int total;
 
+  /// Subscribed: shown in the lists; the others show on demand.
+  final bool subscribed;
+
   const AccountFolderInfo({
     required this.mailbox,
     required this.name,
@@ -986,6 +989,7 @@ class AccountFolderInfo {
     required this.selectable,
     required this.unread,
     required this.total,
+    required this.subscribed,
   });
 
   @override
@@ -995,7 +999,8 @@ class AccountFolderInfo {
       depth.hashCode ^
       selectable.hashCode ^
       unread.hashCode ^
-      total.hashCode;
+      total.hashCode ^
+      subscribed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1007,7 +1012,8 @@ class AccountFolderInfo {
           depth == other.depth &&
           selectable == other.selectable &&
           unread == other.unread &&
-          total == other.total;
+          total == other.total &&
+          subscribed == other.subscribed;
 }
 
 class AccountInfo {
