@@ -269,9 +269,9 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Reply'));
     await tester.pumpAndSettle();
     expect(find.text('Reply all'), findsNothing);
-    tester.state<NavigatorState>(find.byType(Navigator)).popUntil(
-      (r) => r.isFirst,
-    );
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .popUntil((r) => r.isFirst);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Giulia Romano'));

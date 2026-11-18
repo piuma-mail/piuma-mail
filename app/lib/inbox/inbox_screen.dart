@@ -1096,7 +1096,12 @@ class _InboxScreenState extends State<InboxScreen> {
           LogicalKeyboardKey.add,
           LogicalKeyboardKey.numpadAdd,
         ])
-          SingleActivator(key, meta: apple, control: !apple, shift: shift): () =>
+          SingleActivator(
+            key,
+            meta: apple,
+            control: !apple,
+            shift: shift,
+          ): () =>
               _zoomBy(1),
       },
       for (final key in [
@@ -1319,20 +1324,21 @@ class _InboxScreenState extends State<InboxScreen> {
     bool quote = true,
     MailEnvelope? envelope,
     ReplyMode mode = ReplyMode.sender,
-  }) => ReplyBuilder(
-    AppLocalizations.of(context),
-    Localizations.localeOf(context).toLanguageTag(),
-  ).reply(
-    row,
-    body,
-    envelope: envelope,
-    mode: mode,
-    text: text,
-    fromEmail: widget.source.replyFrom(row),
-    signatureId: signatureId,
-    to: to,
-    quote: quote,
-  );
+  }) =>
+      ReplyBuilder(
+        AppLocalizations.of(context),
+        Localizations.localeOf(context).toLanguageTag(),
+      ).reply(
+        row,
+        body,
+        envelope: envelope,
+        mode: mode,
+        text: text,
+        fromEmail: widget.source.replyFrom(row),
+        signatureId: signatureId,
+        to: to,
+        quote: quote,
+      );
 
   Future<void> _deliver(Draft draft) async {
     _flushOnDispose = null;
@@ -2371,9 +2377,7 @@ class _InboxScreenState extends State<InboxScreen> {
       onForwardAttachment: _canForward(reading)
           ? (row) => _actions.forwardAsAttachment(row)
           : null,
-      onRedirect: _canForward(reading)
-          ? (row) => _actions.redirect(row)
-          : null,
+      onRedirect: _canForward(reading) ? (row) => _actions.redirect(row) : null,
       onEditAsNew: _canForward(reading)
           ? (row) => _actions.editAsNew(row)
           : null,

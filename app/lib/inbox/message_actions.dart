@@ -32,8 +32,10 @@ Future<String?> Function(String name) pickSaveLocation = (name) async {
 };
 
 /// Writes a picked file. Tests replace it.
-Future<void> Function(String path, Uint8List data) writeSavedFile =
-    (path, data) => File(path).writeAsBytes(data, flush: true);
+Future<void> Function(String path, Uint8List data) writeSavedFile = (
+  path,
+  data,
+) => File(path).writeAsBytes(data, flush: true);
 
 /// What the reader's More menus do with a message beyond Reply: Forward
 /// (inline, with its files fetched in sight), Forward as attachment, Edit
@@ -59,10 +61,8 @@ class MessageActions {
 
   AppLocalizations get _l => AppLocalizations.of(context);
 
-  ReplyBuilder get _builder => ReplyBuilder(
-    _l,
-    Localizations.localeOf(context).toLanguageTag(),
-  );
+  ReplyBuilder get _builder =>
+      ReplyBuilder(_l, Localizations.localeOf(context).toLanguageTag());
 
   /// Forward, as on `ForwardToApprove` (option A), keeping the message's
   /// formatting: compose opens once its files are here, each fetched in
@@ -165,11 +165,7 @@ class MessageActions {
     );
     final l = _l;
     if (phone) {
-      await showPiumaSheet<void>(
-        context,
-        label: l.sourceTitle,
-        builder: panel,
-      );
+      await showPiumaSheet<void>(context, label: l.sourceTitle, builder: panel);
     } else {
       await showPiumaDialog<void>(
         context,
@@ -262,7 +258,10 @@ class MessageActions {
     final l = _l;
     final items = whole
         ? [
-            _Fetch(ReplyBuilder.emlName(row.subject), () => source.rawMessage(row)),
+            _Fetch(
+              ReplyBuilder.emlName(row.subject),
+              () => source.rawMessage(row),
+            ),
           ]
         : [
             for (final f in files)
@@ -272,11 +271,7 @@ class MessageActions {
     Widget panel(BuildContext context) =>
         _FetchPanel(items: items, title: label, whole: whole);
     return phone
-        ? showPiumaSheet<List<DraftFile>>(
-            context,
-            label: label,
-            builder: panel,
-          )
+        ? showPiumaSheet<List<DraftFile>>(context, label: label, builder: panel)
         : showPiumaDialog<List<DraftFile>>(
             context,
             label: label,
@@ -445,8 +440,7 @@ class _FetchPanelState extends State<_FetchPanel> {
                 kind: PiumaButtonKind.secondary,
                 onPressed: _finish,
               ),
-            if (stuck)
-              PiumaButton(label: l.tryAgain, onPressed: _run),
+            if (stuck) PiumaButton(label: l.tryAgain, onPressed: _run),
           ],
         ),
       ],
@@ -560,8 +554,13 @@ class _SourcePanelState extends State<_SourcePanel> {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final mono = PiumaType.mono.copyWith(fontSize: 12, height: 1.5, color: c.fg);
-    final height = MediaQuery.sizeOf(context).height * (widget.phone ? 0.6 : 0.55);
+    final mono = PiumaType.mono.copyWith(
+      fontSize: 12,
+      height: 1.5,
+      color: c.fg,
+    );
+    final height =
+        MediaQuery.sizeOf(context).height * (widget.phone ? 0.6 : 0.55);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -619,7 +618,8 @@ class _SourcePanelState extends State<_SourcePanel> {
                   text: _raw
                       ? _text
                       : [
-                          for (final h in widget.headers) '${h.name}: ${h.value}',
+                          for (final h in widget.headers)
+                            '${h.name}: ${h.value}',
                         ].join('\n'),
                 ),
               ),

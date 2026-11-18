@@ -164,17 +164,14 @@ class ReplyBuilder {
 
   /// Forward as attachment: the whole message, as it came, attached as an
   /// `.eml` (message/rfc822) to an empty email.
-  Draft forwardAsAttachment(
-    MailRow row,
-    Uint8List raw, {
-    String? fromEmail,
-  }) => Draft(
-    accountId: row.accountId,
-    fromEmail: fromEmail,
-    subject: forwardSubject(row.subject),
-    files: [DraftFile(emlName(row.subject), raw)],
-    forward: true,
-  );
+  Draft forwardAsAttachment(MailRow row, Uint8List raw, {String? fromEmail}) =>
+      Draft(
+        accountId: row.accountId,
+        fromEmail: fromEmail,
+        subject: forwardSubject(row.subject),
+        files: [DraftFile(emlName(row.subject), raw)],
+        forward: true,
+      );
 
   /// Edit as new: a new email with the message's recipients, subject,
   /// text (with its formatting) and files, answering nothing.
