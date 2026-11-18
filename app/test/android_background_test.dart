@@ -200,12 +200,13 @@ void main() {
   test('a message waiting out its time is handed to Android to send', () async {
     final calls = <MethodCall>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('mail.piuma/background'), (
-          call,
-        ) async {
-          calls.add(call);
-          return null;
-        });
+        .setMockMethodCallHandler(
+          const MethodChannel('mail.piuma/background'),
+          (call) async {
+            calls.add(call);
+            return null;
+          },
+        );
     addTearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(

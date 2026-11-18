@@ -46,8 +46,7 @@ void main() {
     var retried = 0;
     await tester.pumpWidget(
       PiumaApp(
-        home: (_, _) =>
-            DataProblem(detail: 'x', onRetry: () => retried++),
+        home: (_, _) => DataProblem(detail: 'x', onRetry: () => retried++),
       ),
     );
     await tester.pumpAndSettle();
