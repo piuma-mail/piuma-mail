@@ -17,9 +17,14 @@ log = "0.4"
 piuma-core = { path = "../../core" }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "time"] }
 
+[dev-dependencies]
+# test-util: paused time, so the watcher restart test doesn't wait for real.
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "time", "test-util"] }
+
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # Pictures pasted into compose from the system clipboard.
 arboard = { version = "3", default-features = false, features = ["image-data"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(target_os = "ios")'.dependencies]

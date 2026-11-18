@@ -329,6 +329,15 @@ class _AttachPreviewState extends State<AttachPreview> {
                 child: Image.memory(
                   bytes,
                   fit: BoxFit.contain,
+                  // Twice the screen, for zooming; never the full size a
+                  // hostile file may declare.
+                  cacheWidth:
+                      (MediaQuery.sizeOf(context).longestSide *
+                              MediaQuery.devicePixelRatioOf(context) *
+                              2)
+                          .ceil()
+                          .clamp(1, 8192)
+                          .toInt(),
                   gaplessPlayback: true,
                   semanticLabel: _file.file.name,
                   errorBuilder: (_, _, _) => _CantShow(onDark: true),

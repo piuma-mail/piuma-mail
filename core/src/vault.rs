@@ -556,11 +556,9 @@ fn is_pdf(a: &Attachment) -> bool {
 fn clean_subject(subject: &str) -> String {
     let mut s = subject.trim();
     loop {
-        let lower = s.to_lowercase();
         let Some(rest) = ["re:", "fwd:", "fw:", "i:", "r:"]
             .iter()
-            .find(|p| lower.starts_with(*p))
-            .map(|p| &s[p.len()..])
+            .find_map(|p| crate::guard::strip_prefix_ci(s, p))
         else {
             return s.to_owned();
         };
@@ -659,10 +657,9 @@ fn merchant_vat(v: &Value, paths: &[&[&str]]) -> String {
 /// the local time of the place, which is what a ticket shows.
 fn date_time(s: &str) -> (String, String) {
     let s = s.trim();
-    let day = if s.len() >= 10 && parse_iso(&s[..10]).is_some() {
-        s[..10].to_owned()
-    } else {
-        String::new()
+    let day = match s.get(..10) {
+        Some(d) if parse_iso(d).is_some() => d.to_owned(),
+        _ => String::new(),
     };
     let time = s
         .split_once('T')
@@ -2504,7 +2501,12 @@ fn parse_amount(s: &str) -> Option<i64> {
     if whole.is_empty() {
         return None;
     }
-    Some(whole.parse::<i64>().ok()? * 100 + cents.parse::<i64>().ok()?)
+    // Digits beyond what fits are no amount, not an overflow.
+    whole
+        .parse::<i64>()
+        .ok()?
+        .checked_mul(100)?
+        .checked_add(cents.parse::<i64>().ok()?)
 }
 
 // ---------------------------------------------------------------------------
@@ -2713,7 +2715,9 @@ fn with_year(month: u32, day: u32, year: Option<i32>, received: Day) -> Option<D
 /// A day at the very start of `s`, after any weekday and "on"/"il".
 fn parse_day(s: &str, received: Day) -> Option<Day> {
     let mut s = s.trim_start_matches(|c: char| c.is_whitespace() || c == ':' || c == ',');
-    let lower = s.to_lowercase();
+    // Only the start matters: lowercasing all that follows, at every
+    // word of a long body, would read it again and again.
+    let lower: String = s.chars().take(12).flat_map(char::to_lowercase).collect();
     for (word, add) in [("today", 0), ("oggi", 0), ("tomorrow", 1), ("domani", 1)] {
         if lower.starts_with(word) {
             return Some(received.plus(add));
@@ -2826,6 +2830,29 @@ fn find_day(s: &str, received: Day) -> Option<Day> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_amount_too_long_to_hold_is_no_amount() {
+        assert_eq!(parse_amount("99999999999999999,99"), None);
+        assert_eq!(parse_amount("1.234,56"), Some(123_456));
+    }
+
+    #[test]
+    fn a_date_cut_inside_a_character_is_no_date() {
+        // The tenth byte falls inside "é".
+        assert_eq!(
+            date_time("2026-10-2\u{e9}T07:15"),
+            (String::new(), "07:15".into())
+        );
+        assert_eq!(
+            date_time("\u{20ac}\u{20ac}\u{20ac}\u{20ac}"),
+            (String::new(), String::new())
+        );
+        assert_eq!(
+            date_time("2026-10-24T07:15:00+02:00"),
+            ("2026-10-24".into(), "07:15".into())
+        );
+    }
 
     /// Thursday, October 15, 2026, 10:30 UTC.
     const OCT_15: i64 = 1_792_060_200;
