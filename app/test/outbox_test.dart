@@ -124,6 +124,35 @@ void main() {
     expect(source.sent, isEmpty);
   });
 
+  testWidgets('a message that may have gone says so, and never goes again', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    source
+      ..offline = false
+      ..loseNextAnswer = true;
+    await _send(tester);
+    // The server has it, but the answer never came.
+    expect(source.sent, hasLength(1));
+    expect(find.text('May have been sent'), findsOneWidget);
+    expect(
+      find.text(
+        'The connection broke as it went. Check Sent before sending it again.',
+      ),
+      findsWidgets,
+    );
+    expect((await source.outbox(null)).single.state, OutboxState.maybeSent);
+    source.goOnline();
+    await tester.pumpAndSettle();
+    expect(source.sent, hasLength(1), reason: 'not sent again by itself');
+    expect(find.byType(OutboxTile), findsOneWidget);
+    // The person decides: it opens in compose, out of the outbox.
+    await tester.tap(find.byType(OutboxTile));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+    expect(find.byType(OutboxTile), findsNothing);
+  });
+
   testWidgets('the Outbox follows the account picked', (tester) async {
     await _pump(tester);
     await _send(tester);

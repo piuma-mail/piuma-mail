@@ -975,6 +975,56 @@ enum BackgroundDelivery {
   periodic,
 }
 
+/// Where a message of the outbox stands.
+enum OutboxState {
+  /// It waits for its time or for the server.
+  waiting,
+
+  /// It is on its way now.
+  sending,
+
+  /// The server refused it; [OutboxItem.error] says why.
+  refused,
+
+  /// The connection broke as it went: the server may have it. The person
+  /// checks Sent before sending it again; it never goes again by itself.
+  maybeSent,
+}
+
+/// What became of a message handed to the server ([MailSource.deliver]).
+enum SendOutcome {
+  /// The server took it.
+  sent,
+
+  /// It waits in the outbox until the server can be reached.
+  waiting,
+
+  /// It waits in the outbox: the server refused the password.
+  wrongPassword,
+
+  /// The server refused it.
+  refused,
+
+  /// No secure connection could be made (a certificate that doesn't
+  /// check out).
+  insecure,
+
+  /// The server may have taken it; it stays in the outbox, marked so.
+  maybeSent,
+
+  /// It was taken back (Undo) or deleted meanwhile.
+  gone,
+}
+
+/// A message of the outbox, handed to the server.
+class Delivery {
+  const Delivery(this.outcome, [this.detail = '']);
+  final SendOutcome outcome;
+
+  /// The server's words, when it said something.
+  final String detail;
+}
+
 /// A message waiting in the outbox (`Outbox`).
 class OutboxItem {
   const OutboxItem({
@@ -986,10 +1036,19 @@ class OutboxItem {
     required this.queuedAt,
     this.error,
     this.sendAt,
+    this.state = OutboxState.waiting,
+    this.undo = false,
   });
 
   final int id;
   final int accountId;
+
+  /// Where it stands: waiting, on its way, refused, or maybe sent.
+  final OutboxState state;
+
+  /// Sent with Undo: [sendAt] ends the Undo window rather than being a
+  /// time the person picked, and the row says Sending.
+  final bool undo;
 
   /// When it goes, for mail sent later; null to go as soon as it can.
   final DateTime? sendAt;
@@ -1000,8 +1059,28 @@ class OutboxItem {
   final String body;
   final DateTime queuedAt;
 
-  /// Why the server refused it; null while it only waits.
+  /// Why the server refused it, or why it may have gone; null while it
+  /// only waits.
   final String? error;
+
+  /// The same message in another state.
+  OutboxItem copyWith({
+    OutboxState? state,
+    String? error,
+    bool clearSendAt = false,
+    bool? undo,
+  }) => OutboxItem(
+    id: id,
+    accountId: accountId,
+    to: to,
+    subject: subject,
+    body: body,
+    queuedAt: queuedAt,
+    error: error ?? this.error,
+    sendAt: clearSendAt ? null : sendAt,
+    state: state ?? this.state,
+    undo: undo ?? this.undo,
+  );
 
   /// Who it goes to, by name where there is one.
   String get recipients => to
@@ -2624,11 +2703,23 @@ abstract class MailSource {
   /// [LogoException].
   Future<Uint8List> shrinkLogo(Uint8List data);
 
-  /// Sends a draft and files a copy in Sent; its saved copy goes. When
-  /// the server can't be reached it waits in the outbox, goes once the
-  /// connection is back, and this returns its id there. Throws
-  /// [SendException].
+  /// Sends a draft and files a copy in Sent; its saved copy goes. It is
+  /// kept in the outbox first, so nothing is lost: when the server can't
+  /// be reached it waits there, goes once the connection is back, and
+  /// this returns its id there. Throws [SendException].
   Future<int?> send(Draft draft);
+
+  /// Send with Undo: keeps [draft] in the outbox, on disk, to go once
+  /// [window] has passed, and returns its id there. Undo takes it back
+  /// with [reopenOutgoing]. Closing the app in the window doesn't lose it:
+  /// it goes at the next start. Throws [SendException] for a draft that
+  /// can't be sent (a wrong address).
+  Future<int> sendWithUndo(Draft draft, Duration window);
+
+  /// Waits until the message [id] of the outbox has gone (its Undo window
+  /// first) and says what became of it. Safe to call while anything else
+  /// sends the outbox: a message never goes twice.
+  Future<Delivery> deliver(int id);
 
   /// Keeps [draft] to send at [at] from this device: it waits in the
   /// Outbox until then. Returns its id there, to take it back.

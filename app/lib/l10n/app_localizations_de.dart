@@ -1573,6 +1573,24 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'Vielleicht gesendet';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'Die Verbindung brach beim Senden ab. Sieh in „Gesendet“ nach, bevor du sie noch einmal sendest.';
+
+  @override
+  String get dataProblemTitle => 'Piuma konnte seine Daten nicht öffnen';
+
+  @override
+  String get dataProblemBody =>
+      'Deine E-Mails sind sicher auf deinen Servern, und hier wurde nichts verändert. Versuche es noch einmal; passiert es wieder, melde es mit dem, was Piuma anzeigt.';
+
+  @override
+  String get dataProblemNewer =>
+      'Diese Daten stammen von einer neueren Version von Piuma. Aktualisiere Piuma, um sie zu öffnen; hier wurde nichts verändert.';
+
+  @override
   String get inOutbox =>
       'Im Postausgang · wird gesendet, sobald du wieder online bist';
 

@@ -42,6 +42,10 @@ struct Server {
     headers: bool,
     /// The away message (RFC 8621 section 8), on servers that keep one.
     vacation: Option<Value>,
+    /// The next submission is made, but its answer never arrives.
+    drop_submission: bool,
+    /// The next submission is refused (`notCreated`).
+    refuse_submission: bool,
 }
 
 impl Server {
@@ -187,6 +191,32 @@ impl Server {
                 ));
                 one(json!({ "created": { "new": { "id": id } } }))
             }
+            "Email/query" if args["filter"]["header"].is_array() => {
+                let wanted = args["filter"]["header"][1].as_str().unwrap();
+                let ids: Vec<&String> = self
+                    .emails
+                    .iter()
+                    .filter(|(_, e)| {
+                        String::from_utf8_lossy(&e.raw)
+                            .lines()
+                            .any(|l| l.starts_with("Message-ID:") && l.contains(wanted))
+                    })
+                    .map(|(id, _)| id)
+                    .collect();
+                one(json!({ "ids": ids, "position": 0 }))
+            }
+            "EmailSubmission/query" => {
+                let wanted: Vec<String> =
+                    serde_json::from_value(args["filter"]["emailIds"].clone()).unwrap();
+                let ids: Vec<String> = self
+                    .sent
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (email, _))| wanted.contains(email))
+                    .map(|(i, _)| format!("S{}", i + 1))
+                    .collect();
+                one(json!({ "ids": ids }))
+            }
             "Email/query" => {
                 let mailbox = args["filter"]["inMailbox"].as_str().unwrap();
                 let mut ids: Vec<(&String, &Email)> = self
@@ -280,6 +310,10 @@ impl Server {
                 { "id": "other", "email": "someone@example.com" },
                 { "id": "me", "email": USER },
             ] })),
+            "EmailSubmission/set" if self.refuse_submission => {
+                self.refuse_submission = false;
+                one(json!({ "notCreated": { "send": { "type": "forbiddenToSend" } } }))
+            }
             "EmailSubmission/set" => {
                 let send = &args["create"]["send"];
                 assert_eq!(send["identityId"], "me");
@@ -419,13 +453,27 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
                     using.contains(&json!("urn:ietf:params:jmap:vacationresponse"))
                 );
                 let mut responses = Vec::new();
-                {
+                let lost = {
                     let mut s = state.lock().unwrap();
+                    let submits = request["methodCalls"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|c| c[0] == "EmailSubmission/set");
                     for call in request["methodCalls"].as_array().unwrap() {
                         for (name, args) in s.method(call[0].as_str().unwrap(), &call[1]) {
                             responses.push(json!([name, args, call[2]]));
                         }
                     }
+                    let lost = submits && s.drop_submission;
+                    if lost {
+                        s.drop_submission = false;
+                    }
+                    lost
+                };
+                if lost {
+                    // Done, but the answer never makes it back.
+                    return;
                 }
                 let answer = json!({ "methodResponses": responses, "sessionState": "s1" });
                 respond(
@@ -730,7 +778,7 @@ async fn keeps_drafts_and_sends() {
     assert!(subjects(&store, Folder::Drafts).is_empty());
 
     let sent = client
-        .send(raw.as_bytes(), USER, &["julia@example.org".into()])
+        .send(raw.as_bytes(), USER, &["julia@example.org".into()], "")
         .await
         .unwrap();
     assert_eq!(sent, "mb-sent");
@@ -739,6 +787,67 @@ async fn keeps_drafts_and_sends() {
     assert_eq!(rcpt, &["julia@example.org".to_owned()]);
     assert_eq!(s.emails[email].mailboxes, ["mb-sent".to_owned()].into());
     assert!(!s.emails[email].keywords.contains("$draft"));
+}
+
+const ONCE: &str = "<once-1@example.com>";
+
+fn once() -> String {
+    format!(
+        "From: Matteo <{USER}>\r\nTo: julia@example.org\r\nSubject: Once\r\nMessage-ID: {ONCE}\r\n\r\nOnce.\r\n"
+    )
+}
+
+#[tokio::test]
+async fn a_send_whose_answer_was_lost_is_not_sent_twice() {
+    let (server, cfg) = start().await;
+    let mut client = Client::open(&cfg).await.unwrap();
+    let rcpt = ["julia@example.org".to_owned()];
+    server.lock().unwrap().drop_submission = true;
+    let err = client
+        .send(once().as_bytes(), USER, &rcpt, ONCE)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, JmapError::Uncertain(_)), "{err:?}");
+    assert_eq!(server.lock().unwrap().sent.len(), 1, "the server sent it");
+
+    // The server can tell it went; sending again does nothing.
+    let mut client = Client::open(&cfg).await.unwrap();
+    let (_, submitted) = client.sent_state(ONCE).await.unwrap().unwrap();
+    assert!(submitted);
+    let emails = server.lock().unwrap().emails.len();
+    let sent = client
+        .send(once().as_bytes(), USER, &rcpt, ONCE)
+        .await
+        .unwrap();
+    assert_eq!(sent, "mb-sent");
+    let s = server.lock().unwrap();
+    assert_eq!(s.sent.len(), 1, "not sent twice");
+    assert_eq!(s.emails.len(), emails, "no second copy");
+}
+
+#[tokio::test]
+async fn a_send_tried_again_uses_the_copy_it_left_in_drafts() {
+    let (server, cfg) = start().await;
+    let mut client = Client::open(&cfg).await.unwrap();
+    let rcpt = ["julia@example.org".to_owned()];
+    assert_eq!(client.sent_state(ONCE).await.unwrap(), None);
+    server.lock().unwrap().refuse_submission = true;
+    client
+        .send(once().as_bytes(), USER, &rcpt, ONCE)
+        .await
+        .unwrap_err();
+    let emails = server.lock().unwrap().emails.len();
+    let (_, submitted) = client.sent_state(ONCE).await.unwrap().unwrap();
+    assert!(!submitted, "the server can tell it never went");
+    client
+        .send(once().as_bytes(), USER, &rcpt, ONCE)
+        .await
+        .unwrap();
+    let s = server.lock().unwrap();
+    assert_eq!(s.sent.len(), 1);
+    assert_eq!(s.emails.len(), emails, "the copy in Drafts was used again");
+    let (email, _) = &s.sent[0];
+    assert_eq!(s.emails[email].mailboxes, ["mb-sent".to_owned()].into());
 }
 
 #[tokio::test]

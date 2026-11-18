@@ -13,6 +13,8 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  // The inbox's window, once made: a second launch brings it forward.
+  GtkWindow* window;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -32,8 +34,15 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+  // One Piuma per person: two would both sync, notify and send the outbox
+  // on one database. Launched again, the open window comes forward.
+  if (self->window != nullptr) {
+    gtk_window_present(self->window);
+    return;
+  }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -100,25 +109,23 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
-// Implements GApplication::local_command_line.
-static gboolean my_application_local_command_line(GApplication* application,
-                                                  gchar*** arguments,
-                                                  int* exit_status) {
+// Implements GApplication::command_line. Runs in the first instance only:
+// GApplication hands it the command line of every later launch (from
+// their own process, over D-Bus) instead of starting a second app.
+static gint my_application_command_line(GApplication* application,
+                                        GApplicationCommandLine* command_line) {
   MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
-
-  g_autoptr(GError) error = nullptr;
-  if (!g_application_register(application, nullptr, &error)) {
-    g_warning("Failed to register: %s", error->message);
-    *exit_status = 1;
-    return TRUE;
+  if (self->window == nullptr) {
+    gchar** arguments =
+        g_application_command_line_get_arguments(command_line, nullptr);
+    // Strip out the first argument as it is the binary name.
+    self->dart_entrypoint_arguments =
+        g_strdupv(arguments[0] != nullptr ? arguments + 1 : arguments);
+    g_strfreev(arguments);
   }
-
+  // A later launch's arguments (a mailto: link, one day) arrive here.
   g_application_activate(application);
-  *exit_status = 0;
-
-  return TRUE;
+  return 0;
 }
 
 // Implements GApplication::startup.
@@ -148,14 +155,15 @@ static void my_application_dispose(GObject* object) {
 
 static void my_application_class_init(MyApplicationClass* klass) {
   G_APPLICATION_CLASS(klass)->activate = my_application_activate;
-  G_APPLICATION_CLASS(klass)->local_command_line =
-      my_application_local_command_line;
+  G_APPLICATION_CLASS(klass)->command_line = my_application_command_line;
   G_APPLICATION_CLASS(klass)->startup = my_application_startup;
   G_APPLICATION_CLASS(klass)->shutdown = my_application_shutdown;
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  self->window = nullptr;
+}
 
 MyApplication* my_application_new() {
   // Set the program name to the application ID, which helps various systems
@@ -166,5 +174,6 @@ MyApplication* my_application_new() {
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                     G_APPLICATION_HANDLES_COMMAND_LINE,
+                                     nullptr));
 }

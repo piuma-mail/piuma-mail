@@ -189,6 +189,9 @@ pub enum JmapError {
     NoFolder,
     #[error("JMAP: {0}")]
     Protocol(String),
+    /// A send was asked for and no answer came: it may have gone.
+    #[error("the server may have taken the message: {0}")]
+    Uncertain(String),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
@@ -991,13 +994,28 @@ impl Client {
 
     /// Sends a message from `from` to `recipients` and files it in Sent.
     /// Returns the Sent folder.
-    pub async fn send(&mut self, raw: &[u8], from: &str, recipients: &[String]) -> Result<String> {
+    ///
+    /// Safe to call again for the same message (`message_id`): one already
+    /// submitted is not sent twice, and the copy an earlier try left in
+    /// Drafts is used rather than a new one. A connection lost while
+    /// submitting is [JmapError::Uncertain]; [Client::sent_state] settles it.
+    pub async fn send(
+        &mut self,
+        raw: &[u8],
+        from: &str,
+        recipients: &[String],
+        message_id: &str,
+    ) -> Result<String> {
         let sent = self.folder(FolderRole::Sent).await?;
         let drafts = self.folder(FolderRole::Drafts).await?;
+        let email = match self.sent_state(message_id).await? {
+            Some((_, true)) => return Ok(sent),
+            Some((email, false)) => email,
+            // The message waits in Drafts and moves to Sent once it is
+            // out, so a failed send leaves it where the person can find it.
+            None => self.import(raw, &drafts, &["$draft", "$seen"]).await?,
+        };
         let identity = self.identity(from).await?;
-        // The message waits in Drafts and moves to Sent once it is out, so
-        // a failed send leaves it where the person can find it.
-        let email = self.import(raw, &drafts, &["$draft", "$seen"]).await?;
         let rcpt: Vec<Value> = recipients.iter().map(|r| json!({ "email": r })).collect();
         let (drafts_id, sent_id) = (self.remote(&drafts)?, self.remote(&sent)?);
         let [submitted] = self
@@ -1016,11 +1034,60 @@ impl Client {
                     } },
                 }),
             )])
-            .await?;
+            .await
+            .map_err(|e| match e {
+                JmapError::Auth => JmapError::Auth,
+                // The server answered and refused it.
+                JmapError::Protocol(p) if p.starts_with("EmailSubmission/set:") => {
+                    JmapError::Protocol(p)
+                }
+                // Asked, but no answer came: it may have gone.
+                e => JmapError::Uncertain(e.to_string()),
+            })?;
         if submitted["created"]["send"].is_null() {
             return Err(not_done(&submitted, "notCreated"));
         }
         Ok(sent)
+    }
+
+    /// The message with this Message-ID as the server has it: its id, and
+    /// whether it was submitted for sending; None when the server has no
+    /// such message.
+    pub async fn sent_state(&mut self, message_id: &str) -> Result<Option<(String, bool)>> {
+        let id = message_id
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>');
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let [found] = self
+            .call([(
+                "Email/query",
+                json!({
+                    "accountId": self.account_id,
+                    "filter": { "header": ["Message-ID", id] },
+                    "limit": 10,
+                }),
+            )])
+            .await?;
+        let ids: Vec<String> = found["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        let Some(first) = ids.first().cloned() else {
+            return Ok(None);
+        };
+        let [submissions] = self
+            .call([(
+                "EmailSubmission/query",
+                json!({ "accountId": self.account_id, "filter": { "emailIds": ids } }),
+            )])
+            .await?;
+        let submitted = submissions["ids"].as_array().is_some_and(|a| !a.is_empty());
+        Ok(Some((first, submitted)))
     }
 
     /// Waits until the server reports a change or `timeout` passes, over

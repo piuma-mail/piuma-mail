@@ -1572,6 +1572,24 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'Puede que se haya enviado';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'La conexión se cortó al enviarlo. Mira en Enviados antes de enviarlo otra vez.';
+
+  @override
+  String get dataProblemTitle => 'Piuma no pudo abrir sus datos';
+
+  @override
+  String get dataProblemBody =>
+      'Tu correo está a salvo en tus servidores y aquí no ha cambiado nada. Vuelve a intentarlo; si sigue pasando, avísanos con lo que dice Piuma.';
+
+  @override
+  String get dataProblemNewer =>
+      'Estos datos los escribió una versión más nueva de Piuma. Actualiza Piuma para abrirlos; aquí no ha cambiado nada.';
+
+  @override
   String get inOutbox =>
       'En la bandeja de salida · se envía cuando vuelvas a estar en línea';
 

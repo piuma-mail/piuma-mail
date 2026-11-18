@@ -10,7 +10,8 @@ use futures::TryStreamExt;
 use piuma_core::imap::ImapConfig;
 use piuma_core::outbox::{self, Outgoing};
 use piuma_core::remote;
-use piuma_core::smtp::{ready, send, send_and_file, Draft, SendError, SmtpConfig};
+use piuma_core::remote::AccountCourier;
+use piuma_core::smtp::{ready, send, send_and_file, Draft, Filing, SendError, SmtpConfig};
 use piuma_core::{Account, AccountId, AccountKind, Security, Server, Store};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
@@ -163,7 +164,7 @@ async fn files_a_copy_in_sent() {
     let report = send_and_file(&smtp(port, "test"), &imap, &ready(&draft()).unwrap())
         .await
         .unwrap();
-    assert_eq!(report.filed_in.as_deref(), Some("Sent"));
+    assert_eq!(report.filed, Filing::Ours("Sent".into()));
     assert!(report.message_id.starts_with('<'));
     assert_eq!(inbox.lock().unwrap().len(), 1);
 
@@ -239,12 +240,18 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
         ready: ready(&draft()).unwrap(),
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
+        undo: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
-    assert!(outbox::send(&store, &offline, "test")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &offline,
+        &mut AccountCourier::new(&offline, "test"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.len(), 1);
     assert_eq!(waiting[0].to, ["Luca <luca@example.org>"]);
@@ -253,18 +260,30 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     // A refused password keeps it waiting, without a reason.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    assert!(outbox::send(&store, &online, "nope")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "nope"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     assert_eq!(store.lock().unwrap().outbox(None).unwrap()[0].error, None);
 
     // Back online: it goes as it was built, and leaves the outbox.
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
-    assert!(!sent[0].filed);
+    assert!(!sent[0].filed.done());
     assert!(store.lock().unwrap().outbox(None).unwrap().is_empty());
     let got = inbox.lock().unwrap();
     assert_eq!(got.len(), 1);
@@ -285,6 +304,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
         ready: ready(&draft()).unwrap(),
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
+        undo: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
 
@@ -292,10 +312,15 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // just not taking it now. It stays in the outbox, without a reason.
     let (port, _deferred) = smtp_sink(true).await;
     let deferring = account(id, port, no_imap);
-    assert!(outbox::send(&store, &deferring, "test")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &deferring,
+        &mut AccountCourier::new(&deferring, "test"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.len(), 1);
     assert_eq!(waiting[0].id, queued);
@@ -304,11 +329,18 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // A server that takes it: it goes as it was built, and leaves.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
-    assert!(!sent[0].filed);
+    assert!(!sent[0].filed.done());
     assert!(store.lock().unwrap().outbox(None).unwrap().is_empty());
     let got = inbox.lock().unwrap();
     assert_eq!(got.len(), 1);
@@ -317,7 +349,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
 }
 
 #[tokio::test]
-async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
+async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
     let store = Store::open_in_memory().unwrap();
     let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
     let store = Mutex::new(store);
@@ -334,15 +366,15 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
             draft,
             saved: None,
             send_at: Some(send_at),
+            undo: false,
         };
         store.lock().unwrap().queue_outgoing(&out, now).unwrap()
     };
     let later = queue(now + 3600);
-    let due = queue(now - 5);
-    assert_eq!(
-        store.lock().unwrap().next_due(id, now).unwrap(),
-        Some(now - 5)
-    );
+    // Meant for three days ago: the app was closed meanwhile.
+    let late = now - 3 * 86_400;
+    let due = queue(late);
+    assert_eq!(store.lock().unwrap().next_due(id, now).unwrap(), Some(late));
     assert_eq!(
         store
             .lock()
@@ -357,7 +389,14 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
     // Only the one whose time has come goes.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, closed_port());
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.iter().map(|s| s.id).collect::<Vec<_>>(), [due]);
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.iter().map(|w| w.id).collect::<Vec<_>>(), [later]);
@@ -366,7 +405,8 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
         store.lock().unwrap().next_due(id, now).unwrap(),
         Some(now + 3600)
     );
-    // Dated for when it was meant to go, not when it was written.
+    // Dated when it actually went, not when it was meant to go: a late
+    // message must not pretend to be three days old.
     let got = inbox.lock().unwrap();
     let date = got[0]
         .data
@@ -375,5 +415,13 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
         .unwrap()
         .to_owned();
     let sent_at = mail_parser::DateTime::parse_rfc822(&date).unwrap();
-    assert_eq!(sent_at.to_timestamp(), now - 5);
+    assert!(sent_at.to_timestamp() >= now, "{date}");
+    assert!(sent_at.to_timestamp() <= now + 60, "{date}");
+    // Still the message that was built: same Message-ID.
+    assert_eq!(
+        got[0].data.matches("Message-ID:").count(),
+        1,
+        "{}",
+        got[0].data
+    );
 }
