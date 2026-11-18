@@ -509,6 +509,17 @@ fn http() -> Result<reqwest::Client, TokenError> {
         .map_err(|e| TokenError::Offline(e.to_string()))
 }
 
+/// `application/x-www-form-urlencoded`, kept out of memory when dropped:
+/// it carries codes and tokens.
+fn form_body(fields: &[(&str, &str)]) -> Vec<u8> {
+    let body = Zeroizing::new(
+        url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(fields)
+            .finish(),
+    );
+    body.as_bytes().to_vec()
+}
+
 async fn token_request(
     provider: &Provider,
     client: &Client,
@@ -521,7 +532,8 @@ async fn token_request(
     }
     let response = http()?
         .post(provider.token_url(client))
-        .form(&fields)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(form_body(&fields))
         .send()
         .await
         .map_err(|e| TokenError::Offline(e.without_url().to_string()))?;
@@ -581,7 +593,8 @@ pub async fn revoke(provider: &Provider, client: &Client, token: &str) -> Result
     };
     let response = http()?
         .post(url)
-        .form(&[("token", token), ("client_id", &client.client_id)])
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(form_body(&[("token", token), ("client_id", &client.client_id)]))
         .send()
         .await
         .map_err(|e| TokenError::Offline(e.without_url().to_string()))?;
