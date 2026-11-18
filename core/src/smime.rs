@@ -451,9 +451,12 @@ pub fn verify_detached(
                 organization: signer.organization.clone(),
             });
         }
-        at_cert = certs
-            .iter()
-            .find(|c| may_issue(c) && c.raw != at_cert.raw && issued(c, at_cert))?;
+        // The issuer among the certificates carried: a renewed CA keeps
+        // its name, so an expired copy may come first; only a valid one
+        // that signed this certificate counts.
+        at_cert = certs.iter().find(|c| {
+            may_issue(c) && valid(c, now, at) && c.raw != at_cert.raw && issued(c, at_cert)
+        })?;
     }
     None
 }
@@ -497,8 +500,9 @@ mod tests {
     const ROOT: &str = include_str!("../tests/fixtures/pec/test-root.pem");
     /// What `tools/gen_pec_fixtures.sh` signs into `signed.p7s`.
     const CONTENT: &str = "Content-Type: multipart/mixed; boundary=\"inner\"\r\n\r\n--inner\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nRicevuta di avvenuta consegna\r\n\r\nIl giorno 19/10/2026 alle ore 09:12:04 (+0200) il messaggio\r\n\"Lease renewal 2027\" proveniente da \"matteo@pec.example.it\"\r\ned indirizzato a \"studio.rossi@pec.example.it\"\r\nè stato consegnato nella casella di destinazione.\r\n--inner--\r\n";
-    /// 18 November 2026.
-    const NOW: i64 = 1_795_000_000;
+    /// 29 November 2026: after the fixtures were made, and after the old
+    /// copy of the renewed CA expired.
+    const NOW: i64 = 1_796_000_000;
 
     #[test]
     fn a_signature_checks_only_while_its_certificates_are_valid() {

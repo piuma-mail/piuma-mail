@@ -196,7 +196,8 @@ void main() {
       await tester.longPress(link);
       await tester.pumpAndSettle();
       expect(find.text('Where this link goes'), findsOneWidget);
-      expect(find.text('https://bottegalume.example/autumn'), findsOneWidget);
+      expect(find.text('bottegalume.example'), findsOneWidget);
+      expect(find.text('/autumn'), findsOneWidget);
       expect(opened, isEmpty);
       await tester.tap(find.text('Copy link'));
       await tester.pumpAndSettle();
@@ -226,9 +227,9 @@ void main() {
       await mouse.moveTo(tester.getCenter(link));
       await tester.pumpAndSettle();
       expect(
-        find.widgetWithText(
-          LinkTargetLine,
-          'https://bottegalume.example/autumn',
+        find.descendant(
+          of: find.byType(LinkTargetLine),
+          matching: find.text('bottegalume.example'),
         ),
         findsOneWidget,
       );
@@ -251,7 +252,8 @@ void main() {
       await _pump(tester, size: const Size(390, 844));
       await tester.longPress(find.text('Long press here'));
       await tester.pumpAndSettle();
-      expect(find.text('https://lume.example/x'), findsOneWidget);
+      expect(find.text('lume.example'), findsOneWidget);
+      expect(find.text('/x'), findsOneWidget);
       await tester.tap(find.text('Open link'));
       await tester.pumpAndSettle();
       if (find.text('Open anyway').evaluate().isNotEmpty) {
@@ -390,6 +392,20 @@ void main() {
       expect(opened, [Uri.parse('https://lume.example/')]);
     });
 
+    testWidgets('the browser\'s form of a suspicious link still warns', (
+      tester,
+    ) async {
+      // WebKit hands back `a.href` normalized: another case, no slash.
+      originalPaper = (html, onLink) => GestureDetector(
+        onTap: () => onLink('HTTPS://LUME-LOGIN.EXAMPLE'),
+        child: const Text('A link inside'),
+      );
+      await _pump(tester);
+      await tester.tap(find.text('A link inside'));
+      await tester.pumpAndSettle();
+      expect(find.text('Check this link'), findsOneWidget);
+    });
+
     testWidgets('a link activated from the keyboard opens', (tester) async {
       final opened = <Uri>[];
       final before = openExternalLink;
@@ -455,9 +471,9 @@ void main() {
       await tester.tap(find.text('Hover here'));
       await tester.pumpAndSettle();
       expect(
-        find.widgetWithText(
-          LinkTargetLine,
-          'https://lume-login.example/account',
+        find.descendant(
+          of: find.byType(LinkTargetLine),
+          matching: find.text('lume-login.example'),
         ),
         findsOneWidget,
       );

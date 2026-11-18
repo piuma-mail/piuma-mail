@@ -149,7 +149,20 @@ class _OriginalViewState extends State<OriginalView> {
     final doc = _doc;
     if (doc == null || !mounted) return;
     if (!clicked && !_gate.take()) return;
-    widget.onLink(link, doc.suspicious[link]);
+    widget.onLink(link, _suspicious(doc, link));
+  }
+
+  /// The text a suspicious link shows, by its address as the engine read
+  /// it from the `href`; the web view hands back the browser's form of it
+  /// (`a.href`: a trailing slash, another case, percent-encoding), so both
+  /// are compared normalized.
+  String? _suspicious(OriginalDoc doc, String link) {
+    if (doc.suspicious[link] case final shown?) return shown;
+    final wanted = normalizeLink(link);
+    for (final e in doc.suspicious.entries) {
+      if (normalizeLink(e.key) == wanted) return e.value;
+    }
+    return null;
   }
 
   void _unavailable() {

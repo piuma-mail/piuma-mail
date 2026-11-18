@@ -9,6 +9,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import 'button.dart';
 import 'dialog.dart';
+import 'links.dart';
 
 /// Where the link under the pointer really goes, on a line at the bottom
 /// of the reader, as a browser's status line: for every link of an email,
@@ -97,14 +98,88 @@ class LinkTargetLine extends StatelessWidget {
             borderRadius: BorderRadius.circular(PiumaRadius.field),
             border: Border.all(color: c.line),
           ),
-          child: Text(
-            url,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: PiumaType.mono.copyWith(color: c.muted, fontSize: 12),
-          ),
+          child: _LinkTargetText(url: url, size: 12, oneLine: true),
         ),
       ),
+    );
+  }
+}
+
+/// A link's target, so its host is always seen: the host first, never
+/// cut, its registrable domain in the text's strong color, the ASCII
+/// (punycode) form of a host that has other letters, then the rest of the
+/// address cut in the middle, not at the end.
+class _LinkTargetText extends StatelessWidget {
+  const _LinkTargetText({
+    required this.url,
+    required this.size,
+    required this.oneLine,
+  });
+
+  final String url;
+  final double size;
+  final bool oneLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final parts = describeLink(url);
+    final quiet = PiumaType.mono.copyWith(color: c.muted, fontSize: size);
+    if (parts == null) {
+      return Text(
+        elideMiddle(url, oneLine ? 72 : 240),
+        maxLines: oneLine ? 1 : 6,
+        style: quiet,
+      );
+    }
+    final strong = quiet.copyWith(color: c.fg, fontWeight: FontWeight.w600);
+    final sub = parts.host.endsWith(parts.registrable)
+        ? parts.host.substring(0, parts.host.length - parts.registrable.length)
+        : '';
+    final host = Text.rich(
+      TextSpan(
+        children: [
+          // A long run of labels in front can only push the registrable
+          // part away: it is cut in the middle too.
+          TextSpan(
+            text: elideMiddle(sub, oneLine ? 28 : 64),
+            style: quiet.copyWith(color: c.fg),
+          ),
+          TextSpan(
+            text: sub.isEmpty ? parts.host : parts.registrable,
+            style: strong,
+          ),
+          if (parts.ascii case final ascii?)
+            TextSpan(text: '  $ascii', style: quiet),
+        ],
+      ),
+      softWrap: !oneLine,
+    );
+    final rest = Text(
+      elideMiddle(parts.rest, oneLine ? 56 : 240),
+      maxLines: oneLine ? 1 : 6,
+      overflow: TextOverflow.clip,
+      style: quiet,
+    );
+    if (oneLine) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          host,
+          if (parts.rest.isNotEmpty) Flexible(child: rest),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        host,
+        if (parts.rest.isNotEmpty) ...[
+          const SizedBox(height: PiumaSpace.s4),
+          rest,
+        ],
+      ],
     );
   }
 }
@@ -187,12 +262,7 @@ class _LinkTargetPanel extends StatelessWidget {
               color: c.soft,
               borderRadius: BorderRadius.circular(PiumaRadius.field),
             ),
-            child: Text(
-              url,
-              maxLines: 6,
-              overflow: TextOverflow.ellipsis,
-              style: PiumaType.mono.copyWith(color: c.fg, fontSize: 13),
-            ),
+            child: _LinkTargetText(url: url, size: 13, oneLine: false),
           ),
           const SizedBox(height: PiumaSpace.s16),
           Row(

@@ -70,4 +70,50 @@ void main() {
     now = now.add(const Duration(seconds: 5));
     expect(gate.take(), isFalse);
   });
+
+  test('a web address with a user name before its host never opens', () {
+    for (final link in [
+      'https://bank.example@evil.example/',
+      'https://bank.example:443@evil.example/login',
+      'https://user:pass@shop.example/',
+    ]) {
+      expect(isMailLinkAllowed(Uri.parse(link)), isFalse, reason: link);
+    }
+    // An @ in the query is no user name: the host is the one before it.
+    expect(
+      isMailLinkAllowed(Uri.parse('https://bank.example/login?x=a@b.example')),
+      isTrue,
+    );
+  });
+
+  test('the target shows its real host and the end of a padded address', () {
+    final padded =
+        'https://evil.example/${'bank.example/login/' * 30}finish?id=7';
+    final parts = describeLink(padded)!;
+    expect(parts.host, 'evil.example');
+    expect(parts.registrable, 'evil.example');
+    final shown = elideMiddle(parts.rest, 56);
+    expect(shown.runes.length, 56);
+    expect(shown, contains('…'));
+    expect(shown, endsWith('finish?id=7'));
+    expect(describeLink('https://login.bank.co.uk/x')!.registrable, 'bank.co.uk');
+  });
+
+  test('a host with other letters shows its ASCII form too', () {
+    // Cyrillic letters that look like "paypal".
+    expect(punycodeHost('раураl.com'), 'xn--l-7sba6dbr.com');
+    expect(punycodeHost('bücher.de'), 'xn--bcher-kva.de');
+    expect(punycodeHost('shop.example'), isNull);
+  });
+
+  test('an href and the browser\'s form of it compare equal', () {
+    expect(
+      normalizeLink('HTTPS://Lume-Login.Example'),
+      normalizeLink('https://lume-login.example/'),
+    );
+    expect(
+      normalizeLink('https://a.example/x/../y'),
+      normalizeLink('https://a.example/y'),
+    );
+  });
 }

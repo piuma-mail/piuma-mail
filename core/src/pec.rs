@@ -592,8 +592,10 @@ mod tests {
     const AGID_PEC_CA: &str = include_str!("../tests/fixtures/pec/agid-pec-ca.pem");
     const PECNET: &str = include_str!("../tests/fixtures/pec/pecnet.eml");
     const ROOTONLY: &str = include_str!("../tests/fixtures/pec/rootonly.eml");
-    /// 18 November 2026.
-    const NOW: i64 = 1_795_000_000;
+    const RENEWED: &str = include_str!("../tests/fixtures/pec/renewed.eml");
+    /// 29 November 2026: after the fixtures were made, and after the old
+    /// copy of the renewed CA expired.
+    const NOW: i64 = 1_796_000_000;
 
     fn signed_by(raw: &str, anchors: &[Vec<u8>]) -> bool {
         signed_at(raw, anchors, NOW)
@@ -712,6 +714,13 @@ mod tests {
         assert!(!signed_by(PERSON, &anchors));
         // The qualified CA's provider certificate still checks.
         assert!(signed_by(SIGNED, &anchors));
+    }
+
+    #[test]
+    fn an_expired_copy_of_a_renewed_ca_doesn_t_hide_the_valid_one() {
+        // The signature carries the CA twice, same name and key: first a
+        // copy that has expired by now, then the renewed one.
+        assert!(signed_by(RENEWED, &both()));
     }
 
     #[test]

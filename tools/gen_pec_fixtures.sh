@@ -52,6 +52,15 @@ ca other-root
 ca actalis-root
 subca agid-pec-ca actalis-root
 leaf pecnet agid-pec-ca "Piuma Test PEC Provider" leaf
+# A CA renewed with the same name and key: the old copy expires in a day.
+openssl req -new -newkey rsa:2048 -nodes -keyout renewed-ca.key -out renewed-ca.csr \
+  -subj "/O=Piuma Test/CN=renewed-ca" 2>/dev/null
+openssl x509 -req -in renewed-ca.csr -CA test-root.pem -CAkey test-root.key -CAcreateserial \
+  -out renewed-ca-old.pem -days 1 -extfile ca.cnf -extensions subca 2>/dev/null
+openssl x509 -req -in renewed-ca.csr -CA test-root.pem -CAkey test-root.key -CAcreateserial \
+  -out renewed-ca.pem -days 7300 -extfile ca.cnf -extensions subca 2>/dev/null
+cat renewed-ca-old.pem renewed-ca.pem > renewed-chain.pem
+leaf renewed renewed-ca "Piuma Test PEC Provider" leaf
 leaf rootonly actalis-root "Piuma Test PEC Provider" leaf
 leaf provider test-root "Piuma Test PEC Provider" leaf
 leaf person test-root "Mario Rossi" leaf
@@ -78,10 +87,11 @@ sign nosign nosign.eml sha256
 sign stranger stranger.eml sha256
 sign pecnet pecnet.eml sha256 agid-pec-ca.pem
 sign rootonly rootonly.eml sha256
+sign renewed renewed.eml sha256 renewed-chain.pem
 # The bare signature, for the parser's hostile-input test.
 openssl smime -sign -binary -md sha256 -in content.eml -signer provider.pem \
   -inkey provider.key -outform DER -out signed.p7s
 
 dest="$OLDPWD/$out"
 cp test-root.pem agid-pec-ca.pem signed.eml sha1.eml person.eml nosign.eml stranger.eml \
-  pecnet.eml rootonly.eml signed.p7s "$dest/"
+  pecnet.eml rootonly.eml renewed.eml signed.p7s "$dest/"
