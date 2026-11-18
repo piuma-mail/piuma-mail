@@ -385,6 +385,157 @@ void main() {
     expect(UnreadBadge.count, unread);
   });
 
+  group('on the phone', () {
+    const phone = Size(390, 844);
+
+    Future<void> openWorkFolders(WidgetTester tester) async {
+      await tester.tap(
+        find.bySemanticsLabel('3 accounts, accounts and Settings'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Work, matteo@studio.it'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.bySemanticsLabel('Work only, accounts and Settings'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Work folders'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> pickFolder(WidgetTester tester, String name) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(PhoneFolderTree),
+          matching: find.text(name),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('rows show stars, and Starred is in the folders sheet', (
+      tester,
+    ) async {
+      await _pump(tester, size: phone);
+      expect(_rows(tester).where((r) => r.starred), hasLength(2));
+      await tester.tap(
+        find.bySemanticsLabel('3 accounts, accounts and Settings'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Starred'));
+      await tester.pumpAndSettle();
+      expect(_rows(tester).every((r) => r.starred), isTrue);
+      expect(_rows(tester), hasLength(2));
+    });
+
+    testWidgets('the reader’s More stars and copies', (tester) async {
+      final source = await _pump(tester, size: phone);
+      // Work's, so Copy to has folders to offer.
+      final row = _rows(tester).firstWhere((r) => r.accountId == 2);
+      await _openRow(tester, row.subject);
+      await tester.tap(find.bySemanticsLabel('More actions').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(row.starred ? 'Remove star' : 'Star'));
+      await tester.pumpAndSettle();
+      expect(source.starredSet.last.$1.key, row.key);
+      expect(source.starredSet.last.$2, !row.starred);
+      await tester.tap(find.bySemanticsLabel('More actions').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy to…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Invoices').last);
+      await tester.pumpAndSettle();
+      expect(source.copied.map((c) => (c.$1.key, c.$2)), [
+        (row.key, 'Invoices'),
+      ]);
+    });
+
+    testWidgets('picked rows: More stars them and copies them', (tester) async {
+      final source = await _pump(tester, size: phone);
+      final row = _rows(tester).firstWhere((r) => r.accountId == 2);
+      await tester.longPress(
+        find.descendant(
+          of: find.byType(InboxRowTile),
+          matching: find.text(row.subject),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('More actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(row.starred ? 'Remove star' : 'Star'));
+      await tester.pumpAndSettle();
+      expect(source.starredSet.last.$1.key, row.key);
+      expect(source.starredSet.last.$2, !row.starred);
+      // Still picked: More again.
+      await tester.tap(find.bySemanticsLabel('More actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy to…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Invoices').last);
+      await tester.pumpAndSettle();
+      expect(source.copied.single.$2, 'Invoices');
+    });
+
+    testWidgets('the folders sheet is a tree with hidden folders on demand', (
+      tester,
+    ) async {
+      await _pump(tester, size: phone);
+      await openWorkFolders(tester);
+      expect(find.text('Acme'), findsOneWidget);
+      expect(find.text('Archive 2019'), findsNothing);
+      await tester.tap(find.bySemanticsLabel('Hide the folders in Clients'));
+      await tester.pumpAndSettle();
+      expect(find.text('Acme'), findsNothing);
+      await tester.tap(find.text('Show 1 hidden folder'));
+      await tester.pumpAndSettle();
+      expect(find.text('Archive 2019'), findsOneWidget);
+      await pickFolder(tester, 'Invoices');
+      expect(find.text('Invoices'), findsOneWidget);
+    });
+
+    testWidgets('Trash: Empty asks how many, Delete is for good', (
+      tester,
+    ) async {
+      final source = await _pump(tester, size: phone);
+      await openWorkFolders(tester);
+      await pickFolder(tester, 'Trash');
+      expect(_rows(tester), hasLength(2));
+      final row = _rows(tester).first;
+      await _openRow(tester, row.subject);
+      await tester.tap(find.bySemanticsLabel('More actions').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this email for good?'), findsOneWidget);
+      await tester.tap(find.text('Delete for good'));
+      await tester.pumpAndSettle();
+      expect(source.erased.map((r) => r.key), [row.key]);
+      expect(_rows(tester), hasLength(1));
+      await tester.tap(find.text('Empty Trash'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete the email in Trash for good?'), findsOneWidget);
+      await tester.tap(find.text('Empty'));
+      await tester.pumpAndSettle();
+      expect(source.emptied, ['Trash']);
+    });
+  });
+
+  testWidgets('the swipe settings say where they work', (tester) async {
+    final source = DemoMailSource(now: _now, mailbox: true);
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) => Scaffold(
+          body: SingleChildScrollView(child: ListOptions(source: source)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Swipes work on phones and tablets.'),
+      findsOneWidget,
+    );
+  });
+
   test('hidden folders and closed parents leave the sidebar', () {
     const list = [
       AccountFolder(mailbox: 'A', name: 'A'),

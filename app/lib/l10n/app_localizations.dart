@@ -9435,6 +9435,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 unread email} other{{count} unread emails}}'**
   String badgeUnread(int count);
+
+  /// No description provided for @moreShort.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get moreShort;
+
+  /// No description provided for @swipeNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.'**
+  String get swipeNote;
 }
 
 class _AppLocalizationsDelegate

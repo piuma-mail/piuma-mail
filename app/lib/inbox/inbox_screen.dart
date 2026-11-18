@@ -1801,14 +1801,15 @@ class _InboxScreenState extends State<InboxScreen> {
     final account = _accountOf(_account);
     if (account == null) return;
     final l = AppLocalizations.of(context);
+    // The same tree as the desktop's sidebar: folders open and close,
+    // hidden ones on demand.
     final picked = await showPiumaSheet<AccountFolder>(
       context,
       label: l.accountFolders(account.name),
-      builder: (_) => MoveMenu(
+      builder: (_) => PhoneFolderTree(
         account: account,
-        targets: _ownFolders[account.id] ?? const [],
-        hint: l.accountFolders(account.name),
-        phone: true,
+        folders: _ownFolders[account.id] ?? const [],
+        current: _account == account.id ? _mailbox : null,
       ),
     );
     if (picked != null && mounted) _showMailbox(account.id, picked.mailbox);
@@ -2185,6 +2186,12 @@ class _InboxScreenState extends State<InboxScreen> {
             ),
           ),
         ..._awayTop(const EdgeInsets.fromLTRB(20, 4, 20, 8)),
+        // Trash and spam: Empty, as at the head of the desktop's list.
+        if (_emptyButton() case final empty?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 12, 4),
+            child: Align(alignment: Alignment.centerRight, child: empty),
+          ),
         // Only when something has waited 3 days or more.
         if (_waiting.long > 0 &&
             downloading == null &&
@@ -2311,6 +2318,8 @@ class _InboxScreenState extends State<InboxScreen> {
           unsubscribeFrom(context, widget.source, row, onToast: _toast),
       onSender: (row, _) => _senderCard(row, phone: true),
       onSide: _canSide(reading) ? _side : null,
+      onStar: (row, on) => _star([row], on),
+      onCopy: _canMove ? (row, _) => _copy([row], phone: true) : null,
     );
     return reader;
   }
@@ -2567,10 +2576,9 @@ class _InboxScreenState extends State<InboxScreen> {
                     onSnooze: _snoozable
                         ? () => _snooze(picked, phone: true)
                         : null,
-                    onStar: _folder == MailFolder.drafts
+                    onMore: _folder == MailFolder.drafts
                         ? null
-                        : (on) => _star(picked, on),
-                    allStarred: picked.every((r) => r.starred),
+                        : () => _phoneSelectMore(picked),
                   ),
                 ),
               ),
@@ -3391,6 +3399,31 @@ class _InboxScreenState extends State<InboxScreen> {
 
   // Managing the mailbox: stars, deleting for good, emptying Trash and
   // spam, copying, rows dropped on folders, and the swipes as set.
+
+  /// The phone's More while rows are picked: Star (or Remove star) and
+  /// Copy to…, as the desktop's selection panel has them.
+  Future<void> _phoneSelectMore(List<MailRow> picked) async {
+    final l = AppLocalizations.of(context);
+    final allStarred = picked.every((r) => r.starred);
+    final copy = _oneAccount(picked);
+    final choice = await showPiumaSheet<int>(
+      context,
+      label: l.moreActions,
+      builder: (sheet) => PhoneActionList(
+        items: [
+          (PiumaIcon.star, allStarred ? l.unstar : l.star),
+          if (copy) (PiumaIcon.copy, l.copyTo),
+        ],
+        onPick: (i) => Navigator.of(sheet).pop(i),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    if (choice == 0) {
+      await _star(picked, !allStarred);
+    } else {
+      await _copy(picked, phone: true);
+    }
+  }
 
   /// The unread count on the app's icon, the taskbar or the title.
   void _badge(int unread) {

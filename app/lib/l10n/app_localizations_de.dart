@@ -6490,4 +6490,11 @@ class AppLocalizationsDe extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'Mehr';
+
+  @override
+  String get swipeNote =>
+      'Wischen funktioniert auf Telefonen und Tablets. Am Computer findest du dieselben Aktionen in der Leiste, in den Menüs und als Tastenkürzel.';
 }

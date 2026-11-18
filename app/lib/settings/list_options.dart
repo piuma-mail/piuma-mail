@@ -94,6 +94,8 @@ class ListOptions extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(height: PiumaSpace.s8),
+            Text(l.swipeNote, style: PiumaType.small.copyWith(color: c.muted)),
           ],
         );
       },

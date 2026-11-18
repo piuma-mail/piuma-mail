@@ -1004,13 +1004,11 @@ class PhoneSelectBar extends StatelessWidget {
     this.onMove,
     this.onSnooze,
     this.onNotSpam,
-    this.onStar,
-    this.allStarred = false,
+    this.onMore,
   });
 
-  /// Stars them all, or takes the stars off once [allStarred].
-  final ValueChanged<bool>? onStar;
-  final bool allStarred;
+  /// More: Star (or Remove star) and Copy to…, in a sheet.
+  final VoidCallback? onMore;
 
   /// In the spam folder, in Archive's place: back to the inbox.
   final VoidCallback? onNotSpam;
@@ -1104,13 +1102,13 @@ class PhoneSelectBar extends StatelessWidget {
                   ),
             if (onMove case final move?)
               action(PiumaIcon.folder, l.moveShort, move, c.fg),
-            if (onStar case final star?)
+            if (onMore case final more?)
               action(
-                PiumaIcon.star,
-                l.swipeStar,
-                () => star(!allStarred),
-                allStarred ? c.warn : c.fg,
-                semanticLabel: allStarred ? l.unstar : l.star,
+                PiumaIcon.more,
+                l.moreShort,
+                more,
+                c.fg,
+                semanticLabel: l.moreActions,
               ),
             if (onSnooze case final snooze?)
               action(PiumaIcon.clock, l.actionSnooze, snooze, c.fg),

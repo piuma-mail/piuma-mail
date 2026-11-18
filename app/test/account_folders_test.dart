@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/mailbox_actions.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/inbox/move_menu.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
@@ -186,7 +187,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.bySemanticsLabel('Work folders'));
     await tester.pumpAndSettle();
-    await _pickTarget(tester, 'Projects');
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PhoneFolderTree),
+        matching: find.text('Projects'),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Projects'), findsOneWidget);
     expect(find.byType(InboxRowTile), findsNothing);
   });

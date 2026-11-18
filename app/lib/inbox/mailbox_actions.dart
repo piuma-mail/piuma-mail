@@ -654,3 +654,204 @@ List<AccountFolder> shownFolders(
 /// Whether [list] has folders inside the one at [i].
 bool hasSubfolders(List<AccountFolder> list, int i) =>
     i + 1 < list.length && list[i + 1].depth > list[i].depth;
+
+/// Lines of a phone sheet, an icon and words each: what [onPick] gets is
+/// the index of the line tapped.
+class PhoneActionList extends StatelessWidget {
+  const PhoneActionList({super.key, required this.items, required this.onPick});
+
+  final List<(PiumaIcon, String)> items;
+  final ValueChanged<int> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, (icon, label)) in items.indexed)
+          PiumaPressable(
+            onTap: () => onPick(i),
+            semanticLabel: label,
+            child: ExcludeSemantics(
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 52),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Row(
+                  children: [
+                    PiumaIconView(icon, size: 18, color: c.fg),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: PiumaType.body.copyWith(
+                          fontSize: 16,
+                          color: c.fg,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// An account's folders on the phone, as the desktop's sidebar has them:
+/// a tree whose folders open and close, hidden folders on demand. A tap
+/// on a folder returns it.
+class PhoneFolderTree extends StatefulWidget {
+  const PhoneFolderTree({
+    super.key,
+    required this.account,
+    required this.folders,
+    this.current,
+  });
+
+  final MailAccount account;
+  final List<AccountFolder> folders;
+
+  /// The folder the list shows, kept in sight.
+  final String? current;
+
+  @override
+  State<PhoneFolderTree> createState() => _PhoneFolderTreeState();
+}
+
+class _PhoneFolderTreeState extends State<PhoneFolderTree> {
+  final _closed = <String>{};
+  bool _hidden = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final all = widget.folders;
+    final shown = shownFolders(
+      all,
+      hidden: _hidden,
+      closed: _closed,
+      keep: widget.current,
+    );
+    final hidden = all.where((f) => !f.subscribed).length;
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+            child: Semantics(
+              header: true,
+              child: Text(
+                l.accountFolders(widget.account.name),
+                style: PiumaType.body.copyWith(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: c.fg,
+                ),
+              ),
+            ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final f in shown)
+                    _line(context, f, hasSubfolders(all, all.indexOf(f))),
+                  if (hidden > 0)
+                    PiumaPressable(
+                      onTap: () => setState(() => _hidden = !_hidden),
+                      semanticLabel: _hidden
+                          ? l.hiddenFoldersHide
+                          : l.hiddenFoldersShow(hidden),
+                      child: ExcludeSemantics(
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: 48),
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _hidden
+                                ? l.hiddenFoldersHide
+                                : l.hiddenFoldersShow(hidden),
+                            style: PiumaType.body.copyWith(color: c.accentText),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _line(BuildContext context, AccountFolder f, bool parent) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final current = f.mailbox == widget.current;
+    final open = !_closed.contains(f.mailbox);
+    final row = Container(
+      constraints: const BoxConstraints(minHeight: 48),
+      padding: EdgeInsets.only(left: 12.0 + f.depth * 20, right: 24),
+      color: current ? c.sel : null,
+      child: Row(
+        children: [
+          if (parent)
+            FolderChevron(
+              open: open,
+              name: f.name,
+              onTap: () => setState(
+                () => open ? _closed.add(f.mailbox) : _closed.remove(f.mailbox),
+              ),
+            )
+          else
+            const SizedBox(width: 24),
+          const SizedBox(width: 6),
+          PiumaIconView(PiumaIcon.folder, size: 18, color: c.muted),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              f.name,
+              style: PiumaType.body.copyWith(
+                fontSize: 16,
+                color: f.selectable ? c.fg : c.muted,
+                fontWeight: current ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+          if (!f.subscribed)
+            Text(
+              l.folderHidden,
+              style: PiumaType.small.copyWith(color: c.muted),
+            )
+          else if (f.unread > 0)
+            Text(
+              '${f.unread}',
+              style: PiumaType.small.copyWith(color: c.muted),
+            ),
+        ],
+      ),
+    );
+    if (!f.selectable) return row;
+    return Semantics(
+      button: true,
+      selected: current,
+      child: PiumaPressable(
+        onTap: () => Navigator.of(context).pop(f),
+        semanticLabel: f.name,
+        child: row,
+      ),
+    );
+  }
+}

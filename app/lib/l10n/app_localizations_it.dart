@@ -6501,4 +6501,11 @@ class AppLocalizationsIt extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'Altro';
+
+  @override
+  String get swipeNote =>
+      'Gli scorrimenti funzionano su telefoni e tablet. Sul computer le stesse azioni sono nella barra, nei menu e nelle scorciatoie da tastiera.';
 }

@@ -2122,5 +2122,7 @@
   "badgeTitle": "{count, plural, =0{Piuma Mail} other{Piuma Mail ({count})}}",
   "@badgeTitle": {"placeholders": {"count": {"type": "int"}}},
   "badgeUnread": "{count, plural, =1{1 unread email} other{{count} unread emails}}",
-  "@badgeUnread": {"placeholders": {"count": {"type": "int"}}}
+  "@badgeUnread": {"placeholders": {"count": {"type": "int"}}},
+  "moreShort": "More",
+  "swipeNote": "Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts."
 }

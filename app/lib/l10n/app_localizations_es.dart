@@ -6473,4 +6473,11 @@ class AppLocalizationsEs extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'Más';
+
+  @override
+  String get swipeNote =>
+      'Los deslizamientos funcionan en teléfonos y tabletas. En el ordenador, las mismas acciones están en la barra, los menús y los atajos de teclado.';
 }

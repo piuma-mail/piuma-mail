@@ -6438,4 +6438,11 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'More';
+
+  @override
+  String get swipeNote =>
+      'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.';
 }

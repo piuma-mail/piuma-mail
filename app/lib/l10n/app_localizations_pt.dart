@@ -6468,4 +6468,11 @@ class AppLocalizationsPt extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'Mais';
+
+  @override
+  String get swipeNote =>
+      'Os deslizes funcionam em telefones e tablets. No computador, as mesmas ações estão na barra, nos menus e nos atalhos de teclado.';
 }

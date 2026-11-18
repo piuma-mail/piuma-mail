@@ -6491,4 +6491,11 @@ class AppLocalizationsFr extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get moreShort => 'Plus';
+
+  @override
+  String get swipeNote =>
+      'Les balayages fonctionnent sur téléphone et tablette. Sur ordinateur, les mêmes actions sont dans la barre, les menus et les raccourcis clavier.';
 }
