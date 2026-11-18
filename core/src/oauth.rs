@@ -97,9 +97,10 @@ pub struct Provider {
     pub app_passwords: bool,
 }
 
-/// The app's own URL scheme on Android, its application id (RFC 8252
-/// section 7.1: a reverse domain name the app controls).
-pub const APP_SCHEME: &str = "mail.piuma.piuma_mail";
+/// The app's own URL scheme on Android: a reverse domain name the project
+/// controls (RFC 8252 section 7.1). Not the application id itself, whose
+/// `_` a URL scheme can't hold.
+pub const APP_SCHEME: &str = "mail.piuma.app";
 
 impl Provider {
     pub fn imap(&self) -> Server {
@@ -816,7 +817,7 @@ mod tests {
         );
         assert_eq!(
             provider("microsoft").unwrap().android_redirect(&ms),
-            "mail.piuma.piuma_mail://oauth"
+            "mail.piuma.app://oauth"
         );
         assert!(clients_from("", "microsoft", false).is_none());
         assert!(clients_from("microsoft=", "microsoft", false).is_none());
@@ -827,7 +828,7 @@ mod tests {
         // RFC 7636, appendix B.
         assert_eq!(
             challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGwSstw-cM"
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
     }
 
@@ -865,28 +866,28 @@ mod tests {
             client_secret: None,
             tenant: None,
         };
-        let r = Request::new(p, &client, "", "mail.piuma.piuma_mail://oauth");
+        let r = Request::new(p, &client, "", "mail.piuma.app://oauth");
         let state = r.state.clone();
         assert_eq!(
-            r.code_from_redirect(&format!("mail.piuma.piuma_mail://oauth?code=abc&state={state}")),
+            r.code_from_redirect(&format!("mail.piuma.app://oauth?code=abc&state={state}")),
             Ok("abc".into())
         );
         assert_eq!(
-            r.code_from_redirect("mail.piuma.piuma_mail://oauth?code=abc&state=other"),
+            r.code_from_redirect("mail.piuma.app://oauth?code=abc&state=other"),
             Err(FlowError::StateMismatch)
         );
         assert_eq!(
-            r.code_from_redirect("mail.piuma.piuma_mail://oauth?code=abc"),
+            r.code_from_redirect("mail.piuma.app://oauth?code=abc"),
             Err(FlowError::StateMismatch)
         );
         assert_eq!(
             r.code_from_redirect(&format!(
-                "mail.piuma.piuma_mail://oauth?error=access_denied&error_description=No&state={state}"
+                "mail.piuma.app://oauth?error=access_denied&error_description=No&state={state}"
             )),
             Err(FlowError::Denied("access_denied: No".into()))
         );
         assert_eq!(
-            r.code_from_redirect(&format!("mail.piuma.piuma_mail://oauth?state={state}")),
+            r.code_from_redirect(&format!("mail.piuma.app://oauth?state={state}")),
             Err(FlowError::NoCode)
         );
     }
