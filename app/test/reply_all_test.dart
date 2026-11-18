@@ -9,6 +9,7 @@ import 'package:piuma_mail/inbox/message_actions.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/inbox/reader.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/settings/shortcuts_page.dart';
 import 'package:piuma_mail/widgets/attachment_chip.dart';
@@ -265,6 +266,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(source.redirected.single.$2, ['eve@example.org']);
     expect(source.redirected.single.$1.subject, 'Mockup v3 review');
+    // Through the outbox, as Send: Undo first, then it goes.
+    // The toast, and the row in the Outbox.
+    expect(find.text('Sending…'), findsWidgets);
+    expect(find.text('Undo'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
     expect(find.text('Redirected to eve@example.org'), findsOneWidget);
   });
 
@@ -536,6 +543,8 @@ void main() {
       await tester.tap(find.text('Redirect').last);
       await tester.pumpAndSettle();
       expect(source.redirected.single.$2, ['eve@example.org']);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
       expect(find.text('Redirected to eve@example.org'), findsOneWidget);
     });
 
@@ -633,5 +642,81 @@ void main() {
     await tester.tap(find.text('Open'));
     await tester.pumpAndSettle();
     expect(opened, '/picked/Mockup v3 review.eml');
+  });
+
+  testWidgets('Redirect: Undo takes it back before it goes', (tester) async {
+    final source = await _pump(tester);
+    await _open(tester, 'Mockup v3 review');
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Redirect'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'eve@example.org');
+    await tester.pump();
+    await tester.tap(find.text('Redirect').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Undo'));
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(find.text('Redirected to eve@example.org'), findsNothing);
+    expect(source.sent, isEmpty);
+  });
+
+  testWidgets('Redirect: names with a comma, and a wrong address said', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    await _open(tester, 'Mockup v3 review');
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Redirect'));
+    await tester.pumpAndSettle();
+    final field = find.byType(TextField).last;
+    await tester.enterText(field, 'Rossi, Mario <m@x.it>, nope');
+    await tester.pump();
+    expect(find.text('“nope” is not an email address.'), findsOneWidget);
+    // Not sent while an address is wrong.
+    await tester.tap(find.text('Redirect').last);
+    await tester.pump();
+    expect(source.redirected, isEmpty);
+    await tester.enterText(field, 'Rossi, Mario <m@x.it>; "Bo, B" <b@x.it>');
+    await tester.pump();
+    expect(find.textContaining('is not an email address'), findsNothing);
+    await tester.tap(find.text('Redirect').last);
+    await tester.pumpAndSettle();
+    expect(source.redirected.single.$2, ['m@x.it', 'b@x.it']);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('Reply all to an unverified Mail-Followup-To opens compose', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    source.envelopeFor['Dinner on Friday?'] = const MailEnvelope(
+      to: [
+        MailPerson('Matteo', 'matteo@posta.it', you: true),
+        MailPerson('Elena Ferri', 'elena.ferri@icloud.com'),
+      ],
+      replyTo: ['Giulia Romano <giulia.romano@posta.it>'],
+      replyAllTo: ['eve@evil.example'],
+      replyAllReview: true,
+    );
+    await _open(tester, 'Dinner on Friday?');
+    // The box's Reply all, on; what is typed opens compose, not sent.
+    await tester.tap(find.bySemanticsLabel('Reply all').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find
+          .descendant(of: find.byType(Reader), matching: find.byType(TextField))
+          .last,
+      "I'm in!",
+    );
+    await tester.tap(find.bySemanticsLabel('Send reply'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(source.sent, isEmpty);
   });
 }

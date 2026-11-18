@@ -233,7 +233,13 @@ void main() {
     expect(giulia.buttons, isTrue);
     _fake.press(giulia, 'reply', "I'm in!");
     await tester.pumpAndSettle();
-    expect(find.text('Sending…'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Sending…'),
+      ),
+      findsOneWidget,
+    );
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
     final reply = source.sent.single;

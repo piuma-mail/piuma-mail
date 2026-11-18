@@ -401,6 +401,11 @@
   "outboxWaiting": "En espera",
   "outboxNotSent": "No enviado",
   "outboxRefused": "El servidor lo rechazó: {reason}",
+  "outboxMaybeSent": "Puede que se haya enviado",
+  "outboxMaybeSentCheck": "La conexión se cortó al enviarlo. Mira en Enviados antes de enviarlo otra vez.",
+  "dataProblemTitle": "Piuma no pudo abrir sus datos",
+  "dataProblemBody": "Tu correo está a salvo en tus servidores y aquí no ha cambiado nada. Vuelve a intentarlo; si sigue pasando, avísanos con lo que dice Piuma.",
+  "dataProblemNewer": "Estos datos los escribió una versión más nueva de Piuma. Actualiza Piuma para abrirlos; aquí no ha cambiado nada.",
   "inOutbox": "En la bandeja de salida · se envía cuando vuelvas a estar en línea",
   "editAction": "Editar",
   "backgroundTitle": "Correo nuevo en cuanto llega",
@@ -1539,5 +1544,6 @@
   "zoomOut": "Reducir",
   "zoomReset": "Tamaño real",
   "zoomLevel": "Tamaño del texto {percent} %",
-  "textSize": "Tamaño del texto"
+  "textSize": "Tamaño del texto",
+  "sourceCut": "Se muestran los primeros {size} KB. Guarda como .eml para el correo completo."
 }

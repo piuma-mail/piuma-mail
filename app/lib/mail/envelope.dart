@@ -56,6 +56,7 @@ class MailEnvelope {
     this.replyAllCc = const [],
     this.listPost,
     this.muted = false,
+    this.replyAllReview = false,
   });
 
   final List<MailPerson> to;
@@ -77,6 +78,12 @@ class MailEnvelope {
 
   /// The conversation is muted.
   final bool muted;
+
+  /// Reply all follows a Mail-Followup-To naming people the message shows
+  /// nowhere else (`core/src/envelope.rs`, `followup_needs_review`): it
+  /// opens compose, to be seen before it goes, and the quick reply box
+  /// doesn't send it straight away.
+  final bool replyAllReview;
 
   /// How many more people Reply all reaches than Reply: 0 when Reply all
   /// would write to the same people, and isn't worth offering. Offered
@@ -100,6 +107,7 @@ class MailEnvelope {
     replyAllCc: replyAllCc,
     listPost: listPost,
     muted: muted,
+    replyAllReview: replyAllReview,
   );
 }
 
@@ -112,6 +120,49 @@ String bareAddress(String address) {
   }
   return address.trim();
 }
+
+/// The addresses typed in one field: split at commas, semicolons and
+/// line breaks outside quotes and angle brackets, a name with a comma in
+/// it kept whole (`Rossi, Mario <m@x.it>`: a piece with no address joins
+/// the one after it).
+List<String> splitAddresses(String text) {
+  final pieces = <String>[];
+  final b = StringBuffer();
+  var quoted = false;
+  var angle = 0;
+  for (final ch in text.split('')) {
+    if (ch == '"') quoted = !quoted;
+    if (!quoted && ch == '<') angle++;
+    if (!quoted && ch == '>' && angle > 0) angle--;
+    if (!quoted && angle == 0 && (ch == ',' || ch == ';' || ch == '\n')) {
+      pieces.add(b.toString());
+      b.clear();
+    } else {
+      b.write(ch);
+    }
+  }
+  pieces.add(b.toString());
+  final out = <String>[];
+  var pending = '';
+  for (final p in pieces) {
+    final joined = pending.isEmpty ? p.trim() : '$pending,${p.trimRight()}';
+    if (joined.trim().isEmpty) continue;
+    if (joined.contains('@')) {
+      out.add(joined.trim());
+      pending = '';
+    } else {
+      pending = joined;
+    }
+  }
+  if (pending.trim().isNotEmpty) out.add(pending.trim());
+  return out;
+}
+
+/// A plausible address: something@domain.tld, no spaces, in `Name <…>`
+/// or alone.
+bool validAddress(String text) =>
+    RegExp(r'^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$')
+        .hasMatch(bareAddress(text));
 
 /// One header of a message, as View source lists them.
 @immutable

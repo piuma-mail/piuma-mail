@@ -8,7 +8,7 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `describe`, `mail_address`, `raw_message`, `recipients_of`
+// These functions are ignored because they are not marked as `pub`: `describe`, `mail_address`, `others`, `raw_message`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// The recipient headers of a message and who answers go to. Mail kept
@@ -40,22 +40,29 @@ Future<Uint8List> messageSource({
 List<MessageHeader> messageHeaders({required List<int> raw}) =>
     RustLib.instance.api.crateApiReplyMessageHeaders(raw: raw);
 
-/// Redirect (Bounce): sends the message unchanged to `to`, with
-/// Resent-From, Resent-Date, Resent-To and Resent-Message-ID on top. It
-/// goes from the account's address (or `from_email`, one of its aliases)
-/// and a copy is filed in Sent, as any message sent.
-Future<void> redirectMessage({
+/// Redirect (Bounce): the message unchanged, with Resent-From,
+/// Resent-Date, Resent-To and Resent-Message-ID on top, to the bare
+/// addresses of `to`. It goes through the outbox like any message: kept
+/// on disk at once, sent once its Undo window (`undo_seconds`) has
+/// passed, exactly once, and waiting there while the server can't be
+/// reached. It goes from `from_email` when that is one of the account's
+/// addresses, from the account's own otherwise; a copy is filed in Sent.
+/// Returns its outbox id, to take it back ([super::engine::reopen_outgoing])
+/// or wait for it ([super::engine::deliver_outgoing]).
+Future<PlatformInt64> redirectMessage({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,
   String? fromEmail,
   required List<String> to,
+  required int undoSeconds,
 }) => RustLib.instance.api.crateApiReplyRedirectMessage(
   accountId: accountId,
   mailbox: mailbox,
   uid: uid,
   fromEmail: fromEmail,
   to: to,
+  undoSeconds: undoSeconds,
 );
 
 /// Mutes the conversation of a message, or unmutes it: new mail in it
@@ -122,6 +129,12 @@ class MessageEnvelope {
   /// The conversation is muted.
   final bool muted;
 
+  /// Reply all follows a Mail-Followup-To that names people the message
+  /// shows nowhere else: it opens compose, to be seen before it goes,
+  /// and isn't offered where it would go at once (the quick reply, the
+  /// watch, a notice).
+  final bool replyAllReview;
+
   const MessageEnvelope({
     required this.to,
     required this.cc,
@@ -131,6 +144,7 @@ class MessageEnvelope {
     required this.replyAllCc,
     this.listPost,
     required this.muted,
+    required this.replyAllReview,
   });
 
   @override
@@ -142,7 +156,8 @@ class MessageEnvelope {
       replyAllTo.hashCode ^
       replyAllCc.hashCode ^
       listPost.hashCode ^
-      muted.hashCode;
+      muted.hashCode ^
+      replyAllReview.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -156,7 +171,8 @@ class MessageEnvelope {
           replyAllTo == other.replyAllTo &&
           replyAllCc == other.replyAllCc &&
           listPost == other.listPost &&
-          muted == other.muted;
+          muted == other.muted &&
+          replyAllReview == other.replyAllReview;
 }
 
 /// One header of a message, for View source.

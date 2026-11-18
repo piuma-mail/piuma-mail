@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:piuma_mail/compose/reply_builder.dart';
+import 'package:piuma_mail/inbox/message_actions.dart';
 import 'package:piuma_mail/inbox/recipients_line.dart';
 import 'package:piuma_mail/l10n/app_localizations.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
@@ -244,5 +246,63 @@ void main() {
     expect(d.marks.single.kind, BodyMarkKind.italic);
     expect(d.files.single, file);
     expect(d.inReplyTo, isNull);
+  });
+
+  group('file names', () {
+    test('no direction marks, no half emoji', () {
+      expect(
+        ReplyBuilder.emlName('invoice\u202Egpj.exe'),
+        'invoicegpj.exe.eml',
+      );
+      // 79 letters, then an emoji made of a surrogate pair: kept whole.
+      final name = ReplyBuilder.emlName('${'a' * 79}\u{1F600}b');
+      expect(name, '${'a' * 79}\u{1F600}.eml');
+    });
+  });
+
+  group('addresses typed for Redirect', () {
+    test('a name with a comma stays one address', () {
+      expect(splitAddresses('Rossi, Mario <m@x.it>, b@x.it'), [
+        'Rossi, Mario <m@x.it>',
+        'b@x.it',
+      ]);
+      expect(splitAddresses('"Bo, B" <b@x.it>; c@x.it\nd@x.it'), [
+        '"Bo, B" <b@x.it>',
+        'c@x.it',
+        'd@x.it',
+      ]);
+      expect(splitAddresses(' , ;'), isEmpty);
+    });
+
+    test('what is an address', () {
+      expect(validAddress('Rossi, Mario <m@x.it>'), isTrue);
+      expect(validAddress('m@x.it'), isTrue);
+      expect(validAddress('nope'), isFalse);
+      expect(validAddress('a@b'), isFalse);
+      expect(validAddress('a b@x.it'), isFalse);
+    });
+  });
+
+  group('View source', () {
+    test('control and direction characters go, tabs and lines stay', () {
+      final raw = Uint8List.fromList(
+        utf8.encode('Subject: a\u202Eb\u0007c\r\n\tfolded\r\n\r\nbody\u200F\n'),
+      );
+      final shown = sourceLines(raw);
+      expect(shown.cut, isFalse);
+      expect(shown.lines.first, 'Subject: abc');
+      expect(shown.lines[1], '\tfolded');
+      expect(shown.lines, contains('body'));
+      expect(utf8.decode(headerBlock(raw)), endsWith('\r\n\r\n'));
+    });
+
+    test('a big email shows its start', () {
+      final raw = Uint8List(sourceShown + 5000)
+        ..fillRange(0, sourceShown + 5000, 0x61);
+      final shown = sourceLines(raw);
+      expect(shown.cut, isTrue);
+      expect(shown.lines.single.length, sourceShown);
+      expect(headerBlock(raw).length, sourceShown);
+    });
   });
 }

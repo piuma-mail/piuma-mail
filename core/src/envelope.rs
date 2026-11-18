@@ -48,6 +48,27 @@ impl Address {
     }
 }
 
+/// Whether `email` is one of the person's addresses ([own]: the account's
+/// and its aliases), without case, and with a `+tag` after the local part
+/// of any of them: `me+news@x.it` is `me@x.it`.
+pub fn is_own(email: &str, own: &[String]) -> bool {
+    let email = email.trim().trim_matches(['<', '>']);
+    let untagged = match email.rsplit_once('@') {
+        Some((local, domain)) => match local.split_once('+') {
+            Some((base, _)) if !base.is_empty() => Some(format!("{base}@{domain}")),
+            _ => None,
+        },
+        None => None,
+    };
+    own.iter().any(|o| {
+        let o = o.trim();
+        o.eq_ignore_ascii_case(email)
+            || untagged
+                .as_deref()
+                .is_some_and(|u| o.eq_ignore_ascii_case(u))
+    })
+}
+
 /// The recipient headers of a message, as it arrived.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
@@ -239,12 +260,20 @@ pub fn reply_recipients(
     own: &[String],
     mode: ReplyMode,
 ) -> Recipients {
-    let author: Vec<Address> = if envelope.reply_to.is_empty() {
+    let mine = |a: &Address| is_own(&a.email, own);
+    // Reply-To that names only the person (as some lists and forwarders
+    // set it) says nothing about who wrote: the answer goes to From.
+    let reply_to: Vec<Address> = envelope
+        .reply_to
+        .iter()
+        .filter(|a| !mine(a))
+        .cloned()
+        .collect();
+    let author: Vec<Address> = if reply_to.is_empty() {
         vec![from.clone()]
     } else {
-        envelope.reply_to.clone()
+        reply_to
     };
-    let mine = |a: &Address| own.iter().any(|o| a.is(o));
     let (to, cc): (Vec<Address>, Vec<Address>) = match mode {
         ReplyMode::Sender => {
             let to: Vec<Address> = author.iter().filter(|a| !mine(a)).cloned().collect();
@@ -256,6 +285,8 @@ pub fn reply_recipients(
             }
         }
         ReplyMode::All if !envelope.followup_to.is_empty() => {
+            // Unverified (see [followup_needs_review]), the app shows it in
+            // compose before it goes, never sends it straight away.
             (envelope.followup_to.clone(), Vec::new())
         }
         ReplyMode::All => (
@@ -298,18 +329,39 @@ pub fn reply_recipients(
     }
 }
 
+/// Mail-Followup-To asks Reply all to go to addresses the message showed
+/// nowhere else (not in From, Reply-To, To or Cc) and the message didn't
+/// come through a list: a forged header could send an answer anywhere.
+/// Then Reply all opens compose, for the person to see who it goes to,
+/// and is not offered where it would go straight away (the quick reply,
+/// the watch, a notice).
+pub fn followup_needs_review(envelope: &Envelope, from: &Address) -> bool {
+    if envelope.followup_to.is_empty() || envelope.list {
+        return false;
+    }
+    let shown: Vec<&Address> = std::iter::once(from)
+        .chain(&envelope.reply_to)
+        .chain(&envelope.to)
+        .chain(&envelope.cc)
+        .collect();
+    !envelope
+        .followup_to
+        .iter()
+        .all(|f| shown.iter().any(|s| s.is(&f.email)))
+}
+
 /// The person got the message without being on To or Cc: a blind copy.
 /// Not for mail from a list, which reaches its members that way, nor for
 /// the person's own mail.
 pub fn bcc_you(envelope: &Envelope, from: &str, own: &[String]) -> bool {
-    if own.is_empty() || envelope.list || own.iter().any(|o| o.eq_ignore_ascii_case(from.trim())) {
+    if own.is_empty() || envelope.list || is_own(from, own) {
         return false;
     }
     !envelope
         .to
         .iter()
         .chain(&envelope.cc)
-        .any(|a| own.iter().any(|o| a.is(o)))
+        .any(|a| is_own(&a.email, own))
 }
 
 /// One header of a message, for View source: its name as written and its
@@ -390,6 +442,62 @@ pub fn resend(raw: &[u8], from: &str, to: &[String], at: i64, message_id: &str) 
     }
     out.extend_from_slice(body);
     out
+}
+
+/// The bare address of `Name <a@b.c>` (or `a@b.c`), checked; None for
+/// text that isn't one.
+pub fn bare_address(text: &str) -> Option<String> {
+    let t = text.trim();
+    let bare = match (t.rfind('<'), t.rfind('>')) {
+        (Some(a), Some(b)) if a < b => &t[a + 1..b],
+        _ => t,
+    };
+    let bare = bare.trim();
+    crate::groups::valid_address(bare).then(|| bare.to_owned())
+}
+
+/// Redirect, built for the outbox: the message `raw` with its Resent-*
+/// headers, going from `from` when it is one of the person's addresses
+/// ([own], the account's first) and from the account's own otherwise,
+/// to the bare addresses of `to` (names are left out of Resent-To). The
+/// draft only says, in the outbox, what goes where.
+pub fn redirect(
+    raw: &[u8],
+    subject: &str,
+    from: Option<&str>,
+    own: &[String],
+    to: &[String],
+    at: i64,
+) -> Result<(crate::smtp::Draft, crate::smtp::Ready), crate::smtp::SendError> {
+    use crate::smtp::{Draft, Ready, SendError};
+    let account = own.first().cloned().unwrap_or_default();
+    let from = from
+        .map(str::trim)
+        .filter(|f| !f.is_empty() && own.iter().any(|o| o.eq_ignore_ascii_case(f)))
+        .map(str::to_owned)
+        .unwrap_or(account);
+    let to: Vec<&String> = to.iter().filter(|t| !t.trim().is_empty()).collect();
+    if to.is_empty() {
+        return Err(SendError::NoRecipients);
+    }
+    let recipients = to
+        .iter()
+        .map(|t| bare_address(t).ok_or_else(|| SendError::Address(t.trim().to_owned())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let message_id = new_message_id(&from);
+    let ready = Ready {
+        message_id: message_id.clone(),
+        from: from.clone(),
+        recipients: recipients.clone(),
+        raw: resend(raw, &from, &recipients, at, &message_id),
+    };
+    let draft = Draft {
+        from_email: from,
+        to: recipients,
+        subject: subject.to_owned(),
+        ..Draft::default()
+    };
+    Ok((draft, ready))
 }
 
 /// A new Message-ID for mail sent from `from`: `<random@domain>`.
@@ -616,6 +724,112 @@ mod tests {
             m.from().unwrap().first().unwrap().address(),
             Some("anna@x.it")
         );
+    }
+
+    #[test]
+    fn reply_to_naming_only_the_person_answers_the_author() {
+        // A forwarder or a list that sets Reply-To to the reader.
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nReply-To: Me@Studio.it\r\n\
+             To: me@studio.it, bo@x.it\r\nSubject: s\r\n\r\nbody",
+        );
+        let anna = a("Anna", "anna@x.it");
+        let one = reply_recipients(&e, &anna, &own(), ReplyMode::Sender);
+        assert_eq!(emails(&one.to), ["anna@x.it"]);
+        let all = reply_recipients(&e, &anna, &own(), ReplyMode::All);
+        assert_eq!(emails(&all.to), ["anna@x.it", "bo@x.it"]);
+        // Mixed: the person and someone else.
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nReply-To: me@studio.it, desk@x.it\r\n\
+             To: me@studio.it\r\n\r\nbody",
+        );
+        let one = reply_recipients(&e, &anna, &own(), ReplyMode::Sender);
+        assert_eq!(emails(&one.to), ["desk@x.it"]);
+    }
+
+    #[test]
+    fn tagged_aliases_and_case_are_the_person_too() {
+        assert!(is_own("ME+news@Studio.IT", &own()));
+        assert!(is_own("<matteo+x@alias.example>", &own()));
+        assert!(!is_own("+x@studio.it", &own()));
+        assert!(!is_own("mee@studio.it", &own()));
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nTo: me+work@studio.it, bo@x.it\r\n\
+             Cc: Matteo+lists@ALIAS.example\r\n\r\nbody",
+        );
+        let all = reply_recipients(&e, &a("Anna", "anna@x.it"), &own(), ReplyMode::All);
+        assert_eq!(emails(&all.to), ["anna@x.it", "bo@x.it"]);
+        assert!(all.cc.is_empty());
+        assert!(!bcc_you(&e, "anna@x.it", &own()));
+    }
+
+    #[test]
+    fn recipients_in_groups_count_as_any_other() {
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nTo: Team: Bo <bo@x.it>, me@studio.it;, carla@x.it\r\n\r\nbody",
+        );
+        assert_eq!(emails(&e.to), ["bo@x.it", "me@studio.it", "carla@x.it"]);
+        let all = reply_recipients(&e, &a("Anna", "anna@x.it"), &own(), ReplyMode::All);
+        assert_eq!(emails(&all.to), ["anna@x.it", "bo@x.it", "carla@x.it"]);
+    }
+
+    #[test]
+    fn a_followup_to_outside_the_message_needs_a_look() {
+        let anna = a("Anna", "anna@x.it");
+        // Within the message's own people: fine.
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nMail-Followup-To: anna@x.it, BO@x.it\r\n\
+             To: me@studio.it, bo@x.it\r\n\r\nbody",
+        );
+        assert!(!followup_needs_review(&e, &anna));
+        // Someone nobody saw: compose first, no quick Reply all.
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nMail-Followup-To: eve@evil.example\r\n\
+             To: me@studio.it, bo@x.it\r\n\r\nbody",
+        );
+        assert!(followup_needs_review(&e, &anna));
+        // A list's posting address is not on the lines, and that's fine.
+        let e = envelope(
+            "From: Anna <anna@x.it>\r\nMail-Followup-To: dev@l.org\r\n\
+             To: me@studio.it\r\nList-Id: <dev.l.org>\r\n\r\nbody",
+        );
+        assert!(!followup_needs_review(&e, &anna));
+        // None at all.
+        let e = envelope("From: anna@x.it\r\nTo: me@studio.it\r\n\r\nbody");
+        assert!(!followup_needs_review(&e, &anna));
+    }
+
+    #[test]
+    fn redirect_goes_from_an_own_address_to_bare_ones() {
+        let raw = b"From: anna@x.it\r\nTo: me@studio.it\r\nSubject: s\r\n\r\nbody\r\n";
+        let to = vec!["Rossi, Mario <m@x.it>".to_owned(), " eve@x.it ".to_owned()];
+        // An alias of the account goes as it is.
+        let (draft, ready) =
+            redirect(raw, "s", Some("Matteo@Alias.example"), &own(), &to, 0).unwrap();
+        assert_eq!(ready.from, "Matteo@Alias.example");
+        assert_eq!(ready.recipients, ["m@x.it", "eve@x.it"]);
+        assert_eq!(draft.to, ["m@x.it", "eve@x.it"]);
+        let text = String::from_utf8(ready.raw).unwrap();
+        assert!(
+            text.contains("Resent-From: Matteo@Alias.example\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("Resent-To: m@x.it, eve@x.it\r\n"), "{text}");
+        assert!(!text.contains("Rossi"), "{text}");
+        // Anything else goes from the account.
+        let (_, ready) = redirect(raw, "s", Some("boss@x.it"), &own(), &to, 0).unwrap();
+        assert_eq!(ready.from, "me@studio.it");
+        let (_, ready) = redirect(raw, "s", None, &own(), &to, 0).unwrap();
+        assert_eq!(ready.from, "me@studio.it");
+        // Bad and missing addresses.
+        assert!(matches!(
+            redirect(raw, "s", None, &own(), &["not an address".into()], 0),
+            Err(crate::smtp::SendError::Address(a)) if a == "not an address"
+        ));
+        assert!(matches!(
+            redirect(raw, "s", None, &own(), &[" ".into()], 0),
+            Err(crate::smtp::SendError::NoRecipients)
+        ));
     }
 
     #[test]

@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
-use piuma_core::outbox;
 use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
@@ -254,7 +253,10 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
         }
         let store = engine.store.clone();
         let arrived = engine.runtime.block_on(async {
-            outbox::send(&store, &account, &password).await.ok();
+            // The same way the app sends it: claimed in the database, so
+            // the app and this look never send one message twice, and
+            // its copy in Drafts goes once it is sent.
+            engine::deliver_outbox(&account, &password).await;
             let mut conn = match Remote::open(&account, &password).await {
                 Ok(conn) => conn,
                 Err(e) => {
@@ -274,6 +276,28 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
         }
     }
     Ok(notices)
+}
+
+/// Sends what waits in every account's outbox, once, the way the app
+/// does: for the job Android runs when a message's time comes (the end of
+/// its Undo window, a Send later time) and the app may have been swiped
+/// away. Claims in the database keep it from going twice beside the app.
+pub fn send_outbox_once() -> Result<(), engine::EngineError> {
+    let engine = engine::engine()?;
+    let accounts = engine
+        .store
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .accounts()?;
+    for account in accounts {
+        let Ok(password) = credentials::load(account.id) else {
+            continue;
+        };
+        engine
+            .runtime
+            .block_on(engine::deliver_outbox(&account, &password));
+    }
+    Ok(())
 }
 
 /// What a button on a notice asks for (`Notifications`): the message is
@@ -371,6 +395,18 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     message.uid,
                 ))
                 .ok();
+            // Reply all from a watch or a notice goes at once: never for a
+            // blind copy, nor to people only a Mail-Followup-To names.
+            if all
+                && envelope
+                    .as_ref()
+                    .is_none_or(|e| crate::api::reply::others(e) == 0)
+            {
+                return Err(engine::EngineError::new(
+                    engine::ErrorKind::Other,
+                    "Reply all needs the app for this email",
+                ));
+            }
             let (to, cc) = match envelope {
                 Some(e) if all && !e.reply_all_to.is_empty() => (e.reply_all_to, e.reply_all_cc),
                 Some(e) if !e.reply_to.is_empty() => (e.reply_to, Vec::new()),

@@ -196,4 +196,38 @@ void main() {
       await AndroidBackground.refreshSignInNotices();
     });
   });
+
+  test('a message waiting out its time is handed to Android to send', () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('mail.piuma/background'),
+          (call) async {
+            calls.add(call);
+            return null;
+          },
+        );
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('mail.piuma/background'),
+            null,
+          );
+      AndroidBackground.debugAndroid = null;
+    });
+    AndroidBackground.debugAndroid = true;
+    await AndroidBackground.outboxAt(7, DateTime.utc(2026, 10, 15, 10, 30, 10));
+    expect(calls.single.method, 'outboxAt');
+    expect(calls.single.arguments, {'id': 7, 'at': 1792060210});
+    // Taken back (Undo): its job is cancelled.
+    await AndroidBackground.cancelOutbox(7);
+    expect(calls.last.method, 'cancelOutbox');
+    expect(calls.last.arguments, {'id': 7});
+    calls.clear();
+    // Not on Android: nothing to ask.
+    AndroidBackground.debugAndroid = false;
+    await AndroidBackground.outboxAt(8, DateTime.utc(2026));
+    await AndroidBackground.cancelOutbox(8);
+    expect(calls, isEmpty);
+  });
 }

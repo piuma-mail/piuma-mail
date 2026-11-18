@@ -4,11 +4,11 @@
 
 use flutter_rust_bridge::frb;
 use piuma_core::envelope::{self, Address, Envelope, ReplyMode};
-use piuma_core::remote::{self, Remote};
-use piuma_core::smtp::Ready;
+use piuma_core::outbox::Outgoing;
+use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
-use super::engine::{engine, now_secs, reader, store, EngineError, ErrorKind};
+use super::engine::{engine, now_secs, reader, send_outbox_at, store, EngineError, ErrorKind};
 use crate::credentials;
 
 /// One person on a line of a message.
@@ -25,7 +25,7 @@ fn mail_address(a: &Address, own: &[String]) -> MailAddress {
     MailAddress {
         name: a.name.clone(),
         email: a.email.clone(),
-        you: own.iter().any(|o| o.eq_ignore_ascii_case(a.email.trim())),
+        you: envelope::is_own(&a.email, own),
     }
 }
 
@@ -46,6 +46,11 @@ pub struct MessageEnvelope {
     pub list_post: Option<String>,
     /// The conversation is muted.
     pub muted: bool,
+    /// Reply all follows a Mail-Followup-To that names people the message
+    /// shows nowhere else: it opens compose, to be seen before it goes,
+    /// and isn't offered where it would go at once (the quick reply, the
+    /// watch, a notice).
+    pub reply_all_review: bool,
 }
 
 /// What [MessageEnvelope] says, from what the store keeps.
@@ -73,7 +78,30 @@ pub(crate) fn describe(
         reply_all_cc: shown(&all.cc),
         list_post: (!envelope.list_post.is_empty()).then(|| envelope.list_post.clone()),
         muted: store.thread_muted(account, mailbox, uid)?,
+        reply_all_review: envelope::followup_needs_review(envelope, &from),
     })
+}
+
+/// How many more people Reply all reaches than Reply, as the app counts
+/// them (`MailEnvelope.others`): 0 for a blind copy, and where Reply all
+/// must be seen in compose first.
+pub(crate) fn others(e: &MessageEnvelope) -> u32 {
+    if e.bcc_you || e.reply_all_review {
+        return 0;
+    }
+    let bare = |a: &String| {
+        envelope::bare_address(a)
+            .unwrap_or_else(|| a.trim().to_owned())
+            .to_lowercase()
+    };
+    let reply: std::collections::HashSet<String> = e.reply_to.iter().map(bare).collect();
+    e.reply_all_to
+        .iter()
+        .chain(&e.reply_all_cc)
+        .map(bare)
+        .collect::<std::collections::HashSet<_>>()
+        .difference(&reply)
+        .count() as u32
 }
 
 /// The recipient headers of a message and who answers go to. Mail kept
@@ -151,63 +179,53 @@ pub fn message_headers(raw: Vec<u8>) -> Vec<MessageHeader> {
         .collect()
 }
 
-/// Redirect (Bounce): sends the message unchanged to `to`, with
-/// Resent-From, Resent-Date, Resent-To and Resent-Message-ID on top. It
-/// goes from the account's address (or `from_email`, one of its aliases)
-/// and a copy is filed in Sent, as any message sent.
+/// Redirect (Bounce): the message unchanged, with Resent-From,
+/// Resent-Date, Resent-To and Resent-Message-ID on top, to the bare
+/// addresses of `to`. It goes through the outbox like any message: kept
+/// on disk at once, sent once its Undo window (`undo_seconds`) has
+/// passed, exactly once, and waiting there while the server can't be
+/// reached. It goes from `from_email` when that is one of the account's
+/// addresses, from the account's own otherwise; a copy is filed in Sent.
+/// Returns its outbox id, to take it back ([super::engine::reopen_outgoing])
+/// or wait for it ([super::engine::deliver_outgoing]).
 pub async fn redirect_message(
     account_id: i64,
     mailbox: String,
     uid: u32,
     from_email: Option<String>,
     to: Vec<String>,
-) -> Result<(), EngineError> {
+    undo_seconds: u32,
+) -> Result<i64, EngineError> {
     let id = AccountId(account_id);
-    let account = store()?
-        .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let recipients = recipients_of(&to)?;
-    let raw = raw_message(id, mailbox, uid).await?;
-    let from = from_email
-        .filter(|f| !f.trim().is_empty())
-        .unwrap_or_else(|| account.email.clone());
-    let message_id = envelope::new_message_id(&from);
-    let ready = Ready {
-        message_id: message_id.clone(),
-        from: from.clone(),
-        recipients,
-        raw: envelope::resend(&raw, &from, &to, now_secs(), &message_id),
+    let (own, subject) = {
+        let store = store()?;
+        let own = store.own_addresses(id)?;
+        let subject = store
+            .message(id, &mailbox, uid)?
+            .map(|m| m.subject)
+            .unwrap_or_default();
+        (own, subject)
     };
-    let password = credentials::load(id)?;
-    engine()?
-        .runtime
-        .spawn(async move { remote::send_ready(&account, &password, &ready).await })
-        .await
-        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
-    Ok(())
-}
-
-/// The bare addresses of `to` (`a@b.c` or `Name <a@b.c>`), each checked.
-fn recipients_of(to: &[String]) -> Result<Vec<String>, EngineError> {
-    if to.iter().all(|t| t.trim().is_empty()) {
-        return Err(EngineError::new(ErrorKind::NoRecipients, ""));
+    if own.is_empty() {
+        return Err(EngineError::new(ErrorKind::Other, "unknown account"));
     }
-    to.iter()
-        .filter(|t| !t.trim().is_empty())
-        .map(|t| {
-            let t = t.trim();
-            let bare = match (t.rfind('<'), t.rfind('>')) {
-                (Some(a), Some(b)) if a < b => &t[a + 1..b],
-                _ => t,
-            };
-            let bare = bare.trim();
-            if piuma_core::groups::valid_address(bare) {
-                Ok(bare.to_owned())
-            } else {
-                Err(EngineError::new(ErrorKind::BadAddress, t))
-            }
-        })
-        .collect()
+    // A wrong address says so before the message is fetched.
+    envelope::redirect(b"", &subject, from_email.as_deref(), &own, &to, 0)?;
+    let raw = raw_message(id, mailbox, uid).await?;
+    let now = now_secs();
+    let (draft, ready) = envelope::redirect(&raw, &subject, from_email.as_deref(), &own, &to, now)?;
+    let send_at = now + i64::from(undo_seconds);
+    let out = Outgoing {
+        account: id,
+        draft,
+        ready,
+        saved: None,
+        send_at: Some(send_at),
+        undo: true,
+    };
+    let queued = store()?.queue_outgoing(&out, now)?;
+    send_outbox_at(id, send_at)?;
+    Ok(queued)
 }
 
 /// Mutes the conversation of a message, or unmutes it: new mail in it
@@ -226,18 +244,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn redirect_recipients_are_bare_and_checked() {
+    fn others_is_the_set_the_app_counts() {
+        let e = MessageEnvelope {
+            to: Vec::new(),
+            cc: Vec::new(),
+            bcc_you: false,
+            reply_to: vec!["Anna <ANNA@x.it>".into()],
+            reply_all_to: vec!["anna@x.it".into(), "Bo <bo@x.it>".into()],
+            reply_all_cc: vec!["bo@X.it".into(), "Carla <carla@x.it>".into()],
+            list_post: None,
+            muted: false,
+            reply_all_review: false,
+        };
+        assert_eq!(others(&e), 2);
         assert_eq!(
-            recipients_of(&["Carla <carla@x.it>".into(), " dan@x.it ".into()]).unwrap(),
-            ["carla@x.it", "dan@x.it"]
+            others(&MessageEnvelope {
+                bcc_you: true,
+                ..e.clone()
+            }),
+            0
         );
         assert_eq!(
-            recipients_of(&["".into()]).unwrap_err().kind,
-            ErrorKind::NoRecipients
-        );
-        assert_eq!(
-            recipients_of(&["not an address".into()]).unwrap_err().kind,
-            ErrorKind::BadAddress
+            others(&MessageEnvelope {
+                reply_all_review: true,
+                ..e
+            }),
+            0
         );
     }
 

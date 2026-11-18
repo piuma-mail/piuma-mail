@@ -1770,22 +1770,27 @@ class EngineMailSource extends MailSource {
         mailbox: row.mailbox,
         uid: row.uid,
       );
-      return MailEnvelope(
-        to: [for (final a in e.to) MailPerson(a.name, a.email, you: a.you)],
-        cc: [for (final a in e.cc) MailPerson(a.name, a.email, you: a.you)],
-        bccYou: e.bccYou,
-        replyTo: e.replyTo,
-        replyAllTo: e.replyAllTo,
-        replyAllCc: e.replyAllCc,
-        listPost: e.listPost,
-        muted: e.muted,
-      );
+      return envelopeOf(e);
     } catch (_) {
       // Mail kept before its headers were read, with the server out of
       // reach: Reply goes to the sender, as before.
       return null;
     }
   }
+
+  /// The engine's envelope as the app keeps it.
+  @visibleForTesting
+  static MailEnvelope envelopeOf(rep.MessageEnvelope e) => MailEnvelope(
+    to: [for (final a in e.to) MailPerson(a.name, a.email, you: a.you)],
+    cc: [for (final a in e.cc) MailPerson(a.name, a.email, you: a.you)],
+    bccYou: e.bccYou,
+    replyTo: e.replyTo,
+    replyAllTo: e.replyAllTo,
+    replyAllCc: e.replyAllCc,
+    listPost: e.listPost,
+    muted: e.muted,
+    replyAllReview: e.replyAllReview,
+  );
 
   @override
   Future<Uint8List> rawMessage(MailRow row) => rep.messageSource(
@@ -1800,24 +1805,23 @@ class EngineMailSource extends MailSource {
   ];
 
   @override
-  Future<void> redirect(MailRow row, List<String> to) async {
+  Future<int> redirect(MailRow row, List<String> to, Duration window) async {
     try {
-      await rep.redirectMessage(
+      final id = await rep.redirectMessage(
         accountId: row.accountId,
         mailbox: row.mailbox,
         uid: row.uid,
         fromEmail: replyFrom(row),
         to: to,
+        undoSeconds: window.inSeconds,
       );
+      // As Send with Undo: should the app be swiped away in the window,
+      // Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
+      _changes.add(null);
+      return id;
     } on engine.EngineError catch (e) {
-      throw SendException(switch (e.kind) {
-        engine.ErrorKind.badAddress => SendError.badAddress,
-        engine.ErrorKind.noRecipients => SendError.noRecipients,
-        engine.ErrorKind.wrongPassword => SendError.wrongPassword,
-        engine.ErrorKind.unreachable => SendError.unreachable,
-        engine.ErrorKind.rejected => SendError.rejected,
-        _ => SendError.other,
-      }, e.detail);
+      throw _sendException(e);
     }
   }
 
@@ -2725,7 +2729,12 @@ class EngineMailSource extends MailSource {
       final waiting = await engine.outbox(accountId: draft.accountId);
       return waiting.isEmpty ? null : waiting.last.id;
     } on engine.EngineError catch (e) {
-      throw SendException(switch (e.kind) {
+      throw _sendException(e);
+    }
+  }
+
+  static SendException _sendException(engine.EngineError e) =>
+      SendException(switch (e.kind) {
         engine.ErrorKind.badAddress => SendError.badAddress,
         engine.ErrorKind.noRecipients => SendError.noRecipients,
         engine.ErrorKind.wrongPassword => SendError.wrongPassword,
@@ -2733,6 +2742,47 @@ class EngineMailSource extends MailSource {
         engine.ErrorKind.rejected => SendError.rejected,
         _ => SendError.other,
       }, e.detail);
+
+  @override
+  Future<int> sendWithUndo(Draft draft, Duration window) async {
+    try {
+      final id = await engine.sendWithUndo(
+        message: _outgoing(draft),
+        undoSeconds: window.inSeconds,
+      );
+      // Should the app be swiped away in the window, Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
+      _changes.add(null);
+      return id;
+    } on engine.EngineError catch (e) {
+      throw _sendException(e);
+    }
+  }
+
+  @override
+  Future<Delivery> deliver(int id) async {
+    try {
+      final d = await engine.deliverOutgoing(id: id);
+      final outcome = switch (d.kind) {
+        engine.DeliveryKind.sent => SendOutcome.sent,
+        engine.DeliveryKind.waiting => SendOutcome.waiting,
+        engine.DeliveryKind.wrongPassword => SendOutcome.wrongPassword,
+        engine.DeliveryKind.refused => SendOutcome.refused,
+        engine.DeliveryKind.insecure => SendOutcome.insecure,
+        engine.DeliveryKind.maybeSent => SendOutcome.maybeSent,
+        engine.DeliveryKind.gone => SendOutcome.gone,
+      };
+      if (outcome == SendOutcome.waiting ||
+          outcome == SendOutcome.wrongPassword) {
+        _retryOutbox();
+      }
+      return Delivery(outcome, d.detail);
+    } on engine.EngineError catch (e) {
+      // Kept in the outbox all the same: it goes with the next try.
+      _retryOutbox();
+      return Delivery(SendOutcome.waiting, e.detail);
+    } finally {
+      _changes.add(null);
     }
   }
 
@@ -2743,6 +2793,7 @@ class EngineMailSource extends MailSource {
         message: _outgoing(draft),
         sendAt: at.millisecondsSinceEpoch ~/ 1000,
       );
+      AndroidBackground.outboxAt(id, at).ignore();
       _changes.add(null);
       return id;
     } on engine.EngineError catch (e) {
@@ -2780,7 +2831,9 @@ class EngineMailSource extends MailSource {
   /// new mail wakes the account's watcher.
   void _retryOutbox() {
     _outboxTimer ??= Timer.periodic(const Duration(minutes: 1), (_) async {
-      if ((await engine.outbox()).every((o) => o.error != null)) {
+      if ((await engine.outbox()).every(
+        (o) => o.state != engine.OutboxState.waiting,
+      )) {
         _outboxTimer?.cancel();
         _outboxTimer = null;
         return;
@@ -2805,6 +2858,13 @@ class EngineMailSource extends MailSource {
         sendAt: o.sendAt == null
             ? null
             : DateTime.fromMillisecondsSinceEpoch(o.sendAt! * 1000),
+        state: switch (o.state) {
+          engine.OutboxState.waiting => OutboxState.waiting,
+          engine.OutboxState.sending => OutboxState.sending,
+          engine.OutboxState.refused => OutboxState.refused,
+          engine.OutboxState.maybeSent => OutboxState.maybeSent,
+        },
+        undo: o.undo,
       ),
   ];
 
@@ -2812,6 +2872,8 @@ class EngineMailSource extends MailSource {
   Future<Draft> reopenOutgoing(int id) async {
     try {
       final m = await engine.reopenOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
       final copy = m.draft;
       return Draft(
         accountId: m.accountId,

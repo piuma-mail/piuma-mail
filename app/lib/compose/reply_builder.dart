@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart' show StringCharacters;
 import 'package:intl/intl.dart';
 
 import '../l10n/app_localizations.dart';
@@ -219,10 +220,22 @@ class ReplyBuilder {
   /// without the characters file systems refuse.
   static String emlName(String subject) {
     var name = subject
-        .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), '_')
+        // Control and direction characters: a name that reads one way
+        // and opens as another ("invoice\u202Elme.exe").
+        .replaceAll(
+          RegExp(
+            r'[\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]',
+          ),
+          '',
+        )
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    if (name.length > 80) name = name.substring(0, 80).trimRight();
+    // Cut by what shows as one character, never inside a surrogate pair
+    // or an emoji.
+    if (name.characters.length > 80) {
+      name = name.characters.take(80).toString().trimRight();
+    }
     if (name.isEmpty || name.replaceAll('.', '').isEmpty) name = 'message';
     return '$name.eml';
   }

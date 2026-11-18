@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../compose/compose_pane.dart' show undoSendWindow;
 import '../compose/reply_builder.dart';
 import '../design/icons.dart';
 import '../design/theme.dart';
@@ -54,7 +55,12 @@ class MessageActions {
   final BuildContext context;
   final MailSource source;
   final ValueChanged<Draft> openCompose;
-  final void Function(String text, {String? action, VoidCallback? onAction})
+  final void Function(
+    String text, {
+    String? action,
+    VoidCallback? onAction,
+    Duration? duration,
+  })
   toast;
 
   /// A sheet from the bottom, not a dialog.
@@ -137,19 +143,66 @@ class MessageActions {
     await _sendRedirect(row, to);
   }
 
+  /// Redirect goes through the outbox, as Send does: on disk at once,
+  /// with Undo while its window lasts, then once, or waiting there while
+  /// the server can't be reached.
   Future<void> _sendRedirect(MailRow row, List<String> to) async {
     final l = _l;
+    final int id;
     try {
-      await source.redirect(row, to);
+      id = await source.redirect(row, to, undoSendWindow);
+    } on SendException catch (e) {
       if (!context.mounted) return;
-      toast(l.redirectDone(to.map(bareAddress).join(', ')));
+      toast(
+        e.error == SendError.badAddress
+            ? l.sendBadAddress(e.detail)
+            : l.redirectFailed,
+        action: l.tryAgain,
+        onAction: () => redirect(row),
+      );
+      return;
     } catch (_) {
+      // The message couldn't be fetched (offline): nothing was queued.
       if (!context.mounted) return;
       toast(
         l.redirectFailed,
         action: l.tryAgain,
         onAction: () => _sendRedirect(row, to),
       );
+      return;
+    }
+    final delivery = source.deliver(id);
+    if (!context.mounted) return;
+    toast(
+      l.sending,
+      action: l.undo,
+      duration: undoSendWindow,
+      onAction: () => source.reopenOutgoing(id).ignore(),
+    );
+    final done = await delivery;
+    if (!context.mounted) return;
+    switch (done.outcome) {
+      case SendOutcome.sent:
+        toast(l.redirectDone(to.map(bareAddress).join(', ')));
+      case SendOutcome.waiting:
+        toast(l.inOutbox);
+      case SendOutcome.maybeSent:
+        toast(l.outboxMaybeSentCheck);
+      case SendOutcome.wrongPassword:
+      case SendOutcome.refused:
+      case SendOutcome.insecure:
+        // Kept in the Outbox with its reason; Try again asks once more.
+        toast(
+          l.redirectFailed,
+          action: l.tryAgain,
+          onAction: () {
+            source.reopenOutgoing(id).ignore();
+            _sendRedirect(row, to);
+          },
+        );
+      case SendOutcome.gone:
+        // Taken back with Undo.
+        break;
     }
   }
 
@@ -157,9 +210,18 @@ class MessageActions {
   Future<void> viewSource(MailRow row) async {
     final raw = await _raw(row);
     if (raw == null || !context.mounted) return;
-    final headers = source.headersOf(raw);
+    // A big message is shown in part, read off the screen's thread.
+    final shown = raw.length > _inlineSource
+        ? await compute(sourceLines, raw)
+        : sourceLines(raw);
+    final headers = [
+      for (final h in source.headersOf(headerBlock(raw)))
+        MailHeader(h.name, cleanSource(h.value)),
+    ];
+    if (!context.mounted) return;
     Widget panel(BuildContext context) => _SourcePanel(
-      raw: raw,
+      lines: shown.lines,
+      cut: shown.cut,
       headers: headers,
       phone: phone,
       onSave: () => _save(row, raw),
@@ -313,6 +375,49 @@ class MessageActions {
   String _accountEmail(MailRow row) =>
       source.accounts.where((a) => a.id == row.accountId).firstOrNull?.email ??
       '';
+}
+
+/// How much of a message View source shows: the rest is in Save as .eml.
+const sourceShown = 256 * 1024;
+
+/// Up to this size the source is read on the screen's thread.
+const _inlineSource = 64 * 1024;
+
+/// What View source shows of [raw]: its first [sourceShown] bytes as
+/// lines, with control and direction characters taken out (tabs and line
+/// ends stay), and whether it was cut.
+({List<String> lines, bool cut}) sourceLines(Uint8List raw) {
+  final cut = raw.length > sourceShown;
+  final text = utf8.decode(
+    cut ? Uint8List.sublistView(raw, 0, sourceShown) : raw,
+    allowMalformed: true,
+  );
+  return (lines: cleanSource(text).split('\n'), cut: cut);
+}
+
+/// [text] without the characters that would hide or reorder what shows:
+/// C0 and C1 controls but tab and line feed, and the bidirectional marks
+/// and overrides.
+String cleanSource(String text) => text.replaceAll(
+  RegExp(
+    '[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]',
+  ),
+  '',
+);
+
+/// The header block of [raw], up to the first empty line (and no more
+/// than [sourceShown]), for the header list.
+Uint8List headerBlock(Uint8List raw) {
+  final end = raw.length < sourceShown ? raw.length : sourceShown;
+  for (var i = 0; i + 3 < end; i++) {
+    if (raw[i] == 13 &&
+        raw[i + 1] == 10 &&
+        raw[i + 2] == 13 &&
+        raw[i + 3] == 10) {
+      return Uint8List.sublistView(raw, 0, i + 4);
+    }
+  }
+  return Uint8List.sublistView(raw, 0, end);
 }
 
 /// One file to fetch.
@@ -503,13 +608,18 @@ class _RedirectPanelState extends State<_RedirectPanel> {
     super.dispose();
   }
 
-  List<String> get _addresses => [
-    for (final a in _to.text.split(RegExp(r'[,;\n]')))
-      if (a.trim().isNotEmpty) a.trim(),
-  ];
+  List<String> get _addresses => splitAddresses(_to.text);
+
+  /// The first address typed that isn't one, said under the field.
+  String? get _wrong {
+    for (final a in _addresses) {
+      if (!validAddress(a)) return a;
+    }
+    return null;
+  }
 
   void _send() {
-    if (_addresses.isEmpty) return;
+    if (_addresses.isEmpty || _wrong != null) return;
     Navigator.of(context).pop(_addresses);
   }
 
@@ -541,6 +651,17 @@ class _RedirectPanelState extends State<_RedirectPanel> {
           autofocus: true,
           onSubmitted: (_) => _send(),
         ),
+        if (_wrong case final wrong?
+            when !_to.text.trimRight().endsWith(',')) ...[
+          const SizedBox(height: PiumaSpace.s8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              l.sendBadAddress(wrong),
+              style: PiumaType.small.copyWith(color: c.warn),
+            ),
+          ),
+        ],
         const SizedBox(height: PiumaSpace.s24),
         Wrap(
           alignment: WrapAlignment.end,
@@ -554,7 +675,7 @@ class _RedirectPanelState extends State<_RedirectPanel> {
             ),
             PiumaButton(
               label: l.actionRedirect,
-              onPressed: _addresses.isEmpty ? null : _send,
+              onPressed: _addresses.isEmpty || _wrong != null ? null : _send,
             ),
           ],
         ),
@@ -567,13 +688,18 @@ class _RedirectPanelState extends State<_RedirectPanel> {
 /// select and copy; Save as .eml beside them.
 class _SourcePanel extends StatefulWidget {
   const _SourcePanel({
-    required this.raw,
+    required this.lines,
+    required this.cut,
     required this.headers,
     required this.phone,
     required this.onSave,
   });
 
-  final Uint8List raw;
+  /// The message's first [sourceShown] bytes, line by line.
+  final List<String> lines;
+
+  /// The message is longer than what shows.
+  final bool cut;
   final List<MailHeader> headers;
   final bool phone;
   final VoidCallback onSave;
@@ -584,7 +710,6 @@ class _SourcePanel extends StatefulWidget {
 
 class _SourcePanelState extends State<_SourcePanel> {
   bool _raw = false;
-  late final String _text = utf8.decode(widget.raw, allowMalformed: true);
 
   @override
   Widget build(BuildContext context) {
@@ -597,6 +722,32 @@ class _SourcePanelState extends State<_SourcePanel> {
     );
     final height =
         MediaQuery.sizeOf(context).height * (widget.phone ? 0.6 : 0.55);
+    // Line by line, built as they scroll in: a long message doesn't hold
+    // up the screen.
+    final list = _raw
+        ? ListView.builder(
+            padding: const EdgeInsets.all(PiumaSpace.s12),
+            itemCount: widget.lines.length,
+            itemBuilder: (context, i) => Text(widget.lines[i], style: mono),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(PiumaSpace.s12),
+            itemCount: widget.headers.length,
+            itemBuilder: (context, i) {
+              final h = widget.headers[i];
+              return Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${h.name}: ',
+                      style: mono.copyWith(color: c.muted),
+                    ),
+                    TextSpan(text: h.value, style: mono),
+                  ],
+                ),
+              );
+            },
+          );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -621,25 +772,15 @@ class _SourcePanelState extends State<_SourcePanel> {
             border: Border.all(color: c.line),
             borderRadius: BorderRadius.circular(PiumaRadius.card),
           ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(PiumaSpace.s12),
-            child: _raw
-                ? SelectableText(_text, style: mono)
-                : SelectableText.rich(
-                    TextSpan(
-                      children: [
-                        for (final h in widget.headers) ...[
-                          TextSpan(
-                            text: '${h.name}: ',
-                            style: mono.copyWith(color: c.muted),
-                          ),
-                          TextSpan(text: '${h.value}\n', style: mono),
-                        ],
-                      ],
-                    ),
-                  ),
-          ),
+          child: SelectionArea(child: list),
         ),
+        if (_raw && widget.cut) ...[
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            l.sourceCut((sourceShown / 1024).round()),
+            style: PiumaType.small.copyWith(color: c.muted),
+          ),
+        ],
         const SizedBox(height: PiumaSpace.s16),
         Wrap(
           alignment: WrapAlignment.end,
@@ -652,7 +793,7 @@ class _SourcePanelState extends State<_SourcePanel> {
               onPressed: () => Clipboard.setData(
                 ClipboardData(
                   text: _raw
-                      ? _text
+                      ? widget.lines.join('\n')
                       : [
                           for (final h in widget.headers)
                             '${h.name}: ${h.value}',

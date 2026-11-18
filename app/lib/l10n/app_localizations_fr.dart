@@ -1588,6 +1588,24 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'Peut-être envoyé';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'La connexion a été coupée pendant l’envoi. Vérifiez dans Envoyés avant de le renvoyer.';
+
+  @override
+  String get dataProblemTitle => 'Piuma n’a pas pu ouvrir ses données';
+
+  @override
+  String get dataProblemBody =>
+      'Vos e-mails sont en sécurité sur vos serveurs et rien n’a été modifié ici. Réessayez ; si cela continue, signalez-le avec ce qu’affiche Piuma.';
+
+  @override
+  String get dataProblemNewer =>
+      'Ces données ont été écrites par une version plus récente de Piuma. Mettez Piuma à jour pour les ouvrir ; rien n’a été modifié ici.';
+
+  @override
   String get inOutbox =>
       'Dans la boîte d’envoi · part dès que vous êtes en ligne';
 
@@ -6384,4 +6402,9 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get textSize => 'Taille du texte';
+
+  @override
+  String sourceCut(int size) {
+    return 'Seuls les premiers $size Ko sont affichés. Enregistrez en .eml pour l’e-mail entier.';
+  }
 }

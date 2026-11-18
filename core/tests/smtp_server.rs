@@ -10,7 +10,10 @@ use futures::TryStreamExt;
 use piuma_core::imap::ImapConfig;
 use piuma_core::outbox::{self, Outgoing};
 use piuma_core::remote;
-use piuma_core::smtp::{ready, send, send_and_file, Draft, Ready, SendError, SmtpConfig};
+use piuma_core::remote::AccountCourier;
+use piuma_core::smtp::{
+    ready, send, send_and_file, send_within, Draft, Filing, Limits, Ready, SendError, SmtpConfig,
+};
 use piuma_core::{Account, AccountId, AccountKind, Security, Server, Store};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedReadHalf;
@@ -19,6 +22,8 @@ use tokio::net::{TcpListener, TcpStream};
 /// What the fake server received.
 #[derive(Default, Debug)]
 struct Received {
+    /// The MAIL FROM line, as sent.
+    mail: String,
     rcpt: Vec<String>,
     /// The message, dot-stuffing undone, one "\n" after each line.
     data: String,
@@ -38,6 +43,13 @@ struct Sink {
     ehlo: &'static str,
     /// Answers DATA with this instead of 354, and takes no content.
     data_reply: Option<&'static str>,
+    /// Answers the message itself with this instead of 250, having taken
+    /// it: a reply that breaks the exchange after the message went.
+    end_reply: Option<&'static str>,
+    /// Goes silent, connection open, at this point: "GREETING", or the
+    /// start of a command ("EHLO", "AUTH", "MAIL FROM", "RCPT TO",
+    /// "DATA"), or "END" once it has the whole message.
+    stall: Option<&'static str>,
 }
 
 impl Default for Sink {
@@ -46,6 +58,8 @@ impl Default for Sink {
             defer: false,
             ehlo: "250-sink\r\n250 AUTH PLAIN LOGIN\r\n",
             data_reply: None,
+            end_reply: None,
+            stall: None,
         }
     }
 }
@@ -93,11 +107,20 @@ fn text(line: &[u8]) -> String {
 async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
     let (r, mut w) = tcp.into_split();
     let mut r = BufReader::new(r);
+    if sink.stall == Some("GREETING") {
+        return std::future::pending().await;
+    }
     w.write_all(b"220 sink ESMTP\r\n").await.unwrap();
     let mut current = Received::default();
     while let Some(raw) = read_line(&mut r).await {
         let line = text(&raw);
         let upper = line.to_ascii_uppercase();
+        if sink
+            .stall
+            .is_some_and(|at| at != "END" && upper.starts_with(at))
+        {
+            return std::future::pending().await;
+        }
         if let Some(last) = seen.lock().unwrap().last_mut() {
             last.after.push(line.clone());
         }
@@ -111,7 +134,10 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
                 b"535 5.7.8 bad credentials\r\n"
             }
         } else if upper.starts_with("MAIL FROM") {
-            current = Received::default();
+            current = Received {
+                mail: line.clone(),
+                ..Received::default()
+            };
             b"250 ok\r\n"
         } else if upper.starts_with("RCPT TO") {
             current.rcpt.push(line[8..].trim().to_owned());
@@ -137,6 +163,13 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
                 b"451 4.3.2 try again later\r\n"
             } else {
                 seen.lock().unwrap().push(std::mem::take(&mut current));
+                if sink.stall == Some("END") {
+                    return std::future::pending().await;
+                }
+                if let Some(reply) = sink.end_reply {
+                    w.write_all(reply.as_bytes()).await.ok();
+                    continue;
+                }
                 b"250 queued\r\n"
             }
         } else if upper == "QUIT" {
@@ -225,7 +258,7 @@ async fn files_a_copy_in_sent() {
     let report = send_and_file(&smtp(port, "test"), &imap, &ready(&draft()).unwrap())
         .await
         .unwrap();
-    assert_eq!(report.filed_in.as_deref(), Some("Sent"));
+    assert_eq!(report.filed, Filing::Ours("Sent".into()));
     assert!(report.message_id.starts_with('<'));
     assert_eq!(inbox.lock().unwrap().len(), 1);
 
@@ -301,12 +334,18 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
         ready: ready(&draft()).unwrap(),
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
+        undo: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
-    assert!(outbox::send(&store, &offline, "test")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &offline,
+        &mut AccountCourier::new(&offline, "test"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.len(), 1);
     assert_eq!(waiting[0].to, ["Luca <luca@example.org>"]);
@@ -315,18 +354,30 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     // A refused password keeps it waiting, without a reason.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    assert!(outbox::send(&store, &online, "nope")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "nope"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     assert_eq!(store.lock().unwrap().outbox(None).unwrap()[0].error, None);
 
     // Back online: it goes as it was built, and leaves the outbox.
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
-    assert!(!sent[0].filed);
+    assert!(!sent[0].filed.done());
     assert!(store.lock().unwrap().outbox(None).unwrap().is_empty());
     let got = inbox.lock().unwrap();
     assert_eq!(got.len(), 1);
@@ -347,6 +398,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
         ready: ready(&draft()).unwrap(),
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
+        undo: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
 
@@ -354,10 +406,15 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // just not taking it now. It stays in the outbox, without a reason.
     let (port, _deferred) = smtp_sink(true).await;
     let deferring = account(id, port, no_imap);
-    assert!(outbox::send(&store, &deferring, "test")
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(outbox::send(
+        &store,
+        &deferring,
+        &mut AccountCourier::new(&deferring, "test"),
+        "me"
+    )
+    .await
+    .unwrap()
+    .is_empty());
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.len(), 1);
     assert_eq!(waiting[0].id, queued);
@@ -366,11 +423,18 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // A server that takes it: it goes as it was built, and leaves.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
-    assert!(!sent[0].filed);
+    assert!(!sent[0].filed.done());
     assert!(store.lock().unwrap().outbox(None).unwrap().is_empty());
     let got = inbox.lock().unwrap();
     assert_eq!(got.len(), 1);
@@ -379,7 +443,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
 }
 
 #[tokio::test]
-async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
+async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
     let store = Store::open_in_memory().unwrap();
     let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
     let store = Mutex::new(store);
@@ -396,15 +460,15 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
             draft,
             saved: None,
             send_at: Some(send_at),
+            undo: false,
         };
         store.lock().unwrap().queue_outgoing(&out, now).unwrap()
     };
     let later = queue(now + 3600);
-    let due = queue(now - 5);
-    assert_eq!(
-        store.lock().unwrap().next_due(id, now).unwrap(),
-        Some(now - 5)
-    );
+    // Meant for three days ago: the app was closed meanwhile.
+    let late = now - 3 * 86_400;
+    let due = queue(late);
+    assert_eq!(store.lock().unwrap().next_due(id, now).unwrap(), Some(late));
     assert_eq!(
         store
             .lock()
@@ -419,7 +483,14 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
     // Only the one whose time has come goes.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, closed_port());
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(
+        &store,
+        &online,
+        &mut AccountCourier::new(&online, "test"),
+        "me",
+    )
+    .await
+    .unwrap();
     assert_eq!(sent.iter().map(|s| s.id).collect::<Vec<_>>(), [due]);
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.iter().map(|w| w.id).collect::<Vec<_>>(), [later]);
@@ -428,7 +499,8 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
         store.lock().unwrap().next_due(id, now).unwrap(),
         Some(now + 3600)
     );
-    // Dated for when it was meant to go, not when it was written.
+    // Dated when it actually went, not when it was meant to go: a late
+    // message must not pretend to be three days old.
     let got = inbox.lock().unwrap();
     let date = got[0]
         .data
@@ -437,7 +509,15 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
         .unwrap()
         .to_owned();
     let sent_at = mail_parser::DateTime::parse_rfc822(&date).unwrap();
-    assert_eq!(sent_at.to_timestamp(), now - 5);
+    assert!(sent_at.to_timestamp() >= now, "{date}");
+    assert!(sent_at.to_timestamp() <= now + 60, "{date}");
+    // Still the message that was built: same Message-ID.
+    assert_eq!(
+        got[0].data.matches("Message-ID:").count(),
+        1,
+        "{}",
+        got[0].data
+    );
 }
 
 /// Every line of the message ends in CRLF on the wire: no bare CR or LF.
@@ -590,6 +670,167 @@ async fn a_reply_out_of_turn_is_a_protocol_error() {
     assert!(inbox.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn a_broken_reply_after_the_message_is_may_have_been_sent_not_resent() {
+    // The server takes the message, then answers it with something that
+    // is not SMTP: it may well have it.
+    let (port, inbox) = smtp_sink_with(Sink {
+        end_reply: Some("hello there\r\n"),
+        ..Sink::default()
+    })
+    .await;
+    let err = send(&smtp(port, "test"), &ready(&draft()).unwrap())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Uncertain(_)), "{err:?}");
+    assert!(!err.is_offline());
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+
+    // Through the outbox: marked "may have been sent", and never sent
+    // again on its own.
+    let store = Store::open_in_memory().unwrap();
+    let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
+    let store = Mutex::new(store);
+    let online = account(id, port, closed_port());
+    let out = Outgoing {
+        account: id,
+        draft: draft(),
+        ready: ready(&draft()).unwrap(),
+        saved: None,
+        send_at: None,
+        undo: false,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
+    for _ in 0..3 {
+        let sent = outbox::send(
+            &store,
+            &online,
+            &mut AccountCourier::new(&online, "test"),
+            "me",
+        )
+        .await
+        .unwrap();
+        assert!(sent.is_empty());
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2, "one more, only once");
+    let listed = store.lock().unwrap().outbox(None).unwrap();
+    assert_eq!(listed[0].id, queued);
+    assert_eq!(listed[0].state, outbox::State::Unknown);
+}
+
+#[tokio::test]
+async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
+    // DATA answered out of turn: nothing went, and the outbox shows why
+    // rather than waiting as if offline or sending it again.
+    let (port, inbox) = smtp_sink_with(Sink {
+        data_reply: Some("250 ok\r\n"),
+        ..Sink::default()
+    })
+    .await;
+    let store = Store::open_in_memory().unwrap();
+    let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
+    let store = Mutex::new(store);
+    let online = account(id, port, closed_port());
+    let out = Outgoing {
+        account: id,
+        draft: draft(),
+        ready: ready(&draft()).unwrap(),
+        saved: None,
+        send_at: None,
+        undo: false,
+    };
+    store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
+    for _ in 0..2 {
+        outbox::send(
+            &store,
+            &online,
+            &mut AccountCourier::new(&online, "test"),
+            "me",
+        )
+        .await
+        .unwrap();
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+    let listed = store.lock().unwrap().outbox(None).unwrap();
+    assert_eq!(listed[0].state, outbox::State::Refused);
+    assert!(
+        listed[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("not valid SMTP"),
+        "{:?}",
+        listed[0].error
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_stops_answering_never_leaves_a_send_hanging() {
+    let limits = Limits {
+        step: std::time::Duration::from_millis(300),
+        ..Limits::default()
+    };
+    // Silent before the message text: nothing went, so it is like a
+    // dropped connection, and the outbox tries again later.
+    for at in ["GREETING", "EHLO", "AUTH", "MAIL FROM", "RCPT TO", "DATA"] {
+        let (port, inbox) = smtp_sink_with(Sink {
+            stall: Some(at),
+            ..Sink::default()
+        })
+        .await;
+        let started = std::time::Instant::now();
+        let err = send_within(&smtp(port, "test"), &ready(&draft()).unwrap(), limits)
+            .await
+            .unwrap_err();
+        assert!(err.is_offline(), "{at}: {err:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{at}"
+        );
+        assert!(inbox.lock().unwrap().is_empty(), "{at}");
+    }
+    // Silent once it has the message: it may have it.
+    let (port, inbox) = smtp_sink_with(Sink {
+        stall: Some("END"),
+        ..Sink::default()
+    })
+    .await;
+    let err = send_within(&smtp(port, "test"), &ready(&draft()).unwrap(), limits)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Uncertain(_)), "{err:?}");
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_size_goes_with_mail_from_and_a_message_too_big_is_never_uploaded() {
+    let (port, inbox) = smtp_sink_with(Sink {
+        ehlo: "250-sink\r\n250-SIZE 1000000\r\n250 AUTH PLAIN LOGIN\r\n",
+        ..Sink::default()
+    })
+    .await;
+    let message = ready(&draft()).unwrap();
+    send(&smtp(port, "test"), &message).await.unwrap();
+    let mail = inbox.lock().unwrap()[0].mail.clone();
+    assert!(
+        mail.ends_with(&format!("SIZE={}", message.raw.len())),
+        "{mail}"
+    );
+
+    // A server that takes 100 bytes at most: refused here, before upload.
+    let (port, inbox) = smtp_sink_with(Sink {
+        ehlo: "250-sink\r\n250-SIZE 100\r\n250 AUTH PLAIN LOGIN\r\n",
+        ..Sink::default()
+    })
+    .await;
+    let err = send(&smtp(port, "test"), &message).await.unwrap_err();
+    assert!(
+        matches!(&err, SendError::Rejected(why) if why.contains("at most")),
+        "{err:?}"
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
 /// What the original of a redirect or a forward looks like on the wire.
 const ORIGINAL: &str = "Delivered-To: me@example.org\r\nReturn-Path: <anna@x.it>\r\n\
 From: Anna <anna@x.it>\r\nTo: me@example.org\r\nCc: Bo <bo@x.it>\r\n\
@@ -601,28 +842,47 @@ See you at 20:30, caff=C3=A8 after.\r\n";
 async fn redirect_resends_the_message_unchanged_with_resent_headers() {
     use piuma_core::envelope;
     let (port, inbox) = smtp_sink(false).await;
-    let id = envelope::new_message_id("me@example.org");
-    let to = vec!["carla@example.org".to_owned()];
-    let message = piuma_core::smtp::Ready {
-        message_id: id.clone(),
-        from: "me@example.org".into(),
-        recipients: to.clone(),
-        raw: envelope::resend(
-            ORIGINAL.as_bytes(),
-            "me@example.org",
-            &to,
-            1_790_000_000,
-            &id,
-        ),
-    };
+    let own = vec!["me@example.org".to_owned(), "studio@example.org".to_owned()];
+    // From an alias of the account, to a name with a comma.
+    let (_, message) = envelope::redirect(
+        ORIGINAL.as_bytes(),
+        "Plan for Friday",
+        Some("Studio@Example.org"),
+        &own,
+        &["Rossi, Mario <carla@example.org>".to_owned()],
+        1_790_000_000,
+    )
+    .unwrap();
+    let id = message.message_id.clone();
     send(&smtp(port, "test"), &message).await.unwrap();
+    // Not one of the account's: it goes from the account.
+    let (_, other) = envelope::redirect(
+        ORIGINAL.as_bytes(),
+        "Plan for Friday",
+        Some("boss@elsewhere.example"),
+        &own,
+        &["carla@example.org".to_owned()],
+        1_790_000_000,
+    )
+    .unwrap();
+    send(&smtp(port, "test"), &other).await.unwrap();
 
     let got = inbox.lock().unwrap();
-    assert_eq!(got.len(), 1);
+    assert_eq!(got.len(), 2);
+    assert!(
+        got[0].mail.contains("<Studio@Example.org>"),
+        "{}",
+        got[0].mail
+    );
+    assert!(got[1].mail.contains("<me@example.org>"), "{}", got[1].mail);
     // Only the new recipient: neither the original To nor its Cc hear of it.
     assert_eq!(got[0].rcpt, ["<carla@example.org>"]);
     let data = &got[0].data;
-    assert!(data.starts_with("Resent-From: me@example.org\n"), "{data}");
+    assert!(
+        data.starts_with("Resent-From: Studio@Example.org\n"),
+        "{data}"
+    );
+    // Bare addresses only: no name, comma or raw UTF-8 in Resent-To.
     assert!(data.contains("Resent-To: carla@example.org\n"), "{data}");
     assert!(
         data.contains(&format!("Resent-Message-ID: {id}\n")),

@@ -190,7 +190,15 @@ class Reader extends StatefulWidget {
 
   /// Sends [text] as a reply to the message, whose text is [body]; to
   /// everyone it went to with [all] (the box's Reply all, off by default).
-  final void Function(MailRow row, String body, String text, bool all)?
+  /// [envelope] is who it went to, as the reader has it (null when the
+  /// engine couldn't say).
+  final void Function(
+    MailRow row,
+    String body,
+    String text,
+    bool all,
+    MailEnvelope? envelope,
+  )?
   onQuickReply;
 
   /// Where a reply to the message goes from, when that is one of the
@@ -868,9 +876,10 @@ class _ReaderState extends State<Reader> {
       row.fromName.isNotEmpty ? row.fromName.split(' ').first : row.fromEmail;
 
   Future<void> _quickReply(MailRow row, String text) async {
-    final all = _replyAll && (_envelopes[row.key]?.others ?? 0) > 0;
+    final envelope = _envelopes[row.key];
+    final all = _replyAll && (envelope?.others ?? 0) > 0;
     final body = await widget.source.body(row).catchError((_) => '');
-    widget.onQuickReply!(row, body, text, all);
+    widget.onQuickReply!(row, body, text, all, envelope);
   }
 
   /// The message at the text size Ctrl/⌘ + and − set, on top of the
