@@ -522,7 +522,10 @@ fn authorized(g: &Graph, counted: &Counted<'_>, i: usize) -> bool {
 /// Reads the log made of `entries` (from every copy and from this device,
 /// in any order and with repeats) from its beginning `root`. `own` are
 /// removals this device made: it knows they are genuine, so one stands
-/// against a removal of this device made beside it. Nobody else's
+/// against a removal of this device made beside it, and nothing the
+/// removed device did beside it counts here (nor waits to be decided, so
+/// a back-dated removal can't hold up what this device wrote before its
+/// own removal). Nobody else's
 /// removal gets that: a device can't tell a genuine one from a back-dated
 /// one by which it saw first.
 ///
@@ -571,6 +574,12 @@ pub fn evaluate(
             turns.push(i);
         }
     }
+    // This device's own removals, by index: what the device each removes
+    // did beside one (without knowing of it) never counts here.
+    let mine: Vec<(usize, &str)> = (1..n)
+        .filter(|&i| own.contains(&g.ids[i]))
+        .filter_map(|i| Some((i, g.entries[i].removes()?)))
+        .collect();
     let mut labels = vec![Label::Undecided; n];
     let mut counted = Counted::default();
     labels[0] = Label::In;
@@ -615,6 +624,15 @@ pub fn evaluate(
                 || !authorized(&g, &counted, c)
             {
                 // What follows an entry that doesn't count doesn't either.
+                Label::Out
+            } else if mine
+                .iter()
+                .any(|&(o, removed)| removed == e.by && g.concurrent(c, o))
+            {
+                // Done by a device this one removed, beside that removal:
+                // decided at once, so a removal it back-dated can't make
+                // this device's own entries (and through them its removal)
+                // wait on it.
                 Label::Out
             } else if e.removes().is_some() && own.contains(&g.ids[c]) {
                 // This device's own removals stand, whatever was made
@@ -1154,5 +1172,37 @@ mod tests {
         let e = evaluate(log, &g.id(), &BTreeSet::new());
         assert!(!e.overflow);
         assert_eq!(ids(&e.state), ["a"]);
+    }
+
+    /// Fifth review: the unlinker wrote an entry (a pairing) after the
+    /// removed device joined, then the unlink. A removal of the unlinker
+    /// back-dated before that entry doesn't make the unlinker's own entries
+    /// wait on it: on the unlinker they count, and so does the unlink. On
+    /// the others it is a stop while the back-dated removal is around.
+    #[test]
+    fn an_unlinker_stands_by_what_it_wrote_before_its_unlink() {
+        let (a, b, c, x) = (d("a"), d("b"), d("c"), d("x"));
+        let g = start(&a, &Key::generate());
+        let ab = after(&[&g], add(&b), &a);
+        let ac = after(&[&ab], add(&c), &a);
+        let ax = after(&[&ac], add(&x), &a);
+        let rc = after(&[&ax], remove(&c), &a);
+        let ra = after(&[&ac], remove(&a), &c);
+        let cy = after(&[&ac], add(&d("y")), &c);
+        let all = [g.clone(), ab, ac, ax, rc.clone(), ra.clone(), cy.clone()];
+        let on_a = evaluate(all.clone(), &g.id(), &[rc.id()].into());
+        assert!(on_a.conflict.is_empty());
+        assert_eq!(ids(&on_a.state), ["a", "b", "x"]);
+        assert_eq!(on_a.state.heads, [rc.id()]);
+        assert!(!on_a.kept.contains(&ra) && !on_a.kept.contains(&cy));
+        // A's log alone reads the same anywhere.
+        let later = evaluate(on_a.kept.clone(), &g.id(), &BTreeSet::new());
+        assert!(later.conflict.is_empty());
+        assert_eq!(ids(&later.state), ["a", "b", "x"]);
+        let e = evaluate(all, &g.id(), &BTreeSet::new());
+        assert_eq!(
+            e.conflict.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
     }
 }

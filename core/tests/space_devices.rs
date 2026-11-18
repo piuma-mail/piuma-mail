@@ -2060,3 +2060,51 @@ async fn a_device_still_listed_links_again_with_a_code() {
     assert_eq!(readers(&t), ids(&[&a, &b]));
     assert_eq!(space_sync::state(&a.store).unwrap().trust.log.len(), before);
 }
+
+/// Fifth review: the Mac paired another device after the old phone
+/// joined, then unlinked the old phone. The old phone back-dates a removal
+/// of the Mac before that pairing: the Mac still stands by its unlink
+/// (what it wrote in between doesn't wait on the back-dated removal),
+/// writes over the folder, and the others go on once the old phone's copy
+/// is gone.
+#[tokio::test]
+async fn a_back_dated_unlink_before_the_unlinkers_later_entries_stops_nobody_for_good() {
+    let (a, b, c, x) = (dev("Mac"), dev("Pixel"), dev("Old phone"), dev("iPad"));
+    for d in [&a, &b, &c, &x] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b, &c]).await;
+    // What the old phone knew last.
+    let mut forged = open(&mut t, &c).await;
+    // The Mac links the iPad, then unlinks the old phone.
+    link_by_code(&mut t, &a, &x).await.unwrap();
+    b.round(&mut t).await;
+    space_sync::unlink(&mut t, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    // The old phone (it still has the mailbox password) removes the Mac
+    // on the last entry it knew, and puts its copy beside the Mac's.
+    let ra = signed(
+        &forged,
+        Op::Remove {
+            device: a.me.device.id.clone(),
+        },
+        &c,
+    );
+    forged.content.log.push(ra.clone());
+    forged.content.generation += 5;
+    forge(&mut t, &forged, &c, &[&b, &c, &x]).await;
+    // The Mac doesn't stop: it writes over the folder.
+    a.round(&mut t).await;
+    let trust = space_sync::state(&a.store).unwrap().trust;
+    assert!(!trust.log.contains(&ra));
+    assert!(space_sync::state(&a.store).unwrap().conflict.is_empty());
+    assert_eq!(spaces(&t).len(), 1);
+    assert_eq!(readers(&t), ids(&[&a, &b, &x]));
+    // The others go on by themselves.
+    b.round(&mut t).await;
+    x.round(&mut t).await;
+    assert!(space_sync::state(&b.store).unwrap().conflict.is_empty());
+    assert!(space_sync::state(&x.store).unwrap().conflict.is_empty());
+    assert_eq!(readers(&t), ids(&[&a, &b, &x]));
+}

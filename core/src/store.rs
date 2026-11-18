@@ -15059,6 +15059,19 @@ From: <help@bank.example>\r\n\r\nHi";
         store.upsert_messages(&mail).unwrap();
         store.set_body(a, "INBOX", 1, "the body").unwrap();
         assert_eq!(store.unsent(a).unwrap(), (0, 0));
+        // What names it, synced or not.
+        for key in [
+            format!("account.{}.folders", a.0),
+            format!("notify.loud.{}", a.0),
+        ] {
+            store.set_setting(&key, "x").unwrap();
+        }
+        store
+            .set_setting(
+                crate::rules::NOT_NOW,
+                &format!("{} rule-a\n{} rule-b", a.0, b.0),
+            )
+            .unwrap();
 
         store.start_removing_account(a).unwrap();
         // Gone from the lists, the search and the accounts at once.
@@ -15111,6 +15124,19 @@ From: <help@bank.example>\r\n\r\nHi";
             .unwrap();
         assert_eq!(rows, 0);
         assert_eq!(store.uids(b, "INBOX").unwrap(), [1]);
+        // Its last step took what named it too.
+        assert_eq!(
+            store.setting(&format!("account.{}.folders", a.0)).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.setting(&format!("notify.loud.{}", a.0)).unwrap(),
+            None
+        );
+        assert_eq!(
+            store.setting(crate::rules::NOT_NOW).unwrap().as_deref(),
+            Some(format!("{} rule-b", b.0).as_str())
+        );
     }
 
     #[test]
