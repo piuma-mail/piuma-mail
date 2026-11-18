@@ -107,9 +107,7 @@ void main() {
     expect(source.sent.last.cc, isEmpty);
   });
 
-  testWidgets('a message only to the person has no Reply all', (
-    tester,
-  ) async {
+  testWidgets('a message only to the person has no Reply all', (tester) async {
     await _pump(tester);
     await _open(tester, 'Re: Print quote');
     // Sara wrote to the person, with Luca in Cc: Reply all is there.
@@ -206,9 +204,7 @@ void main() {
     expect(_inCompose(find.byType(AttachmentChip)), findsNWidgets(2));
   });
 
-  testWidgets('Forward goes on without the files that failed', (
-    tester,
-  ) async {
+  testWidgets('Forward goes on without the files that failed', (tester) async {
     final source = await _pump(tester);
     source.failFiles.add('compose-notes.png');
     await _open(tester, 'Mockup v3 review');
@@ -399,9 +395,7 @@ void main() {
     expect(find.text('K  ↑'), findsOneWidget);
   });
 
-  testWidgets('the palette has Reply all and the new commands', (
-    tester,
-  ) async {
+  testWidgets('the palette has Reply all and the new commands', (tester) async {
     await _pump(tester);
     await _open(tester, 'Mockup v3 review');
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);

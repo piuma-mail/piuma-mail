@@ -76,10 +76,9 @@ void main() {
     test('without an envelope every answer goes to the sender', () {
       for (final mode in ReplyMode.values) {
         expect(_b.reply(_row(), 'Hi', mode: mode).to, ['Anna Bo <anna@x.it>']);
-        expect(
-          _b.reply(_row(replyTo: 'desk@x.it'), 'Hi', mode: mode).to,
-          ['desk@x.it'],
-        );
+        expect(_b.reply(_row(replyTo: 'desk@x.it'), 'Hi', mode: mode).to, [
+          'desk@x.it',
+        ]);
       }
     });
 
@@ -179,10 +178,7 @@ void main() {
       );
       String marked(BodyMark m) => f.text.substring(m.start, m.end);
       expect(
-        [
-          for (final m in f.marks)
-            (m.kind, marked(m), m.url),
-        ],
+        [for (final m in f.marks) (m.kind, marked(m), m.url)],
         [
           (BodyMarkKind.bold, 'Agenda', ''),
           (BodyMarkKind.bold, 'this', ''),
