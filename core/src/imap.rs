@@ -251,6 +251,25 @@ pub(crate) const VAULT_BYTES: usize = 512 * 1024;
 pub(crate) const FILES_LOOK: u32 = 2000;
 /// Outlines asked for per round trip.
 const FILES_BATCH: usize = 200;
+/// Without CONDSTORE, the newest messages of a folder whose flags are
+/// read again at every round...
+///
+/// The compromise, on servers without CONDSTORE only: a flag changed
+/// elsewhere (read, starred, answered on another device or in webmail)
+/// shows here at the next round for the newest 500 messages of a folder,
+/// but for older ones only when the sweep below reaches them, after up to
+/// `messages / FLAGS_SWEEP` rounds (a folder of 100,000 messages: about 50
+/// rounds, a few hours of rounds every few minutes). Reading every
+/// message's flags at every round instead costs a FETCH of the whole
+/// folder each time, which on big folders is slow on the server and the
+/// network and wears phones' batteries. Changes made here go to the server
+/// at once either way, and servers with CONDSTORE (most) get every change
+/// at the next round.
+const FLAGS_NEWEST: u32 = 500;
+/// ...and how many older ones each round adds, going down the folder and
+/// starting again at the top: a big folder is looked at whole in a few
+/// rounds, never all at once.
+const FLAGS_SWEEP: u32 = 2000;
 /// Servers drop IDLE after 30 minutes; renew it before that.
 pub const IDLE_RENEW: Duration = Duration::from_secs(25 * 60);
 
@@ -375,6 +394,13 @@ impl Connection {
         self.moves = false;
     }
 
+    /// Acts as if the server had no CONDSTORE, to test the flags read in
+    /// windows.
+    #[doc(hidden)]
+    pub fn forget_condstore_for_tests(&mut self) {
+        self.condstore = false;
+    }
+
     pub fn supports_idle(&self) -> bool {
         self.idle
     }
@@ -428,7 +454,7 @@ impl Connection {
             lock(store).set_labels_local(account)?;
         }
 
-        let (prior, local, found) = {
+        let (prior, local, unchanged, found) = {
             let store = lock(store);
             let mut prior = store.mailbox_state(account, mailbox)?;
             if prior.is_some_and(|p| p.uid_validity != uid_validity) {
@@ -436,12 +462,35 @@ impl Connection {
                 report.reset = true;
                 prior = None;
             }
-            let local: HashSet<u32> = store.uids(account, mailbox)?.into_iter().collect();
-            (prior, local, store.server_found_uids(account, mailbox)?)
+            // A folder as the last complete sync left it lists nothing:
+            // no UID SEARCH ALL, no set of every uid here.
+            let unchanged = prior.is_some()
+                && store.mailbox_unchanged(
+                    account,
+                    mailbox,
+                    uid_validity,
+                    selected.uid_next,
+                    selected.exists,
+                )?;
+            let local: HashSet<u32> = if unchanged {
+                HashSet::new()
+            } else {
+                store.uids(account, mailbox)?.into_iter().collect()
+            };
+            (
+                prior,
+                local,
+                unchanged,
+                store.server_found_uids(account, mailbox)?,
+            )
         };
 
         // 1. Forget what the server no longer has.
-        let server = session.uid_search("ALL").await?;
+        let server = if unchanged {
+            HashSet::new()
+        } else {
+            session.uid_search("ALL").await?
+        };
         let gone: Vec<u32> = local.difference(&server).copied().collect();
         if !gone.is_empty() {
             lock(store).remove_messages(account, mailbox, &gone)?;
@@ -522,14 +571,39 @@ impl Connection {
         // 3. Refresh flags of what we already had.
         // Rounds that only fill in history skip it, and keep the old
         // modseq so the round that does look misses no change.
-        let kept: Vec<u32> = local.intersection(&server).copied().collect();
-        if round.flags && !kept.is_empty() {
+        let kept = unchanged || local.intersection(&server).next().is_some();
+        let mut flags_below = lock(store).flags_below(account, mailbox)?;
+        if round.flags && kept {
             let flags_query = match prior.and_then(|p| p.highest_modseq) {
                 Some(modseq) if condstore => Some((
                     "1:*".to_owned(),
                     format!("(UID FLAGS) (CHANGEDSINCE {modseq})"),
                 )),
-                _ => Some((uid_set(&kept), "(UID FLAGS)".to_owned())),
+                // Without CONDSTORE: the newest messages, and the next
+                // slice of the older ones, instead of every message's
+                // flags at every round.
+                _ => {
+                    let (window, below) = {
+                        let store = lock(store);
+                        let mut window = store.uids_below(account, mailbox, None, FLAGS_NEWEST)?;
+                        let start = flags_below.or(window.last().copied());
+                        let older = match start {
+                            Some(start) => {
+                                store.uids_below(account, mailbox, Some(start), FLAGS_SWEEP)?
+                            }
+                            None => Vec::new(),
+                        };
+                        // A slice shorter than asked reached the bottom:
+                        // the next round starts again at the top.
+                        let below = (older.len() as u32 == FLAGS_SWEEP)
+                            .then(|| older.last().copied())
+                            .flatten();
+                        window.extend(older);
+                        (window, below)
+                    };
+                    flags_below = below;
+                    (!window.is_empty()).then(|| (uid_set(&window), "(UID FLAGS)".to_owned()))
+                }
             };
             if let Some((set, q)) = flags_query {
                 let fetches: Vec<Fetch> = session.uid_fetch(set, q).await?.try_collect().await?;
@@ -687,6 +761,19 @@ impl Connection {
                     _ => selected.highest_modseq,
                 },
             },
+        )?;
+        // What the folder looked like when this round began, kept only
+        // when the round left nothing to download: the next round can then
+        // tell an unchanged folder without listing it.
+        let complete = report.more == 0;
+        lock(store).set_mailbox_scan(
+            account,
+            mailbox,
+            selected
+                .uid_next
+                .filter(|_| complete)
+                .map(|next| (uid_validity, next, selected.exists)),
+            flags_below,
         )?;
         Ok(report)
     }

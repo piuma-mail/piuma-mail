@@ -285,6 +285,8 @@ impl Query {
         // Mail a server search brought from outside the sync (hidden 2)
         // is found too; mail hidden for an undo isn't.
         sql.push_str(" AND m.hidden IN (0, 2)");
+        // Mail of an account being removed is gone from every list.
+        sql.push_str(crate::store::LIVE);
         for clause in rest {
             let parts: Vec<String> = clause
                 .any

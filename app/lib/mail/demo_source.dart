@@ -38,7 +38,34 @@ class DemoMailSource extends MailSource {
     this.asks = false,
     bool contactGroups = false,
     this.mailbox = false,
+    bool unsent = false,
+    this.backup = false,
+    this.noRoom = false,
   }) : now = now ?? DateTime.now(),
+       _unsent = [
+         if (unsent) ...const [
+           UnsentMessage(
+             id: 41,
+             accountId: 2,
+             subject: 'Quote for the Rossi kitchen',
+             to: ['Luca Ferri <luca@ferramentabianchi.it>'],
+             refused: true,
+           ),
+           UnsentMessage(
+             id: 42,
+             accountId: 2,
+             subject: 'Site visit on Thursday',
+             to: ['Sara Conti <sara@studio.it>', 'giulia@studio.it'],
+           ),
+           UnsentMessage(
+             id: 7,
+             accountId: 2,
+             subject: 'Notes from the Tuesday meeting',
+             to: ['Anna Bianchi <anna@studio.it>'],
+             draft: true,
+           ),
+         ],
+       ],
        _crashWaiting = crashed {
     if (contactGroups) {
       // A group typed in To brings every address.
@@ -877,14 +904,82 @@ class DemoMailSource extends MailSource {
     _servers[accountId] = servers;
   }
 
+  /// Mail written in Work that hasn't gone, with `unsent`.
+  final List<UnsentMessage> _unsent;
+
+  /// The Storage page shows a copy kept from before the last update.
+  final bool backup;
+
+  /// Clearing cached mail finds no room on the disk to shrink the file.
+  final bool noRoom;
+
+  @override
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => [
+    for (final u in _unsent)
+      if (u.accountId == accountId) u,
+  ];
+
+  @override
+  Future<void> sendUnsent(UnsentMessage message) async {
+    _unsent.removeWhere((u) => u.id == message.id && u.draft == message.draft);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> deleteUnsent(UnsentMessage message) async {
+    _unsent.removeWhere((u) => u.id == message.id && u.draft == message.draft);
+    _changes.add(null);
+  }
+
   @override
   Future<void> removeAccount(int accountId) async {
+    if (_unsent.any((u) => u.accountId == accountId)) {
+      throw const UnsentMailLeft();
+    }
     accounts = [
       for (final a in accounts)
         if (a.id != accountId) a,
     ];
     _rows.removeWhere((r) => r.accountId == accountId);
     _changes.add(null);
+  }
+
+  /// Days whole messages are kept, as picked in Settings › Storage.
+  int? _keepDays = 90;
+
+  /// Accounts whose cached mail was cleared.
+  final _cleared = <int>{};
+
+  @override
+  Future<StorageUse> storage() async {
+    final list = [
+      for (final (i, a) in accounts.indexed)
+        AccountStorage(
+          accountId: a.id,
+          messages: 1840 + i * 2315,
+          cachedBytes: _cleared.contains(a.id) ? 0 : (38 + i * 21) << 20,
+        ),
+    ];
+    final copy = backup ? 182 << 20 : 0;
+    return StorageUse(
+      totalBytes:
+          (96 << 20) +
+          copy +
+          list.fold<int>(0, (sum, a) => sum + a.cachedBytes),
+      backupBytes: copy,
+      accounts: list,
+      keepDays: _keepDays,
+    );
+  }
+
+  @override
+  Future<void> setKeepDays(int? days) async => _keepDays = days;
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async {
+    _cleared.add(accountId);
+    if (noRoom) throw NoRoomToShrink(await storage());
+    return storage();
   }
 
   @override
