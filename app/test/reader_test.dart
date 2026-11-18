@@ -286,12 +286,16 @@ void main() {
       openExternalLink = (uri) async => opened.add(uri);
       addTearDown(() => openExternalLink = before);
       // Enter on a focused link, as the web view reports it: no pointer.
+      var pressed = false;
       originalPaper = (html, onLink) => Builder(
         builder: (context) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            OriginalView.keyPressed(context);
-            onLink('https://lume.example/');
-          });
+          if (!pressed) {
+            pressed = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              OriginalView.keyPressed(context);
+              onLink('https://lume.example/');
+            });
+          }
           return const SizedBox.expand();
         },
       );
