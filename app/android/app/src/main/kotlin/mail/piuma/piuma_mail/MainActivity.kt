@@ -30,12 +30,25 @@ class MainActivity : FlutterActivity() {
         init(applicationContext)
         NetworkWatch.follow(applicationContext)
         launchPayload = Background.payload(intent)
+        oauthRedirect(intent)
         super.onCreate(savedInstanceState)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Background.payload(intent)?.let { notices?.invokeMethod("open", it) }
+        oauthRedirect(intent)
+    }
+
+    /**
+     * The browser coming back from Microsoft's or Google's sign-in page.
+     * The engine checks the answer's `state` against the sign-in it
+     * started and ignores anything else.
+     */
+    private fun oauthRedirect(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        MailNative.oauthRedirect(data.toString())
     }
 
     companion object {

@@ -110,7 +110,7 @@ pub async fn set_account_servers(
         smtp: into(servers.smtp),
         username: servers.username.trim().to_owned(),
     };
-    let password = credentials::load(a.id)?;
+    let password = crate::login::load(a.id)?;
     let checked = a.clone();
     engine
         .runtime
@@ -138,13 +138,39 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     for source in sources {
         disconnect_calendar(source)?;
     }
+    let removed = account(account_id)?;
+    let oauth = crate::login::stored(id);
     let store = store()?;
     store.remove_account(id)?;
     // An account added later may get the same id.
     store.set_setting(&alert_key(account_id), "")?;
     store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
+    store.set_setting(&crate::login::oauth_key(account_id), "")?;
+    if let AccountKind::Imap { imap, smtp, .. } = &removed.kind {
+        for host in [&imap.host, &smtp.host] {
+            store.set_setting(&crate::login::cert_key(account_id, host), "")?;
+        }
+    }
     drop(store);
     credentials::forget(id);
+    crate::login::forget_session(id);
+    // Give the refresh token back where the provider takes it (Google);
+    // Microsoft's runs out on its own. Best effort: the account is gone
+    // from this device either way.
+    if let Some(stored) = oauth {
+        if let (Some(provider), Ok(engine)) =
+            (piuma_core::oauth::provider(&stored.provider), engine())
+        {
+            engine.runtime.spawn(async move {
+                let _ = piuma_core::oauth::revoke(
+                    provider,
+                    &stored.client,
+                    &stored.refresh_token,
+                )
+                .await;
+            });
+        }
+    }
     Ok(())
 }
 

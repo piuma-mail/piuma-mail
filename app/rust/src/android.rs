@@ -176,6 +176,56 @@ pub fn reminders<'caller>(
         .resolve::<ThrowRuntimeExAndDefault>()
 }
 
+/// The browser came back from an OAuth sign-in page (`MainActivity`).
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn oauth_redirect<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    url: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, Error> {
+            let url = url.try_to_string(env)?;
+            Ok(crate::api::oauth::deliver_oauth_redirect(url))
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Secrets the engine got, for the Keystore, as JSON, each given once.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn kept_secrets<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Error> {
+            let items: Vec<String> = crate::credentials::take_kept()
+                .into_iter()
+                .map(|(key, value)| {
+                    format!(r#"{{"key":{},"value":{}}}"#, json_string(&key), json_string(&value))
+                })
+                .collect();
+            JString::from_str(env, format!("[{}]", items.join(",")))
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// A JSON string literal.
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The accounts that can't sign in, as JSON, each told once.
 #[jni_mangle("mail.piuma.piuma_mail.MailNative")]
 pub fn sign_in_notices<'caller>(

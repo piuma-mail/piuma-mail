@@ -11,6 +11,7 @@ class CheckJob : JobService() {
                 Background.openEngine(applicationContext)
                 Background.show(applicationContext, MailNative.checkOnce(Background.minute()))
                 Background.showSignIn(applicationContext)
+                Background.keepSecrets(applicationContext)
                 Background.show(applicationContext, Background.reminders())
             } catch (e: Throwable) {
                 // Next time, then.

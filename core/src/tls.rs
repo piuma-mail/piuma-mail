@@ -143,6 +143,30 @@ pub struct Refused {
     pub cert: CertInfo,
 }
 
+impl Refused {
+    /// As the app reads it: `host`, `problem` (untrusted, expired,
+    /// nameMismatch, changed, invalid), `fingerprint`, `subject`, `issuer`
+    /// and `notAfter`.
+    pub fn json(&self) -> String {
+        let problem = match self.problem {
+            Problem::Untrusted => "untrusted",
+            Problem::Expired => "expired",
+            Problem::NameMismatch => "nameMismatch",
+            Problem::Changed => "changed",
+            Problem::Invalid => "invalid",
+        };
+        serde_json::json!({
+            "host": self.host,
+            "problem": problem,
+            "fingerprint": self.cert.fingerprint,
+            "subject": self.cert.subject,
+            "issuer": self.cert.issuer,
+            "notAfter": self.cert.not_after,
+        })
+        .to_string()
+    }
+}
+
 impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let why = match self.problem {

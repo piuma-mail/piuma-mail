@@ -246,7 +246,7 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains(&account.id.0);
-        let Ok(password) = credentials::load(account.id) else {
+        let Ok(password) = crate::login::load(account.id) else {
             continue;
         };
         if followed {

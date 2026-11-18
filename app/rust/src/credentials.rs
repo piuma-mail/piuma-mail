@@ -3,6 +3,12 @@
 //! database. Android has no keychain Rust can reach: there the app keeps
 //! them in the Android Keystore and hands them over at start
 //! ([`remember`]); the engine only holds them in memory.
+//!
+//! An account signed in with OAuth keeps an `oauth::Stored` here in place
+//! of its password: the provider, the client and the refresh token, never
+//! anywhere else. When the provider sends a new refresh token the engine
+//! keeps it at once ([`keep`]); on Android the app and the background
+//! service collect it ([`take_kept`]) for the Keystore.
 
 use piuma_core::AccountId;
 
@@ -47,14 +53,84 @@ fn entry(key: &str) -> Result<keyring::Entry, EngineError> {
 
 #[cfg(not(target_os = "android"))]
 fn keychain(e: keyring::Error) -> EngineError {
-    EngineError {
-        kind: ErrorKind::Keychain,
-        detail: e.to_string(),
+    let detail = e.to_string();
+    let kind = if no_keyring(&e) {
+        ErrorKind::NoKeyring
+    } else {
+        ErrorKind::Keychain
+    };
+    EngineError { kind, detail }
+}
+
+/// Linux without a Secret Service (no GNOME Keyring, KWallet or
+/// KeePassXC answering on D-Bus, or no D-Bus session at all): passwords
+/// have nowhere safe to go, and are never written to a plain file instead.
+#[cfg(not(target_os = "android"))]
+fn no_keyring(e: &keyring::Error) -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
     }
+    match e {
+        keyring::Error::NoStorageAccess(_) => true,
+        keyring::Error::PlatformFailure(inner) => missing_service(&inner.to_string()),
+        _ => false,
+    }
+}
+
+/// What the Secret Service and D-Bus libraries say when nobody answers.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn missing_service(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    [
+        "org.freedesktop.secrets",
+        "serviceunknown",
+        "secret service",
+        "secretservice",
+        "dbus",
+        "d-bus",
+        "no such interface",
+    ]
+    .iter()
+    .any(|w| text.contains(w))
 }
 
 pub fn save(id: AccountId, password: &str) -> Result<(), EngineError> {
     save_key(&account_key(id), password)
+}
+
+/// Keeps a secret the engine itself got (an OAuth sign-in, a renewed
+/// refresh token). On Android it also waits for the app or the background
+/// service to put it in the Keystore.
+pub fn keep(id: AccountId, secret: &str) -> Result<(), EngineError> {
+    save(id, secret)?;
+    #[cfg(target_os = "android")]
+    kept()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(k, _)| *k != account_key(id));
+    #[cfg(target_os = "android")]
+    kept()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((account_key(id), secret.to_owned()));
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn kept() -> &'static std::sync::Mutex<Vec<(String, String)>> {
+    static KEPT: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+    &KEPT
+}
+
+/// Android: the secrets [`keep`] got since the last call, by keychain
+/// name, for the Keystore. Elsewhere always empty: the keychain has them.
+pub fn take_kept() -> Vec<(String, String)> {
+    #[cfg(target_os = "android")]
+    {
+        std::mem::take(&mut *kept().lock().unwrap_or_else(|e| e.into_inner()))
+    }
+    #[cfg(not(target_os = "android"))]
+    Vec::new()
 }
 
 /// Forgets an account's password, when the account is removed.
@@ -176,6 +252,21 @@ pub fn remember_key(key: &str, password: &str) {
         .lock()
         .unwrap()
         .insert(key.to_owned(), password.to_owned());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_missing_secret_service_is_told_apart() {
+        for text in [
+            "The name org.freedesktop.secrets was not provided by any .service files",
+            "D-Bus error: org.freedesktop.DBus.Error.ServiceUnknown",
+            "Unable to autolaunch a dbus-daemon without a $DISPLAY for X11",
+        ] {
+            assert!(super::missing_service(text), "{text}");
+        }
+        assert!(!super::missing_service("Prompt dismissed"));
+    }
 }
 
 /// Debug builds only: with PIUMA_TEST_MEMORY_KEYCHAIN set, passwords stay

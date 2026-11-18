@@ -218,8 +218,12 @@ pub async fn connect_caldav(
 
 /// Connects the calendar of an email account, with its password.
 pub async fn connect_account_calendar(account_id: i64) -> Result<CalendarSourceInfo, EngineError> {
-    let (account, password) = super::engine::signed_in(AccountId(account_id))?;
-    let found = CalDav::new(&account.email, &password)?
+    let (account, login) = super::engine::signed_in(AccountId(account_id))?;
+    // CalDAV takes a password; an account signed in with OAuth has none.
+    let password = login
+        .password_text()
+        .ok_or_else(|| EngineError::new(ErrorKind::WrongPassword, "signed in with OAuth"))?;
+    let found = CalDav::new(&account.email, password)?
         .discover(&account.email)
         .await?;
     let name = server_name(&found.home, &account.email);
@@ -352,7 +356,11 @@ pub fn remember_calendar_password(source_id: i64, password: String) {
 
 fn password(source: &CalendarSource) -> Result<String, EngineError> {
     match source.account {
-        Some(account) => credentials::load(account),
+        // An account signed in with OAuth has no password for CalDAV.
+        Some(account) => crate::login::load(account)?
+            .password_text()
+            .map(str::to_owned)
+            .ok_or_else(|| EngineError::new(ErrorKind::WrongPassword, "signed in with OAuth")),
         None => credentials::load_key(&credentials::calendar_key(source.id)),
     }
 }

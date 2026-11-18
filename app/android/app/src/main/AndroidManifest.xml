@@ -44,6 +44,22 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Sign-in with Microsoft or Google comes back here from the
+                 browser (RFC 8252). Only the address is handed to the
+                 engine, which drops it unless a sign-in started in this app
+                 waits for it with the same `state`. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="mail.piuma.app" android:host="oauth"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="${googleOAuthScheme}" android:path="/oauth2redirect"/>
+            </intent-filter>
         </activity>
         <service
             android:name=".MailService"

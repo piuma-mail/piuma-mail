@@ -50,6 +50,15 @@ object MailNative {
     /** The accounts whose password was refused, as JSON, each given once. */
     @JvmStatic external fun signInNotices(): String
 
+    /** The browser came back from an OAuth sign-in page with this address. */
+    @JvmStatic external fun oauthRedirect(url: String): Boolean
+
+    /**
+     * Secrets the engine got (an OAuth sign-in, a renewed refresh token)
+     * as JSON `[{"key", "value"}]`, each given once, for the Keystore.
+     */
+    @JvmStatic external fun keptSecrets(): String
+
     /** The inbox as a paired watch shows it, as JSON (`watch.rs`). */
     @JvmStatic external fun watchSummary(): String
 
@@ -167,6 +176,25 @@ object Background {
             MailNative.remember(id.toLong(), password)
         }
         return ids.size
+    }
+
+    /** Puts the secrets the engine got in the Keystore. */
+    fun keepSecrets(context: Context) {
+        val kept = try {
+            JSONArray(MailNative.keptSecrets())
+        } catch (e: Exception) {
+            return
+        }
+        if (kept.length() == 0) return
+        val passwords = Passwords(context)
+        for (i in 0 until kept.length()) {
+            val k = kept.getJSONObject(i)
+            try {
+                passwords.write(k.getString("key"), k.getString("value"))
+            } catch (e: Exception) {
+                // The next renewal tries again; the old token still works.
+            }
+        }
     }
 
     /** The Vault notices due now, and "While you were away", where the phone is. */
