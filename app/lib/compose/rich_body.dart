@@ -488,7 +488,7 @@ class RichBodyController extends TextEditingController {
         final n = pictures.indexOf(a);
         children.add(
           WidgetSpan(
-            alignment: PlaceholderAlignment.bottom,
+            alignment: PlaceholderAlignment.middle,
             child: n < _images.length
                 ? InlinePicture(image: _images[n])
                 : const SizedBox.shrink(),
@@ -573,16 +573,17 @@ List<BodyMark> _normal(List<BodyMark> marks, int length) {
   return out;
 }
 
-/// A picture inside the text being written, as compose draws it: at
-/// most as wide as the text and a few lines tall, with its name for
-/// screen readers.
+/// A picture inside the text being written, as compose draws it: a
+/// pill as tall as a line, with a thumbnail and the picture's name, where
+/// the picture will be in the email. A text field lays its pictures out
+/// as part of a line, so the pill keeps to a line's height.
 class InlinePicture extends StatelessWidget {
   const InlinePicture({super.key, required this.image});
 
   final DraftImage image;
 
-  /// The tallest a picture is drawn while writing.
-  static const maxHeight = 220.0;
+  /// The pill's height, under the body's line height.
+  static const height = 26.0;
 
   @override
   Widget build(BuildContext context) {
@@ -590,28 +591,49 @@ class InlinePicture extends StatelessWidget {
     return Semantics(
       image: true,
       label: image.name,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+      child: ExcludeSemantics(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: maxHeight),
-          child: DecoratedBox(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: height),
+          child: Container(
+            height: height,
+            padding: const EdgeInsets.fromLTRB(3, 3, 10, 3),
             decoration: BoxDecoration(
+              color: c.soft,
               border: Border.all(color: c.line),
-              borderRadius: BorderRadius.circular(PiumaRadius.card),
+              borderRadius: BorderRadius.circular(PiumaRadius.pill),
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(PiumaRadius.card),
-              child: Image.memory(
-                image.data,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                excludeFromSemantics: true,
-                errorBuilder: (_, _, _) => SizedBox(
-                  width: 120,
-                  height: 80,
-                  child: ColoredBox(color: c.soft),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(PiumaRadius.pill),
+                  child: SizedBox.square(
+                    dimension: height - 8,
+                    child: Image.memory(
+                      image.data,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      excludeFromSemantics: true,
+                      cacheWidth: 64,
+                      errorBuilder: (_, _, _) => ColoredBox(color: c.line),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    image.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: PiumaFonts.sans,
+                      fontSize: 13,
+                      height: 1.2,
+                      color: c.accentText,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
