@@ -254,6 +254,17 @@ pub fn remember_key(key: &str, password: &str) {
         .insert(key.to_owned(), password.to_owned());
 }
 
+/// Debug builds only: with PIUMA_TEST_MEMORY_KEYCHAIN set, passwords stay
+/// in memory, so end-to-end tests run on machines without a keychain.
+#[cfg(debug_assertions)]
+fn test_memory() -> Option<&'static std::sync::Mutex<std::collections::HashMap<String, String>>> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    std::env::var_os("PIUMA_TEST_MEMORY_KEYCHAIN")?;
+    Some(MEMORY.get_or_init(|| Mutex::new(HashMap::new())))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -267,15 +278,4 @@ mod tests {
         }
         assert!(!super::missing_service("Prompt dismissed"));
     }
-}
-
-/// Debug builds only: with PIUMA_TEST_MEMORY_KEYCHAIN set, passwords stay
-/// in memory, so end-to-end tests run on machines without a keychain.
-#[cfg(debug_assertions)]
-fn test_memory() -> Option<&'static std::sync::Mutex<std::collections::HashMap<String, String>>> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-    std::env::var_os("PIUMA_TEST_MEMORY_KEYCHAIN")?;
-    Some(MEMORY.get_or_init(|| Mutex::new(HashMap::new())))
 }

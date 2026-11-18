@@ -159,9 +159,7 @@ pub fn provider(id: &str) -> Option<&'static Provider> {
 /// The provider of an address's own domain.
 pub fn for_domain(domain: &str) -> Option<&'static Provider> {
     let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    providers()
-        .iter()
-        .find(|p| p.domains.contains(&domain))
+    providers().iter().find(|p| p.domains.contains(&domain))
 }
 
 /// The provider that hosts a custom domain, by one of its MX hosts.
