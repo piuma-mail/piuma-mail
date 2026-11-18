@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
 use crate::model::{Account, AccountId, AccountKind};
+use crate::outbox::Courier;
 use crate::smtp::{self, Draft, Ready, SendError, SendReport, SmtpConfig};
 use crate::store::{Body, Store, StoreError};
 
@@ -402,42 +403,109 @@ pub async fn check_login(account: &Account, password: &str) -> Result<()> {
     Ok(())
 }
 
-/// Sends a draft and files a copy in Sent (see [`send_ready`]).
+/// Sends a draft and files a copy in Sent, straight away, without the
+/// outbox: for checks and tests. The app sends through [crate::outbox].
 pub async fn send(account: &Account, password: &str, draft: &Draft) -> smtp::Result<SendReport> {
-    send_ready(account, password, &smtp::ready(draft)?).await
+    let ready = smtp::ready(draft)?;
+    let mut courier = AccountCourier::new(account, password);
+    courier.send(&ready).await?;
+    Ok(SendReport {
+        message_id: ready.message_id.clone(),
+        filed: courier.file(&ready, false).await,
+    })
 }
 
-/// Sends a message already built and files a copy in Sent: over SMTP
-/// for IMAP accounts, through the server itself for JMAP ones.
-pub async fn send_ready(
-    account: &Account,
-    password: &str,
-    ready: &Ready,
-) -> smtp::Result<SendReport> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
-        let sent = async {
-            let mut client = jmap::Client::open(&cfg).await?;
-            client
-                .send(&ready.raw, &account.email, &ready.recipients)
-                .await
-        }
-        .await
-        .map_err(|e| match e {
-            JmapError::Auth => SendError::Auth,
-            JmapError::Connect { url, source } => SendError::Connect {
-                host: url,
-                detail: source.to_string(),
-            },
-            e => SendError::Rejected(e.to_string()),
-        })?;
-        return Ok(SendReport {
-            message_id: ready.message_id.clone(),
-            filed_in: Some(sent),
-        });
+/// Hands outbox mail to an account's servers: over SMTP with a copy
+/// filed in Sent over IMAP, or through the JMAP server, which files it.
+pub struct AccountCourier<'a> {
+    account: &'a Account,
+    password: &'a str,
+}
+
+impl<'a> AccountCourier<'a> {
+    pub fn new(account: &'a Account, password: &'a str) -> Self {
+        AccountCourier { account, password }
     }
-    let smtp = SmtpConfig::for_account(account, password).expect("IMAP account");
-    let imap = ImapConfig::for_account(account, password).expect("IMAP account");
-    smtp::send_and_file(&smtp, &imap, ready).await
+
+    fn jmap(&self) -> Option<JmapConfig> {
+        JmapConfig::for_account(self.account, self.password)
+    }
+}
+
+/// A JMAP failure, as a send failure.
+fn jmap_send_error(e: JmapError) -> SendError {
+    match e {
+        JmapError::Auth => SendError::Auth,
+        JmapError::Uncertain(detail) => SendError::Uncertain(detail),
+        // The server would take the password only unencrypted: as a
+        // certificate error, shown, never waited on.
+        JmapError::Insecure => SendError::Tls {
+            host: String::new(),
+            detail: JmapError::Insecure.to_string(),
+        },
+        JmapError::Connect { url, source } if smtp::tls_failure(&source) => SendError::Tls {
+            host: url,
+            detail: source.to_string(),
+        },
+        JmapError::Connect { url, source } => SendError::Connect {
+            host: url,
+            detail: source.to_string(),
+        },
+        e => SendError::Rejected(e.to_string()),
+    }
+}
+
+impl Courier for AccountCourier<'_> {
+    async fn send(&mut self, ready: &Ready) -> smtp::Result<()> {
+        if let Some(cfg) = self.jmap() {
+            let mut client = jmap::Client::open(&cfg).await.map_err(|e| match e {
+                // Nothing asked yet: safe to try again.
+                JmapError::Uncertain(detail) => SendError::Connect {
+                    host: cfg.session_url.clone(),
+                    detail,
+                },
+                e => jmap_send_error(e),
+            })?;
+            client
+                .send(
+                    &ready.raw,
+                    &self.account.email,
+                    &ready.recipients,
+                    &ready.message_id,
+                )
+                .await
+                .map_err(jmap_send_error)?;
+            return Ok(());
+        }
+        let smtp = SmtpConfig::for_account(self.account, self.password).expect("IMAP account");
+        smtp::send(&smtp, ready).await
+    }
+
+    async fn file(&mut self, ready: &Ready, retry: bool) -> smtp::Filing {
+        if self.jmap().is_some() {
+            return smtp::Filing::Server;
+        }
+        let smtp = SmtpConfig::for_account(self.account, self.password).expect("IMAP account");
+        let imap = ImapConfig::for_account(self.account, self.password).expect("IMAP account");
+        smtp::file_sent(&smtp, &imap, ready, retry).await
+    }
+
+    async fn was_sent(&mut self, ready: &Ready) -> Option<bool> {
+        if let Some(cfg) = self.jmap() {
+            let mut client = jmap::Client::open(&cfg).await.ok()?;
+            return match client.sent_state(&ready.message_id).await.ok()? {
+                Some(state) => Some(state.submitted),
+                None => Some(false),
+            };
+        }
+        // In Sent, it went. Missing proves nothing on servers that don't
+        // file sent mail themselves, nor on one that is slow to.
+        let imap = ImapConfig::for_account(self.account, self.password)?;
+        let mut conn = imap::Connection::open(&imap).await.ok()?;
+        let found = conn.sent_has(&ready.message_id).await.ok()?;
+        conn.logout().await.ok();
+        found.map(|_| true)
+    }
 }
 
 /// Keeps an account's inbox in sync forever (see `imap::watch` and

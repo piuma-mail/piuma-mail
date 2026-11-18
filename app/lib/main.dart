@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'design/look.dart';
 import 'design/theme.dart';
 import 'design/tokens.g.dart';
+import 'data_problem.dart';
 import 'dev_copy.dart';
 import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
@@ -30,6 +31,8 @@ Future<void> main(List<String> args) async {
   if (args.firstOrNull == 'multi_window') {
     return _readerWindow(args.elementAtOrNull(2) ?? '');
   }
+  // First, so whatever goes wrong from here on is kept for a report.
+  _keepCrashes();
   WidgetsFlutterBinding.ensureInitialized();
   registerFontLicenses();
   await RustLib.init();
@@ -38,8 +41,36 @@ Future<void> main(List<String> args) async {
   // First: the installer's hooks end here, and a downloaded update
   // restarts into itself before the engine opens.
   Updates.start(dir.path);
-  engine.openEngine(dbPath: '${dir.path}/piuma.db');
-  _keepCrashes();
+  await _start(dir.path);
+}
+
+/// Opens the engine and shows the inbox; when the data can't be opened (a
+/// failed update of the database, a locked or damaged file, data from a
+/// newer Piuma), says so with Try again and Report instead of a blank
+/// window or a crash at every start.
+Future<void> _start(String dir) async {
+  try {
+    engine.openEngine(dbPath: '$dir/piuma.db');
+  } catch (e, stack) {
+    // Kept for the report offered at the next start that works.
+    try {
+      feedback.feedbackRecordCrash(text: '$e\n$stack');
+    } catch (_) {}
+    runApp(
+      PiumaApp(
+        appearance: _loadAppearance(),
+        home: (_, _) => DataProblem(
+          detail: '$e',
+          newer: '$e'.contains('newer version of Piuma'),
+          reportAddress: _feedbackAddress(),
+          onRetry: () => _start(dir).ignore(),
+        ),
+      ),
+    );
+    return;
+  }
+  // A password the system can no longer read leaves its account asking
+  // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();
   // The background service or the 15-minute look, as picked.
@@ -65,6 +96,14 @@ Future<void> main(List<String> args) async {
       ),
     ),
   );
+}
+
+String _feedbackAddress() {
+  try {
+    return feedback.feedbackAddress();
+  } catch (_) {
+    return '';
+  }
 }
 
 /// Keeps what went wrong for the next start, where the inbox offers to
