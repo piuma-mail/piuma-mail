@@ -51,7 +51,9 @@ document.addEventListener('click', function (e) {
   e.preventDefault();
   // A click the page made up is not the person's.
   if (!e.isTrusted) return;
-  window.chrome.webview.postMessage(href);
+  // A trusted click is the person's, by the mouse or by Enter on a
+  // focused link (detail 0): it opens without waiting for a press.
+  window.chrome.webview.postMessage((e.detail === 0 ? '#key:' : '') + href);
 }, true);
 document.addEventListener('mouseover', function (e) {
   var a = e.target.closest && e.target.closest('a[href]');
@@ -122,6 +124,13 @@ class _WindowsPaperState extends State<WindowsPaper> {
                   context,
                   url.isEmpty || url.length > 2048 ? null : url,
                 );
+              }
+              return;
+            }
+            if (m.startsWith('#key:')) {
+              if (mounted) {
+                OriginalView.keyPressed(context);
+                widget.onLink(m.substring('#key:'.length));
               }
               return;
             }

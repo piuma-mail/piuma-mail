@@ -123,6 +123,11 @@ class OriginalView extends StatefulWidget {
   static void unavailable(BuildContext context) =>
       _scope(context)?.onUnavailable();
 
+  /// The person activated a link from the keyboard (Enter or Space, as
+  /// the web view saw it, not as a page script made it up): the next
+  /// navigation counts as theirs, as after a press ([ClickGate]).
+  static void keyPressed(BuildContext context) => _scope(context)?.onKey();
+
   @override
   State<OriginalView> createState() => _OriginalViewState();
 }
@@ -171,6 +176,7 @@ class _OriginalViewState extends State<OriginalView> {
         onHeight: _setHeight,
         onClicked: (link) => _open(link, clicked: true),
         onUnavailable: _unavailable,
+        onKey: _gate.pressed,
         child: FutureBuilder<OriginalDoc>(
           future: widget.original,
           builder: (context, snap) {
@@ -272,12 +278,14 @@ class _OriginalPaperScope extends InheritedWidget {
     required this.onHeight,
     required this.onClicked,
     required this.onUnavailable,
+    required this.onKey,
     required super.child,
   });
 
   final ValueChanged<double> onHeight;
   final ValueChanged<String> onClicked;
   final VoidCallback onUnavailable;
+  final VoidCallback onKey;
 
   @override
   bool updateShouldNotify(_OriginalPaperScope old) => old.onHeight != onHeight;
@@ -329,6 +337,15 @@ const _watchHeight = '''
       PiumaHover.postMessage(a ? a.href : '');
     }, true);
   }
+  // Enter or Space on a link, pressed by the person (a script's made-up
+  // event isn't trusted): its navigation may open, as after a click.
+  if (window.PiumaKey) {
+    document.addEventListener('keydown', function (e) {
+      if (!e.isTrusted || (e.key !== 'Enter' && e.key !== ' ')) return;
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (a) PiumaKey.postMessage('1');
+    }, true);
+  }
 })();
 ''';
 
@@ -367,6 +384,12 @@ class _WebPaperState extends State<_WebPaper> {
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..addJavaScriptChannel('PiumaPaper', onMessageReceived: _onReport)
     ..addJavaScriptChannel('PiumaHover', onMessageReceived: _onHover)
+    ..addJavaScriptChannel(
+      'PiumaKey',
+      onMessageReceived: (_) {
+        if (mounted) OriginalView.keyPressed(context);
+      },
+    )
     ..setNavigationDelegate(
       NavigationDelegate(
         onPageFinished: (_) => _watch(),

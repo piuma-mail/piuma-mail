@@ -7,8 +7,12 @@
 //! only on a certified mailbox (whose provider wraps whatever arrives from
 //! outside the PEC system in an envelope of its own), only from the
 //! provider's certificate address, and it is proof only once the
-//! provider's S/MIME signature checks against [`ANCHORS`] ([`signed`]).
-//! Until then the Vault shows it as unverified.
+//! provider's S/MIME signature checks ([`signed`]): a certificate that
+//! leads to a qualified CA of the Italian trusted list ([`ANCHORS`]),
+//! issued to an organization in AgID's list of PEC providers
+//! ([`PROVIDERS`]), for the address the receipt comes from. Qualified CAs
+//! also certify people; the organization keeps their signatures from
+//! passing for a provider's. Until then the Vault shows it as unverified.
 
 use std::sync::LazyLock;
 
@@ -19,12 +23,50 @@ use serde::{Deserialize, Serialize};
 /// The header fields [`receipt`] reads, for an IMAP fetch.
 pub const HEADER_FIELDS: &str = "X-RICEVUTA X-RIFERIMENTO-MESSAGE-ID X-TRASPORTO";
 
-/// The certificates PEC receipts must lead to, as PEM: see the file for
-/// where they come from and how they are updated.
+/// The certificates PEC receipts must lead to, as PEM, and the PEC
+/// providers, one name a line: both written by `tools/gen_pec_trust.py`,
+/// which says where they come from and how they are refreshed.
 const ANCHORS_PEM: &str = include_str!("pec_anchors.pem");
+const PROVIDERS_TXT: &str = include_str!("pec_providers.txt");
 
 /// [`ANCHORS_PEM`], as DER.
 pub static ANCHORS: LazyLock<Vec<Vec<u8>>> = LazyLock::new(|| crate::smime::pem(ANCHORS_PEM));
+
+/// [`PROVIDERS_TXT`], as [`organization_key`]s.
+pub static PROVIDERS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    PROVIDERS_TXT
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(organization_key)
+        .collect()
+});
+
+/// A company name with only its letters and digits, lowercase, and
+/// without what it adds in brackets: AgID writes "Aruba PEC S.p.A.", a
+/// certificate "ArubaPEC S.p.A."; "… S.r.l. (già I.T. Telecom S.r.l.)"
+/// is the company before the brackets.
+pub fn organization_key(name: &str) -> String {
+    let mut depth = 0usize;
+    let mut out = String::new();
+    for c in name.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            c if depth == 0 && c.is_alphanumeric() => out.extend(c.to_lowercase()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// What a receipt's signature is checked against.
+pub struct Trusted<'a> {
+    /// The CAs, as DER.
+    pub anchors: &'a [Vec<u8>],
+    /// The providers, as [`organization_key`]s.
+    pub providers: &'a [String],
+}
 
 /// Whether an account is a certified (PEC) mailbox, by its server: the
 /// providers' own (Aruba, InfoCert's Legalmail, Poste, Namirial,
@@ -200,15 +242,27 @@ fn reason(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Whether `m` (as `raw`) is a receipt signed by a PEC provider: a
+/// Whether `m` (as `raw`) is a receipt signed by a PEC provider, now: a
 /// detached S/MIME signature over the message, by a certificate that
-/// leads to [`ANCHORS`] and names the address the receipt comes from.
+/// leads to [`ANCHORS`], belongs to an organization in [`PROVIDERS`] and
+/// is for the very address the receipt comes from.
 pub fn signed(m: &Message, raw: &[u8]) -> bool {
-    signed_with(m, raw, &ANCHORS)
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    signed_with(
+        m,
+        raw,
+        &Trusted {
+            anchors: &ANCHORS,
+            providers: &PROVIDERS,
+        },
+        now,
+    )
 }
 
-pub(crate) fn signed_with(m: &Message, raw: &[u8], anchors: &[Vec<u8>]) -> bool {
-    if anchors.is_empty() || receipt(m).is_none() {
+pub(crate) fn signed_with(m: &Message, raw: &[u8], trusted: &Trusted<'_>, now: i64) -> bool {
+    if trusted.anchors.is_empty() || receipt(m).is_none() {
         return false;
     }
     let Some(from) = m
@@ -222,11 +276,16 @@ pub(crate) fn signed_with(m: &Message, raw: &[u8], anchors: &[Vec<u8>]) -> bool 
     let Some((content, p7s)) = detached(m, raw) else {
         return false;
     };
-    let Some(signer) = crate::smime::verify_detached(content, &p7s, anchors) else {
+    let Some(signer) = crate::smime::verify_detached(content, &p7s, trusted.anchors, now) else {
         return false;
     };
-    let domain = from.rsplit_once('@').map(|(_, d)| d).unwrap_or_default();
-    signer.emails.iter().any(|e| e == &from) || signer.hosts.iter().any(|h| h == domain)
+    // `receipt` made sure the address is posta-certificata@…
+    signer.emails.iter().any(|e| e == &from)
+        && signer
+            .organization
+            .as_deref()
+            .map(organization_key)
+            .is_some_and(|o| !o.is_empty() && trusted.providers.contains(&o))
 }
 
 /// The signed part of a multipart/signed message, as written, and its
@@ -525,11 +584,29 @@ mod tests {
 
     const SIGNED: &str = include_str!("../tests/fixtures/pec/signed.eml");
     const STRANGER: &str = include_str!("../tests/fixtures/pec/stranger.eml");
+    const PERSON: &str = include_str!("../tests/fixtures/pec/person.eml");
+    const NOSIGN: &str = include_str!("../tests/fixtures/pec/nosign.eml");
+    const SHA1: &str = include_str!("../tests/fixtures/pec/sha1.eml");
     const TEST_ROOT: &str = include_str!("../tests/fixtures/pec/test-root.pem");
+    /// 18 November 2026.
+    const NOW: i64 = 1_795_000_000;
 
     fn signed_by(raw: &str, anchors: &[Vec<u8>]) -> bool {
+        signed_at(raw, anchors, NOW)
+    }
+
+    fn signed_at(raw: &str, anchors: &[Vec<u8>], now: i64) -> bool {
         let m = MessageParser::default().parse(raw.as_bytes()).unwrap();
-        signed_with(&m, raw.as_bytes(), anchors)
+        let providers = [organization_key("Piuma Test PEC Provider")];
+        signed_with(
+            &m,
+            raw.as_bytes(),
+            &Trusted {
+                anchors,
+                providers: &providers,
+            },
+            now,
+        )
     }
 
     #[test]
@@ -538,12 +615,23 @@ mod tests {
         assert_eq!(anchors.len(), 1);
         assert!(parse(SIGNED).is_some());
         assert!(signed_by(SIGNED, &anchors));
-        // Not without the provider's certificate among the anchors, as
-        // in the app until they are added.
+        // Not without its CA among the anchors: the app's own bundled
+        // ones never issued it.
         assert!(!signed_by(SIGNED, &[]));
         assert!(!signed(
             &MessageParser::default().parse(SIGNED.as_bytes()).unwrap(),
             SIGNED.as_bytes()
+        ));
+        // Nor from an organization that isn't a provider.
+        let m = MessageParser::default().parse(SIGNED.as_bytes()).unwrap();
+        assert!(!signed_with(
+            &m,
+            SIGNED.as_bytes(),
+            &Trusted {
+                anchors: &anchors,
+                providers: &[organization_key("Aruba PEC S.p.A.")],
+            },
+            NOW
         ));
     }
 
@@ -584,6 +672,32 @@ mod tests {
         );
         assert_eq!(parse(&person), None);
         assert!(!signed_by(&person, &anchors));
+    }
+
+    #[test]
+    fn only_a_provider_s_certificate_made_to_sign_and_strong_hashes() {
+        let anchors = crate::smime::pem(TEST_ROOT);
+        // A qualified certificate of a person's, for the same address.
+        assert!(parse(PERSON).is_some());
+        assert!(!signed_by(PERSON, &anchors));
+        // A provider's certificate that isn't for signing.
+        assert!(!signed_by(NOSIGN, &anchors));
+        // Signed with SHA-1.
+        assert!(!signed_by(SHA1, &anchors));
+        // Once the certificates have expired, nothing new is proof.
+        assert!(!signed_at(SIGNED, &anchors, 2_524_608_000));
+    }
+
+    #[test]
+    fn the_bundled_lists_are_read() {
+        assert!(organization_key("Aruba PEC S.p.A.") == organization_key("ArubaPEC S.p.A."));
+        assert_eq!(
+            organization_key("Telecom Italia Trust Technologies S.r.l. (già I.T. Telecom S.r.l.)"),
+            "telecomitaliatrusttechnologiessrl"
+        );
+        assert!(PROVIDERS.contains(&organization_key("Aruba PEC S.p.A.")));
+        assert!(PROVIDERS.contains(&organization_key("Poste Italiane S.p.A.")));
+        assert!(ANCHORS.len() > 10);
     }
 
     #[test]

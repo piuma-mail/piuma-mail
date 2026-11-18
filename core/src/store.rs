@@ -3422,9 +3422,11 @@ impl Store {
                 checked.list_signed,
             ],
         )?;
-        // A receipt is proof only once its provider's signature checks.
+        // A receipt is proof only once its provider's signature checks;
+        // checked when first read, so a certificate that expires later
+        // doesn't take the proof away (see smime.rs).
         tx.execute(
-            "UPDATE pec_receipt SET verified = ?4
+            "UPDATE pec_receipt SET verified = MAX(verified, ?4)
              WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
             params![account.0, mailbox, uid, body.receipt_signed],
         )?;
@@ -8885,6 +8887,13 @@ From: <help@bank.example>\r\n\r\nHi";
             ..Body::default()
         };
         store.set_full_body(a, "INBOX", 3, &signed).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Read again after its certificate expired: still the proof it was.
+        let later = Body {
+            receipt_signed: false,
+            ..signed
+        };
+        store.set_full_body(a, "INBOX", 3, &later).unwrap();
         assert!(store.pec_sent(None).unwrap()[0].verified);
         // A receipt deleted on the server goes from the card too.
         store.remove_messages(a, "INBOX", &[3]).unwrap();

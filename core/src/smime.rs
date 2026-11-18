@@ -2,9 +2,17 @@
 //! fixed set of trusted certificates, for PEC receipts (`pec::signed`).
 //!
 //! Only what such signatures use is read: DER (no indefinite lengths),
-//! one signer, RSA PKCS #1 v1.5 or ECDSA keys, SHA-1 to SHA-512. Anything
-//! else is simply not verified. The arithmetic is aws-lc-rs's, which the
-//! engine already carries for TLS.
+//! one signer, RSA PKCS #1 v1.5 or ECDSA keys, SHA-256 to SHA-512 (SHA-1
+//! is refused: collisions for it can be bought). Anything else is simply
+//! not verified. The arithmetic is aws-lc-rs's, which the engine already
+//! carries for TLS.
+//!
+//! Every certificate in the chain must be valid now, and also when the
+//! signature says it was made, if it says. A receipt is checked when the
+//! app first reads it, which is soon after it arrived, and what was found
+//! then is kept (`pec_receipt.verified` only ever turns on): a provider
+//! certificate expiring years later doesn't take the proof away, and an
+//! expired one can't make a new one.
 
 use aws_lc_rs::digest;
 use aws_lc_rs::signature::{self, UnparsedPublicKey, VerificationAlgorithm};
@@ -15,7 +23,6 @@ const MESSAGE_DIGEST: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 
 const SIGNING_TIME: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x05];
 const EMAIL_ADDRESS: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x01];
 const RSA: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
-const RSA_SHA1: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x05];
 const RSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B];
 const RSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C];
 const RSA_SHA512: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D];
@@ -24,12 +31,19 @@ const ECDSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
 const ECDSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03];
 const P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
 const P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
-const SHA1: &[u8] = &[0x2B, 0x0E, 0x03, 0x02, 0x1A];
 const SHA256: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 const SHA384: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02];
 const SHA512: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03];
 const SUBJECT_ALT_NAME: &[u8] = &[0x55, 0x1D, 0x11];
 const BASIC_CONSTRAINTS: &[u8] = &[0x55, 0x1D, 0x13];
+const KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x0F];
+const EXTENDED_KEY_USAGE: &[u8] = &[0x55, 0x1D, 0x25];
+const EMAIL_PROTECTION: &[u8] = &[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x04];
+const ORGANIZATION: &[u8] = &[0x55, 0x04, 0x0A];
+
+/// Key usage bits, in the first byte of the BIT STRING.
+const DIGITAL_SIGNATURE: u8 = 0x80;
+const KEY_CERT_SIGN: u8 = 0x04;
 
 /// One DER element: its tag, its contents, and all of it.
 #[derive(Debug, Clone, Copy)]
@@ -150,10 +164,14 @@ pub struct Cert<'a> {
     key_curve: Option<&'a [u8]>,
     key: &'a [u8],
     ca: bool,
+    /// The first byte of its key usage, when it has the extension.
+    usage: Option<u8>,
+    /// Its extended key usages, when it has the extension.
+    extended: Option<Vec<&'a [u8]>>,
     /// Its e-mail addresses (subject and alternative names), lowercase.
     pub emails: Vec<String>,
-    /// Its host names (alternative names), lowercase.
-    pub hosts: Vec<String>,
+    /// Its subject's organization (O), as written.
+    pub organization: Option<String>,
 }
 
 fn cert(raw: &[u8]) -> Option<Cert<'_>> {
@@ -187,15 +205,21 @@ fn cert(raw: &[u8]) -> Option<Cert<'_>> {
         key_curve: params.filter(|p| p.tag == 0x06).map(|p| p.value),
         key,
         ca: false,
+        usage: None,
+        extended: None,
         emails: Vec::new(),
-        hosts: Vec::new(),
+        organization: None,
     };
     for rdn in items(subject.value)? {
         for pair in items(rdn.value)? {
             let kv = items(pair.value)?;
-            if kv.first()?.value == EMAIL_ADDRESS {
+            let id = kv.first()?.value;
+            if id == EMAIL_ADDRESS {
                 let v = std::str::from_utf8(kv.get(1)?.value).ok()?;
                 out.emails.push(v.trim().to_ascii_lowercase());
+            } else if id == ORGANIZATION && out.organization.is_none() {
+                let v = String::from_utf8_lossy(kv.get(1)?.value);
+                out.organization = Some(v.trim().to_owned());
             }
         }
     }
@@ -211,16 +235,28 @@ fn cert(raw: &[u8]) -> Option<Cert<'_>> {
             if id == SUBJECT_ALT_NAME {
                 for name in items(value.value)? {
                     let text = String::from_utf8_lossy(name.value).to_ascii_lowercase();
-                    match name.tag {
-                        0x81 => out.emails.push(text),
-                        0x82 => out.hosts.push(text),
-                        _ => {}
+                    if name.tag == 0x81 {
+                        out.emails.push(text);
                     }
                 }
             } else if id == BASIC_CONSTRAINTS {
                 out.ca = items(value.value)?
                     .first()
                     .is_some_and(|b| b.tag == 0x01 && b.value == [0xFF]);
+            } else if id == KEY_USAGE {
+                // A BIT STRING: unused bits, then the bits.
+                out.usage = (value.tag == 0x03)
+                    .then(|| value.value.get(1).copied())
+                    .flatten()
+                    .or(Some(0));
+            } else if id == EXTENDED_KEY_USAGE {
+                out.extended = Some(
+                    items(value.value)?
+                        .into_iter()
+                        .filter(|o| o.tag == 0x06)
+                        .map(|o| o.value)
+                        .collect(),
+                );
             }
         }
     }
@@ -230,7 +266,6 @@ fn cert(raw: &[u8]) -> Option<Cert<'_>> {
 /// The digest an algorithm names.
 fn digest_of(oid: &[u8]) -> Option<&'static digest::Algorithm> {
     Some(match oid {
-        SHA1 => &digest::SHA1_FOR_LEGACY_USE_ONLY,
         SHA256 => &digest::SHA256,
         SHA384 => &digest::SHA384,
         SHA512 => &digest::SHA512,
@@ -241,7 +276,7 @@ fn digest_of(oid: &[u8]) -> Option<&'static digest::Algorithm> {
 /// Whether `key` signed `message` with `signature`, by the signature
 /// algorithm (or, for CMS's bare `rsaEncryption`, the digest it names).
 fn verify(
-    key: &Cert,
+    key: &Cert<'_>,
     algorithm: &[u8],
     digest: Option<&[u8]>,
     message: &[u8],
@@ -250,9 +285,6 @@ fn verify(
     let rsa = key.key_algorithm == RSA;
     let ec = key.key_algorithm == EC_KEY;
     let alg: &dyn VerificationAlgorithm = match (algorithm, digest) {
-        (RSA_SHA1, _) | (RSA, Some(SHA1)) if rsa => {
-            &signature::RSA_PKCS1_2048_8192_SHA1_FOR_LEGACY_USE_ONLY
-        }
         (RSA_SHA256, _) | (RSA, Some(SHA256)) if rsa => &signature::RSA_PKCS1_2048_8192_SHA256,
         (RSA_SHA384, _) | (RSA, Some(SHA384)) if rsa => &signature::RSA_PKCS1_2048_8192_SHA384,
         (RSA_SHA512, _) | (RSA, Some(SHA512)) if rsa => &signature::RSA_PKCS1_2048_8192_SHA512,
@@ -270,7 +302,7 @@ fn verify(
 }
 
 /// Whether `issuer` signed `subject`'s certificate.
-fn issued(issuer: &Cert, subject: &Cert) -> bool {
+fn issued(issuer: &Cert<'_>, subject: &Cert<'_>) -> bool {
     issuer.subject == subject.issuer
         && verify(
             issuer,
@@ -281,23 +313,48 @@ fn issued(issuer: &Cert, subject: &Cert) -> bool {
         )
 }
 
-fn valid_at(c: &Cert, at: Option<i64>) -> bool {
-    at.is_none_or(|t| c.not_before <= t && t <= c.not_after)
+/// Valid now, and when the signature says it was made.
+fn valid(c: &Cert<'_>, now: i64, signed_at: Option<i64>) -> bool {
+    let at = |t: i64| c.not_before <= t && t <= c.not_after;
+    at(now) && signed_at.is_none_or(at)
+}
+
+/// A certificate that may issue others: a CA, allowed to sign them.
+fn may_issue(c: &Cert<'_>) -> bool {
+    c.ca && c.usage.is_some_and(|u| u & KEY_CERT_SIGN != 0)
+}
+
+/// A certificate that may sign a message: its key usage allows digital
+/// signatures, and its extended usages, if it lists them, e-mail.
+fn may_sign(c: &Cert<'_>) -> bool {
+    c.usage.is_some_and(|u| u & DIGITAL_SIGNATURE != 0)
+        && c
+            .extended
+            .as_ref()
+            .is_none_or(|e| e.iter().any(|o| *o == EMAIL_PROTECTION))
 }
 
 /// Who signed: the signer's certificate names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Signer {
+    /// Its e-mail addresses, lowercase.
     pub emails: Vec<String>,
-    pub hosts: Vec<String>,
+    /// Its organization, as written.
+    pub organization: Option<String>,
 }
 
 /// Checks a detached signature (`smime.p7s`) over `content`: the content
-/// is what was signed, and the signer's certificate leads, through the
-/// certificates the signature carries, to one of `anchors` (DER). Each
-/// certificate must be valid when the signature says it was made, and
-/// every one between the signer and the anchor must be a CA.
-pub fn verify_detached(content: &[u8], p7s: &[u8], anchors: &[Vec<u8>]) -> Option<Signer> {
+/// is what was signed, and the signer's certificate, allowed to sign,
+/// leads through the certificates the signature carries to one of
+/// `anchors` (DER). Each certificate must be valid at `now` (Unix
+/// seconds) and when the signature says it was made, and every one
+/// between the signer and the anchor must be a CA allowed to issue.
+pub fn verify_detached(
+    content: &[u8],
+    p7s: &[u8],
+    anchors: &[Vec<u8>],
+    now: i64,
+) -> Option<Signer> {
     let info = items(only(p7s)?.value)?;
     if info.first()?.value != SIGNED_DATA {
         return None;
@@ -306,7 +363,7 @@ pub fn verify_detached(content: &[u8], p7s: &[u8], anchors: &[Vec<u8>]) -> Optio
     let parts = items(signed.value)?;
     let mut certs = Vec::new();
     let mut signers = None;
-    for p in &parts[1..] {
+    for p in parts.get(1..)? {
         match p.tag {
             0xA0 => {
                 for c in items(p.value)? {
@@ -340,6 +397,9 @@ pub fn verify_detached(content: &[u8], p7s: &[u8], anchors: &[Vec<u8>]) -> Optio
     let signer = certs
         .iter()
         .find(|c| c.issuer == issuer && c.serial == serial)?;
+    if !may_sign(signer) {
+        return None;
+    }
     let hashed = digest::digest(digest_of(digest_alg)?, content);
     let mut at = None;
     let message: Vec<u8> = match attrs {
@@ -363,7 +423,7 @@ pub fn verify_detached(content: &[u8], p7s: &[u8], anchors: &[Vec<u8>]) -> Optio
             }
             // Signed as a SET, not with the [0] it is stored under.
             let mut der = a.raw.to_vec();
-            der[0] = 0x31;
+            *der.first_mut()? = 0x31;
             der
         }
         None => content.to_vec(),
@@ -372,25 +432,29 @@ pub fn verify_detached(content: &[u8], p7s: &[u8], anchors: &[Vec<u8>]) -> Optio
         return None;
     }
 
-    let anchors: Vec<Cert> = anchors.iter().filter_map(|a| cert(a)).collect();
+    // Not made in the future.
+    if at.is_some_and(|t| t > now + 86_400) {
+        return None;
+    }
+    let anchors: Vec<Cert<'_>> = anchors.iter().filter_map(|a| cert(a)).collect();
     let mut at_cert = signer;
     for _ in 0..5 {
-        if !valid_at(at_cert, at) {
+        if !valid(at_cert, now, at) {
             return None;
         }
         if anchors.iter().any(|a| a.raw == at_cert.raw)
             || anchors
                 .iter()
-                .any(|a| valid_at(a, at) && issued(a, at_cert))
+                .any(|a| valid(a, now, at) && issued(a, at_cert))
         {
             return Some(Signer {
                 emails: signer.emails.clone(),
-                hosts: signer.hosts.clone(),
+                organization: signer.organization.clone(),
             });
         }
         at_cert = certs
             .iter()
-            .find(|c| c.ca && c.raw != at_cert.raw && issued(c, at_cert))?;
+            .find(|c| may_issue(c) && c.raw != at_cert.raw && issued(c, at_cert))?;
     }
     None
 }
@@ -419,6 +483,94 @@ pub fn pem(text: &str) -> Vec<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const P7S: &[u8] = include_bytes!("../tests/fixtures/pec/signed.p7s");
+    const ROOT: &str = include_str!("../tests/fixtures/pec/test-root.pem");
+    /// What `tools/gen_pec_fixtures.sh` signs into `signed.p7s`.
+    const CONTENT: &str = "Content-Type: multipart/mixed; boundary=\"inner\"\r\n\r\n--inner\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nRicevuta di avvenuta consegna\r\n\r\nIl giorno 19/10/2026 alle ore 09:12:04 (+0200) il messaggio\r\n\"Lease renewal 2027\" proveniente da \"matteo@pec.example.it\"\r\ned indirizzato a \"studio.rossi@pec.example.it\"\r\nè stato consegnato nella casella di destinazione.\r\n--inner--\r\n";
+    /// 18 November 2026.
+    const NOW: i64 = 1_795_000_000;
+
+    #[test]
+    fn a_signature_checks_only_while_its_certificates_are_valid() {
+        let anchors = pem(ROOT);
+        let signer = verify_detached(CONTENT.as_bytes(), P7S, &anchors, NOW).unwrap();
+        assert_eq!(signer.emails, ["posta-certificata@pec.example.it"]);
+        assert_eq!(signer.organization.as_deref(), Some("Piuma Test PEC Provider"));
+        // In 2050 every certificate here has expired: nothing new checks.
+        assert_eq!(
+            verify_detached(CONTENT.as_bytes(), P7S, &anchors, 2_524_608_000),
+            None
+        );
+        // Before they were made, neither.
+        assert_eq!(
+            verify_detached(CONTENT.as_bytes(), P7S, &anchors, 1_000_000_000),
+            None
+        );
+        assert_eq!(verify_detached(b"other", P7S, &anchors, NOW), None);
+    }
+
+    #[test]
+    fn an_empty_signed_data_is_no_signature() {
+        let empty = [
+            0x30, 0x0B, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02, 0xA0,
+            0x02, 0x30, 0x00,
+        ];
+        assert_eq!(verify_detached(b"x", &empty, &pem(ROOT), NOW), None);
+        assert_eq!(verify_detached(b"x", &[], &pem(ROOT), NOW), None);
+        assert_eq!(verify_detached(b"x", &[0x30], &pem(ROOT), NOW), None);
+    }
+
+    /// xorshift64*, as in the other hostile-input tests: a fixed seed
+    /// keeps a failure reproducible.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    #[test]
+    fn hostile_signatures_never_panic() {
+        let anchors = pem(ROOT);
+        let mut rng = Rng(0x5EED_0F_5_1A7E);
+        for round in 0..4000 {
+            let mut bytes = P7S.to_vec();
+            match round % 5 {
+                // A few bytes changed anywhere.
+                0 | 1 => {
+                    for _ in 0..1 + rng.below(8) {
+                        let at = rng.below(bytes.len());
+                        bytes[at] = rng.next() as u8;
+                    }
+                }
+                // Cut short.
+                2 => bytes.truncate(rng.below(bytes.len())),
+                // A length byte made huge or zero.
+                3 => {
+                    let at = rng.below(bytes.len());
+                    bytes[at] = [0x00, 0x80, 0x81, 0x84, 0xFF][rng.below(5)];
+                }
+                // Noise from the start.
+                _ => {
+                    bytes = (0..rng.below(64)).map(|_| rng.next() as u8).collect();
+                    if !bytes.is_empty() {
+                        bytes[0] = 0x30;
+                    }
+                }
+            }
+            let _ = verify_detached(CONTENT.as_bytes(), &bytes, &anchors, NOW);
+            let _ = cert(&bytes);
+        }
+    }
 
     #[test]
     fn times() {

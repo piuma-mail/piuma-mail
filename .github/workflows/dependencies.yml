@@ -9,10 +9,10 @@ name: Dependencies
 
 on:
   pull_request:
-    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", ".github/workflows/dependencies.yml"]
+    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", "core/src/pec_anchors.pem", "core/src/pec_providers.txt", "tools/gen_pec_trust.py", ".github/workflows/dependencies.yml"]
   push:
     branches: [main]
-    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", ".github/workflows/dependencies.yml"]
+    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", "core/src/pec_anchors.pem", "core/src/pec_providers.txt", "tools/gen_pec_trust.py", ".github/workflows/dependencies.yml"]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -32,6 +32,17 @@ jobs:
         with:
           arguments: ""
           command: check advisories sources
+
+  # The trust lists PEC receipts are checked against (tools/gen_pec_trust.py)
+  # go stale as AgID updates them: a warning once they are 90 days old.
+  pec-trust:
+    name: PEC trust lists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 tools/gen_pec_trust.py --check || true
 
   # THIRD_PARTY_RUST.md lists every crate the engine ships. CI checks it on
   # pull requests, except Dependabot's: this catches what they leave behind.

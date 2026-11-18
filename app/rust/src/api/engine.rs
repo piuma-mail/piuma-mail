@@ -4573,9 +4573,10 @@ pub struct Unsubscribe {
     pub body: String,
 }
 
-/// The list info of a message, with one-click left on only where the
-/// message proves its list headers are the sender's
-/// (`newsletter::one_click_allowed`).
+/// The list info of a message, with one-click left on only where a DKIM
+/// signature of the From domain covers its list headers (RFC 8058 section
+/// 4; a DMARC pass alone may rest on SPF or on a signature that leaves
+/// them out), as `newsletter::one_click_allowed` says.
 fn checked_list(
     store: &piuma_core::store::Store,
     account: AccountId,
@@ -4583,8 +4584,8 @@ fn checked_list(
     uid: u32,
 ) -> Result<piuma_core::model::ListInfo, EngineError> {
     let mut list = store.list_info(account, mailbox, uid)?;
-    let (dmarc_pass, list_signed) = store.sender_proofs(account, mailbox, uid)?;
-    list.one_click = newsletter::one_click_allowed(&list, dmarc_pass || list_signed);
+    let (_, list_signed) = store.sender_proofs(account, mailbox, uid)?;
+    list.one_click = newsletter::one_click_allowed(&list, list_signed);
     Ok(list)
 }
 

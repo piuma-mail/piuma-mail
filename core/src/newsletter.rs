@@ -165,13 +165,13 @@ pub enum UnsubscribeError {
 }
 
 /// Whether a list can be left with one request, nothing shown: its
-/// headers ask for it, and the message proves they are the sender's
-/// (`proven`: a DKIM signature of the From domain covers them, as RFC
-/// 8058 section 4 requires, or DMARC passed for the message), and the
-/// address is a public https one ([`public_https`]). Otherwise the app
-/// opens the page, or shows the message it would send.
-pub fn one_click_allowed(list: &ListInfo, proven: bool) -> bool {
-    list.one_click && proven && public_https(&list.unsubscribe)
+/// headers ask for it, a DKIM signature of the From domain that passed
+/// covers them (`signed`, as RFC 8058 section 4 requires; a DMARC pass is
+/// not enough, it can rest on SPF alone), and the address is a public
+/// https one ([`public_https`]). Otherwise the app opens the page, or
+/// shows the message it would send.
+pub fn one_click_allowed(list: &ListInfo, signed: bool) -> bool {
+    list.one_click && signed && public_https(&list.unsubscribe)
 }
 
 /// An https address on a public host name: not an IP address, nor a

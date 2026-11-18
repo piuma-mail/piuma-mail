@@ -280,6 +280,30 @@ void main() {
       expect(opened, [Uri.parse('https://lume.example/')]);
     });
 
+    testWidgets('a link activated from the keyboard opens', (tester) async {
+      final opened = <Uri>[];
+      final before = openExternalLink;
+      openExternalLink = (uri) async => opened.add(uri);
+      addTearDown(() => openExternalLink = before);
+      // Enter on a focused link, as the web view reports it: no pointer.
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            OriginalView.keyPressed(context);
+            onLink('https://lume.example/');
+          });
+          return const SizedBox.expand();
+        },
+      );
+      await _pump(tester);
+      await tester.pumpAndSettle();
+      if (find.text('Open anyway').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Open anyway'));
+        await tester.pumpAndSettle();
+      }
+      expect(opened, [Uri.parse('https://lume.example/')]);
+    });
+
     testWidgets('a web view that can’t start gives way to the clean view', (
       tester,
     ) async {

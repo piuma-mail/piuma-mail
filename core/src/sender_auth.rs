@@ -26,10 +26,13 @@ pub struct Trail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// A server's hop: the host after "by", when it names one, and the
-    /// one it took the message from.
+    /// one it took the message from: the name that host gave itself
+    /// (`from`, its HELO, which it chooses), and the address the server
+    /// saw it connect from, when the line says.
     Received {
         by: Option<String>,
         from: Option<String>,
+        from_ip: Option<std::net::IpAddr>,
     },
     /// What a server found, by the name it signs with (`authserv-id`).
     Results { id: String, methods: Vec<Method> },
@@ -72,8 +75,10 @@ enum Id {
     Exact(&'static str),
     /// The prefix, a number, the suffix: `mx` 1…n `.messagingengine.com`.
     Numbered(&'static str, &'static str),
-    /// Any name under the domain: servers we know nothing about.
+    /// Any name under the domain.
     Under(String),
+    /// No name at all: Microsoft's results start with the first check.
+    Nameless,
 }
 
 impl Id {
@@ -87,8 +92,31 @@ impl Id {
                     !n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit())
                 }),
             Id::Under(domain) => under(id, domain),
+            Id::Nameless => id.is_empty(),
         }
     }
+}
+
+/// How a provider writes its results, and so what can be believed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    /// One header per message under one name (or names of one family).
+    /// The top-most is the provider's: whatever the sender wrote comes
+    /// below it, so any later one under the provider's name or domain is
+    /// a forgery.
+    Single,
+    /// One header per check, each under its own name, all above the hop
+    /// where the message entered the provider. Any of them at or below
+    /// that hop is a forgery.
+    Multi,
+    /// One header under the name of the server that took the message: it
+    /// counts only when that name is the "by" of the hop where the
+    /// message entered, above it or right under it.
+    Numbered,
+    /// A server we know nothing about: results above the hop where the
+    /// message entered, under the server's own domain. Nothing is called
+    /// a forgery, since we don't know what the server strips.
+    Unknown,
 }
 
 /// The servers whose results an account can believe.
@@ -100,47 +128,61 @@ pub struct Trust {
     /// own, and results named under them but not with one of [`ids`] are
     /// a look-alike.
     domains: Vec<String>,
-    /// A provider in [`KNOWN`]: its own hops above its results are fine.
-    /// For any other server only results above every hop count.
-    known: bool,
+    shape: Shape,
 }
 
 /// One provider that checks every message it accepts from outside and
-/// writes what it found, as RFC 8601 section 5 asks of a receiving
-/// domain: it removes or renames any results that arrive with its own
-/// name, and adds its own above everything the sender wrote.
+/// writes what it found.
 struct Provider {
     /// The account's server is under one of these.
     hosts: &'static [&'static str],
-    /// The exact names its results are written under.
+    /// The names its results are written under.
     ids: &'static [Id],
     /// Where its own servers are.
     domains: &'static [&'static str],
+    shape: Shape,
 }
 
-/// What is assumed of each provider (checked against their headers in
-/// November 2026):
+/// What is assumed of each provider (from their published headers,
+/// November 2026; the tests carry one stack of each):
 ///
 /// - Gmail writes one `Authentication-Results: mx.google.com` on every
 ///   message it accepts from outside, right under its own `Received`,
 ///   with `dmarc=` only when the From domain publishes a DMARC record.
+/// - Outlook.com and Microsoft 365 write one header with no name at all
+///   (`spf=pass (sender IP is …) …; dmarc=pass action=none …`), above the
+///   hop of `*.mail.protection.outlook.com` that took the message.
+/// - Yahoo writes one header named after the server that checked
+///   (`atlas…mail…yahoo.com`), above its own hop.
 /// - iCloud writes one header per check, each under its own exact name
-///   (`dmarc.icloud.com`, `dkim-verifier.icloud.com`…).
-/// - Fastmail writes one header under the name of the MX that took the
-///   message, `mx1.messagingengine.com` to `mx99.messagingengine.com`;
-///   its own hops in between are `*.internal`.
+///   (`dmarc.icloud.com`, `dkim-verifier.icloud.com`…), above the hop
+///   where the message entered.
+/// - Fastmail writes one header named after the MX that took the message,
+///   `mx1.messagingengine.com` to `mx999.messagingengine.com`; its hops
+///   in between are on private addresses (`*.internal`).
 ///
-/// Everyone else, Yahoo, Outlook and Aruba among them, falls to the
-/// general rule (results above every hop, under the server's domain):
-/// Yahoo's name changes with the server that checked, Outlook writes no
-/// name at all, and Aruba's isn't documented, so none of them can be
-/// pinned, and mail on them is marked verified only by a filter of the
-/// account's own server that writes its results on top.
+/// Every one of them writes its header on every message it accepts from
+/// outside: a sender's header can only come below it. Any other server
+/// (Aruba, a company's own) is believed only above the hop where the
+/// message entered it.
 const KNOWN: &[Provider] = &[
     Provider {
         hosts: &["gmail.com", "googlemail.com", "google.com"],
         ids: &[Id::Exact("mx.google.com")],
         domains: &["google.com"],
+        shape: Shape::Single,
+    },
+    Provider {
+        hosts: &["outlook.com", "office365.com", "hotmail.com", "live.com"],
+        ids: &[Id::Nameless],
+        domains: &["outlook.com", "office365.com"],
+        shape: Shape::Single,
+    },
+    Provider {
+        hosts: &["yahoo.com"],
+        ids: &[Id::Under(String::new())],
+        domains: &["yahoo.com"],
+        shape: Shape::Single,
     },
     Provider {
         hosts: &["me.com", "icloud.com", "apple.com"],
@@ -152,11 +194,13 @@ const KNOWN: &[Provider] = &[
             Id::Exact("arc-verifier.icloud.com"),
         ],
         domains: &["icloud.com", "me.com", "apple.com"],
+        shape: Shape::Multi,
     },
     Provider {
         hosts: &["fastmail.com", "messagingengine.com"],
         ids: &[Id::Numbered("mx", ".messagingengine.com")],
         domains: &["messagingengine.com", "fastmail.com"],
+        shape: Shape::Numbered,
     },
 ];
 
@@ -173,10 +217,20 @@ impl Trust {
         };
         for p in KNOWN {
             if p.hosts.iter().any(|d| under(&host, d)) {
+                let domains: Vec<String> = p.domains.iter().map(|d| (*d).to_owned()).collect();
+                let ids = p
+                    .ids
+                    .iter()
+                    .map(|i| match i {
+                        // A family of names: under the provider's domain.
+                        Id::Under(d) if d.is_empty() => Id::Under(domains[0].clone()),
+                        other => other.clone(),
+                    })
+                    .collect();
                 return Trust {
-                    ids: p.ids.to_vec(),
-                    domains: p.domains.iter().map(|d| (*d).to_owned()).collect(),
-                    known: true,
+                    ids,
+                    domains,
+                    shape: p.shape,
                 };
             }
         }
@@ -184,7 +238,7 @@ impl Trust {
         Trust {
             ids: vec![Id::Under(org.clone())],
             domains: vec![org],
-            known: false,
+            shape: Shape::Unknown,
         }
     }
 
@@ -195,7 +249,13 @@ impl Trust {
 
     /// A server of the provider's.
     fn own(&self, host: &str) -> bool {
-        self.domains.iter().any(|d| under(host, d))
+        named(host) && self.domains.iter().any(|d| under(host, d))
+    }
+
+    /// Results that claim to be the provider's, by its name or a name of
+    /// its domain.
+    fn claims(&self, id: &str) -> bool {
+        self.pinned(id) || self.own(id)
     }
 }
 
@@ -221,6 +281,7 @@ pub fn trail(m: &Message, raw: &[u8]) -> Trail {
             steps.push(Step::Received {
                 by: received_word(&value, "by"),
                 from: received_word(&value, "from"),
+                from_ip: received_ip(&value),
             });
         } else if name.eq_ignore_ascii_case("authentication-results") {
             if let Some(step) = results(&value) {
@@ -248,39 +309,132 @@ struct Believed<'a> {
     forged: bool,
 }
 
+/// A hop's sending side is the provider's own: an address of a private
+/// network or the machine itself, or, when the line gives no address,
+/// a name of the provider's or a private one. A public address is
+/// always someone else's (its reverse name is the sender's to choose),
+/// and so is the name a sender gives itself next to one.
+fn from_inside(trust: &Trust, from: Option<&str>, ip: Option<std::net::IpAddr>) -> bool {
+    // A bare address in place of a name counts as the address.
+    let ip = ip.or_else(|| from.and_then(|h| h.parse().ok()));
+    match ip {
+        Some(ip) => private(ip),
+        // No address: one of the provider's machines, which name
+        // themselves without a domain (`p00-icloudmta-…`) or with its own.
+        // The hop where a message comes in from outside always has one.
+        None => from.is_none_or(|h| {
+            !h.contains('.')
+                || trust.own(h)
+                || [".internal", ".local", ".localdomain"]
+                    .iter()
+                    .any(|s| h.ends_with(s))
+        }),
+    }
+}
+
+/// Where the message entered the provider, from the top: the first hop by
+/// one of its servers (or an unnamed one) from outside, and the server
+/// that took it. None when a server of someone else's comes first, or
+/// there is none.
+fn ingress<'a>(trail: &'a Trail, trust: &Trust) -> Option<(usize, &'a str)> {
+    for (i, step) in trail.steps.iter().enumerate() {
+        let Step::Received { by, from, from_ip } = step else {
+            continue;
+        };
+        let by = by.as_deref().unwrap_or_default();
+        if named(by) && !trust.own(by) {
+            return None;
+        }
+        if !from_inside(trust, from.as_deref(), *from_ip) {
+            return Some((i, by));
+        }
+    }
+    None
+}
+
+/// The first hop, from the top, by a server that isn't the provider's.
+fn foreign(trail: &Trail, trust: &Trust) -> usize {
+    trail
+        .steps
+        .iter()
+        .position(|s| {
+            matches!(s, Step::Received { by: Some(h), .. } if named(h) && !trust.own(h))
+        })
+        .unwrap_or(trail.steps.len())
+}
+
 fn believed<'a>(trail: &'a Trail, trust: &Trust) -> Believed<'a> {
     let mut methods = Vec::new();
     let mut taken: Vec<&str> = Vec::new();
     let mut forged = false;
-    // Still among the provider's own headers: no hop of another server
-    // above.
-    let mut walking = true;
-    for step in &trail.steps {
-        match step {
-            Step::Received { by, .. } => {
-                let theirs = by.as_deref().is_some_and(|h| named(h) && !trust.own(h));
-                if !trust.known || theirs {
-                    walking = false;
-                }
-            }
-            Step::Results { id, methods: m } => {
-                let pinned = trust.pinned(id);
-                if walking && pinned && !taken.contains(&id.as_str()) {
-                    // The top-most results under each name: the
-                    // provider adds its own above what came with the
-                    // message.
-                    taken.push(id);
-                    methods.extend(m.iter());
-                } else if trust.known && (pinned || trust.own(id)) {
-                    // A second header under the provider's name, one
-                    // below another server's hop, or a name of its
-                    // domain it never signs with.
-                    forged = true;
-                }
-            }
+    let entered = ingress(trail, trust);
+    let foreign = foreign(trail, trust);
+    // Where the provider's own results can be: above the hop where the
+    // message entered, or for some, right under it.
+    let limit = match (trust.shape, entered) {
+        (Shape::Single, _) => foreign,
+        (Shape::Numbered, Some((i, _))) => trail.steps[i + 1..]
+            .iter()
+            .position(|s| matches!(s, Step::Received { .. }))
+            .map_or(trail.steps.len(), |n| i + 1 + n),
+        (Shape::Multi | Shape::Unknown, Some((i, _))) => i,
+        // No hop from outside: mail between the provider's own users,
+        // above any server of someone else's.
+        (_, None) => foreign,
+    };
+    let entry_by = entered.map(|(_, by)| by);
+    let warns = trust.shape != Shape::Unknown;
+    for (i, step) in trail.steps.iter().enumerate() {
+        let Step::Results { id, methods: m } = step else {
+            continue;
+        };
+        // A numbered name counts only for the server that took the
+        // message (any, for mail that never came from outside).
+        let pinned = trust.pinned(id)
+            && (trust.shape != Shape::Numbered || entry_by.is_none_or(|b| b == id));
+        let above_entry = entered.is_none_or(|(e, _)| i < e);
+        // One header in all for a provider that writes one.
+        let room = if trust.shape == Shape::Single {
+            taken.is_empty()
+        } else {
+            !taken.contains(&id.as_str())
+        };
+        if i < limit && pinned && room {
+            // The top-most results under each name: the provider adds
+            // its own above what came with the message.
+            taken.push(id);
+            methods.extend(m.iter());
+        } else if !warns || !trust.claims(id) {
+            // Another server's results: not ours to judge.
+        } else if trust.shape == Shape::Multi && above_entry && i < limit {
+            // A second header of the provider's own, where only it
+            // writes.
+        } else {
+            // Its name a second time where a sender writes, its name
+            // below the hop where the message came in, another of its
+            // servers' names than the one that took the message, or a
+            // name of its domain it never signs with.
+            forged = true;
         }
     }
     Believed { methods, forged }
+}
+
+/// An address of a private network or of the machine itself.
+fn private(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v) => {
+            v.is_private() || v.is_loopback() || v.is_link_local() || v.is_unspecified()
+        }
+        std::net::IpAddr::V6(v) => {
+            let first = v.segments()[0];
+            v.is_loopback()
+                || v.is_unspecified()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || v.to_ipv4_mapped().is_some_and(|v4| private(v4.into()))
+        }
+    }
 }
 
 /// The domain a passing DKIM signature is from.
@@ -359,7 +513,11 @@ pub fn checked(trail: &Trail, trust: &Trust) -> Checked {
             .any(|m| signer(m).is_some_and(|d| aligned(d, from) && covers_list(trail, m, d)));
     // The first hop, from the top, that came from outside the provider.
     let sent_by = trail.steps.iter().find_map(|s| match s {
-        Step::Received { from: Some(h), .. } if named(h) && !trust.own(h) => Some(h.clone()),
+        Step::Received {
+            from: Some(h),
+            from_ip,
+            ..
+        } if named(h) && !from_inside(trust, Some(h), *from_ip) => Some(h.clone()),
         _ => None,
     });
     Checked {
@@ -373,16 +531,30 @@ pub fn checked(trail: &Trail, trust: &Trust) -> Checked {
 
 /// Whether the DKIM signature a passing result `m` of `domain` is about
 /// covers both list headers. Where the result names the signature by its
-/// first characters (`header.b`), only that one counts.
+/// first characters (`header.b`, compared as written: base64 tells case
+/// apart), only that one counts; where it doesn't, only a message with
+/// one signature of that domain can say which one passed.
 fn covers_list(trail: &Trail, m: &Method, domain: &str) -> bool {
-    let b = m.prop("header.b");
-    trail.signatures.iter().any(|s| {
-        s.domain == domain
-            && b.is_none_or(|b| !b.is_empty() && s.b.to_ascii_lowercase().starts_with(b))
-            && ["list-unsubscribe", "list-unsubscribe-post"]
-                .iter()
-                .all(|h| s.headers.iter().any(|x| x == h))
-    })
+    let of_domain: Vec<&Signature> = trail
+        .signatures
+        .iter()
+        .filter(|s| s.domain == domain)
+        .collect();
+    let candidates: Vec<&Signature> = match m.prop("header.b") {
+        Some(b) if !b.is_empty() => of_domain
+            .into_iter()
+            .filter(|s| s.b.starts_with(b))
+            .collect(),
+        Some(_) => Vec::new(),
+        None if of_domain.len() == 1 => of_domain,
+        None => Vec::new(),
+    };
+    // Two signatures that both start with what the result names can't
+    // be told apart either.
+    candidates.len() == 1
+        && ["list-unsubscribe", "list-unsubscribe-post"]
+            .iter()
+            .all(|h| candidates[0].headers.iter().any(|x| x == h))
 }
 
 /// "v=1; a=rsa-sha256; d=shop.it; h=From:List-Unsubscribe; b=…".
@@ -428,14 +600,19 @@ fn received_word(value: &str, word: &str) -> Option<String> {
 }
 
 /// "mx.example.com; dkim=pass header.d=a.org; spf=fail" as its parts.
+/// Microsoft writes no name: its first part is already a check, and the
+/// name is then empty. Values are lowercase but `header.b`, a piece of a
+/// signature, which is kept as written.
 fn results(value: &str) -> Option<Step> {
     let value = without_comments(value);
-    let mut parts = value.split(';');
-    let id = parts
-        .next()?
-        .split_whitespace()
-        .next()?
-        .to_ascii_lowercase();
+    let mut parts = value.split(';').peekable();
+    let first = parts.peek()?.split_whitespace().next()?;
+    let id = if first.contains('=') {
+        String::new()
+    } else {
+        parts.next();
+        first.to_ascii_lowercase()
+    };
     let methods = parts
         .filter_map(|p| {
             let mut words = p.split_whitespace();
@@ -446,16 +623,74 @@ fn results(value: &str) -> Option<Step> {
                 props: words
                     .filter_map(|w| w.split_once('='))
                     .map(|(k, v)| {
-                        (
-                            k.to_ascii_lowercase(),
-                            v.trim_matches('"').to_ascii_lowercase(),
-                        )
+                        let k = k.to_ascii_lowercase();
+                        let v = v.trim_matches('"');
+                        let v = if k == "header.b" {
+                            v.to_owned()
+                        } else {
+                            v.to_ascii_lowercase()
+                        };
+                        (k, v)
                     })
                     .collect(),
             })
         })
         .collect();
     Some(Step::Results { id, methods })
+}
+
+/// The address a Received line says the sending host connected from:
+/// the first IP address in the comments of its "from" part, as
+/// `(name [192.0.2.1])`, `(192.0.2.1)` or `[IPv6:2001:db8::1]`.
+fn received_ip(value: &str) -> Option<std::net::IpAddr> {
+    // The "from" part: from its word to the first "by" outside comments.
+    let mut depth = 0usize;
+    let mut word = String::new();
+    let mut comment = String::new();
+    let mut in_from = false;
+    let mut comments = Vec::new();
+    for c in value.chars().chain(std::iter::once(' ')) {
+        match c {
+            '(' => {
+                depth += 1;
+                if depth == 1 {
+                    comment.clear();
+                    continue;
+                }
+            }
+            ')' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if in_from {
+                        comments.push(std::mem::take(&mut comment));
+                    }
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        if depth > 0 {
+            comment.push(c);
+        } else if c.is_whitespace() || c == ';' {
+            if word.eq_ignore_ascii_case("from") {
+                in_from = true;
+            } else if in_from
+                && ["by", "with", "id", "via", "for"]
+                    .iter()
+                    .any(|w| word.eq_ignore_ascii_case(w))
+            {
+                break;
+            }
+            word.clear();
+        } else {
+            word.push(c);
+        }
+    }
+    comments.iter().find_map(|text| {
+        text.split(|c: char| c.is_whitespace() || c == '[' || c == ']' || c == ',')
+            .map(|t| t.trim_start_matches("IPv6:").trim_start_matches("ipv6:"))
+            .find_map(|t| t.parse::<std::net::IpAddr>().ok())
+    })
 }
 
 /// The text without its (comments), which may nest.
@@ -664,7 +899,18 @@ From: <news@shop.example>\r\nList-Unsubscribe: <https://shop.example/u>\r\nList-
         let covered = raw("From:Subject:List-Unsubscribe:List-Unsubscribe-Post");
         assert!(checks(&covered, "imap.gmail.com").list_signed);
         let not_covered = raw("From:Subject");
-        assert!(!checks(&not_covered, "imap.gmail.com").list_signed);
+        // DMARC passed, but nothing signed the list headers: no one-click.
+        let c = checks(&not_covered, "imap.gmail.com");
+        assert!(c.dmarc_pass && !c.list_signed);
+        assert!(!crate::newsletter::one_click_allowed(
+            &crate::model::ListInfo {
+                newsletter: true,
+                unsubscribe: "https://shop.example/u".into(),
+                one_click: true,
+                ..Default::default()
+            },
+            c.list_signed
+        ));
         // Another signature than the one that passed.
         let other = covered.replace("b=AbCdEf12345", "b=ZZZZ12345");
         assert!(!checks(&other, "imap.gmail.com").list_signed);
@@ -727,6 +973,141 @@ Authentication-Results: dkim-verifier.icloud.com; dkim=pass header.d=example.org
 Received: from mail.example.org by mx01.mail.icloud.com; Mon, 19 Oct 2026 08:00:00 +0000\r\n\
 From: <anna@example.org>\r\nSubject: x\r\n\r\nHi\r\n";
         assert!(check(raw, "imap.mail.me.com"));
+    }
+
+    #[test]
+    fn fastmail_believes_only_the_mx_that_took_the_message() {
+        let raw = "Received: from mx6.messagingengine.com (mx6.nyi.internal [10.202.2.205]) by mailmx.nyi.internal (Postfix) with ESMTP\r\n\
+Authentication-Results: mx6.messagingengine.com; spf=pass smtp.mailfrom=attacker.example\r\n\
+Received: from mail.attacker.example (mail.attacker.example [198.51.100.7]) by mx6.messagingengine.com (Postfix) with ESMTPS\r\n\
+FORGED\
+From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
+        let honest = raw.replace("FORGED", "");
+        assert!(!check(&honest, "imap.fastmail.com"));
+        assert!(!checks(&honest, "imap.fastmail.com").dmarc_failed);
+        // Another of Fastmail's MX names, which never saw the message.
+        let other_mx = raw.replace(
+            "FORGED",
+            "Authentication-Results: mx1.messagingengine.com; dmarc=pass header.from=bank.example\r\n",
+        );
+        assert!(!check(&other_mx, "imap.fastmail.com"));
+        assert!(checks(&other_mx, "imap.fastmail.com").dmarc_failed);
+    }
+
+    /// iCloud's headers, then the hop where the message came in.
+    const ICLOUD: &str = "Received: from p00-icloudmta-asmtp-us-west-2a by p00-icloudmta-asmtp-us-west-2a (Oracle) with ESMTP\r\n\
+Authentication-Results: dmarc.icloud.com; dmarc=none header.from=bank.example\r\n\
+Received: from mail.attacker.example (mail.attacker.example [198.51.100.7]) by mx01.mail.icloud.com (Postfix) with ESMTPS\r\n\
+FORGED\
+From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
+
+    #[test]
+    fn icloud_names_below_the_entry_are_forged() {
+        let honest = ICLOUD.replace("FORGED", "");
+        assert!(!check(&honest, "imap.mail.me.com"));
+        // A name iCloud does sign with, but it didn't write this one.
+        let forged = ICLOUD.replace(
+            "FORGED",
+            "Authentication-Results: dkim-verifier.icloud.com; dkim=pass header.d=bank.example\r\n",
+        );
+        assert!(!check(&forged, "imap.mail.me.com"));
+        assert!(checks(&forged, "imap.mail.me.com").dmarc_failed);
+    }
+
+    #[test]
+    fn a_sender_naming_itself_after_the_provider_is_still_outside() {
+        // The sender says HELO mx.studio.it from a public address: the
+        // hop is still where the message came in.
+        let raw = "Received: from mx.studio.it (mx.studio.it [198.51.100.7]) by mx.studio.it with ESMTP\r\n\
+Authentication-Results: mx.studio.it; dmarc=pass header.from=bank.example\r\n\
+From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
+        assert!(!check(raw, "imap.studio.it"));
+        // A bare public address in place of a name, the same.
+        let bare = raw.replace(
+            "from mx.studio.it (mx.studio.it [198.51.100.7])",
+            "from [198.51.100.7] (unknown)",
+        );
+        assert!(!check(&bare, "imap.studio.it"));
+        // A hop between the server's own machines, on a private address,
+        // is not.
+        let inside = "Received: from mx.studio.it (mx.studio.it [10.0.0.5]) by mbox.studio.it with LMTP\r\n\
+Authentication-Results: mx.studio.it; dmarc=pass header.from=bank.example\r\n\
+Received: from mail.bank.example (mail.bank.example [192.0.2.1]) by mx.studio.it with ESMTPS\r\n\
+From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
+        assert!(check(inside, "imap.studio.it"));
+    }
+
+    /// Microsoft 365: internal hops, the results with no name, then the
+    /// hop of the protection server that took the message.
+    const OUTLOOK: &str = "Received: from DB8PR03MB5867.eurprd03.prod.outlook.com (2603:10a6:10:e5::23) by AM6PR03MB4598.eurprd03.prod.outlook.com with HTTPS; Mon, 19 Oct 2026 08:00:02 +0000\r\n\
+Received: from DB5EUR03FT012.eop-EUR03.prod.protection.outlook.com (2603:10a6:20b:1::4) by DB8PR03MB5867.outlook.office365.com (2603:10a6:10:e5::23) with Microsoft SMTP Server; Mon, 19 Oct 2026 08:00:01 +0000\r\n\
+Authentication-Results: spf=pass (sender IP is 192.0.2.10)\r\n smtp.mailfrom=shop.example; dkim=pass (signature was verified)\r\n header.d=shop.example;dmarc=pass action=none\r\n header.from=shop.example;compauth=pass reason=100\r\n\
+Received-SPF: Pass (protection.outlook.com: domain of shop.example designates 192.0.2.10 as permitted sender)\r\n\
+Received: from mail.shop.example (192.0.2.10) by DB5EUR03FT012.mail.protection.outlook.com (10.152.20.123) with Microsoft SMTP Server; Mon, 19 Oct 2026 08:00:00 +0000\r\n\
+FORGED\
+From: Shop <news@shop.example>\r\nSubject: x\r\n\r\nHi\r\n";
+
+    #[test]
+    fn microsoft_results_have_no_name() {
+        let honest = OUTLOOK.replace("FORGED", "");
+        assert!(check(&honest, "outlook.office365.com"));
+        assert!(checks(&honest, "outlook.office365.com").dmarc_pass);
+        // A second nameless header, from the sender.
+        let forged = OUTLOOK.replace(
+            "FORGED",
+            "Authentication-Results: dmarc=pass action=none header.from=bank.example\r\n",
+        );
+        assert!(checks(&forged, "outlook.office365.com").dmarc_failed);
+        assert!(!check(
+            &forged.replace("@shop.example", "@bank.example"),
+            "outlook.office365.com"
+        ));
+    }
+
+    #[test]
+    fn yahoo_names_its_results_after_the_server() {
+        let raw = "Received: from 10.217.150.11 by atlas210.free.mail.bf1.yahoo.com with HTTP; Mon, 19 Oct 2026 08:00:01 +0000\r\n\
+Received-SPF: pass (domain of shop.example designates 192.0.2.10 as permitted sender)\r\n\
+Authentication-Results: atlas210.free.mail.bf1.yahoo.com;\r\n dkim=pass header.i=@shop.example header.s=s1;\r\n spf=pass smtp.mailfrom=shop.example;\r\n dmarc=pass(p=REJECT) header.from=shop.example;\r\n\
+Received: from 10.217.150.11 (EHLO mail.shop.example) (192.0.2.10) by mta4049.mail.bf1.yahoo.com with SMTPS; Mon, 19 Oct 2026 08:00:00 +0000\r\n\
+FORGED\
+From: Shop <news@shop.example>\r\nSubject: x\r\n\r\nHi\r\n";
+        assert!(check(&raw.replace("FORGED", ""), "imap.mail.yahoo.com"));
+        let forged = raw.replace(
+            "FORGED",
+            "Authentication-Results: atlas1.mail.yahoo.com; dmarc=pass header.from=bank.example\r\n",
+        );
+        assert!(checks(&forged, "imap.mail.yahoo.com").dmarc_failed);
+        assert!(!check(
+            &forged.replace("@shop.example", "@bank.example"),
+            "imap.mail.yahoo.com"
+        ));
+    }
+
+    #[test]
+    fn the_signature_named_by_its_first_characters_as_written() {
+        let raw = |b: &str, sigs: &str| {
+            format!(
+                "Received: from mail.shop.example (mail.shop.example [192.0.2.10]) by mx.google.com; Mon, 19 Oct 2026 08:00:00 +0000\r\n\
+Authentication-Results: mx.google.com; dkim=pass header.i=@shop.example header.s=s1{b}; dmarc=pass header.from=shop.example\r\n\
+{sigs}\
+From: <news@shop.example>\r\nList-Unsubscribe: <https://shop.example/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\nSubject: x\r\n\r\nHi\r\n"
+            )
+        };
+        let sig = |b: &str, h: &str| {
+            format!("DKIM-Signature: v=1; a=rsa-sha256; d=shop.example; s=s1; h={h}; bh=x; b={b}\r\n")
+        };
+        let covered = "From:List-Unsubscribe:List-Unsubscribe-Post";
+        let one = sig("AbCdEf12345", covered);
+        assert!(checks(&raw(" header.b=AbCdEf12", &one), "imap.gmail.com").list_signed);
+        // The same letters in another case are another signature.
+        assert!(!checks(&raw(" header.b=abcdef12", &one), "imap.gmail.com").list_signed);
+        // Without header.b, one signature of the domain is the one.
+        assert!(checks(&raw("", &one), "imap.gmail.com").list_signed);
+        // Two: the one that passed might not be the one over the list
+        // headers.
+        let two = format!("{}{}", sig("Genuine123", "From:Subject"), one);
+        assert!(!checks(&raw("", &two), "imap.gmail.com").list_signed);
     }
 
     #[test]
