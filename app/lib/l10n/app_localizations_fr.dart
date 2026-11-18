@@ -4207,6 +4207,10 @@ class AppLocalizationsFr extends AppLocalizations {
       'Ces mots n’ouvrent pas votre espace. Vérifiez-les et réessayez.';
 
   @override
+  String get pairPhraseOld =>
+      'Cette phrase de récupération a été remplacée : votre espace en a reçu une plus récente quand un appareil a été dissocié ou a désactivé la synchronisation. Utilisez la phrase la plus récente, ou un code d’un appareil associé.';
+
+  @override
   String get pairContinue => 'Continuer';
 
   @override
@@ -6332,6 +6336,15 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get syncLinkAgain => 'Associer à nouveau';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name a retiré cet appareil';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'La synchronisation s’est arrêtée sur cet appareil ; ses comptes et ses e-mails restent ici. Si ce n’était pas vous, associez-le à nouveau depuis un appareil que vous avez encore. Sinon, désactivez la synchronisation ici.';
 
   @override
   String get syncExposedNowTitle => 'Changez ces mots de passe maintenant';

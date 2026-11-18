@@ -53,6 +53,19 @@ class _Nameless extends _Joining {
   }
 }
 
+/// A space whose recovery phrase was replaced: the old one, the demo's,
+/// is told apart from a wrong one.
+class _Replaced extends _Joining {
+  @override
+  Future<void> recoverSpace(int accountId, String phrase) async {
+    if (phrase.trim().split(RegExp(r'\s+')).join(' ') ==
+        DemoMailSource.demoPhrase) {
+      throw const SyncFailure(SyncProblem.oldPhrase);
+    }
+    await super.recoverSpace(accountId, phrase);
+  }
+}
+
 /// A first run for real: no accounts until one is added, which says so.
 class _FirstRun extends _Joining {
   _FirstRun() {
@@ -232,6 +245,26 @@ void main() {
     expect(find.text('Phone paired'), findsOneWidget);
     expect(source.syncState().on, isTrue);
   });
+
+  for (final phone in [true, false]) {
+    final on = phone ? 'on the phone' : 'on the desktop';
+    testWidgets('$on, a replaced recovery phrase asks for the newest', (
+      tester,
+    ) async {
+      await _found(tester, phone: phone, joining: _Replaced());
+      await tester.tap(find.text('Use recovery phrase'));
+      await _settle(tester);
+      await tester.enterText(find.byType(TextField), DemoMailSource.demoPhrase);
+      await tester.pump();
+      await tester.tap(find.text('Continue'));
+      await _settle(tester);
+      expect(
+        find.textContaining('This recovery phrase was replaced'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('don\'t open your space'), findsNothing);
+    });
+  }
 
   testWidgets('on first run, the new account doesn\'t cut pairing short', (
     tester,

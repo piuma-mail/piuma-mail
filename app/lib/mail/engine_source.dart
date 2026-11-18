@@ -314,8 +314,9 @@ class EngineMailSource extends MailSource {
   }
 
   /// What the last round had to say on Devices & sync.
-  (String, bool, bool, bool, bool) _syncNotice = (
+  (String, bool, bool, bool, bool, bool) _syncNotice = (
     '',
+    false,
     false,
     false,
     false,
@@ -345,6 +346,7 @@ class EngineMailSource extends MailSource {
         r.outdated,
         r.unverified,
         r.conflict,
+        r.unlinked,
       );
       final changed = notice != _syncNotice;
       _syncNotice = notice;
@@ -374,6 +376,7 @@ class EngineMailSource extends MailSource {
   static SyncFailure _syncError(Object e) => SyncFailure(switch (e) {
     engine.EngineError(:final kind) => switch (kind) {
       engine.ErrorKind.wrongPhrase => SyncProblem.wrongPhrase,
+      engine.ErrorKind.oldPhrase => SyncProblem.oldPhrase,
       engine.ErrorKind.wrongCode => SyncProblem.wrongCode,
       engine.ErrorKind.expired => SyncProblem.expired,
       engine.ErrorKind.refused => SyncProblem.refused,
@@ -404,6 +407,7 @@ class EngineMailSource extends MailSource {
       recoveryChanged: s.recoveryChanged,
       unverified: s.unverified,
       conflict: s.conflict,
+      unlinked: s.unlinked,
       exposed: s.exposed,
       exposedDevice: s.exposedDevice,
       held: [

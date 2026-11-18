@@ -158,7 +158,8 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   /// "Confirm" (a device that synced with an older version) or "Link
-  /// again" (two devices removed each other): the pairing screens a new
+  /// again" (two devices removed each other, or another device removed
+  /// this one): the pairing screens a new
   /// device sees, for the space's own mailbox, with a code from a linked
   /// device or the recovery phrase.
   Future<void> _linkAgain() async {
@@ -427,7 +428,7 @@ class _SyncPageState extends State<SyncPage> {
         ?.name;
     final status = home == null
         ? _Status(dot: c.line, text: l.syncOff)
-        : s.unverified || s.conflict.isNotEmpty
+        : s.unverified || s.conflict.isNotEmpty || s.unlinked != null
         ? _Status(dot: c.warn, text: l.syncPaused)
         : switch (s.syncedAt) {
             final at? => _Status(
@@ -448,7 +449,25 @@ class _SyncPageState extends State<SyncPage> {
           line: home == null ? l.syncOffNote : l.syncOnLine(home),
         ),
         if (home != null) ...[
-          if (s.conflict.isNotEmpty) ...[
+          if (s.unlinked case final by?) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.warning,
+              title: l.syncUnlinkedTitle(by),
+              body: l.syncUnlinkedBody,
+              actions: [
+                PiumaButton(
+                  label: l.syncLinkAgain,
+                  onPressed: _busy ? null : _linkAgain,
+                ),
+                PiumaButton(
+                  label: l.syncTurnOffButton,
+                  kind: PiumaButtonKind.secondary,
+                  onPressed: _busy ? null : _turnOff,
+                ),
+              ],
+            ),
+          ] else if (s.conflict.isNotEmpty) ...[
             const SizedBox(height: 14),
             _SyncWarning(
               icon: PiumaIcon.warning,

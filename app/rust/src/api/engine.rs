@@ -84,6 +84,9 @@ pub enum ErrorKind {
     TooBig,
     /// Sync: the recovery phrase doesn't open the space.
     WrongPhrase,
+    /// Sync: the recovery phrase was the space's, and was replaced since:
+    /// only the newest one opens it.
+    OldPhrase,
     /// Sync: the code typed on the other device wasn't the one shown.
     WrongCode,
     /// Sync: this device isn't linked, or sync is off.

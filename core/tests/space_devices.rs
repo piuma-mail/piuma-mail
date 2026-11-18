@@ -373,7 +373,7 @@ async fn an_old_copy_put_back_after_an_unlink_is_refused() {
     // The old phone can't open what is there now.
     assert!(matches!(
         space_sync::round(&mut t, &c.store, c.secrets(), &c.me, Some(HOME)).await,
-        Ok(Round::Unlinked)
+        Ok(Round::Unlinked(by)) if by == a.me.device.id
     ));
 
     // It puts its old copy back, and a forged one with the old key, a
@@ -695,7 +695,7 @@ async fn two_devices_unlinking_at_once_lock_nobody_else_out() {
     for d in [&e, &f] {
         assert!(matches!(
             space_sync::round(&mut t, &d.store, d.secrets(), &d.me, Some(HOME)).await,
-            Ok(Round::Unlinked)
+            Ok(Round::Unlinked(_))
         ));
     }
 }
@@ -1251,19 +1251,71 @@ async fn the_recovery_phrase_an_unlink_replaced_adds_nobody() {
     let r = b.round(&mut t).await;
     assert_eq!(r.refused, 1);
     assert_eq!(readers(&t), ids(&[&a, &b]));
-    // The old phrase opens nothing now, so no device joins with it.
+    // The old phrase opens nothing now, so no device joins with it; the
+    // log says it was the space's once, so the person is told to use the
+    // newest one.
     let y = dev("New laptop");
     y.add(HOME);
-    assert!(space_sync::recover(
+    assert!(matches!(
+        space_sync::recover(
+            &mut t,
+            &old_phrase.phrase(),
+            &y.store,
+            y.secrets(),
+            &y.me,
+            Some(HOME)
+        )
+        .await,
+        Err(SyncError::PhraseReplaced)
+    ));
+}
+
+/// Third review, finding 4: the phrase an unlink replaced, typed on a new
+/// device while the folder still holds a copy sealed when it was in force
+/// (kept by the server, or put back by the removed device), is refused:
+/// copies it can't open, signed by a device of the space it opens, were
+/// sealed after it. The newest phrase works.
+#[tokio::test]
+async fn a_replaced_recovery_phrase_is_refused_even_beside_an_old_copy() {
+    let (a, b, c) = (dev("Mac"), dev("Pixel"), dev("Old phone"));
+    for d in [&a, &b, &c] {
+        d.add(HOME);
+    }
+    let (mut t, old_phrase) = space(&[&a, &b, &c]).await;
+    let kept = spaces(&t);
+    let gone = space_sync::unlink(&mut t, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    for (_, n) in kept {
+        t.put(&n).await.unwrap();
+    }
+    let y = dev("New laptop");
+    y.add(HOME);
+    let before = t.snapshot();
+    assert!(matches!(
+        space_sync::recover(
+            &mut t,
+            &old_phrase.phrase(),
+            &y.store,
+            y.secrets(),
+            &y.me,
+            Some(HOME)
+        )
+        .await,
+        Err(SyncError::PhraseReplaced)
+    ));
+    assert_eq!(t.snapshot(), before);
+    space_sync::recover(
         &mut t,
-        &old_phrase.phrase(),
+        &gone.recovery.phrase(),
         &y.store,
         y.secrets(),
         &y.me,
-        Some(HOME)
+        Some(HOME),
     )
     .await
-    .is_err());
+    .unwrap();
+    assert_eq!(readers(&t), ids(&[&a, &b, &y]));
 }
 
 #[tokio::test]
@@ -1280,6 +1332,12 @@ async fn turning_sync_off_leaves_and_the_next_device_changes_key_and_phrase() {
     let r = b.round(&mut t).await;
     assert_eq!(r.refused, 0);
     assert!(r.recovery_changed);
+    // The laptop may have been stolen and turned off by whoever has it: B,
+    // the first to change the key, asks for the passwords it knew, as
+    // after an unlink.
+    let s = space_sync::state(&b.store).unwrap();
+    assert_eq!(s.exposed, [HOME]);
+    assert_eq!(s.exposed_device, "Old laptop");
     let mut names = linked(&t, &a);
     names.sort();
     assert_eq!(names, ["Mac", "Pixel"]);
@@ -1293,6 +1351,8 @@ async fn turning_sync_off_leaves_and_the_next_device_changes_key_and_phrase() {
     let r = a.round(&mut t).await;
     assert_eq!(r.refused, 0);
     assert_eq!(readers(&t), ids(&[&a, &b]));
+    // Asked once: A, which found the key changed already, doesn't ask.
+    assert!(space_sync::state(&a.store).unwrap().exposed.is_empty());
     // The phrase the laptop knew adds nobody, before its leave or after.
     let x = dev("Stranger");
     let mut forged = kept.clone();
@@ -1340,30 +1400,30 @@ async fn a_back_dated_unlink_by_a_removed_device_takes_nobody_over() {
     );
     forged.content.log.push(ra);
     forged.content.generation += 2;
-    // The Mac and the iPad, which took the genuine unlink, stand by it.
-    for d in [&a, &e] {
-        forge(&mut t, &forged, &c, &[&a, &b, &c, &e]).await;
-        assert_eq!(d.round(&mut t).await.refused, 1);
-    }
+    // The Mac, which made the genuine unlink, stands by it.
+    forge(&mut t, &forged, &c, &[&a, &b, &c, &e]).await;
+    assert_eq!(a.round(&mut t).await.refused, 1);
     assert_eq!(readers(&t), ids(&[&a, &b, &e]));
     forge(&mut t, &forged, &c, &[&a, &b, &c, &e]).await;
-    // B saw neither first: nothing tells which is genuine. It stops,
-    // takes nothing and writes nothing.
+    // Every other device stops, the iPad too: that it saw the genuine one
+    // first proves nothing (see the next test). Nothing taken or written.
     let before = t.snapshot();
-    let theme = b.get("appearance.theme");
     a.set("appearance.theme", "dark");
-    let stopped = space_sync::round(&mut t, &b.store, b.secrets(), &b.me, Some(HOME))
-        .await
-        .unwrap();
-    let Round::Conflict(who) = stopped else {
-        panic!("expected a stop, got {stopped:?}")
-    };
-    assert_eq!(who, ids(&[&a, &c]));
-    assert_eq!(t.snapshot(), before);
-    assert_eq!(b.get("appearance.theme"), theme);
-    assert_eq!(space_sync::state(&b.store).unwrap().conflict, who);
+    for d in [&e, &b] {
+        let theme = d.get("appearance.theme");
+        let stopped = space_sync::round(&mut t, &d.store, d.secrets(), &d.me, Some(HOME))
+            .await
+            .unwrap();
+        let Round::Conflict(who) = stopped else {
+            panic!("expected a stop, got {stopped:?}")
+        };
+        assert_eq!(who, ids(&[&a, &c]));
+        assert_eq!(t.snapshot(), before);
+        assert_eq!(d.get("appearance.theme"), theme);
+        assert_eq!(space_sync::state(&d.store).unwrap().conflict, who);
+    }
     // Linked again from a device the person has (here with the phrase),
-    // it follows the Mac.
+    // B follows the Mac, and its write drops the old phone's copies.
     space_sync::recover(
         &mut t,
         &unlinked.recovery.phrase(),
@@ -1377,7 +1437,161 @@ async fn a_back_dated_unlink_by_a_removed_device_takes_nobody_over() {
     assert!(space_sync::state(&b.store).unwrap().conflict.is_empty());
     b.round(&mut t).await;
     a.round(&mut t).await;
+    // With nothing contradicting the unlink left, the iPad goes on by itself.
+    e.round(&mut t).await;
+    assert!(space_sync::state(&e.store).unwrap().conflict.is_empty());
     assert_eq!(readers(&t), ids(&[&a, &b, &e]));
+}
+
+/// Third review, finding 1: the old phone deletes the Mac's copy (it knows
+/// the mailbox password) and puts in its own, unlinking the Mac from before
+/// the Mac unlinked it. B, away, sees only that one: it can't know better
+/// and takes it. When it later sees the Mac's genuine unlink it must stop,
+/// not keep the removal it saw first; and the Mac, left out of B's copies,
+/// must not take that as being unlinked.
+#[tokio::test]
+async fn a_back_dated_unlink_seen_first_does_not_win_once_the_genuine_one_shows() {
+    let (a, b, c) = (dev("Mac"), dev("Pixel"), dev("Old phone"));
+    for d in [&a, &b, &c] {
+        d.add(HOME);
+    }
+    let (t, _) = space(&[&a, &b, &c]).await;
+    let mut tb = fork(&t).await;
+    let mut forged = open(&mut tb, &c).await;
+    let mut ta = t;
+    space_sync::unlink(&mut ta, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    // The folder as B finds it: the Mac's copy gone, the old phone's
+    // back-dated unlink of the Mac in its place, and a setting of its own.
+    let ra = signed(
+        &forged,
+        Op::Remove {
+            device: a.me.device.id.clone(),
+        },
+        &c,
+    );
+    forged.content.log.push(ra);
+    forged.content.generation += 2;
+    let old: Vec<String> = spaces(&tb).into_iter().map(|(id, _)| id).collect();
+    forge(&mut tb, &forged, &c, &[&b, &c]).await;
+    tb.remove(&old).await.unwrap();
+    let r = b.round(&mut tb).await;
+    assert!(r.recovery_changed);
+    assert_eq!(readers(&tb), ids(&[&b, &c]));
+    c.set("appearance.theme", "forged");
+    c.round(&mut tb).await;
+    b.set("notify.mode", "people");
+    b.round(&mut tb).await;
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("forged"));
+    assert_eq!(spaces(&tb).len(), 1);
+    // Then the genuine unlink shows up beside it: B stops, takes nothing
+    // and writes nothing, whatever it took first.
+    let mut both = Memory::new();
+    for m in [&ta, &tb] {
+        for (_, n) in spaces(m) {
+            both.put(&n).await.unwrap();
+        }
+    }
+    let before = both.snapshot();
+    let stopped = space_sync::round(&mut both, &b.store, b.secrets(), &b.me, Some(HOME))
+        .await
+        .unwrap();
+    let Round::Conflict(who) = stopped else {
+        panic!("expected a stop, got {stopped:?}")
+    };
+    assert_eq!(who, ids(&[&a, &c]));
+    assert_eq!(both.snapshot(), before);
+    // The Mac reads in B's copies, sealed without it, why it was left out:
+    // a removal it doesn't take. It is not unlinked: it goes on, says so,
+    // and writes its own space over theirs.
+    let r = a.round(&mut both).await;
+    assert!(r.refused >= 1);
+    assert!(space_sync::state(&a.store).unwrap().unlinked.is_empty());
+    assert_eq!(readers(&both), ids(&[&a, &b]));
+    assert_ne!(a.get("appearance.theme").as_deref(), Some("forged"));
+    // Even with only B's copies left in the folder.
+    let mut only_b = Memory::new();
+    for (_, n) in spaces(&tb) {
+        only_b.put(&n).await.unwrap();
+    }
+    a.round(&mut only_b).await;
+    assert_eq!(readers(&only_b), ids(&[&a, &b]));
+    // B stays stopped until the person links it again.
+    assert!(matches!(
+        space_sync::round(&mut both, &b.store, b.secrets(), &b.me, Some(HOME)).await,
+        Ok(Round::Conflict(_))
+    ));
+}
+
+/// Third review, finding 2: a copy sealed without this device proves
+/// nothing by itself. The server deletes the genuine copies and leaves one
+/// it made for itself: the device is not unlinked, puts its own copy back
+/// and goes on.
+#[tokio::test]
+async fn a_copy_sealed_without_this_device_does_not_unlink_it() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    let server = dev("Server");
+    let (mut fake, _) = Space::create(
+        &server.me.device,
+        &server.me.secret,
+        space::Content::default(),
+    );
+    fake.content.generation = 1_000;
+    let genuine: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
+    forge(&mut t, &fake, &server, &[&server]).await;
+    t.remove(&genuine).await.unwrap();
+    let r = b.round(&mut t).await;
+    assert!(r.pushed);
+    assert_eq!(r.refused, 1);
+    let s = space_sync::state(&b.store).unwrap();
+    assert!(s.trust.verified() && s.unlinked.is_empty());
+    assert!(opens(&t, &b));
+    a.round(&mut t).await;
+    assert_eq!(readers(&t), ids(&[&a, &b]));
+    // The same with a copy signed by a device of the space, whose log
+    // doesn't remove this one: still nothing to go by.
+    let mut s = open(&mut t, &a).await;
+    s.content.generation += 1;
+    let genuine: Vec<String> = spaces(&t).into_iter().map(|(id, _)| id).collect();
+    forge(&mut t, &s, &a, &[&a]).await;
+    t.remove(&genuine).await.unwrap();
+    let r = b.round(&mut t).await;
+    assert!(r.pushed);
+    assert_eq!(r.refused, 1);
+    assert_eq!(readers(&t), ids(&[&a, &b]));
+}
+
+/// A device that was really unlinked is told by whom, and keeps what it
+/// trusts until the person decides: linking it again, or turning sync off
+/// here (which writes nothing).
+#[tokio::test]
+async fn an_unlinked_device_is_told_by_whom_and_forgets_only_when_asked() {
+    let (a, c) = (dev("Mac"), dev("Old phone"));
+    for d in [&a, &c] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &c]).await;
+    space_sync::unlink(&mut t, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            space_sync::round(&mut t, &c.store, c.secrets(), &c.me, Some(HOME)).await,
+            Ok(Round::Unlinked(by)) if by == a.me.device.id
+        ));
+    }
+    let s = space_sync::state(&c.store).unwrap();
+    assert_eq!(s.unlinked, a.me.device.id);
+    assert!(s.trust.verified());
+    let before = t.snapshot();
+    assert!(!space_sync::leave(&mut t, &c.store, &c.me).await.unwrap());
+    assert_eq!(t.snapshot(), before);
+    assert!(!space_sync::state(&c.store).unwrap().trust.verified());
 }
 
 #[tokio::test]
@@ -1587,4 +1801,42 @@ async fn the_passwords_an_unlinked_device_knew_stay_asked_for_until_changed() {
     assert_eq!(s.exposed_device, "Old phone");
     space_sync::exposed_done(&a.store).unwrap();
     assert!(space_sync::state(&a.store).unwrap().exposed.is_empty());
+}
+
+/// Third review, finding 3: copies the server makes, full of entries
+/// nobody signed that hang off the genuine log, are not read at all (their
+/// writer is no device the space ever had): together they hold more than
+/// one reading takes, and the round neither stalls nor stops.
+#[tokio::test]
+async fn copies_full_of_entries_nobody_signed_are_not_read() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    let server = dev("Server");
+    let genuine = open(&mut t, &b).await;
+    for k in 0..3u8 {
+        let mut junk = genuine.clone();
+        let mut last = space_log::tips(&junk.content.log);
+        for _ in 0..space_log::MAX_ENTRIES - junk.content.log.len() {
+            let e = Entry {
+                parents: last,
+                op: Op::Phrase {
+                    recovery: vec![k; 32],
+                },
+                by: a.me.device.id.clone(),
+                sig: vec![0; 64],
+            };
+            last = vec![e.id()];
+            junk.content.log.push(e);
+        }
+        forge(&mut t, &junk, &server, &[&a, &b]).await;
+    }
+    let started = std::time::Instant::now();
+    let r = b.round(&mut t).await;
+    assert!(started.elapsed().as_secs_f64() < 10.0);
+    assert_eq!(r.refused, 3);
+    assert_eq!(readers(&t), ids(&[&a, &b]));
+    assert!(space_sync::state(&b.store).unwrap().trust.log.len() < 10);
 }

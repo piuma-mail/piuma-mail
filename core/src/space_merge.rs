@@ -648,11 +648,17 @@ pub struct Local {
     /// it is linked again.
     #[serde(default)]
     pub conflict: Vec<String>,
-    /// After this device unlinked another: the mailboxes whose passwords
-    /// the unlinked device knew, until the person says they changed them.
+    /// The device (by id) that unlinked this one, at the last round: sync
+    /// stopped here, and what this device trusts stays until the person
+    /// links it again or turns sync off.
+    #[serde(default)]
+    pub unlinked: String,
+    /// After this device unlinked another, or was the first to see one
+    /// turn sync off: the mailboxes whose passwords that device knew, until
+    /// the person says they changed them.
     #[serde(default)]
     pub exposed: Vec<String>,
-    /// The unlinked device's name, for the same notice.
+    /// That device's name (names, when several), for the same notice.
     #[serde(default)]
     pub exposed_device: String,
     /// Rows to put in again for columns an update added ("table/gid"),

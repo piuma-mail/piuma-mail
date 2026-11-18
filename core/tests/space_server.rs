@@ -270,7 +270,7 @@ async fn a_phone_pairs_with_a_code_and_is_unlinked() {
         space_sync::round(&mut phone_f, &phone_store, pw(), &phone, Some(home))
             .await
             .unwrap(),
-        Round::Unlinked
+        Round::Unlinked(_)
     ));
     let again = Mutex::new(Store::open_in_memory().unwrap());
     assert!(space_sync::recover(

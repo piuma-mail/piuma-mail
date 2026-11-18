@@ -529,14 +529,20 @@ void main() {
 }
 
 /// Devices & sync on a device that must be confirmed (it synced with an
-/// older version), or that stopped because two devices removed each
-/// other. Linking it again with the phrase clears either.
+/// older version), that stopped because two devices removed each other, or
+/// that another device removed. Linking it again with the phrase clears
+/// each.
 class _Trust extends DemoMailSource {
-  _Trust({required super.now, this.unverified = false, this.conflict = false})
-    : super(synced: true, spaceToFind: true);
+  _Trust({
+    required super.now,
+    this.unverified = false,
+    this.conflict = false,
+    this.unlinked = false,
+  }) : super(synced: true, spaceToFind: true);
 
   bool unverified;
   bool conflict;
+  bool unlinked;
 
   @override
   SyncState syncState() {
@@ -549,6 +555,7 @@ class _Trust extends DemoMailSource {
       exposedDevice: s.exposedDevice,
       unverified: unverified,
       conflict: conflict ? const ['Matteo’s MacBook', 'Old phone'] : const [],
+      unlinked: s.on && unlinked ? 'Pixel 8' : null,
     );
   }
 
@@ -557,6 +564,7 @@ class _Trust extends DemoMailSource {
     await super.recoverSpace(accountId, phrase);
     unverified = false;
     conflict = false;
+    unlinked = false;
   }
 }
 
@@ -608,6 +616,37 @@ void _trustTests({required bool phone}) {
     );
     await _linkWithPhrase(tester, 'Link again');
     expect(find.text('Two devices removed each other'), findsNothing);
+  });
+
+  testWidgets('${on}another device removing this one says which, and links '
+      'again', (tester) async {
+    final source = _Trust(now: _now, unlinked: true);
+    await _settings(tester, phone: phone, demo: source);
+    expect(find.text('Pixel 8 removed this device'), findsOneWidget);
+    expect(find.text('Paused on this device'), findsOneWidget);
+    expect(
+      find.textContaining('its accounts and mail stay here'),
+      findsOneWidget,
+    );
+    await _linkWithPhrase(tester, 'Link again');
+    expect(find.text('Pixel 8 removed this device'), findsNothing);
+    expect(source.syncState().on, isTrue);
+  });
+
+  testWidgets('${on}a device another one removed turns sync off when asked', (
+    tester,
+  ) async {
+    final source = _Trust(now: _now, unlinked: true);
+    await _settings(tester, phone: phone, demo: source);
+    final off = find.text('Turn off sync').first;
+    await tester.ensureVisible(off);
+    await tester.tap(off);
+    await _settle(tester);
+    expect(find.text('Turn off sync on this device?'), findsOneWidget);
+    await tester.tap(find.text('Turn off sync').last);
+    await _settle(tester);
+    expect(source.syncState().on, isFalse);
+    expect(find.text('Pixel 8 removed this device'), findsNothing);
   });
 
   testWidgets('${on}the passwords an unlinked device knew stay asked for', (

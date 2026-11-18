@@ -141,6 +141,7 @@ class _PairScreenState extends State<PairScreen> {
       setState(() {
         _error = switch (e.problem) {
           SyncProblem.wrongPhrase => l.pairPhraseWrong,
+          SyncProblem.oldPhrase => l.pairPhraseOld,
           SyncProblem.offline => l.syncFailOffline(widget.account.email),
           _ => l.syncFailOther,
         };

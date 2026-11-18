@@ -2010,6 +2010,7 @@ class SyncState {
     this.recoveryChanged = false,
     this.unverified = false,
     this.conflict = const [],
+    this.unlinked,
     this.exposed = const [],
     this.exposedDevice = '',
   });
@@ -2044,6 +2045,11 @@ class SyncState {
   /// Two devices (by name) removed each other: sync stopped here until
   /// this device is linked again.
   final List<String> conflict;
+
+  /// The device (by name) that removed this one: sync stopped here, and
+  /// nothing was forgotten, until the person links it again or turns
+  /// sync off here.
+  final String? unlinked;
 
   /// After unlinking a device: the mailboxes whose passwords it still
   /// knows, until the person says they changed them.
@@ -2150,6 +2156,9 @@ class PairAsk {
 enum SyncProblem {
   /// The recovery phrase doesn't open the space.
   wrongPhrase,
+
+  /// The recovery phrase was the space's once, and was replaced since.
+  oldPhrase,
 
   /// The code typed on the other device wasn't the one shown.
   wrongCode,

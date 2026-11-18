@@ -4170,6 +4170,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'These words don\'t open your space. Check them and try again.';
 
   @override
+  String get pairPhraseOld =>
+      'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.';
+
+  @override
   String get pairContinue => 'Continue';
 
   @override
@@ -6279,6 +6283,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncLinkAgain => 'Link again';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name removed this device';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'Sync stopped on this device; its accounts and mail stay here. If that wasn’t you, link it again from a device you still have. Otherwise, turn sync off here.';
 
   @override
   String get syncExposedNowTitle => 'Change these passwords now';

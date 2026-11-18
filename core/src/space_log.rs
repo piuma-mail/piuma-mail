@@ -1,5 +1,5 @@
 //! Who belongs to the sync space: a signed, ordered record of every device
-//! added and removed (the membership log), carried sealed in every copy.
+//! added and removed (the membership log), carried in every copy.
 //!
 //! Each [Entry] names the entries it follows (`parents`, by hash), what it
 //! does ([Op]), who made it and their signature. The first entry
@@ -21,27 +21,32 @@
 //!   phrase on the side. The phrase likewise: what it adds at the same time
 //!   as any removal or replacement doesn't count, and after a removal it
 //!   adds nobody until a member replaces it.
-//! - Removals a device already took stay taken ([evaluate]'s `fixed`):
-//!   a removed device can't undo its unlink by making up an older one.
 //! - When two removals each remove the other's author and neither came
-//!   first, nothing tells which is genuine: [Eval::conflict] names those
-//!   devices and the device stops until the person links it again.
+//!   first, nothing in the log tells which is genuine. A device that made
+//!   one of them stands by its own ([evaluate]'s `own`): it knows it is
+//!   genuine. Every other device stops ([Eval::conflict] names those
+//!   devices) until the person links it again: whichever removal it
+//!   happened to see first proves nothing, since the removed device can
+//!   delete the other one from the folder for a while.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::space::{self, Device, Key, RECOVERY};
 
 /// Entries a copy may carry: years of linking and unlinking stay far
-/// under it.
+/// under it. There is no compaction: a log grown past it makes every copy
+/// that carries it refused.
 pub const MAX_ENTRIES: usize = 4096;
 
-/// Entries looked at in one evaluation, from every copy together.
-const MAX_UNION: usize = 2 * MAX_ENTRIES;
+/// Entries one evaluation reads, from every copy together, once repeats
+/// are dropped. Past it nothing is read ([Eval::overflow]): leaving some
+/// out would let whoever filled the folder choose which.
+pub const MAX_UNION: usize = 2 * MAX_ENTRIES;
 
 /// A device as the log knows it: its id and its two public keys.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Member {
     pub id: String,
     /// X25519: the content key is sealed for it.
@@ -74,7 +79,7 @@ impl Member {
 pub type Members = BTreeMap<String, Member>;
 
 /// What an entry does.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum Op {
     /// The space begins: the device that made it, and the recovery
@@ -96,7 +101,7 @@ pub enum Op {
 }
 
 /// One signed entry of the log.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Entry {
     /// The entries this one follows, by [Entry::id], sorted.
     pub parents: Vec<String>,
@@ -141,29 +146,34 @@ impl Entry {
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    /// Whether `public` signed it. Checks that passed are remembered (by a
-    /// hash of the entry and the key): a log is read again on every round.
-    fn signed_by(&self, public: &[u8]) -> bool {
+    /// Whether `public` signed this entry, named `id`. Answers are
+    /// remembered (by a hash of the entry and the key): a log is read
+    /// again on every round, and a copy full of bad signatures shouldn't
+    /// cost a check each time.
+    fn signed_by(&self, id: &str, public: &[u8]) -> bool {
         use sha2::Digest as _;
-        static PASSED: std::sync::Mutex<BTreeSet<[u8; 32]>> =
-            std::sync::Mutex::new(BTreeSet::new());
+        static SEEN: std::sync::Mutex<BTreeMap<[u8; 32], bool>> =
+            std::sync::Mutex::new(BTreeMap::new());
         let mut h = sha2::Sha256::new();
-        h.update(self.id());
+        h.update(id);
         h.update(public);
         let tag: [u8; 32] = h.finalize().into();
-        let passed = || PASSED.lock().unwrap_or_else(|e| e.into_inner());
-        if passed().contains(&tag) {
-            return true;
+        let seen = || SEEN.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(&ok) = seen().get(&tag) {
+            return ok;
         }
         let ok = space::verify(public, &self.message(), &self.sig);
-        if ok {
-            let mut p = passed();
-            if p.len() >= 1 << 16 {
-                p.clear();
-            }
-            p.insert(tag);
+        let mut s = seen();
+        if s.len() >= 1 << 16 {
+            s.clear();
         }
+        s.insert(tag, ok);
         ok
+    }
+
+    /// Whether `public` signed it (remembered, as for every check).
+    pub fn verified_by(&self, public: &[u8]) -> bool {
+        self.signed_by(&self.id(), public)
     }
 
     /// Parents sorted with no repeats: one way to write each entry.
@@ -172,9 +182,25 @@ impl Entry {
     }
 
     /// The device it removes, for a removal.
-    fn removes(&self) -> Option<&str> {
+    pub fn removes(&self) -> Option<&str> {
         match &self.op {
             Op::Remove { device } => Some(device),
+            _ => None,
+        }
+    }
+
+    /// The device it adds (the space's maker, for the beginning).
+    fn adds(&self) -> Option<&Member> {
+        match &self.op {
+            Op::Genesis { device, .. } | Op::Add { device } => Some(device),
+            _ => None,
+        }
+    }
+
+    /// The recovery phrase it puts in force.
+    fn phrase(&self) -> Option<&[u8]> {
+        match &self.op {
+            Op::Genesis { recovery, .. } | Op::Phrase { recovery } => Some(recovery),
             _ => None,
         }
     }
@@ -206,17 +232,20 @@ pub struct Eval {
     /// Devices in removals that contradict each other with nothing to tell
     /// which came first. Empty when the log is clear.
     pub conflict: BTreeSet<String>,
+    /// More than [MAX_UNION] entries came from the beginning: nothing was
+    /// read, and nothing that relies on it may be taken.
+    pub overflow: bool,
 }
 
 impl Eval {
-    /// The removals that count, for [evaluate]'s `fixed` next time.
-    pub fn removals(&self) -> BTreeSet<String> {
+    /// Who removed `device`, by an entry that counts (the newest such).
+    pub fn removed_by(&self, device: &str) -> Option<&str> {
         self.kept
             .iter()
-            .filter(|e| e.removes().is_some())
-            .map(Entry::id)
-            .filter(|id| self.accepted.contains(id))
-            .collect()
+            .rev()
+            .filter(|e| e.removes() == Some(device))
+            .find(|e| self.accepted.contains(&e.id()))
+            .map(|e| e.by.as_str())
     }
 }
 
@@ -279,10 +308,12 @@ impl Bits {
         self.data[i * self.words + j / 64] |= 1 << (j % 64);
     }
 
-    /// Row `i` |= row `j`.
+    /// Row `i` |= row `j`, for `j < i`.
     fn merge(&mut self, i: usize, j: usize) {
-        for w in 0..self.words {
-            self.data[i * self.words + w] |= self.data[j * self.words + w];
+        let w = self.words;
+        let (low, high) = self.data.split_at_mut(i * w);
+        for (a, b) in high[..w].iter_mut().zip(&low[j * w..(j + 1) * w]) {
+            *a |= *b;
         }
     }
 }
@@ -291,206 +322,237 @@ struct Graph {
     entries: Vec<Entry>,
     ids: Vec<String>,
     parents: Vec<Vec<usize>>,
+    children: Vec<Vec<usize>>,
     /// `anc.has(i, j)`: j comes before i.
     anc: Bits,
 }
 
 impl Graph {
     /// `entries` that descend from `root`, in an order every device
-    /// shares: parents first, then by id.
-    fn build(entries: impl IntoIterator<Item = Entry>, root: &str) -> Graph {
-        let mut by_id: BTreeMap<String, Entry> = BTreeMap::new();
-        for e in entries {
-            if by_id.len() >= MAX_UNION {
-                break;
-            }
-            if e.canonical() {
-                by_id.entry(e.id()).or_insert(e);
-            }
-        }
-        let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        let mut waiting: BTreeMap<&str, usize> = BTreeMap::new();
-        for (id, e) in &by_id {
-            waiting.insert(id, e.parents.len());
+    /// shares: parents first, then by id. None when more than [MAX_UNION]
+    /// do.
+    fn build(entries: impl IntoIterator<Item = Entry>, root: &str) -> Option<Graph> {
+        // Every copy carries much the same log: repeats go before hashing.
+        let unique: HashSet<Entry> = entries.into_iter().filter(Entry::canonical).collect();
+        let all: Vec<(String, Entry)> = unique.into_iter().map(|e| (e.id(), e)).collect();
+        let index: HashMap<&str, usize> = all
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (id.as_str(), i))
+            .collect();
+        let mut waiting: Vec<usize> = Vec::with_capacity(all.len());
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); all.len()];
+        for (i, (_, e)) in all.iter().enumerate() {
+            waiting.push(e.parents.len());
             for p in &e.parents {
-                children.entry(p).or_default().push(id);
-            }
-        }
-        let mut ready: BTreeSet<&str> = BTreeSet::new();
-        if let Some(e) = by_id.get(root) {
-            if e.parents.is_empty() && matches!(e.op, Op::Genesis { .. }) {
-                ready.insert(root);
-            }
-        }
-        let mut order: Vec<&str> = Vec::new();
-        while let Some(id) = ready.pop_first() {
-            order.push(id);
-            for c in children.get(id).into_iter().flatten() {
-                let w = waiting.get_mut(c).expect("every entry waits");
-                *w -= 1;
-                if *w == 0 {
-                    ready.insert(c);
+                if let Some(&pi) = index.get(p.as_str()) {
+                    children[pi].push(i);
                 }
             }
         }
-        let index: BTreeMap<&str, usize> =
-            order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+        let mut ready: BTreeSet<(&str, usize)> = BTreeSet::new();
+        if let Some(&r) = index.get(root) {
+            let e = &all[r].1;
+            if e.parents.is_empty() && matches!(e.op, Op::Genesis { .. }) {
+                ready.insert((root, r));
+            }
+        }
+        let mut order: Vec<usize> = Vec::new();
+        while let Some((_, i)) = ready.pop_first() {
+            if order.len() == MAX_UNION {
+                return None;
+            }
+            order.push(i);
+            for &c in &children[i] {
+                waiting[c] -= 1;
+                if waiting[c] == 0 {
+                    ready.insert((all[c].0.as_str(), c));
+                }
+            }
+        }
         let n = order.len();
+        let mut at = vec![usize::MAX; all.len()];
+        for (k, &i) in order.iter().enumerate() {
+            at[i] = k;
+        }
         let mut anc = Bits::new(n);
         let mut parents = Vec::with_capacity(n);
-        for (i, id) in order.iter().enumerate() {
-            let ps: Vec<usize> = by_id[*id]
+        let mut kids = vec![Vec::new(); n];
+        for (k, &i) in order.iter().enumerate() {
+            let ps: Vec<usize> = all[i]
+                .1
                 .parents
                 .iter()
-                .map(|p| index[p.as_str()])
+                .map(|p| at[index[p.as_str()]])
                 .collect();
             for &p in &ps {
-                anc.set(i, p);
-                anc.merge(i, p);
+                anc.set(k, p);
+                anc.merge(k, p);
+                kids[p].push(k);
             }
             parents.push(ps);
         }
-        let ids: Vec<String> = order.iter().map(|s| (*s).to_owned()).collect();
-        let entries = ids.iter().map(|id| by_id[id].clone()).collect();
-        Graph {
+        let mut slots: Vec<Option<(String, Entry)>> = all.into_iter().map(Some).collect();
+        let (ids, entries) = order
+            .iter()
+            .map(|&i| slots[i].take().expect("each entry once"))
+            .unzip();
+        Some(Graph {
             entries,
             ids,
             parents,
+            children: kids,
             anc,
-        }
+        })
     }
 
     fn concurrent(&self, i: usize, j: usize) -> bool {
         i != j && !self.anc.has(i, j) && !self.anc.has(j, i)
     }
+}
 
-    /// Who belongs after the entries `within` says, of those labelled In.
-    fn fold(&self, labels: &[Label], within: impl Fn(usize) -> bool, heads: bool) -> State {
-        let live: Vec<usize> = (0..self.entries.len())
-            .filter(|&i| labels[i] == Label::In && within(i))
+/// The entries that count so far, by kind, to read the state before any
+/// entry from its ancestors alone: who belongs, and the phrase in force.
+#[derive(Default)]
+struct Counted<'g> {
+    adds: HashMap<&'g str, Vec<usize>>,
+    removes: HashMap<&'g str, Vec<usize>>,
+    removals: Vec<usize>,
+    phrases: Vec<usize>,
+}
+
+impl<'g> Counted<'g> {
+    fn take(&mut self, g: &'g Graph, i: usize) {
+        let e = &g.entries[i];
+        if let Some(m) = e.adds() {
+            self.adds.entry(m.id.as_str()).or_default().push(i);
+        }
+        if let Some(d) = e.removes() {
+            self.removes.entry(d).or_default().push(i);
+            self.removals.push(i);
+        }
+        if e.phrase().is_some() {
+            self.phrases.push(i);
+        }
+    }
+
+    /// `device` as a member before entry `at` (`at == None`: after them
+    /// all). An add counts if every removal of that device came before
+    /// it; of those, the one last in the shared order gives the keys.
+    fn member(&self, g: &'g Graph, at: Option<usize>, device: &str) -> Option<&'g Member> {
+        let before = |j: usize| at.is_none_or(|i| g.anc.has(i, j));
+        let gone: Vec<usize> = self
+            .removes
+            .get(device)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&r| before(r))
             .collect();
-        let mut adds: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-        let mut removes: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
-        let mut phrases: Vec<usize> = Vec::new();
-        for &i in &live {
-            match &self.entries[i].op {
-                Op::Genesis { device, .. } => {
-                    adds.entry(&device.id).or_default().push(i);
-                    phrases.push(i);
-                }
-                Op::Add { device } => adds.entry(&device.id).or_default().push(i),
-                Op::Remove { device } => removes.entry(device).or_default().push(i),
-                Op::Phrase { .. } => phrases.push(i),
-            }
-        }
-        let mut st = State::default();
-        for (id, list) in &adds {
-            let gone = removes.get(id).map(Vec::as_slice).unwrap_or_default();
-            // An add counts if every removal of that device came before it:
-            // a removal at the same time as an add wins.
-            let add = list
-                .iter()
-                .rev()
-                .find(|&&a| gone.iter().all(|&r| self.anc.has(a, r)));
-            if let Some(&a) = add {
-                let m = match &self.entries[a].op {
-                    Op::Genesis { device, .. } | Op::Add { device } => device.clone(),
-                    _ => unreachable!("adds hold adds"),
-                };
-                st.members.insert((*id).to_owned(), m);
-            }
-        }
-        for id in removes.keys() {
-            if !st.members.contains_key(*id) {
-                st.removed.insert((*id).to_owned());
-            }
-        }
-        let tips: Vec<usize> = phrases
+        // An add after every removal comes later in the shared order than
+        // each of them: only those are looked at.
+        let last = gone.iter().copied().max();
+        let mut adds: Vec<usize> = self
+            .adds
+            .get(device)?
             .iter()
             .copied()
-            .filter(|&p| !phrases.iter().any(|&q| q != p && self.anc.has(q, p)))
+            .filter(|&a| last.is_none_or(|r| a > r) && before(a))
             .collect();
-        if let [p] = tips[..] {
-            let all_removals_before = removes.values().flatten().all(|&r| self.anc.has(p, r));
-            if all_removals_before {
-                st.recovery = match &self.entries[p].op {
-                    Op::Genesis { recovery, .. } | Op::Phrase { recovery } => {
-                        Some(recovery.clone())
-                    }
-                    _ => None,
-                };
-            }
-        }
-        if heads {
-            st.heads = live
-                .iter()
-                .filter(|&&i| !live.iter().any(|&j| self.anc.has(j, i)))
-                .map(|&i| self.ids[i].clone())
-                .collect();
-            st.heads.sort();
-        }
-        st
+        adds.sort_unstable_by(|a, b| b.cmp(a));
+        adds.into_iter()
+            .find(|&a| gone.iter().all(|&r| g.anc.has(a, r)))
+            .and_then(|a| g.entries[a].adds())
+    }
+
+    /// The phrase in force before entry `at` (`None`: after them all):
+    /// the one replacement every other came before, and every removal
+    /// too.
+    fn recovery(&self, g: &'g Graph, at: Option<usize>) -> Option<&'g [u8]> {
+        let before = |j: usize| at.is_none_or(|i| g.anc.has(i, j));
+        let phrases: Vec<usize> = self
+            .phrases
+            .iter()
+            .copied()
+            .filter(|&p| before(p))
+            .collect();
+        let &last = phrases.iter().max()?;
+        let alone = phrases.iter().all(|&p| p == last || g.anc.has(last, p));
+        let settled = self
+            .removals
+            .iter()
+            .all(|&r| !before(r) || g.anc.has(last, r));
+        (alone && settled)
+            .then(|| g.entries[last].phrase())
+            .flatten()
     }
 }
 
-/// Whether `e` may be applied on top of `st`.
-fn authorized(e: &Entry, st: &State) -> bool {
-    let key = if e.by == RECOVERY {
+/// Whether entry `i` may be applied on top of the entries before it.
+fn authorized(g: &Graph, counted: &Counted<'_>, i: usize) -> bool {
+    let e = &g.entries[i];
+    let key: &[u8] = if e.by == RECOVERY {
         // The phrase only ever adds a device, and only while it stands.
-        match (&e.op, &st.recovery) {
-            (Op::Add { .. }, Some(k)) => k.clone(),
+        match (&e.op, counted.recovery(g, Some(i))) {
+            (Op::Add { .. }, Some(k)) => k,
             _ => return false,
         }
     } else {
-        match st.members.get(&e.by) {
-            Some(m) => m.sign.clone(),
+        match counted.member(g, Some(i), &e.by) {
+            Some(m) => &m.sign,
             None => return false,
         }
     };
-    if !e.signed_by(&key) {
+    if !e.signed_by(&g.ids[i], key) {
         return false;
     }
     match &e.op {
         Op::Genesis { .. } => false,
-        Op::Add { device } => device.valid() && !st.members.contains_key(&device.id),
-        Op::Remove { device } => st.members.contains_key(device),
+        Op::Add { device } => device.valid() && counted.member(g, Some(i), &device.id).is_none(),
+        Op::Remove { device } => counted.member(g, Some(i), device).is_some(),
         Op::Phrase { recovery } => recovery.len() == 32,
     }
 }
 
 /// Reads the log made of `entries` (from every copy and from this device,
-/// in any order and with repeats) from its beginning `root`. `fixed` are
-/// removals this device took before: they stand whatever else comes in.
+/// in any order and with repeats) from its beginning `root`. `own` are
+/// removals this device made: it knows they are genuine, so one stands
+/// against a removal of this device made beside it. Nobody else's
+/// removal gets that: a device can't tell a genuine one from a back-dated
+/// one by which it saw first.
+///
+/// Each entry is read once its parents are, from what counts among its
+/// ancestors; one that waits on a removal made beside it is read again
+/// when that removal is decided. Entries still waiting at the end are
+/// removals that contradict each other ([Eval::conflict]).
 pub fn evaluate(
     entries: impl IntoIterator<Item = Entry>,
     root: &str,
-    fixed: &BTreeSet<String>,
+    own: &BTreeSet<String>,
 ) -> Eval {
-    let g = Graph::build(entries, root);
+    let Some(g) = Graph::build(entries, root) else {
+        return Eval {
+            overflow: true,
+            ..Eval::default()
+        };
+    };
     let n = g.entries.len();
-    let mut labels = vec![Label::Undecided; n];
     let genesis_ok = n > 0
         && match &g.entries[0].op {
             Op::Genesis { device, recovery } => {
                 g.entries[0].by == device.id
                     && device.valid()
                     && recovery.len() == 32
-                    && g.entries[0].signed_by(&device.sign)
+                    && g.entries[0].signed_by(&g.ids[0], &device.sign)
             }
             _ => false,
         };
     if !genesis_ok {
         return Eval::default();
     }
-    labels[0] = Label::In;
-    for i in 1..n {
-        if g.entries[i].removes().is_some() && fixed.contains(&g.ids[i]) {
-            labels[i] = Label::In;
-        }
-    }
     // What can undo each entry: removals of its author, and for the phrase
     // any removal or replacement.
-    let mut removals_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut removals_of: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut turns: Vec<usize> = Vec::new();
     for (i, e) in g.entries.iter().enumerate() {
         if let Some(d) = e.removes() {
@@ -501,58 +563,86 @@ pub fn evaluate(
             turns.push(i);
         }
     }
-    let mut states: Vec<Option<State>> = vec![None; n];
-    loop {
-        let mut changed = false;
-        // Settled: decided, and so is everything before it.
-        let mut settled = vec![false; n];
-        for i in 0..n {
-            settled[i] = labels[i] != Label::Undecided && g.parents[i].iter().all(|&p| settled[p]);
+    let mut labels = vec![Label::Undecided; n];
+    let mut counted = Counted::default();
+    labels[0] = Label::In;
+    counted.take(&g, 0);
+    // This device's own removals stand, whatever was made beside them.
+    for i in 1..n {
+        if g.entries[i].removes().is_some() && own.contains(&g.ids[i]) {
+            labels[i] = Label::In;
         }
-        for i in 1..n {
-            if labels[i] != Label::Undecided || !g.parents[i].iter().all(|&p| settled[p]) {
-                continue;
-            }
+    }
+    // Parents not yet read, entries ready to read, entries waiting on a
+    // removal made beside them.
+    let mut unread: Vec<usize> = g.parents.iter().map(Vec::len).collect();
+    let mut ready: Vec<usize> = Vec::new();
+    let mut waiters: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut read = vec![false; n];
+    read[0] = true;
+    for &c in &g.children[0] {
+        unread[c] -= 1;
+        if unread[c] == 0 {
+            ready.push(c);
+        }
+    }
+    while let Some(i) = ready.pop() {
+        if read[i] {
+            continue;
+        }
+        if labels[i] == Label::Undecided {
             let e = &g.entries[i];
-            let st = states[i].get_or_insert_with(|| g.fold(&labels, |j| g.anc.has(i, j), false));
-            if !authorized(e, st) {
-                labels[i] = Label::Out;
-                changed = true;
-                continue;
-            }
-            let against: &[usize] = if e.by == RECOVERY {
+            let against: Vec<usize> = if e.by == RECOVERY {
                 &turns
             } else {
                 removals_of
                     .get(e.by.as_str())
                     .map(Vec::as_slice)
                     .unwrap_or_default()
-            };
-            let against = against.iter().copied().filter(|&r| g.concurrent(i, r));
-            let mut all_out = true;
-            let mut any_in = false;
-            for r in against {
-                match labels[r] {
-                    Label::In => any_in = true,
-                    Label::Undecided => all_out = false,
-                    Label::Out => {}
+            }
+            .iter()
+            .copied()
+            .filter(|&r| g.concurrent(i, r))
+            .collect();
+            let label = if against.iter().any(|&r| labels[r] == Label::In)
+                || !authorized(&g, &counted, i)
+            {
+                Label::Out
+            } else if against.iter().any(|&r| labels[r] == Label::Undecided) {
+                for &r in &against {
+                    if labels[r] == Label::Undecided {
+                        waiters[r].push(i);
+                    }
                 }
-            }
-            if any_in {
-                labels[i] = Label::Out;
-                changed = true;
-            } else if all_out {
-                labels[i] = Label::In;
-                changed = true;
-            }
+                continue;
+            } else {
+                Label::In
+            };
+            labels[i] = label;
         }
-        if !changed {
-            break;
+        // Decided, with everything before it: its children may be read,
+        // and whatever waited on it read again.
+        read[i] = true;
+        if labels[i] == Label::In {
+            counted.take(&g, i);
+        }
+        ready.append(&mut waiters[i]);
+        for &c in &g.children[i] {
+            unread[c] -= 1;
+            if unread[c] == 0 {
+                ready.push(c);
+            }
         }
     }
+    // What still waits with everything before it read: the removals that
+    // contradict each other, and what they undo (what follows them waits
+    // only because they do).
     let mut conflict = BTreeSet::new();
     for i in 0..n {
-        if labels[i] == Label::Undecided {
+        if read[i] {
+            continue;
+        }
+        if g.parents[i].iter().all(|&p| read[p]) {
             let e = &g.entries[i];
             if let Some(d) = e.removes() {
                 conflict.insert(d.to_owned());
@@ -561,20 +651,37 @@ pub fn evaluate(
                 conflict.insert(e.by.clone());
             }
         }
+        // An own removal waiting on its parents counts for nothing yet.
+        labels[i] = Label::Undecided;
     }
-    let state = g.fold(&labels, |_| true, true);
-    // What counts and everything it follows.
+    // Who belongs after everything that counts, and its newest entries.
+    let mut state = State::default();
+    let ids: BTreeSet<&str> = counted.adds.keys().copied().collect();
+    for id in ids {
+        if let Some(m) = counted.member(&g, None, id) {
+            state.members.insert(id.to_owned(), m.clone());
+        }
+    }
+    for id in counted.removes.keys() {
+        if !state.members.contains_key(*id) {
+            state.removed.insert((*id).to_owned());
+        }
+    }
+    state.recovery = counted.recovery(&g, None).map(<[u8]>::to_vec);
+    let mut followed = vec![false; n];
     let mut keep = vec![false; n];
     for i in (0..n).rev() {
-        if labels[i] == Label::In {
-            keep[i] = true;
+        let counts = labels[i] == Label::In;
+        if counts && !followed[i] {
+            state.heads.push(g.ids[i].clone());
         }
-        if keep[i] {
-            for &p in &g.parents[i] {
-                keep[p] = true;
-            }
+        keep[i] |= counts;
+        for &p in &g.parents[i] {
+            followed[p] |= counts || followed[i];
+            keep[p] |= keep[i];
         }
     }
+    state.heads.sort();
     Eval {
         state,
         accepted: (0..n)
@@ -586,6 +693,7 @@ pub fn evaluate(
             .map(|i| g.entries[i].clone())
             .collect(),
         conflict,
+        overflow: false,
     }
 }
 
@@ -698,11 +806,11 @@ mod tests {
             &BTreeSet::new(),
         );
         assert_eq!(ids(&e.state), ["a", "b"]);
-        // On A, which took its removal of C, C's made-up unlink of A loses.
+        // On A, which made its removal of C, C's made-up unlink of A loses.
         let ra = after(&[&ac], remove(&a), &c);
-        let fixed: BTreeSet<String> = [rc.id()].into();
+        let own: BTreeSet<String> = [rc.id()].into();
         let all = [g.clone(), ab, ac, rc, cx, ra];
-        let e = evaluate(all.clone(), &g.id(), &fixed);
+        let e = evaluate(all.clone(), &g.id(), &own);
         assert!(e.conflict.is_empty());
         assert_eq!(ids(&e.state), ["a", "b"]);
         // On a device that saw neither first, nothing tells which is
@@ -786,5 +894,127 @@ mod tests {
         assert_eq!(ids(&e.state), ["a", "b"]);
         assert_eq!(e.state.recovery, None);
         assert_eq!(e.state.heads.len(), 2);
+    }
+
+    /// The removed device deletes the genuine unlink from the folder and
+    /// puts its own, back-dated, in its place: a device that sees that one
+    /// first takes it (it can't know better), but once it sees the genuine
+    /// one too it stops, whatever it did in between. Only the device that
+    /// made the genuine removal goes on.
+    #[test]
+    fn a_back_dated_removal_seen_first_is_not_taken_for_genuine() {
+        let (a, b, c) = (d("a"), d("b"), d("c"));
+        let g = start(&a, &Key::generate());
+        let ab = after(&[&g], add(&b), &a);
+        let ac = after(&[&ab], add(&c), &a);
+        let rc = after(&[&ac], remove(&c), &a);
+        let ra = after(&[&ac], remove(&a), &c);
+        let none = BTreeSet::new();
+        let first = evaluate(
+            [g.clone(), ab.clone(), ac.clone(), ra.clone()],
+            &g.id(),
+            &none,
+        );
+        assert_eq!(ids(&first.state), ["b", "c"]);
+        // B wrote after it (a new phrase, as a device does after a removal).
+        let pb = after(
+            &[&ra],
+            Op::Phrase {
+                recovery: phrase(&Key::generate()),
+            },
+            &b,
+        );
+        let mut log = first.kept.clone();
+        log.push(pb.clone());
+        let all = [g.clone(), ab, ac, rc.clone(), ra, pb];
+        let e = evaluate(log.into_iter().chain(all.clone()), &g.id(), &none);
+        assert_eq!(
+            e.conflict.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+        // A stands by its own.
+        let e = evaluate(all, &g.id(), &[rc.id()].into());
+        assert!(e.conflict.is_empty());
+        assert_eq!(ids(&e.state), ["a", "b"]);
+    }
+
+    /// A log as long as a copy may carry, beside a removed device's branch
+    /// as long again, reads in well under a second, and faster again from
+    /// signatures already checked. (Signature crates are optimised in debug
+    /// builds too, see the workspace's Cargo.toml: unoptimised, each check
+    /// takes milliseconds.)
+    #[test]
+    fn a_full_log_reads_quickly() {
+        let (a, x) = (d("a"), d("x"));
+        let g = start(&a, &Key::generate());
+        let mut log = vec![g.clone()];
+        let p = phrase(&Key::generate());
+        for i in 1..MAX_ENTRIES {
+            let op = match i % 3 {
+                1 => add(&x),
+                2 => remove(&x),
+                _ => Op::Phrase {
+                    recovery: p.clone(),
+                },
+            };
+            log.push(after(&[log.last().expect("one")], op, &a));
+        }
+        // A removed device's side branch, as long again: none of it counts.
+        let (b, c) = (d("b"), d("c"));
+        let ab = after(&[&g], add(&b), &a);
+        let ac = after(&[&ab], add(&c), &a);
+        let rc = after(&[&ac], remove(&c), &a);
+        let mut side = vec![ac.clone()];
+        for _ in 1..MAX_ENTRIES - 3 {
+            let op = Op::Phrase {
+                recovery: p.clone(),
+            };
+            side.push(after(&[side.last().expect("one")], op, &c));
+        }
+        let all: Vec<Entry> = log
+            .iter()
+            .cloned()
+            .chain([ab, rc.clone()])
+            .chain(side)
+            .collect();
+        for round in 0..2 {
+            let t = std::time::Instant::now();
+            let e = evaluate(all.iter().cloned(), &g.id(), &BTreeSet::new());
+            let took = t.elapsed().as_secs_f64();
+            eprintln!("round {round}: {} entries in {took:.2} s", all.len());
+            assert!(took < 5.0, "{took} s");
+            assert!(!e.overflow && e.conflict.is_empty());
+            assert_eq!(ids(&e.state), ["a", "b"]);
+            assert!(e.accepted.contains(&rc.id()));
+            assert_eq!(e.accepted.len(), MAX_ENTRIES + 3);
+        }
+    }
+
+    /// Past [MAX_UNION] entries nothing is read: none is left out silently,
+    /// which would let whoever filled the folder choose which.
+    #[test]
+    fn too_many_entries_are_an_error_not_a_cut() {
+        let a = d("a");
+        let g = start(&a, &Key::generate());
+        let mut log = vec![g.clone()];
+        for _ in 0..MAX_UNION {
+            // Unsigned: too many is found before any signature is checked.
+            let e = Entry {
+                parents: vec![log.last().expect("one").id()],
+                op: Op::Phrase {
+                    recovery: vec![0; 32],
+                },
+                by: "a".into(),
+                sig: Vec::new(),
+            };
+            log.push(e);
+        }
+        let e = evaluate(log.clone(), &g.id(), &BTreeSet::new());
+        assert!(e.overflow);
+        assert!(e.accepted.is_empty() && e.state.members.is_empty());
+        log.truncate(MAX_UNION);
+        let e = evaluate(log, &g.id(), &BTreeSet::new());
+        assert!(!e.overflow);
+        assert_eq!(ids(&e.state), ["a"]);
     }
 }

@@ -57,6 +57,15 @@ pub enum SyncError {
     /// again.
     #[error("two devices removed each other")]
     Conflict(Vec<String>),
+    /// A linked device (this one, by id) removed this device: a signed
+    /// entry of the log says so, and a copy it signed is sealed without
+    /// this device.
+    #[error("another device unlinked this one")]
+    Unlinked(String),
+    /// The recovery phrase typed was replaced since: copies sealed after
+    /// it, by devices of the space it opens, need the newest one.
+    #[error("this recovery phrase was replaced by a newer one")]
+    PhraseReplaced,
     /// The space's generation can't count further.
     #[error("the space's generation is used up")]
     Generation,
@@ -259,6 +268,9 @@ struct Opened {
     sealed: Option<SealedSpace>,
     /// This device is joining: it writes itself in whatever else changed.
     joining: bool,
+    /// Devices that turned sync off since this device last looked, by
+    /// name: they still know the passwords the space carried.
+    left: Vec<String>,
     /// An older build's space, opened with the recovery phrase: it has no
     /// log yet, and this device begins one.
     convert: bool,
@@ -274,9 +286,16 @@ struct Opened {
 /// wrap.
 ///
 /// `own` is the newest copy a linked device took or wrote, from its own
-/// database: when the folder holds copies it opens but none it can take
-/// (older copies put back, or only copies by a device that left since), it
-/// starts from that one and writes again, which puts the folder right.
+/// database: when the folder holds no copy it can take (older copies put
+/// back, copies by a device that left since, or only copies it can't open
+/// though it still belongs), it starts from that one and writes again,
+/// which puts the folder right.
+///
+/// A linked device is unlinked ([SyncError::Unlinked]) only when the log
+/// says so, by an entry signed by a member, and a copy that member's
+/// fellow members signed is sealed without it: a copy lacking its wrap
+/// proves nothing by itself, since anyone who can write to the folder
+/// can make one.
 fn open_copies(
     notes: &[(String, Note)],
     trust: &Trust,
@@ -284,7 +303,11 @@ fn open_copies(
     anchor: Anchor<'_>,
     own: Option<&SealedSpace>,
 ) -> Result<Opened> {
-    let linked = matches!(opener, Opener::Me(_));
+    let me = match opener {
+        Opener::Me(me) => Some(me),
+        _ => None,
+    };
+    let linked = me.is_some();
     if linked && !trust.verified() {
         return Err(SyncError::Unverified);
     }
@@ -294,9 +317,7 @@ fn open_copies(
         .map(|(id, _)| id.clone())
         .collect();
     let mut failed = 0;
-    let mut newer = 0;
-    let mut not_linked = false;
-    let mut opened: Vec<(SealedSpace, Space)> = Vec::new();
+    let mut stored: Vec<(&SealedSpace, Option<Space>)> = Vec::new();
     let mut v1 = Vec::new();
     for (_, note) in notes {
         let Note::Space(sealed) = note else { continue };
@@ -304,19 +325,19 @@ fn open_copies(
             v1.push(sealed);
             continue;
         }
-        newer += 1;
         match opener.open(sealed) {
-            Ok(s) => opened.push((sealed.clone(), s)),
-            Err(SpaceError::NotLinked) => not_linked = true,
+            Ok(s) => stored.push((sealed, Some(s))),
             Err(SpaceError::Newer) => return Err(SpaceError::Newer.into()),
-            Err(_) => failed += 1,
+            Err(SpaceError::NotLinked) => stored.push((sealed, None)),
+            Err(_) => {
+                failed += 1;
+                stored.push((sealed, None));
+            }
         }
     }
-    let own = own
-        .filter(|_| linked && !opened.is_empty())
-        .and_then(|s| Some((s.clone(), opener.open(s).ok()?)));
-    if opened.is_empty() {
-        if matches!(opener, Opener::Recovery(_)) && newer == 0 && !v1.is_empty() {
+    let any_open = stored.iter().any(|(_, s)| s.is_some());
+    if stored.is_empty() {
+        if let Opener::Recovery(_) = opener {
             let mut last = SyncError::NoSpace;
             for sealed in v1.into_iter().rev() {
                 match opener.open(sealed) {
@@ -330,6 +351,7 @@ fn open_copies(
                             rotate: false,
                             sealed: None,
                             joining: false,
+                            left: Vec::new(),
                             convert: true,
                             rewrite: false,
                         })
@@ -339,40 +361,137 @@ fn open_copies(
             }
             return Err(last);
         }
-        return Err(if !linked {
-            if newer == 0 && v1.is_empty() {
-                SyncError::NoSpace
-            } else {
-                SpaceError::Sealed.into()
-            }
-        } else if not_linked {
-            SpaceError::NotLinked.into()
-        } else if failed > 0 || !v1.is_empty() {
-            log_refused(failed.max(1));
+        return Err(if v1.is_empty() {
+            SyncError::NoSpace
+        } else if linked {
+            log_refused(1);
             SyncError::Rollback
         } else {
-            SyncError::NoSpace
+            SpaceError::Sealed.into()
         });
     }
-    let pairs: Vec<(&SealedSpace, &Space)> = opened.iter().map(|(a, b)| (a, b)).collect();
-    let verdict = space_trust::judge(trust, anchor, &pairs);
+    if !linked && !any_open {
+        // The phrase, or the key a pairing handed over, opens none of them.
+        // A phrase some copy's log once put in force was replaced since.
+        if let Anchor::Phrase(public) = anchor {
+            let once = stored.iter().flat_map(|(s, _)| &s.log).any(|e| {
+                matches!(&e.op, Op::Phrase { recovery } | Op::Genesis { recovery, .. }
+                    if recovery.as_slice() == public)
+            });
+            if once {
+                return Err(SyncError::PhraseReplaced);
+            }
+        }
+        return Err(SpaceError::Sealed.into());
+    }
+    let copies: Vec<space_trust::Stored<'_>> = stored
+        .iter()
+        .map(|(sealed, s)| (*sealed, s.as_ref()))
+        .collect();
+    let verdict = space_trust::judge(trust, anchor, &copies);
+    if verdict.overflow {
+        log(
+            Level::Warn,
+            "space",
+            "the copies of the sync space carry more log entries than one reading takes",
+        );
+        return Err(if linked {
+            SyncError::Rollback
+        } else {
+            SpaceError::Sealed.into()
+        });
+    }
     if !verdict.conflict.is_empty() {
         return Err(SyncError::Conflict(verdict.conflict.into_iter().collect()));
     }
-    let refused = verdict.refused + failed;
+    let members = verdict.state.members.clone();
+    if let Anchor::Phrase(_) = anchor {
+        // Copies the phrase can't open, signed by a device of the space it
+        // opens: they were sealed after the phrase was replaced.
+        let newer = copies.iter().any(|(sealed, space)| {
+            space.is_none()
+                && members
+                    .get(&sealed.signer)
+                    .is_some_and(|m| sealed.signed_by(&m.sign))
+        });
+        if newer {
+            return Err(SyncError::PhraseReplaced);
+        }
+    }
+    let mut refused = verdict.refused + failed;
+    let mut quit = Vec::new();
+    if let Some(me) = me {
+        let id = me.device.id.as_str();
+        let before = trust.state().members;
+        if !members.contains_key(id) {
+            // Removed by an entry that counts: believed only from a copy a
+            // member signed without this device's key.
+            let signed_without = copies.iter().any(|(sealed, _)| {
+                !sealed.sealed_for(id)
+                    && members
+                        .get(&sealed.signer)
+                        .or_else(|| before.get(&sealed.signer))
+                        .is_some_and(|m| sealed.signed_by(&m.sign))
+            });
+            return Err(match verdict.eval.removed_by(id) {
+                Some(by) if signed_without => SyncError::Unlinked(by.to_owned()),
+                _ => {
+                    log_refused(refused.max(1));
+                    SyncError::Rollback
+                }
+            });
+        }
+        // A member that left this device out over a removal of it this
+        // device doesn't take (one made beside its own): said as an older
+        // copy left out, and written over.
+        refused += copies
+            .iter()
+            .filter(|(sealed, space)| {
+                space.is_none()
+                    && members.contains_key(&sealed.signer)
+                    && sealed.log.iter().any(|e| e.removes() == Some(id))
+            })
+            .count() as u32;
+        // Devices that turned sync off since this one last looked.
+        quit = before
+            .into_keys()
+            .filter(|d| !members.contains_key(d))
+            .filter(|d| verdict.eval.removed_by(d) == Some(d.as_str()))
+            .collect();
+    }
+    let top = verdict.accepted.iter().copied().max_by(|&a, &b| {
+        let (sa, ca) = copies[a];
+        let (sb, cb) = copies[b];
+        let (ca, cb) = (ca.expect("taken"), cb.expect("taken"));
+        (ca.content.generation, &sa.signer).cmp(&(cb.content.generation, &sb.signer))
+    });
+    let own = own
+        .filter(|_| linked)
+        .and_then(|s| Some((s.clone(), opener.open(s).ok()?)));
+    // Their names, from any copy that still lists them.
+    let left: Vec<String> = quit
+        .iter()
+        .filter_map(|gone| {
+            copies
+                .iter()
+                .filter_map(|(_, s)| *s)
+                .chain(own.as_ref().map(|(_, s)| s))
+                .flat_map(|s| &s.content.devices)
+                .find(|d| &d.id == gone)
+                .map(|d| d.name.clone())
+        })
+        .collect();
+    let mut rotate = verdict.rotate;
+    let rewrite = top.is_none();
+    if rewrite && verdict.left == 0 {
+        // Nothing in the folder could be taken: said, and written over.
+        refused = refused.max(1);
+    }
     if refused > 0 {
         log_refused(refused);
     }
-    let members = verdict.state.members;
-    let top = verdict.accepted.iter().copied().max_by(|&a, &b| {
-        let (sa, ca) = &opened[a];
-        let (sb, cb) = &opened[b];
-        (ca.content.generation, &sa.signer).cmp(&(cb.content.generation, &sb.signer))
-    });
-    let mut rotate = verdict.rotate;
-    let rewrite = top.is_none();
     let (top_sealed, mut space) = match (top, own) {
-        (Some(top), _) => opened[top].clone(),
+        (Some(top), _) => (copies[top].0.clone(), copies[top].1.expect("taken").clone()),
         (None, Some((sealed, space))) => {
             // Its own newest copy: taken before, so trusted then; written
             // again with a new key if it was sealed for anyone gone since.
@@ -381,15 +500,15 @@ fn open_copies(
             (sealed, space)
         }
         (None, None) => {
-            return Err(if !linked || not_linked {
-                SpaceError::NotLinked.into()
-            } else {
+            return Err(if linked {
                 SyncError::Rollback
+            } else {
+                SpaceError::NotLinked.into()
             })
         }
     };
     for &i in &verdict.accepted {
-        let other = &opened[i].1;
+        let other = copies[i].1.expect("taken");
         space.content.horizon = space.content.horizon.max(other.content.horizon);
         if Some(i) == top {
             continue;
@@ -416,6 +535,7 @@ fn open_copies(
         rotate,
         sealed: Some(top_sealed),
         joining: false,
+        left,
         convert: false,
         rewrite,
     })
@@ -444,8 +564,9 @@ async fn open_checked(t: &mut impl Transport, me: &Me, local: &Local) -> Result<
         Anchor::Linked,
         own.as_ref(),
     )?;
+    // [open_copies] says Unlinked, with proof, before it gets here.
     if !opened.members.contains_key(&me.device.id) {
-        return Err(SpaceError::NotLinked.into());
+        return Err(SyncError::Rollback);
     }
     Ok(opened)
 }
@@ -517,8 +638,11 @@ pub struct Report {
 #[derive(Debug)]
 pub enum Round {
     Done(Box<Report>),
-    /// Another device unlinked this one.
-    Unlinked,
+    /// Another device (this one, by id) unlinked this one: nothing is
+    /// taken or written. What this device trusts stays, so Devices & sync
+    /// can say who did it, until the person links it again or turns sync
+    /// off here.
+    Unlinked(String),
     /// Another device moved the space to this address's mailbox.
     Moved(String),
     /// The space is in a format newer than this build: nothing happens
@@ -614,6 +738,7 @@ async fn settle(
         sealed,
         joining,
         rewrite,
+        left,
         ..
     } = opened;
     let now_ms = space_merge::now_ms();
@@ -664,6 +789,17 @@ async fn settle(
     local.outdated = outdated;
     local.conflict.clear();
     local.recovery_changed |= rotated;
+    local.unlinked.clear();
+    // The first device to change the key after a device turned sync off
+    // asks for the passwords it knew, as after an unlink: it may have been
+    // stolen, and turned off by whoever has it.
+    if rotated && !left.is_empty() {
+        let exposed = passwords_in(&remote);
+        if !exposed.is_empty() {
+            local.exposed = exposed;
+            local.exposed_device = left.join(", ");
+        }
+    }
     if let Some(s) = &sealed {
         local.last_copy = b64(&s.to_bytes());
     }
@@ -733,7 +869,11 @@ pub async fn round(
         return Ok(Round::Unverified);
     }
     let opened = match open_checked(t, me, &local).await {
-        Err(SyncError::Space(SpaceError::NotLinked)) => return Ok(Round::Unlinked),
+        Err(SyncError::Unlinked(by)) => {
+            local.unlinked.clone_from(&by);
+            save(store, &local, me)?;
+            return Ok(Round::Unlinked(by));
+        }
         Err(SyncError::Space(SpaceError::Newer)) => return Ok(Round::Newer),
         Err(SyncError::NoSpace) => {
             return moved_to(t)
@@ -1380,7 +1520,7 @@ pub async fn unlink(
 pub async fn leave(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Result<bool> {
     let saved = lock(store).space_local();
     let local = match saved {
-        Ok(l) if l.trust.verified() && l.conflict.is_empty() => l,
+        Ok(l) if l.trust.verified() && l.conflict.is_empty() && l.unlinked.is_empty() => l,
         Ok(_) | Err(crate::StoreError::SpaceState(_)) => {
             lock(store).space_forget()?;
             return Ok(false);
@@ -1389,7 +1529,11 @@ pub async fn leave(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> Res
     };
     let opened = match open_checked(t, me, &local).await {
         Ok(o) => o,
-        Err(SyncError::Conflict(_) | SyncError::Space(SpaceError::NotLinked)) => {
+        Err(
+            SyncError::Conflict(_)
+            | SyncError::Unlinked(_)
+            | SyncError::Space(SpaceError::NotLinked),
+        ) => {
             lock(store).space_forget()?;
             return Ok(false);
         }

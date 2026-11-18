@@ -4203,6 +4203,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Diese Wörter öffnen deinen Bereich nicht. Prüfe sie und versuche es erneut.';
 
   @override
+  String get pairPhraseOld =>
+      'Diese Wiederherstellungsphrase wurde ersetzt: Dein Bereich hat eine neuere bekommen, als ein Gerät getrennt wurde oder die Synchronisierung ausgeschaltet hat. Verwende die neueste Phrase oder einen Code von einem verbundenen Gerät.';
+
+  @override
   String get pairContinue => 'Weiter';
 
   @override
@@ -6331,6 +6335,15 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get syncLinkAgain => 'Erneut verbinden';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name hat dieses Gerät entfernt';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'Die Synchronisierung auf diesem Gerät ist angehalten; seine Konten und E-Mails bleiben hier. Wenn du das nicht warst, verbinde es erneut von einem Gerät, das du noch hast. Sonst schalte die Synchronisierung hier aus.';
 
   @override
   String get syncExposedNowTitle => 'Ändere diese Passwörter jetzt';

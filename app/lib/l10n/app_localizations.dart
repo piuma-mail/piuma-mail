@@ -6394,6 +6394,12 @@ abstract class AppLocalizations {
   /// **'These words don\'t open your space. Check them and try again.'**
   String get pairPhraseWrong;
 
+  /// No description provided for @pairPhraseOld.
+  ///
+  /// In en, this message translates to:
+  /// **'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.'**
+  String get pairPhraseOld;
+
   /// No description provided for @pairContinue.
   ///
   /// In en, this message translates to:
@@ -9279,6 +9285,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Link again'**
   String get syncLinkAgain;
+
+  /// No description provided for @syncUnlinkedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} removed this device'**
+  String syncUnlinkedTitle(String name);
+
+  /// No description provided for @syncUnlinkedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync stopped on this device; its accounts and mail stay here. If that wasn’t you, link it again from a device you still have. Otherwise, turn sync off here.'**
+  String get syncUnlinkedBody;
 
   /// No description provided for @syncExposedNowTitle.
   ///

@@ -9642,15 +9642,16 @@ impl SseDecode for crate::api::engine::ErrorKind {
             8 => crate::api::engine::ErrorKind::NotAnImage,
             9 => crate::api::engine::ErrorKind::TooBig,
             10 => crate::api::engine::ErrorKind::WrongPhrase,
-            11 => crate::api::engine::ErrorKind::WrongCode,
-            12 => crate::api::engine::ErrorKind::NotLinked,
-            13 => crate::api::engine::ErrorKind::NoSpace,
-            14 => crate::api::engine::ErrorKind::Expired,
-            15 => crate::api::engine::ErrorKind::Refused,
-            16 => crate::api::engine::ErrorKind::Taken,
-            17 => crate::api::engine::ErrorKind::Rollback,
-            18 => crate::api::engine::ErrorKind::Outdated,
-            19 => crate::api::engine::ErrorKind::Other,
+            11 => crate::api::engine::ErrorKind::OldPhrase,
+            12 => crate::api::engine::ErrorKind::WrongCode,
+            13 => crate::api::engine::ErrorKind::NotLinked,
+            14 => crate::api::engine::ErrorKind::NoSpace,
+            15 => crate::api::engine::ErrorKind::Expired,
+            16 => crate::api::engine::ErrorKind::Refused,
+            17 => crate::api::engine::ErrorKind::Taken,
+            18 => crate::api::engine::ErrorKind::Rollback,
+            19 => crate::api::engine::ErrorKind::Outdated,
+            20 => crate::api::engine::ErrorKind::Other,
             _ => unreachable!("Invalid variant for ErrorKind: {}", inner),
         };
     }
@@ -12266,6 +12267,7 @@ impl SseDecode for crate::api::sync::SyncInfo {
         let mut var_recoveryChanged = <bool>::sse_decode(deserializer);
         let mut var_unverified = <bool>::sse_decode(deserializer);
         let mut var_conflict = <Vec<String>>::sse_decode(deserializer);
+        let mut var_unlinked = <Option<String>>::sse_decode(deserializer);
         let mut var_exposed = <Vec<String>>::sse_decode(deserializer);
         let mut var_exposedDevice = <String>::sse_decode(deserializer);
         return crate::api::sync::SyncInfo {
@@ -12278,6 +12280,7 @@ impl SseDecode for crate::api::sync::SyncInfo {
             recovery_changed: var_recoveryChanged,
             unverified: var_unverified,
             conflict: var_conflict,
+            unlinked: var_unlinked,
             exposed: var_exposed,
             exposed_device: var_exposedDevice,
         };
@@ -13680,15 +13683,16 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::ErrorKind {
             Self::NotAnImage => 8.into_dart(),
             Self::TooBig => 9.into_dart(),
             Self::WrongPhrase => 10.into_dart(),
-            Self::WrongCode => 11.into_dart(),
-            Self::NotLinked => 12.into_dart(),
-            Self::NoSpace => 13.into_dart(),
-            Self::Expired => 14.into_dart(),
-            Self::Refused => 15.into_dart(),
-            Self::Taken => 16.into_dart(),
-            Self::Rollback => 17.into_dart(),
-            Self::Outdated => 18.into_dart(),
-            Self::Other => 19.into_dart(),
+            Self::OldPhrase => 11.into_dart(),
+            Self::WrongCode => 12.into_dart(),
+            Self::NotLinked => 13.into_dart(),
+            Self::NoSpace => 14.into_dart(),
+            Self::Expired => 15.into_dart(),
+            Self::Refused => 16.into_dart(),
+            Self::Taken => 17.into_dart(),
+            Self::Rollback => 18.into_dart(),
+            Self::Outdated => 19.into_dart(),
+            Self::Other => 20.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -15751,6 +15755,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncInfo {
             self.recovery_changed.into_into_dart().into_dart(),
             self.unverified.into_into_dart().into_dart(),
             self.conflict.into_into_dart().into_dart(),
+            self.unlinked.into_into_dart().into_dart(),
             self.exposed.into_into_dart().into_dart(),
             self.exposed_device.into_into_dart().into_dart(),
         ]
@@ -16595,15 +16600,16 @@ impl SseEncode for crate::api::engine::ErrorKind {
                 crate::api::engine::ErrorKind::NotAnImage => 8,
                 crate::api::engine::ErrorKind::TooBig => 9,
                 crate::api::engine::ErrorKind::WrongPhrase => 10,
-                crate::api::engine::ErrorKind::WrongCode => 11,
-                crate::api::engine::ErrorKind::NotLinked => 12,
-                crate::api::engine::ErrorKind::NoSpace => 13,
-                crate::api::engine::ErrorKind::Expired => 14,
-                crate::api::engine::ErrorKind::Refused => 15,
-                crate::api::engine::ErrorKind::Taken => 16,
-                crate::api::engine::ErrorKind::Rollback => 17,
-                crate::api::engine::ErrorKind::Outdated => 18,
-                crate::api::engine::ErrorKind::Other => 19,
+                crate::api::engine::ErrorKind::OldPhrase => 11,
+                crate::api::engine::ErrorKind::WrongCode => 12,
+                crate::api::engine::ErrorKind::NotLinked => 13,
+                crate::api::engine::ErrorKind::NoSpace => 14,
+                crate::api::engine::ErrorKind::Expired => 15,
+                crate::api::engine::ErrorKind::Refused => 16,
+                crate::api::engine::ErrorKind::Taken => 17,
+                crate::api::engine::ErrorKind::Rollback => 18,
+                crate::api::engine::ErrorKind::Outdated => 19,
+                crate::api::engine::ErrorKind::Other => 20,
                 _ => {
                     unimplemented!("");
                 }
@@ -18641,6 +18647,7 @@ impl SseEncode for crate::api::sync::SyncInfo {
         <bool>::sse_encode(self.recovery_changed, serializer);
         <bool>::sse_encode(self.unverified, serializer);
         <Vec<String>>::sse_encode(self.conflict, serializer);
+        <Option<String>>::sse_encode(self.unlinked, serializer);
         <Vec<String>>::sse_encode(self.exposed, serializer);
         <String>::sse_encode(self.exposed_device, serializer);
     }

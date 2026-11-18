@@ -259,8 +259,11 @@ pub struct Content {
     /// The recovery key, so a linked device can show the phrase again.
     #[serde(default)]
     pub recovery: String,
-    /// Who belongs: the membership log ([crate::space_log]).
-    #[serde(default)]
+    /// Who belongs: the membership log ([crate::space_log]). Stored in the
+    /// clear beside the sealed content ([SealedSpace::log]), so a device
+    /// the space is no longer sealed for can still read who removed it;
+    /// sealed inside only by builds before that.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub log: Vec<Entry>,
     /// Tombstones stamped before this (milliseconds) were dropped: a device
     /// last merged before it takes the space's word for older rows.
@@ -366,12 +369,20 @@ pub struct SealedSpace {
     #[serde(with = "b64")]
     content: Vec<u8>,
     /// The device that wrote it, and its signature over the sealed content
-    /// (which holds the generation and the membership log) and the wraps
+    /// (which holds the generation), the wraps and the membership log
     /// ([SealedSpace::signed_message]). The old format has none.
     #[serde(default)]
     pub signer: String,
     #[serde(default, with = "b64")]
     sig: Vec<u8>,
+    /// The membership log ([crate::space_log]), in the clear: device ids
+    /// and public keys (which the wraps and pairing requests show anyway)
+    /// and signatures, no names. Covered by the writer's signature, and
+    /// each entry signed by its own author. A device the copy isn't sealed
+    /// for reads in it why: who removed it, and whether that removal stands
+    /// against its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub log: Vec<Entry>,
     /// What a new device shows before it can open the space ("We found
     /// your space"). In the clear, so only counts and kinds of device: no
     /// names, which the mail provider could read.
@@ -390,7 +401,8 @@ impl SealedSpace {
     }
 
     /// What the writer signs: the format, who it is, the sealed content
-    /// (which holds the generation) and who can open it.
+    /// (which holds the generation), who can open it and the log. (Copies
+    /// from before the log moved out of the sealed content sign no log.)
     fn signed_message(&self) -> Vec<u8> {
         use sha2::Digest as _;
         let mut m = b"piuma-mail space\0".to_vec();
@@ -401,7 +413,17 @@ impl SealedSpace {
         m.extend(sha2::Sha256::digest(
             serde_json::to_vec(&self.wraps).expect("serializes"),
         ));
+        if !self.log.is_empty() {
+            m.extend(sha2::Sha256::digest(
+                serde_json::to_vec(&self.log).expect("serializes"),
+            ));
+        }
         m
+    }
+
+    /// Whether this copy carries a key for `device`.
+    pub fn sealed_for(&self, device: &str) -> bool {
+        self.readers().any(|r| r == device)
     }
 
     /// Whether the writer's signature checks out with `public`.
@@ -537,10 +559,13 @@ impl Space {
                 extra: serde_json::Map::new(),
             }
         } else {
-            let content: Content =
+            let mut content: Content =
                 serde_json::from_slice(&plain).map_err(|e| SpaceError::Format(e.to_string()))?;
             if content.format > space_merge::FORMAT {
                 return Err(SpaceError::Newer);
+            }
+            if !sealed.log.is_empty() {
+                content.log.clone_from(&sealed.log);
             }
             content
         };
@@ -610,8 +635,8 @@ impl Space {
         Key::from_hex(&self.content.recovery)
     }
 
-    /// The members its own log names, read from its beginning with nothing
-    /// fixed: for a space as it comes, without a device's trust.
+    /// The members its own log names, read from its beginning standing by no
+    /// removal: for a space as it comes, without a device's trust.
     pub fn members(&self) -> Members {
         match space_log::roots(&self.content.log).first() {
             Some(root) => {
@@ -641,7 +666,12 @@ impl Space {
     }
 
     fn seal_unsigned(&self, readers: &Members) -> SealedSpace {
-        let plain = serde_json::to_vec(&self.content).expect("content serializes");
+        // The log goes in the clear beside it ([SealedSpace::log]).
+        let plain = serde_json::to_vec(&Content {
+            log: Vec::new(),
+            ..self.content.clone()
+        })
+        .expect("content serializes");
         let mut wraps: Vec<Wrap> = readers
             .values()
             .map(|m| Wrap {
@@ -659,6 +689,7 @@ impl Space {
             content: seal(&self.key, &plain),
             signer: String::new(),
             sig: Vec::new(),
+            log: self.content.log.clone(),
             about: About {
                 accounts: self.content.count("account"),
                 groups: self.content.count("address_group"),
@@ -705,6 +736,7 @@ pub(crate) fn sealed_v1(
         about: About::default(),
         signer: String::new(),
         sig: Vec::new(),
+        log: Vec::new(),
     }
 }
 
@@ -1293,6 +1325,7 @@ mod tests {
             about: About::default(),
             signer: String::new(),
             sig: Vec::new(),
+            log: Vec::new(),
         };
         let note = Note::Space(sealed.clone());
         let raw = note.to_message("matteo@posta.it", 0);
@@ -1433,6 +1466,16 @@ mod tests {
         let mut other = sealed.clone();
         other.wraps.pop();
         assert!(!other.signed_by(&mac.sign));
+        // The log travels in the clear, covered too, and comes back inside
+        // the opened space; the sealed content doesn't hold it.
+        assert_eq!(sealed.log, space.content.log);
+        let mut other = sealed.clone();
+        other.log.clear();
+        assert!(!other.signed_by(&mac.sign));
+        let opened = Space::open_as(&sealed, "mac", &mac_key).unwrap();
+        assert_eq!(opened.content.log, space.content.log);
+        let plain = open(space.content_key(), &sealed.content).unwrap();
+        assert!(!String::from_utf8_lossy(&plain).contains("\"log\""));
     }
 
     #[test]

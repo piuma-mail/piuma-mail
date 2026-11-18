@@ -11552,8 +11552,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SyncInfo dco_decode_sync_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 11)
-      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return SyncInfo(
       home: dco_decode_opt_String(arr[0]),
       syncedAt: dco_decode_opt_box_autoadd_i_64(arr[1]),
@@ -11564,8 +11564,9 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       recoveryChanged: dco_decode_bool(arr[6]),
       unverified: dco_decode_bool(arr[7]),
       conflict: dco_decode_list_String(arr[8]),
-      exposed: dco_decode_list_String(arr[9]),
-      exposedDevice: dco_decode_String(arr[10]),
+      unlinked: dco_decode_opt_String(arr[9]),
+      exposed: dco_decode_list_String(arr[10]),
+      exposedDevice: dco_decode_String(arr[11]),
     );
   }
 
@@ -14911,6 +14912,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_recoveryChanged = sse_decode_bool(deserializer);
     var var_unverified = sse_decode_bool(deserializer);
     var var_conflict = sse_decode_list_String(deserializer);
+    var var_unlinked = sse_decode_opt_String(deserializer);
     var var_exposed = sse_decode_list_String(deserializer);
     var var_exposedDevice = sse_decode_String(deserializer);
     return SyncInfo(
@@ -14923,6 +14925,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       recoveryChanged: var_recoveryChanged,
       unverified: var_unverified,
       conflict: var_conflict,
+      unlinked: var_unlinked,
       exposed: var_exposed,
       exposedDevice: var_exposedDevice,
     );
@@ -17903,6 +17906,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.recoveryChanged, serializer);
     sse_encode_bool(self.unverified, serializer);
     sse_encode_list_String(self.conflict, serializer);
+    sse_encode_opt_String(self.unlinked, serializer);
     sse_encode_list_String(self.exposed, serializer);
     sse_encode_String(self.exposedDevice, serializer);
   }

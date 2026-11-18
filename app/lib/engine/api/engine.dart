@@ -1504,6 +1504,10 @@ enum ErrorKind {
   /// Sync: the recovery phrase doesn't open the space.
   wrongPhrase,
 
+  /// Sync: the recovery phrase was the space's, and was replaced since:
+  /// only the newest one opens it.
+  oldPhrase,
+
   /// Sync: the code typed on the other device wasn't the one shown.
   wrongCode,
 

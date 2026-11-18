@@ -70,6 +70,10 @@ pub struct SyncInfo {
     /// Two devices removed each other (their names): sync stopped here
     /// until this device is linked again.
     pub conflict: Vec<String>,
+    /// Another device removed this one (its name): sync stopped here, and
+    /// what this device trusts stays until the person links it again or
+    /// turns sync off here.
+    pub unlinked: Option<String>,
     /// After unlinking a device: the mailboxes whose passwords it still
     /// knows, until the person says they changed them. Urgent: until the
     /// space's own mailbox password changes, it can still write there.
@@ -140,7 +144,8 @@ pub struct KeptSecret {
 pub struct SyncRound {
     /// Another device's changes came in.
     pub took: bool,
-    /// Another device unlinked this one; sync is off here now.
+    /// Another device unlinked this one: sync stopped here, and Devices &
+    /// sync says who did it ([SyncInfo::unlinked]).
     pub unlinked: bool,
     pub requests: Vec<PairAsk>,
     /// Android only: passwords that came in, for the app to keep.
@@ -186,6 +191,8 @@ impl From<SyncError> for EngineError {
                 return e.into();
             }
             SyncError::Space(SpaceError::Phrase | SpaceError::Sealed) => ErrorKind::WrongPhrase,
+            SyncError::PhraseReplaced => ErrorKind::OldPhrase,
+            SyncError::Unlinked(_) => ErrorKind::NotLinked,
             SyncError::Space(SpaceError::Code) => ErrorKind::WrongCode,
             SyncError::Space(SpaceError::NotLinked) => ErrorKind::NotLinked,
             SyncError::NoSpace => ErrorKind::NoSpace,
@@ -305,6 +312,7 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
         recovery_changed: false,
         unverified: false,
         conflict: Vec::new(),
+        unlinked: None,
         exposed: Vec::new(),
         exposed_device: String::new(),
     };
@@ -336,6 +344,14 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
                 .map_or_else(|| id.clone(), |d| d.name.clone())
         })
         .collect();
+    if !local.unlinked.is_empty() {
+        info.unlinked = Some(
+            info.devices
+                .iter()
+                .find(|d| d.id == local.unlinked)
+                .map_or_else(|| local.unlinked.clone(), |d| d.name.clone()),
+        );
+    }
     info.exposed = local.exposed;
     info.exposed_device = local.exposed_device;
     Ok(info)
@@ -550,7 +566,7 @@ fn asks(requests: Vec<space::PairRequest>) -> Vec<PairAsk> {
         .collect()
 }
 
-/// Turns sync off here, when another device unlinked this one.
+/// Turns sync off here.
 fn off() -> Result<(), EngineError> {
     let s = store()?;
     for key in [HOME, SEEN, DEVICES, SYNCED_AT] {
@@ -614,8 +630,10 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
                 return Ok(round);
             }
             Err(e) => return Err(e.into()),
-            Ok(Round::Unlinked) => {
-                off()?;
+            // Nothing taken or sent, and nothing forgotten: Devices & sync
+            // says who did it, and the person links this device again or
+            // turns sync off here.
+            Ok(Round::Unlinked(_)) => {
                 round.unlinked = true;
                 return Ok(round);
             }

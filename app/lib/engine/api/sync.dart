@@ -450,6 +450,11 @@ class SyncInfo {
   /// until this device is linked again.
   final List<String> conflict;
 
+  /// Another device removed this one (its name): sync stopped here, and
+  /// what this device trusts stays until the person links it again or
+  /// turns sync off here.
+  final String? unlinked;
+
   /// After unlinking a device: the mailboxes whose passwords it still
   /// knows, until the person says they changed them. Urgent: until the
   /// space's own mailbox password changes, it can still write there.
@@ -468,6 +473,7 @@ class SyncInfo {
     required this.recoveryChanged,
     required this.unverified,
     required this.conflict,
+    this.unlinked,
     required this.exposed,
     required this.exposedDevice,
   });
@@ -483,6 +489,7 @@ class SyncInfo {
       recoveryChanged.hashCode ^
       unverified.hashCode ^
       conflict.hashCode ^
+      unlinked.hashCode ^
       exposed.hashCode ^
       exposedDevice.hashCode;
 
@@ -500,6 +507,7 @@ class SyncInfo {
           recoveryChanged == other.recoveryChanged &&
           unverified == other.unverified &&
           conflict == other.conflict &&
+          unlinked == other.unlinked &&
           exposed == other.exposed &&
           exposedDevice == other.exposedDevice;
 }
@@ -539,7 +547,8 @@ class SyncRound {
   /// Another device's changes came in.
   final bool took;
 
-  /// Another device unlinked this one; sync is off here now.
+  /// Another device unlinked this one: sync stopped here, and Devices &
+  /// sync says who did it ([SyncInfo::unlinked]).
   final bool unlinked;
   final List<PairAsk> requests;
 

@@ -4191,6 +4191,10 @@ class AppLocalizationsPt extends AppLocalizations {
       'Estas palavras não abrem seu espaço. Confira-as e tente de novo.';
 
   @override
+  String get pairPhraseOld =>
+      'Esta frase de recuperação foi substituída: seu espaço recebeu uma mais nova quando um dispositivo foi desvinculado ou desativou a sincronização. Use a frase mais recente, ou um código de um dispositivo vinculado.';
+
+  @override
   String get pairContinue => 'Continuar';
 
   @override
@@ -6309,6 +6313,15 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get syncLinkAgain => 'Vincular de novo';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name removeu este dispositivo';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'A sincronização parou neste dispositivo; as contas e os e-mails dele ficam aqui. Se não foi você, vincule-o de novo a partir de um dispositivo que você ainda tem. Caso contrário, desative a sincronização aqui.';
 
   @override
   String get syncExposedNowTitle => 'Troque estas senhas agora';
