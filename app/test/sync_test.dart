@@ -185,79 +185,6 @@ void main() {
     expect(find.text('I wrote them down'), findsOneWidget);
   });
 
-  testWidgets('on the phone, a removal elsewhere waits for the person too', (
-    tester,
-  ) async {
-    final source = _Held(now: _now, synced: true);
-    await _settings(tester, phone: true, demo: source);
-    expect(
-      find.text('matteo@studio.it was removed on another device'),
-      findsOneWidget,
-    );
-    await tester.ensureVisible(find.text('Remove here'));
-    await tester.tap(find.text('Remove here'));
-    await _settle(tester);
-    expect(source.removed, [2]);
-  });
-
-  testWidgets('on the phone, keeping it works the same', (tester) async {
-    final source = _Held(now: _now, synced: true);
-    await _settings(tester, phone: true, demo: source);
-    await tester.ensureVisible(find.text('Keep it'));
-    await tester.tap(find.text('Keep it'));
-    await _settle(tester);
-    expect(source.kept, [2]);
-  });
-
-  testWidgets('on the phone, the warnings and the new phrase are told', (
-    tester,
-  ) async {
-    await _settings(
-      tester,
-      phone: true,
-      demo: _Held(now: _now, synced: true, rollback: true, outdated: true),
-    );
-    expect(find.text('An older copy of your space was left out'), findsOne);
-    expect(
-      find.text('Update Piuma to sync this device’s changes'),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('on the phone, a changed recovery phrase is shown in a sheet', (
-    tester,
-  ) async {
-    await _settings(
-      tester,
-      phone: true,
-      demo: _Held(now: _now, synced: true, recoveryChanged: true),
-    );
-    expect(find.text('Write down your new recovery phrase'), findsOneWidget);
-    await tester.ensureVisible(find.text('Show').first);
-    await tester.tap(find.text('Show').first);
-    await _settle(tester);
-    expect(find.text('I wrote them down'), findsOneWidget);
-  });
-
-  testWidgets('on the phone, unlinking says which passwords to change', (
-    tester,
-  ) async {
-    final source = await _settings(tester, phone: true, synced: true);
-    await tester.ensureVisible(find.bySemanticsLabel('Unlink iPad Air'));
-    await tester.tap(find.bySemanticsLabel('Unlink iPad Air'));
-    await _settle(tester);
-    await tester.tap(find.text('Unlink').last);
-    await _settle(tester);
-    await tester.tap(find.text('I wrote them down'));
-    await _settle(tester);
-    expect(find.text('Change these passwords'), findsOneWidget);
-    expect(find.text('matteo@studio.it'), findsWidgets);
-    await tester.tap(find.text('Got it'));
-    await _settle(tester);
-    expect(find.text('Change these passwords'), findsNothing);
-    expect(source.syncState().devices, hasLength(2));
-  });
-
   testWidgets('an old copy put back, and a newer version, are told', (
     tester,
   ) async {
@@ -521,6 +448,80 @@ void main() {
       );
     }
     tester.view.reset();
+  });
+
+  // The phone, after the goldens above: the same states, in its layout.
+  testWidgets('on the phone, a removal elsewhere waits for the person too', (
+    tester,
+  ) async {
+    final source = _Held(now: _now, synced: true);
+    await _settings(tester, phone: true, demo: source);
+    expect(
+      find.text('matteo@studio.it was removed on another device'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Remove here'));
+    await tester.tap(find.text('Remove here'));
+    await _settle(tester);
+    expect(source.removed, [2]);
+  });
+
+  testWidgets('on the phone, keeping it works the same', (tester) async {
+    final source = _Held(now: _now, synced: true);
+    await _settings(tester, phone: true, demo: source);
+    await tester.ensureVisible(find.text('Keep it'));
+    await tester.tap(find.text('Keep it'));
+    await _settle(tester);
+    expect(source.kept, [2]);
+  });
+
+  testWidgets('on the phone, the warnings and the new phrase are told', (
+    tester,
+  ) async {
+    await _settings(
+      tester,
+      phone: true,
+      demo: _Held(now: _now, synced: true, rollback: true, outdated: true),
+    );
+    expect(find.text('An older copy of your space was left out'), findsOne);
+    expect(
+      find.text('Update Piuma to sync this device’s changes'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('on the phone, a changed recovery phrase is shown in a sheet', (
+    tester,
+  ) async {
+    await _settings(
+      tester,
+      phone: true,
+      demo: _Held(now: _now, synced: true, recoveryChanged: true),
+    );
+    expect(find.text('Write down your new recovery phrase'), findsOneWidget);
+    await tester.ensureVisible(find.text('Show').first);
+    await tester.tap(find.text('Show').first);
+    await _settle(tester);
+    expect(find.text('I wrote them down'), findsOneWidget);
+  });
+
+  testWidgets('on the phone, unlinking says which passwords to change', (
+    tester,
+  ) async {
+    final source = await _settings(tester, phone: true, synced: true);
+    await tester.ensureVisible(find.bySemanticsLabel('Unlink iPad Air'));
+    await tester.tap(find.bySemanticsLabel('Unlink iPad Air'));
+    await _settle(tester);
+    await tester.tap(find.text('Unlink').last);
+    await _settle(tester);
+    await tester.tap(find.text('I wrote them down'));
+    await _settle(tester);
+    expect(find.text('Change these passwords'), findsOneWidget);
+    expect(find.text('matteo@studio.it'), findsWidgets);
+    await tester.tap(find.text('Got it'));
+    await _settle(tester);
+    expect(find.text('Change these passwords'), findsNothing);
+    expect(source.syncState().devices, hasLength(2));
   });
 }
 
