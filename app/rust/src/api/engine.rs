@@ -4051,7 +4051,8 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
         }
         .await;
         if let Err(e) = pushed {
-            undo_seen(&store()?, id, &list, &delivered, seen)?;
+            let store = store()?;
+            undo_seen(&store, id, &list, &delivered, seen)?;
             result = Err(e);
         }
     }
