@@ -20,6 +20,7 @@ use tokio::sync::{oneshot, Notify};
 use super::engine::{
     engine, reader, stop_watching, store, watch_account, AccountInfo, EngineError, ErrorKind,
 };
+use super::sync::KeptSecret;
 use crate::credentials;
 
 /// A provider that signs in with its own page.
@@ -325,19 +326,11 @@ pub async fn sign_in_again_oauth(account_id: i64) -> Result<(), EngineError> {
     watch_account(account)
 }
 
-/// A secret the engine got and the Android Keystore should keep.
-#[derive(Debug, Clone)]
-pub struct KeptSecret {
-    /// The Keystore name, e.g. `account-3`.
-    pub key: String,
-    pub value: String,
-}
-
 /// Android: secrets the engine got since the last call (an OAuth sign-in,
 /// a refresh token the provider replaced), for the Keystore. Elsewhere
 /// always empty: the system keychain already has them.
 #[frb(sync)]
-pub fn take_kept_secrets() -> Vec<KeptSecret> {
+pub fn take_new_secrets() -> Vec<KeptSecret> {
     credentials::take_kept()
         .into_iter()
         .map(|(key, value)| KeptSecret { key, value })
