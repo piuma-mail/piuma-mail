@@ -655,6 +655,18 @@ class AppLocalizationsFr extends AppLocalizations {
   String get openAnyway => 'Ouvrir quand même';
 
   @override
+  String get linkTargetTitle => 'Où mène ce lien';
+
+  @override
+  String get linkOpen => 'Ouvrir le lien';
+
+  @override
+  String get linkCopy => 'Copier le lien';
+
+  @override
+  String get linkCopied => 'Lien copié';
+
+  @override
   String get dontOpen => 'Ne pas ouvrir';
 
   @override
@@ -1697,6 +1709,16 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'Un message part de votre compte vers $address pour le demander. Ce qui est déjà arrivé reste ici.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'À : $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Objet : $subject';
   }
 
   @override
@@ -2994,6 +3016,14 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get pecNote =>
       'Les accusés restent hors de la boîte de réception et se regroupent sur le message auquel ils appartiennent. Accusé enregistre la preuve signée dans un fichier.';
+
+  @override
+  String get pecUnverified => 'Non vérifié';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Indique « $status », mais la signature du fournisseur n’a pas pu être vérifiée : ce n’est pas une preuve.';
+  }
 
   @override
   String get pickDateTime => 'Choisir la date et l’heure';

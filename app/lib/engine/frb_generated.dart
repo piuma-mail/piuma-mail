@@ -638,7 +638,13 @@ abstract class RustLibApi extends BaseApi {
 
   bool crateApiEngineSenderMuted({required String email});
 
-  Future<Uint8List?> crateApiEngineSenderPicture({required String email});
+  Future<Uint8List?> crateApiEngineSenderPicture({
+    required String email,
+    PlatformInt64? accountId,
+    String? mailbox,
+    int? uid,
+    required bool opened,
+  });
 
   SenderStats crateApiEngineSenderStats({required String email});
 
@@ -5338,12 +5344,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "sender_muted", argNames: ["email"]);
 
   @override
-  Future<Uint8List?> crateApiEngineSenderPicture({required String email}) {
+  Future<Uint8List?> crateApiEngineSenderPicture({
+    required String email,
+    PlatformInt64? accountId,
+    String? mailbox,
+    int? uid,
+    required bool opened,
+  }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(email, serializer);
+          sse_encode_opt_box_autoadd_i_64(accountId, serializer);
+          sse_encode_opt_String(mailbox, serializer);
+          sse_encode_opt_box_autoadd_u_32(uid, serializer);
+          sse_encode_bool(opened, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -5356,14 +5372,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_engine_error,
         ),
         constMeta: kCrateApiEngineSenderPictureConstMeta,
-        argValues: [email],
+        argValues: [email, accountId, mailbox, uid, opened],
         apiImpl: this,
       ),
     );
   }
 
   TaskConstMeta get kCrateApiEngineSenderPictureConstMeta =>
-      const TaskConstMeta(debugName: "sender_picture", argNames: ["email"]);
+      const TaskConstMeta(
+        debugName: "sender_picture",
+        argNames: ["email", "accountId", "mailbox", "uid", "opened"],
+      );
 
   @override
   SenderStats crateApiEngineSenderStats({required String email}) {
@@ -10381,8 +10400,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   PecMessage dco_decode_pec_message(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 10)
-      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return PecMessage(
       row: dco_decode_inbox_row(arr[0]),
       subject: dco_decode_String(arr[1]),
@@ -10394,6 +10413,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       failedTo: dco_decode_String(arr[7]),
       proofs: dco_decode_list_prim_u_32_strict(arr[8]),
       proofMailbox: dco_decode_String(arr[9]),
+      verified: dco_decode_bool(arr[10]),
     );
   }
 
@@ -10988,11 +11008,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   Unsubscribe dco_decode_unsubscribe(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return Unsubscribe(
       kind: dco_decode_unsubscribe_kind(arr[0]),
       address: dco_decode_String(arr[1]),
+      subject: dco_decode_String(arr[2]),
+      body: dco_decode_String(arr[3]),
     );
   }
 
@@ -13515,6 +13537,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_failedTo = sse_decode_String(deserializer);
     var var_proofs = sse_decode_list_prim_u_32_strict(deserializer);
     var var_proofMailbox = sse_decode_String(deserializer);
+    var var_verified = sse_decode_bool(deserializer);
     return PecMessage(
       row: var_row,
       subject: var_subject,
@@ -13526,6 +13549,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       failedTo: var_failedTo,
       proofs: var_proofs,
       proofMailbox: var_proofMailbox,
+      verified: var_verified,
     );
   }
 
@@ -14165,7 +14189,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_kind = sse_decode_unsubscribe_kind(deserializer);
     var var_address = sse_decode_String(deserializer);
-    return Unsubscribe(kind: var_kind, address: var_address);
+    var var_subject = sse_decode_String(deserializer);
+    var var_body = sse_decode_String(deserializer);
+    return Unsubscribe(
+      kind: var_kind,
+      address: var_address,
+      subject: var_subject,
+      body: var_body,
+    );
   }
 
   @protected
@@ -16483,6 +16514,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.failedTo, serializer);
     sse_encode_list_prim_u_32_strict(self.proofs, serializer);
     sse_encode_String(self.proofMailbox, serializer);
+    sse_encode_bool(self.verified, serializer);
   }
 
   @protected
@@ -16959,6 +16991,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_unsubscribe_kind(self.kind, serializer);
     sse_encode_String(self.address, serializer);
+    sse_encode_String(self.subject, serializer);
+    sse_encode_String(self.body, serializer);
   }
 
   @protected

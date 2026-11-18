@@ -67,6 +67,22 @@ static void send_link(Paper* paper, const char* uri) {
                                   nullptr, nullptr, nullptr);
 }
 
+// The link under the pointer, for the reader's status line: shown, never
+// opened.
+static void on_mouse_target(WebKitWebView* web, WebKitHitTestResult* hit,
+                            guint modifiers, gpointer data) {
+  Paper* paper = static_cast<Paper*>(data);
+  const char* uri = webkit_hit_test_result_context_is_link(hit)
+                        ? webkit_hit_test_result_get_link_uri(hit)
+                        : nullptr;
+  g_autoptr(FlValue) args = fl_value_new_map();
+  fl_value_set_string_take(args, "id", fl_value_new_int(paper->id));
+  fl_value_set_string_take(args, "url",
+                           fl_value_new_string(uri != nullptr ? uri : ""));
+  fl_method_channel_invoke_method(paper->owner->channel, "hover", args,
+                                  nullptr, nullptr, nullptr);
+}
+
 static void on_measured(GObject* object, GAsyncResult* res, gpointer data) {
   GError* error = nullptr;
   JSCValue* value = webkit_web_view_evaluate_javascript_finish(
@@ -239,6 +255,8 @@ static void open_paper(Papers* papers, FlValue* args) {
                                        &background);
   g_signal_connect(paper->web, "decide-policy", G_CALLBACK(on_decide_policy),
                    paper);
+  g_signal_connect(paper->web, "mouse-target-changed",
+                   G_CALLBACK(on_mouse_target), paper);
   g_signal_connect(paper->web, "load-changed", G_CALLBACK(on_load_changed),
                    paper);
   g_signal_connect(paper->web, "context-menu", G_CALLBACK(on_context_menu),

@@ -651,6 +651,18 @@ class AppLocalizationsIt extends AppLocalizations {
   String get openAnyway => 'Apri comunque';
 
   @override
+  String get linkTargetTitle => 'Dove porta questo link';
+
+  @override
+  String get linkOpen => 'Apri il link';
+
+  @override
+  String get linkCopy => 'Copia il link';
+
+  @override
+  String get linkCopied => 'Link copiato';
+
+  @override
   String get dontOpen => 'Non aprire';
 
   @override
@@ -1688,6 +1700,16 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'Un messaggio parte dal tuo account verso $address per chiederlo. Quello che è già arrivato resta qui.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'A: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Oggetto: $subject';
   }
 
   @override
@@ -2991,6 +3013,14 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get pecNote =>
       'Le ricevute restano fuori dalla posta in arrivo e si raccolgono sul messaggio a cui si riferiscono. Ricevuta salva la prova firmata come file.';
+
+  @override
+  String get pecUnverified => 'Non verificata';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Risulta «$status», ma la firma del gestore non è verificabile: non vale come prova.';
+  }
 
   @override
   String get pickDateTime => 'Scegli data e ora';
