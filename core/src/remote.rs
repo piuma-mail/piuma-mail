@@ -69,8 +69,12 @@ pub struct ServerFound {
     /// device can answer (`in:vault`), or one with only filters.
     pub asked: bool,
     /// Some of the account could not be searched fully: a folder refused,
-    /// text cut to ASCII, more folders than are searched.
+    /// text cut to ASCII, more folders than are searched, or the time
+    /// ran out (what came before stays).
     pub partial: bool,
+    /// The server takes only ASCII, and the text has none to ask for
+    /// ("日本"): it couldn't be asked at all.
+    pub text_refused: bool,
 }
 
 fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
@@ -162,6 +166,23 @@ impl Remote {
         query: &Query,
         limit: usize,
     ) -> Result<ServerFound> {
+        let mut found = ServerFound::default();
+        self.search_server_into(store, account, query, limit, &mut found)
+            .await?;
+        Ok(found)
+    }
+
+    /// As [`Self::search_server`], adding to `found` folder by folder, so
+    /// what came before stays when the search stops early (it ran out of
+    /// time) or fails halfway.
+    pub async fn search_server_into(
+        &mut self,
+        store: &Mutex<Store>,
+        account: &Account,
+        query: &Query,
+        limit: usize,
+        found: &mut ServerFound,
+    ) -> Result<()> {
         let (labels, groups) = {
             let s = lock(store);
             let labels: HashMap<String, String> = s
@@ -184,7 +205,6 @@ impl Remote {
                 .collect();
             (labels, groups)
         };
-        let mut found = ServerFound::default();
         match self {
             Remote::Imap(conn) => {
                 // Where the search's `in:` values point in this account.
@@ -260,11 +280,16 @@ impl Remote {
                         .search_folder(store, account.id, &mailbox, &ask, limit)
                         .await
                     {
-                        Ok((uids, partial)) => {
-                            found.partial |= partial;
+                        Ok(f) if f.text_refused => {
+                            // Every folder would answer the same.
+                            found.text_refused = true;
+                            break;
+                        }
+                        Ok(f) => {
+                            found.partial |= f.partial;
                             found
                                 .at
-                                .extend(uids.into_iter().map(|uid| (mailbox.clone(), uid)));
+                                .extend(f.uids.into_iter().map(|uid| (mailbox.clone(), uid)));
                         }
                         // A folder the server won't open or search: the
                         // others still count.
@@ -298,7 +323,7 @@ impl Remote {
                 }
             }
         }
-        Ok(found)
+        Ok(())
     }
 
     /// Ends the session politely, where the protocol has one.

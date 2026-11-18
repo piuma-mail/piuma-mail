@@ -646,7 +646,24 @@ impl Client {
                     by_folder.entry(mailbox).or_default().push((e, id));
                 }
             }
-            for (mailbox, emails) in by_folder {
+            for (mailbox, mut emails) in by_folder {
+                // Mail past the newest the folder's sync brought is for the
+                // next sync, which announces it: taken here first, it
+                // would never be.
+                let (synced, newest) = {
+                    let s = lock(store);
+                    (
+                        s.mailbox_state(account, &mailbox)?.is_some(),
+                        s.newest_synced(account, &mailbox)?.map(|(_, at)| at),
+                    )
+                };
+                if synced {
+                    let newest = newest.unwrap_or(i64::MIN);
+                    emails.retain(|(e, _)| received_at(e).is_none_or(|at| at <= newest));
+                }
+                if emails.is_empty() {
+                    continue;
+                }
                 let ids: Vec<String> = emails.iter().map(|(_, id)| id.clone()).collect();
                 let uids = lock(store).add_jmap_ids(account, &mailbox, &ids)?;
                 let numbered: Vec<(&Value, String, u32)> = emails
@@ -776,6 +793,18 @@ impl Client {
                 );
             }
             progress(report.added, missing.len());
+        }
+
+        // 2b. What a server search brought and the folder lists is synced
+        // mail now: it shows in the folder's list like the rest.
+        let found = lock(store).server_found_uids(account, mailbox)?;
+        if !found.is_empty() {
+            let listed: Vec<u32> = local
+                .iter()
+                .filter(|(id, uid)| on_server.contains(id) && found.contains(uid))
+                .map(|(_, uid)| *uid)
+                .collect();
+            lock(store).adopt_server_found_uids(account, mailbox, &listed)?;
         }
 
         // 3. Refresh flags of what we already had.
@@ -2337,6 +2366,14 @@ fn ids(list: &Value) -> Vec<String> {
         .collect()
 }
 
+/// When an email came, Unix seconds.
+fn received_at(e: &Value) -> Option<i64> {
+    e["receivedAt"]
+        .as_str()
+        .and_then(mail_parser::DateTime::parse_rfc3339)
+        .map(|d| d.to_timestamp())
+}
+
 pub(crate) fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
     let (from_name, from_email) = first_address(&e["from"]);
     let to = e["to"]
@@ -2364,11 +2401,7 @@ pub(crate) fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) ->
         to,
         subject: e["subject"].as_str().unwrap_or_default().to_owned(),
         preview: clean_preview(e["preview"].as_str().unwrap_or_default()),
-        received_at: e["receivedAt"]
-            .as_str()
-            .and_then(mail_parser::DateTime::parse_rfc3339)
-            .map(|d| d.to_timestamp())
-            .unwrap_or_default(),
+        received_at: received_at(e).unwrap_or_default(),
         flags: flags(e),
         list: headers(e)
             .map(|m| newsletter::list_info(&m))

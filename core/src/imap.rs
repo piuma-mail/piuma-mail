@@ -428,7 +428,7 @@ impl Connection {
             lock(store).set_labels_local(account)?;
         }
 
-        let (prior, local) = {
+        let (prior, local, found) = {
             let store = lock(store);
             let mut prior = store.mailbox_state(account, mailbox)?;
             if prior.is_some_and(|p| p.uid_validity != uid_validity) {
@@ -437,7 +437,7 @@ impl Connection {
                 prior = None;
             }
             let local: HashSet<u32> = store.uids(account, mailbox)?.into_iter().collect();
-            (prior, local)
+            (prior, local, store.server_found_uids(account, mailbox)?)
         };
 
         // 1. Forget what the server no longer has.
@@ -455,8 +455,9 @@ impl Connection {
         report.more = total.saturating_sub(round.limit);
         missing.truncate(round.limit);
         // News is what came after the newest message we had: older ones
-        // still arriving are history being filled in.
-        let newest = local.iter().max().copied();
+        // still arriving are history being filled in. What a server search
+        // brought doesn't count: mail past it would never be announced.
+        let newest = local.difference(&found).max().copied();
         let news = |uid: u32| prior.is_some() && newest.is_none_or(|n| uid > n);
         for (i, batch) in missing.chunks(BATCH).enumerate() {
             let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
@@ -501,6 +502,21 @@ impl Connection {
                 });
             }
             progress(report.added, total);
+        }
+
+        // 2b. What a server search brought is synced mail once the sync
+        // has come down to it (it goes newest first): it then shows in
+        // the folder's list like the rest.
+        if !found.is_empty() {
+            let lowest = local
+                .difference(&found)
+                .chain(missing.iter())
+                .min()
+                .copied();
+            let from = if report.more == 0 { Some(0) } else { lowest };
+            if let Some(from) = from {
+                lock(store).adopt_server_found(account, mailbox, from)?;
+            }
         }
 
         // 3. Refresh flags of what we already had.
@@ -899,7 +915,7 @@ impl Connection {
         mailbox: &str,
         query: &crate::search::ServerQuery,
         limit: usize,
-    ) -> Result<(Vec<u32>, bool)> {
+    ) -> Result<FolderFound> {
         let literal_plus = self.literal_plus;
         let session = self.session()?;
         let selected = session.examine(mailbox).await?;
@@ -918,18 +934,42 @@ impl Connection {
                     Some(ascii) => uid_search(session, &ascii.imap(literal_plus))
                         .await?
                         .map_err(async_imap::error::Error::No)?,
-                    None => Vec::new(),
+                    // Nothing it could be asked would come close.
+                    None => {
+                        return Ok(FolderFound {
+                            text_refused: true,
+                            ..FolderFound::default()
+                        })
+                    }
                 }
             }
             Err(refusal) => return Err(async_imap::error::Error::No(refusal).into()),
         };
         uids.sort_unstable_by(|a, b| b.cmp(a));
         uids.dedup();
-        uids.truncate(limit);
         if renumbered {
-            return Ok((Vec::new(), true));
+            return Ok(FolderFound {
+                partial: true,
+                ..FolderFound::default()
+            });
         }
-        let local: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
+        let (local, synced, newest) = {
+            let s = lock(store);
+            (
+                s.uids(account, mailbox)?
+                    .into_iter()
+                    .collect::<HashSet<u32>>(),
+                s.mailbox_state(account, mailbox)?.is_some(),
+                s.newest_synced(account, mailbox)?.map(|(uid, _)| uid),
+            )
+        };
+        // Mail past the newest the sync brought is for the next sync, which
+        // announces it: taken here first, it would never be.
+        if synced {
+            let newest = newest.unwrap_or(0);
+            uids.retain(|u| local.contains(u) || *u <= newest);
+        }
+        uids.truncate(limit);
         let missing: Vec<u32> = uids
             .iter()
             .filter(|u| !local.contains(u))
@@ -952,11 +992,22 @@ impl Connection {
             store.set_listed_files(account, mailbox, &listed)?;
             store.note_server_found(account, mailbox, &found, uid_validity)?;
         }
+        // Within what the sync already covers, it is synced mail.
+        {
+            let s = lock(store);
+            if let Some(lowest) = s.lowest_synced(account, mailbox)? {
+                s.adopt_server_found(account, mailbox, lowest)?;
+            }
+        }
         // What the server listed but didn't fetch (gone meanwhile) is
         // left out.
         let here: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
         uids.retain(|u| here.contains(u));
-        Ok((uids, partial))
+        Ok(FolderFound {
+            uids,
+            partial,
+            text_refused: false,
+        })
     }
 
     /// The folder with a job, when the account has one.
@@ -2293,6 +2344,19 @@ async fn uid_search(
             _ => {}
         }
     }
+}
+
+/// What [`Connection::search_folder`] found in one folder.
+#[derive(Debug, Default)]
+pub struct FolderFound {
+    /// Newest first, all on this device now.
+    pub uids: Vec<u32>,
+    /// The answer may be partial: text cut to ASCII, or the folder was
+    /// renumbered since the last sync.
+    pub partial: bool,
+    /// The server refuses UTF-8 and the text has no ASCII to ask for
+    /// instead ("日本"): it wasn't asked at all.
+    pub text_refused: bool,
 }
 
 /// Which messages [`Connection::empty`] may delete.

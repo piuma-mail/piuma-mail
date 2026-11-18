@@ -346,10 +346,22 @@ async fn a_refused_charset_falls_back_to_ascii() {
     assert_eq!(found.at, [("INBOX".to_owned(), 3)]);
     assert!(found.partial, "the answer may hold more than asked");
 
-    // Nothing ASCII left to ask: no second try, nothing found.
+    // Nothing ASCII left in a text looked for: no second try, nothing
+    // found, and the app says the server can't be asked for it. The rest
+    // alone ("is:unread") would bring every unread message.
     let found = search(&store, &a, "日本").await;
     assert_eq!(mock.commands("UID SEARCH").len(), 3);
-    assert!(found.at.is_empty() && found.partial);
+    assert!(found.at.is_empty() && found.text_refused);
+    let found = search(&store, &a, "日本 is:unread").await;
+    assert_eq!(mock.commands("UID SEARCH").len(), 4);
+    assert!(found.at.is_empty() && found.text_refused);
+
+    // A text left out is dropped, not cut to "caf".
+    search(&store, &a, "-café is:unread").await;
+    assert_eq!(
+        mock.commands("UID SEARCH").last().unwrap(),
+        "UID SEARCH NOT (SEEN)"
+    );
 
     // ASCII only: no charset, nothing refused.
     let found = search(&store, &a, "invoice").await;
@@ -358,6 +370,72 @@ async fn a_refused_charset_falls_back_to_ascii() {
         r#"UID SEARCH TEXT "invoice""#
     );
     assert!(!found.partial);
+}
+
+/// Mail past the newest the sync brought is left for the sync, which
+/// announces it: a search taking it first would swallow the notification
+/// (review of #88, finding 2).
+#[tokio::test]
+async fn new_mail_is_left_for_the_sync_to_announce() {
+    let mock = start(Behaviour {
+        found: vec![2, 5, 9],
+        uid_validity: 7,
+        ..Behaviour::default()
+    })
+    .await;
+    let (store, a) = store_with(mock.port);
+    {
+        let s = store.lock().unwrap();
+        s.set_mailbox_state(
+            a.id,
+            "INBOX",
+            piuma_core::store::MailboxState {
+                uid_validity: 7,
+                highest_modseq: None,
+            },
+        )
+        .unwrap();
+    }
+    let synced = piuma_core::MessageSummary {
+        account: a.id,
+        mailbox: "INBOX".into(),
+        uid: 6,
+        from_name: "Sara".into(),
+        from_email: "sara@tipografialume.it".into(),
+        to: String::new(),
+        subject: "Synced".into(),
+        preview: String::new(),
+        received_at: 1_000,
+        flags: Default::default(),
+        reply: Default::default(),
+        list: Default::default(),
+    };
+    store
+        .lock()
+        .unwrap()
+        .upsert_messages(std::slice::from_ref(&synced))
+        .unwrap();
+    let found = search(&store, &a, "order").await;
+    // 9 came after the last sync: not fetched, not kept.
+    assert_eq!(found.at, [("INBOX".to_owned(), 5), ("INBOX".to_owned(), 2)]);
+    let fetches = mock.commands("UID FETCH");
+    assert_eq!(fetches.len(), 1);
+    assert!(!fetches[0].contains('9'), "{}", fetches[0]);
+    // Older than what the sync covers (from 6 up): kept out of the
+    // inbox's list, still found.
+    let s = store.lock().unwrap();
+    assert_eq!(
+        s.newest_synced(a.id, "INBOX").unwrap().map(|(uid, _)| uid),
+        Some(6)
+    );
+    let listed: Vec<u32> = s
+        .unified(piuma_core::Folder::Inbox, None, 10)
+        .unwrap()
+        .iter()
+        .map(|m| m.uid)
+        .collect();
+    assert_eq!(listed, [6]);
+    assert_eq!(s.search(&Query::parse("order"), 10).unwrap().total, 2);
 }
 
 #[tokio::test]

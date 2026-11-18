@@ -282,7 +282,9 @@ impl Query {
         } else {
             sql.push_str(" WHERE 1");
         }
-        sql.push_str(" AND m.hidden = 0");
+        // Mail a server search brought from outside the sync (hidden 2)
+        // is found too; mail hidden for an undo isn't.
+        sql.push_str(" AND m.hidden IN (0, 2)");
         for clause in rest {
             let parts: Vec<String> = clause
                 .any
@@ -638,6 +640,9 @@ fn operator(key: &str, value: &str) -> Operator {
     }
 }
 
+/// The largest number JMAP takes (RFC 8620, `UnsignedInt`).
+const JMAP_MAX_INT: u64 = (1 << 53) - 1;
+
 /// Words made only of punctuation give the tokenizer nothing to find.
 fn searchable(word: &str) -> bool {
     word.chars().any(char::is_alphanumeric)
@@ -655,7 +660,18 @@ fn day(s: &str) -> Option<i64> {
     let y: i64 = parts.next()?.parse().ok()?;
     let m: i64 = parts.next()?.parse().ok()?;
     let d: i64 = parts.next()?.parse().ok()?;
-    if !(1..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+    if !(1..=9999).contains(&y) || !(1..=12).contains(&m) || d < 1 {
+        return None;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let last = match m {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    // `before:2026-02-31` is a typo, searched as text, not March 3.
+    if d > last {
         return None;
     }
     Some(days_from_civil(y, m, d) * 86_400)
@@ -844,10 +860,19 @@ impl ServerQuery {
     }
 
     /// The same search with only ASCII text, for servers that refuse
-    /// `CHARSET UTF-8`: each text keeps its longest ASCII run ("café"
-    /// looks for "caf", which IMAP finds inside "café"). A text with none
-    /// asks for nothing, so its clause is left out. None when nothing is
-    /// left to ask.
+    /// `CHARSET UTF-8`. What it finds is never less than the search
+    /// itself would, and may be more (the answer is then partial):
+    ///
+    /// - a text looked for keeps its longest ASCII run ("café" looks for
+    ///   "caf", which IMAP finds inside "café");
+    /// - a text left out ("-café") is dropped with its clause instead:
+    ///   leaving out "caf" would leave out "café" and more;
+    /// - an address with other letters is dropped from a list left out,
+    ///   which then leaves out less.
+    ///
+    /// None when the server can't be asked: a text looked for that has no
+    /// ASCII at all ("日本") would match anything, and a search with
+    /// nothing left to ask would bring every message.
     pub fn ascii(&self) -> Option<ServerQuery> {
         fn run(s: &str) -> Option<String> {
             s.split(|c: char| !c.is_ascii() || c.is_ascii_control())
@@ -860,27 +885,42 @@ impl ServerQuery {
         'clauses: for clause in &self.clauses {
             let mut any = Vec::new();
             for l in clause {
+                let text = |s: &String, key: fn(String) -> Key| {
+                    if s.is_ascii() {
+                        Some(Some(key(s.clone())))
+                    } else if l.negated {
+                        // Dropped: the clause may hold for anything.
+                        Some(None)
+                    } else {
+                        run(s).map(|r| Some(key(r)))
+                    }
+                };
                 let key = match &l.key {
-                    Key::Text(s) => run(s).map(Key::Text),
-                    Key::From(s) => run(s).map(Key::From),
-                    Key::To(s) => run(s).map(Key::To),
-                    Key::Cc(s) => run(s).map(Key::Cc),
-                    Key::Bcc(s) => run(s).map(Key::Bcc),
-                    Key::Subject(s) => run(s).map(Key::Subject),
-                    Key::Recipients(list) => {
+                    Key::Text(s) => text(s, Key::Text),
+                    Key::From(s) => text(s, Key::From),
+                    Key::To(s) => text(s, Key::To),
+                    Key::Cc(s) => text(s, Key::Cc),
+                    Key::Bcc(s) => text(s, Key::Bcc),
+                    Key::Subject(s) => text(s, Key::Subject),
+                    Key::Recipients(list) if list.iter().all(|a| a.is_ascii()) => {
+                        Some(Some(Key::Recipients(list.clone())))
+                    }
+                    Key::Recipients(list) if l.negated => {
                         let list: Vec<String> =
                             list.iter().filter(|a| a.is_ascii()).cloned().collect();
-                        (!list.is_empty()).then_some(Key::Recipients(list))
+                        Some((!list.is_empty()).then_some(Key::Recipients(list)))
                     }
-                    k => Some(k.clone()),
+                    // Looking for addresses the server can't be asked for.
+                    Key::Recipients(_) => None,
+                    k => Some(Some(k.clone())),
                 };
                 match key {
-                    Some(key) => any.push(ServerLiteral {
+                    Some(Some(key)) => any.push(ServerLiteral {
                         key,
                         negated: l.negated,
                     }),
-                    // Unknown: anything may match, so the clause may hold.
-                    None => continue 'clauses,
+                    Some(None) => continue 'clauses,
+                    None => return None,
                 }
             }
             clauses.push(any);
@@ -963,8 +1003,9 @@ impl ServerQuery {
                 Key::Flagged => json!({ "hasKeyword": "$flagged" }),
                 Key::Since(t) => json!({ "after": utc_date(*t) }),
                 Key::Before(t) => json!({ "before": utc_date(*t) }),
-                Key::Larger(n) => json!({ "minSize": n.saturating_add(1) }),
-                Key::Smaller(n) => json!({ "maxSize": n }),
+                // JMAP's UnsignedInt stops at 2^53 - 1.
+                Key::Larger(n) => json!({ "minSize": n.saturating_add(1).min(JMAP_MAX_INT) }),
+                Key::Smaller(n) => json!({ "maxSize": (*n).min(JMAP_MAX_INT) }),
                 Key::Keyword(k) => json!({ "hasKeyword": k }),
                 Key::Header(name) => json!({ "header": [name] }),
                 Key::Attachment => json!({ "hasAttachment": true }),
@@ -1150,6 +1191,20 @@ mod tests {
         assert_eq!(one("after:2026-10-01"), Term::After(1_790_812_800));
         assert_eq!(one("after:2026/10/01"), Term::After(1_790_812_800));
         assert_eq!(one("before:1970-01-02"), Term::Before(86_400));
+        // Days a month doesn't have are text, not the next month.
+        assert_eq!(
+            one("before:2026-02-31"),
+            Term::Text("before:2026-02-31".into())
+        );
+        assert_eq!(
+            one("after:2026-04-31"),
+            Term::Text("after:2026-04-31".into())
+        );
+        assert_eq!(
+            one("before:2023-02-29"),
+            Term::Text("before:2023-02-29".into())
+        );
+        assert_eq!(one("before:2024-02-29"), Term::Before(1_709_164_800));
         assert_eq!(one("larger:5M"), Term::Larger(5 << 20));
         assert_eq!(one("larger:1.5mb"), Term::Larger(1_572_864));
         assert_eq!(one("smaller:200K"), Term::Smaller(200 << 10));
@@ -1424,15 +1479,37 @@ mod tests {
             q.imap(true),
             "CHARSET UTF-8 TEXT {5+}\r\ncafé FROM {4+}\r\nZoë TEXT {6+}\r\n日本"
         );
-        let ascii = q.ascii().unwrap();
-        assert!(!ascii.needs_utf8());
-        assert_eq!(ascii.imap(true), r#"TEXT "caf" FROM "Zo""#);
-        let ServerAsk::Ask(q) =
-            Query::parse("日本").for_server(&scope_with(&labels, &groups, &folder))
-        else {
-            panic!()
-        };
+        // A text looked for with no ASCII at all can't be asked for: the
+        // rest alone would bring far more than was looked for.
         assert_eq!(q.ascii(), None);
+        let ascii_of = |s: &str| {
+            let ServerAsk::Ask(q) =
+                Query::parse(s).for_server(&scope_with(&labels, &groups, &folder))
+            else {
+                panic!("{s}")
+            };
+            q.ascii().map(|a| a.imap(true))
+        };
+        assert_eq!(
+            ascii_of("café from:Zoë").as_deref(),
+            Some(r#"TEXT "caf" FROM "Zo""#)
+        );
+        assert_eq!(ascii_of("日本"), None);
+        assert_eq!(ascii_of("日本 is:unread"), None);
+        assert_eq!(ascii_of("日本 OR invoice"), None);
+        // A text left out is dropped, not cut: leaving out "caf" would
+        // leave out more than "café".
+        assert_eq!(ascii_of("-café is:unread").as_deref(), Some("NOT (SEEN)"));
+        assert_eq!(ascii_of("-café"), None);
+        assert_eq!(
+            ascii_of("invoice -from:Zoë").as_deref(),
+            Some(r#"TEXT "invoice""#)
+        );
+        assert_eq!(ascii_of("invoice OR -subject:café"), None);
+        assert_eq!(
+            ascii_of("is:unread (invoice OR -subject:café)").as_deref(),
+            Some("NOT (SEEN)")
+        );
         // Line breaks never reach the server.
         let q = Query::of([Term::Text("a\r\nLOGOUT".into())]);
         let ServerAsk::Ask(q) = q.for_server(&scope_with(&labels, &groups, &folder)) else {
@@ -1486,6 +1563,14 @@ mod tests {
                 { "hasAttachment": true },
                 { "hasKeyword": "to_read" },
                 { "header": ["List-Unsubscribe"] },
+            ]})
+        );
+        // Sizes past what JMAP's numbers hold are clamped.
+        assert_eq!(
+            ask("larger:99999999G smaller:99999999G"),
+            json!({ "operator": "AND", "conditions": [
+                { "minSize": 9_007_199_254_740_991_u64 },
+                { "maxSize": 9_007_199_254_740_991_u64 },
             ]})
         );
         assert_eq!(

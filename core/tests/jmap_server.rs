@@ -279,7 +279,11 @@ impl Server {
                     { "id": "q1", "resourceType": "octets", "scope": "account", "used": used, "hardLimit": limit },
                 ] }))
             }
-            "Email/query" if args["filter"]["operator"].is_string() => {
+            // The outbox's look-up by Message-ID (no sort); searches,
+            // sorted, take the arm below.
+            "Email/query"
+                if args["filter"]["operator"].is_string() && args.get("sort").is_none() =>
+            {
                 let ids: Vec<&String> = self
                     .emails
                     .iter()
