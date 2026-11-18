@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:piuma_mail/compose/reply_builder.dart';
 import 'package:piuma_mail/inbox/recipients_line.dart';
 import 'package:piuma_mail/l10n/app_localizations.dart';
@@ -41,6 +42,8 @@ const _envelope = MailEnvelope(
 );
 
 void main() {
+  setUpAll(() => initializeDateFormatting('en'));
+
   group('who an answer goes to', () {
     test('Reply goes to every Reply-To address', () {
       final d = _b.reply(_row(), 'Hi', envelope: _envelope);

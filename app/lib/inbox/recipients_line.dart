@@ -61,12 +61,13 @@ class _RecipientsLineState extends State<RecipientsLine> {
       height: 1.35,
       color: c.muted,
     );
+    final words = widget.line(RecipientsLine.who(e, l));
     final line = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Flexible(
           child: Text(
-            widget.line(RecipientsLine.who(e, l)),
+            words,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: style,
@@ -86,12 +87,12 @@ class _RecipientsLineState extends State<RecipientsLine> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Semantics(
-          button: true,
           expanded: _open,
+          value: words,
           child: PiumaPressable(
             onTap: () => setState(() => _open = !_open),
             semanticLabel: _open ? l.hideRecipients : l.showRecipients,
-            child: line,
+            child: ExcludeSemantics(child: line),
           ),
         ),
         if (_open)

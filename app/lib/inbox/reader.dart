@@ -542,6 +542,8 @@ class _ReaderState extends State<Reader> {
             final body = await widget.source.body(row).catchError((_) => '');
             to(row, body, text);
           };
+    // Not for a blind copy: answering everyone would tell them.
+    // `others` is 0 for a blind copy: answering everyone would tell them.
     final onReplyAll = (envelope?.others ?? 0) > 0
         ? answer(widget.onReplyAll)
         : null;

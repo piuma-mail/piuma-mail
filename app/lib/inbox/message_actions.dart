@@ -486,6 +486,14 @@ class _RedirectPanelState extends State<_RedirectPanel> {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
+    // The field is a material one.
+    return Material(
+      type: MaterialType.transparency,
+      child: _panel(c, l),
+    );
+  }
+
+  Widget _panel(PiumaColors c, AppLocalizations l) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,

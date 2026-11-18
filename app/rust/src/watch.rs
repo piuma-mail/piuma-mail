@@ -101,6 +101,9 @@ fn others(account_id: i64, mailbox: &str, uid: u32) -> u32 {
         return 0;
     };
     crate::api::reply::describe(&store, account, mailbox, uid, &envelope)
+        .ok()
+        // Not for a blind copy: answering everyone would tell them.
+        .filter(|e| !e.bcc_you)
         .map(|e| {
             (e.reply_all_to.len() + e.reply_all_cc.len()).saturating_sub(e.reply_to.len()) as u32
         })

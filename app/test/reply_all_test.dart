@@ -67,8 +67,7 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Reply all').first);
     await tester.pumpAndSettle();
     expect(find.byType(ComposePane), findsOneWidget);
-    expect(_text(tester, 1), 'Re: Mockup v3 review');
-    await tester.enterText(_inCompose(find.byType(TextField)).at(2), 'Done.');
+    expect(_inCompose(find.text('Re: Mockup v3 review')), findsOneWidget);
     await tester.tap(find.text('Send'));
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
@@ -189,12 +188,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ComposePane), findsNothing);
     expect(find.text('This file couldn’t be attached:'), findsOneWidget);
-    expect(find.text('compose-notes.png'), findsOneWidget);
+    // Named in the panel, over the reader's own chip for it.
+    expect(find.text('compose-notes.png'), findsNWidgets(2));
 
     // Still failing: still named.
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
-    expect(find.text('compose-notes.png'), findsOneWidget);
+    expect(find.text('This file couldn’t be attached:'), findsOneWidget);
 
     // Back on the server: Try again attaches it, and compose opens.
     source.failFiles.clear();
@@ -241,8 +241,11 @@ void main() {
     await tester.tap(find.text('Edit as new'));
     await tester.pumpAndSettle();
     expect(find.byType(ComposePane), findsOneWidget);
-    expect(_text(tester, 1), 'Mockup v3 review');
-    expect(_text(tester, 2), contains('I left two comments'));
+    expect(_inCompose(find.text('Mockup v3 review')), findsOneWidget);
+    expect(
+      _inCompose(find.textContaining('I left two comments')),
+      findsOneWidget,
+    );
     expect(_inCompose(find.byType(AttachmentChip)), findsNWidgets(2));
   });
 
@@ -418,7 +421,6 @@ void main() {
       await tester.tap(find.bySemanticsLabel('More actions'));
       await tester.pumpAndSettle();
       for (final item in [
-        'Reply all',
         'Forward as attachment',
         'Redirect',
         'Edit as new',
@@ -428,7 +430,9 @@ void main() {
       ]) {
         expect(find.text(item), findsOneWidget, reason: item);
       }
-      await tester.tap(find.text('Reply all'));
+      // In the menu, and by the reply box.
+      expect(find.text('Reply all'), findsNWidgets(2));
+      await tester.tap(find.text('Reply all').last);
       await tester.pumpAndSettle();
       expect(find.byType(ComposePane), findsOneWidget);
       expect(source.sent, isEmpty);

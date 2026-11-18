@@ -79,8 +79,10 @@ class MailEnvelope {
   final bool muted;
 
   /// How many more people Reply all reaches than Reply: 0 when Reply all
-  /// would write to the same people, and isn't worth offering.
+  /// would write to the same people, and isn't worth offering. Offered
+  /// nowhere for a blind copy, which answering everyone would give away.
   int get others {
+    if (bccYou) return 0;
     final reply = {for (final a in replyTo) bareAddress(a).toLowerCase()};
     final all = {
       for (final a in [...replyAllTo, ...replyAllCc])
