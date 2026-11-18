@@ -1,10 +1,13 @@
 #include "shell.h"
 
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <gio/gdesktopappinfo.h>
 #include <glib-unix.h>
 #include <glib/gstdio.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <cstring>
 
@@ -132,9 +135,50 @@ static void quit(Shell* self) {
 
 // Signing out or shutting down (systemd stops the session's processes
 // with SIGTERM), or Ctrl-C in a terminal: a normal end, not a crash.
-static gboolean on_terminate(gpointer data) {
+// The handler runs outside the main loop: the first signal asks the loop,
+// through a pipe, to quit as above; a second one (the session is tired of
+// waiting, or the loop is stuck and never read the first) restores the
+// signal's default action and raises it again, so the process ends at once
+// and never holds up a logout.
+static int terminate_pipe[2] = {-1, -1};
+static volatile sig_atomic_t terminate_signals = 0;
+
+static void on_terminate_signal(int signum) {
+  if (terminate_signals++ > 0) {
+    signal(signum, SIG_DFL);
+    raise(signum);
+    return;
+  }
+  int saved = errno;
+  char byte = 0;
+  ssize_t written = write(terminate_pipe[1], &byte, 1);
+  (void)written;
+  errno = saved;
+}
+
+static gboolean on_terminate(gint fd, GIOCondition, gpointer data) {
+  char byte;
+  while (read(fd, &byte, 1) > 0) {
+  }
   quit(static_cast<Shell*>(data));
   return G_SOURCE_CONTINUE;
+}
+
+static void watch_terminate(Shell* self) {
+  if (pipe2(terminate_pipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+    g_warning("termination signals: no pipe, default action kept");
+    return;
+  }
+  g_unix_fd_add(terminate_pipe[0], G_IO_IN, on_terminate, self);
+  struct sigaction action = {};
+  action.sa_handler = on_terminate_signal;
+  action.sa_flags = SA_RESTART;
+  // One handler at a time: SIGTERM and SIGINT share the count.
+  sigemptyset(&action.sa_mask);
+  sigaddset(&action.sa_mask, SIGTERM);
+  sigaddset(&action.sa_mask, SIGINT);
+  sigaction(SIGTERM, &action, nullptr);
+  sigaction(SIGINT, &action, nullptr);
 }
 
 // The inbox's window is gone (closed without a tray): the app ends.
@@ -394,8 +438,7 @@ Shell* shell_new(GApplication* application, GtkWindow* window, FlView* view) {
 
   g_signal_connect(window, "delete-event", G_CALLBACK(on_delete), self);
   g_signal_connect(window, "destroy", G_CALLBACK(on_destroy), self);
-  g_unix_signal_add(SIGTERM, on_terminate, self);
-  g_unix_signal_add(SIGINT, on_terminate, self);
+  watch_terminate(self);
 
   g_autoptr(FlPluginRegistrar) registrar =
       fl_plugin_registry_get_registrar_for_plugin(FL_PLUGIN_REGISTRY(view),

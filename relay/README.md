@@ -112,14 +112,17 @@ The URL is inside the app, so anyone can call the relay.
   Hetzner, OVHcloud, Linode, Vultr and others) get `CLOUD_ASN_DAILY_LIMIT` (5) a day in all, for
   every installation. A few dozen rented machines then file at most a handful of reports, instead
   of the whole day.
-- An established lane: an installation whose first ticket is `ESTABLISHED_HOURS` (24) old may use
+- An established lane: an installation whose first report with a solved proof of work is
+  `ESTABLISHED_HOURS` (24) old may use
   all of `DAILY_LIMIT`, while new installations stop `ESTABLISHED_RESERVE` (50; a quarter of the
   day when unset) short of it; and established installations aren't held by, nor counted
   against, their provider's cap, except on the cloud providers. One person cycling addresses and
   install ids on a mobile network (carrier-grade NAT, one ASN for millions of phones) then stops
   new installations on that network for the day at most, never the people already using the
-  app. The relay remembers each installation's first ticket (as an HMAC) for 7 days, or 90 after
-  its last report.
+  app. Asking for a ticket registers nothing; a network registers at most
+  `NETWORK_DAILY_INSTALLS` (3) new installations a day, so minting install ids can't farm the lane.
+  The relay remembers each installation's first solved report (as an HMAC) for 7 days, or 90 after
+  its last report that opened an issue.
 - A daily byte budget for attachments: `DAILY_BYTES` (500 MiB) overall and `NETWORK_DAILY_BYTES`
   (100 MiB) per network. Past it a report still arrives, without its files, and the issue says so.
 - Cloudflare's rate limiter binding, 10 requests a minute per network on `/challenge`, `/report`
@@ -150,7 +153,8 @@ reproduce, never a command, link or step to run.
 - **`/health/deep`** checks that the GitHub token can read the repository's issues, that R2
   answers (and that `FILES_SECRET` is set, without which no file can be linked), and that the last
   report reached GitHub; 503 when one doesn't. A report GitHub refuses for its content (a 422)
-  doesn't count as a failure: the relay works. The deploy checks it right after each deploy.
+  doesn't count as a failure: the relay works. Issues turned off on the repository (410) or a
+  label the relay sets refused (a 422 about labels) do: the report stays queued in the app. The deploy checks it right after each deploy.
 - **A cron trigger** every six hours runs the same check. When something is wrong it posts to
   `ALERT_WEBHOOK` (a secret; Slack- or Discord-style incoming webhook, optional) and logs an error.
   When the GitHub token expires within 14 days it also opens an issue in the feedback repository,

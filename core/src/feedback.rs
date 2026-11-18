@@ -1289,8 +1289,9 @@ pub fn dismiss_crash(dir: &Path) {
 
 /// Replaces the panic hook, flutter_rust_bridge's included, which prints
 /// the whole panic message: a slicing panic quotes the mail it was
-/// cutting. Each panic is logged and kept for the next launch as "Rust
-/// panic at file.rs:12: <scrubbed message>". With `quiet` (release builds)
+/// cutting. Each panic is logged as "Rust panic at file.rs:12" (the place
+/// only) and kept for the next launch as "Rust panic at file.rs:12:
+/// <scrubbed message>". With `quiet` (release builds)
 /// only "panic at file.rs:12" reaches stderr, so logcat and the system log
 /// never carry mail; otherwise the previous hook runs too, for developers.
 /// Call it after the bridge's own setup; a hook installed later (the
@@ -1314,10 +1315,16 @@ pub fn install_panic_hook(quiet: bool) {
                 .map(|s| s.to_string())
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_default();
-            let entry = format!("Rust panic at {place}: {}", scrub_message(&message));
-            log(Level::Error, "panic", &entry);
+            // The log only says where: a panic message can quote what was
+            // being read, and scrubbing catches quoted text, not a word
+            // that is simply there. The message, scrubbed, waits in the
+            // crash file, which the person sees before a report sends it.
+            log(Level::Error, "panic", &format!("Rust panic at {place}"));
             if let Some(dir) = CRASH_DIR.get() {
-                record_entry(dir, &entry);
+                record_entry(
+                    dir,
+                    &format!("Rust panic at {place}: {}", scrub_message(&message)),
+                );
             }
             if quiet {
                 eprintln!("panic at {place}");

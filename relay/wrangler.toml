@@ -24,10 +24,13 @@ ASN_DAILY_LIMIT = "40"
 # (DEFAULT_CLOUD_ASNS); empty: none.
 # CLOUD_ASNS = "16509,14618,15169,396982,8075,14061,24940,16276,63949,20473"
 CLOUD_ASN_DAILY_LIMIT = "5"
-# An installation whose first ticket is this old is established: it may use the reserve below and
-# isn't held by its provider's cap (outside the cloud providers). New ones get DAILY_LIMIT minus it.
+# An installation whose first report with a solved proof of work is this old is established: it may
+# use the reserve below and isn't held by its provider's cap (outside the cloud providers). New ones
+# get DAILY_LIMIT minus it.
 ESTABLISHED_HOURS = "24"
 ESTABLISHED_RESERVE = "50"
+# New installations a network (IPv4 address, IPv6 /48) may register a day for the lane above.
+NETWORK_DAILY_INSTALLS = "3"
 # Attachment bytes a day, overall and per network; past them reports arrive without files.
 DAILY_BYTES = "524288000"
 NETWORK_DAILY_BYTES = "104857600"

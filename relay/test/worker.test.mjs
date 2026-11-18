@@ -128,6 +128,12 @@ async function readyForm(e, extra = {}, installId = INSTALL, ip = IP) {
   return { t, form, send: (asn = null) => later(Math.max(0, t.nbf - Date.now()) + 1000, () => sendReport(e, form, ip, asn)) };
 }
 
+/** An installation's first report, filed: what starts its way to established. */
+async function firstReport(e, installId = INSTALL, ip = IP) {
+  const ready = await readyForm(e, {}, installId, ip);
+  assert.equal((await ready.send()).status, 201);
+}
+
 /** Runs `fn` with the clock moved forward by `ms`. */
 async function later(ms, fn) {
   const realNow = Date.now;
@@ -388,7 +394,8 @@ test('a GitHub failure takes back the ticket, the counts and the stored files', 
     assert.equal(e.ATTACHMENTS.objects.size, 0);
     assert.equal(e.METER.sql.exec('SELECT COUNT(*) AS n FROM used').toArray()[0].n, 0);
     assert.deepEqual(e.METER.sql.exec('SELECT total, bytes FROM meter_days').toArray().map((r) => ({ ...r })), [{ total: 0, bytes: 0 }]);
-    assert.ok(e.METER.sql.exec('SELECT count FROM meter_counts').toArray().every((r) => r.count === 0));
+    // The report counts are back to zero; the installation stays registered (its proof of work was solved).
+    assert.ok(e.METER.sql.exec("SELECT count FROM meter_counts WHERE key NOT LIKE 'installs:%'").toArray().every((r) => r.count === 0));
     // The wait didn't double, and once GitHub is back the same ticket works.
     assert.ok((await ticketFor(e)).nbf - Date.now() <= 5_000);
     calls.down = false;
@@ -862,7 +869,7 @@ test('cloud providers get a much lower per-ASN cap, for every installation', asy
   mockGitHub();
   // An installation that will be established by the time the VMs come.
   const old = `${'e'.repeat(32)}`;
-  await ticketFor(e, old, '198.51.100.99');
+  await firstReport(e, old, '198.51.100.99');
   await later(25 * HOUR_MS, async () => {
     // Thirty machines on one cloud provider, each its own address and installation.
     const statuses = [];
@@ -891,18 +898,18 @@ test('established installations keep a lane of the day a flood of new ones canno
   assert.equal(limits({ DAILY_LIMIT: '200' }).reserve, 50, 'a quarter of the day by default');
   assert.equal(limits({ DAILY_LIMIT: '2', ESTABLISHED_RESERVE: '9' }).reserve, 2);
   mockGitHub();
-  // Its first ticket, a day and more before.
-  await ticketFor(e, INSTALL, '192.0.2.1');
+  // Its first report, a day and more before.
+  await firstReport(e, INSTALL, '192.0.2.1');
   await later(25 * HOUR_MS, async () => {
-    // Another installation's first ticket, just now.
-    await ticketFor(e, `${'f'.repeat(32)}`, '198.51.100.21');
+    // Another installation's first report, just now.
+    await firstReport(e, `${'f'.repeat(32)}`, '198.51.100.21');
     // New installations have used the day but the reserve.
     e.METER.sql.exec('INSERT OR REPLACE INTO meter_days (day, total, bytes) VALUES (?, 7, 0)', today());
     const fresh = await challengeRes(e, OTHER_INSTALL, '198.51.100.20');
     assert.equal(fresh.status, 503);
     const ready = await readyForm(e, {}, INSTALL, '192.0.2.1');
     assert.equal((await ready.send()).status, 201);
-    // Nor does an installation whose first ticket is an hour old.
+    // Nor does an installation whose first report is an hour old.
     await later(HOUR_MS, async () => {
       // (The hour may cross midnight: the same count on whichever day it is.)
       e.METER.sql.exec('INSERT OR REPLACE INTO meter_days (day, total, bytes) VALUES (?, 7, 0)', today());
@@ -920,7 +927,7 @@ test('one person cycling addresses on a mobile network cannot shut out its estab
   const calls = mockGitHub();
   const mobile = 64520;
   // A beta tester on the carrier, using the app for a while.
-  await ticketFor(e, INSTALL, '100.64.0.1');
+  await firstReport(e, INSTALL, '100.64.0.1');
   await later(30 * HOUR_MS, async () => {
     // Fresh installations, a new carrier-grade NAT address each: they fill the ASN's cap.
     const statuses = [];
@@ -935,22 +942,57 @@ test('one person cycling addresses on a mobile network cannot shut out its estab
     assert.equal((await tester.send(mobile)).status, 201);
     const asnRow = e.METER.sql.exec('SELECT count FROM meter_counts WHERE key = ?', `asn:${mobile}`).toArray()[0];
     assert.equal(asnRow.count, 3);
-    assert.equal(issues(calls).length, 4);
+    assert.equal(issues(calls).length, 5);
   });
 });
 
-test('an installation never seen is forgotten after a week, one that reported is kept longer', async () => {
+const installRows = (e) => e.METER.sql.exec('SELECT ih, exp - first AS kept FROM installs ORDER BY kept').toArray().map((r) => ({ ...r }));
+
+test('a ticket alone registers no installation; one whose report GitHub failed is kept a week, one filed longer', async () => {
   const e = env();
-  mockGitHub();
-  await ticketFor(e, OTHER_INSTALL, '192.0.2.40');
+  const calls = mockGitHub();
+  // Tickets only, as many as anyone likes: nothing is written.
+  for (let i = 0; i < 5; i++) await ticketFor(e, `${'c'.repeat(30)}${String(i).padStart(2, '0')}`, '192.0.2.40');
+  assert.deepEqual(installRows(e), []);
   await later(10_000, async () => {
+    // A solved report GitHub fails: refunded, and its installation only gets the week.
+    calls.down = true;
+    const failed = await readyForm(e, {}, OTHER_INSTALL, '192.0.2.42');
+    assert.equal((await failed.send()).status, 502);
+    calls.down = false;
     const ready = await readyForm(e, {}, INSTALL, '192.0.2.41');
     assert.equal((await ready.send()).status, 201);
   });
-  const rows = e.METER.sql.exec('SELECT exp - first AS kept FROM installs ORDER BY kept').toArray().map((r) => r.kept);
+  const rows = installRows(e);
   assert.equal(rows.length, 2);
-  assert.ok(rows[0] <= 7 * 86400);
-  assert.ok(rows[1] >= 89 * 86400);
+  assert.ok(rows[0].kept <= 7 * 86400);
+  assert.ok(rows[1].kept >= 89 * 86400);
+  // A refund never takes a filed installation's longer memory away.
+  await later(20 * 60_000, async () => {
+    calls.down = true;
+    const again = await readyForm(e, {}, INSTALL, '192.0.2.41');
+    assert.equal((await again.send()).status, 502);
+  });
+  assert.ok(installRows(e).find((r) => r.kept >= 89 * 86400));
+});
+
+test('a network registers a few new installations a day, so the established lane cannot be farmed', async () => {
+  const e = env();
+  e.NETWORK_DAILY_INSTALLS = '2';
+  e.NETWORK_DAILY_LIMIT = '50';
+  mockGitHub();
+  assert.equal(limits({}).networkInstalls, 3);
+  // One machine minting install ids, each report solved and filed.
+  for (let i = 0; i < 5; i++) {
+    await later(i * 20 * 60_000, () => firstReport(e, `${'a'.repeat(30)}${String(i).padStart(2, '0')}`, '192.0.2.50'));
+  }
+  assert.equal(installRows(e).length, 2);
+  // Another network still registers its own.
+  await firstReport(e, OTHER_INSTALL, '192.0.2.51');
+  assert.equal(installRows(e).length, 3);
+  // The next day the network may register again.
+  await later(25 * HOUR_MS, () => firstReport(e, `${'a'.repeat(30)}09`, '192.0.2.50'));
+  assert.equal(installRows(e).length, 4);
 });
 
 test('a long title full of @ stays within GitHub limit and never mentions anyone', () => {
@@ -974,8 +1016,12 @@ test('a long title full of @ stays within GitHub limit and never mentions anyone
 test('GitHub refusing a report is a 400 for the app, and leaves the health check alone', async () => {
   forgetHealth();
   assert.equal(rejectsTheReport(422), true);
+  assert.equal(rejectsTheReport(422, { message: 'Validation Failed', errors: [{ resource: 'Issue', field: 'title', code: 'custom' }] }), true);
   assert.equal(rejectsTheReport(400), true);
-  for (const s of [401, 403, 404, 429, 500, 502]) assert.equal(rejectsTheReport(s), false, String(s));
+  for (const s of [401, 403, 404, 410, 429, 500, 502]) assert.equal(rejectsTheReport(s), false, String(s));
+  // A label the relay sets, missing or refused, is the relay's setup, not the report.
+  assert.equal(rejectsTheReport(422, { message: 'Validation Failed', errors: [{ resource: 'Label', field: 'name', code: 'invalid' }] }), false);
+  assert.equal(rejectsTheReport(422, { errors: [{ resource: 'Issue', field: 'labels', code: 'invalid' }] }), false);
   const e = env();
   const calls = mockGitHub();
   const real = globalThis.fetch;
@@ -1000,6 +1046,37 @@ test('GitHub refusing a report is a 400 for the app, and leaves the health check
     assert.equal(h.status, 200);
     assert.equal((await h.json()).lastReportFailed, false);
   });
+});
+
+test('issues turned off or a missing label is the relay misconfigured: the report stays queued and health fails', async () => {
+  for (const [status, body] of [
+    [410, { message: 'Issues are disabled for this repo' }],
+    [422, { message: 'Validation Failed', errors: [{ resource: 'Label', field: 'name', code: 'invalid', value: 'bug' }] }],
+  ]) {
+    forgetHealth();
+    const e = env();
+    const calls = mockGitHub();
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (init.method === 'POST' && url.endsWith('/issues')) {
+        calls.push({ url, method: init.method });
+        return Response.json(body, { status });
+      }
+      return real(url, init);
+    };
+    await later(10_000, async () => {
+      const ready = await readyForm(e, { reportId: `r-${status}` });
+      const res = await ready.send();
+      // 502: the app keeps the report and tries again later.
+      assert.equal(res.status, 502, String(status));
+      assert.equal(e.METER.sql.exec('SELECT COUNT(*) AS n FROM used').toArray()[0].n, 0);
+      assert.ok((await e.METER.get().upstream()).lastFailure > 0);
+      const h = await worker.fetch(new Request('https://relay.test/health/deep'), e);
+      assert.equal(h.status, 503);
+      assert.equal((await h.json()).lastReportFailed, true);
+    });
+  }
+  forgetHealth();
 });
 
 test('/health/deep answers from memory for a minute, then rate limited per network', async () => {

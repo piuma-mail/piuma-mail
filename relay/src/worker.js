@@ -31,10 +31,12 @@
  *   (ASN_DAILY_LIMIT), so one host or provider can't use up the day for everyone; known cloud and
  *   hosting providers (CLOUD_ASNS) get a much lower cap (CLOUD_ASN_DAILY_LIMIT) that holds for
  *   every installation; a global cap (DAILY_LIMIT) stays as a last resort;
- * - a lane for established installations (whose first ticket is ESTABLISHED_HOURS old): part of
- *   the global cap (ESTABLISHED_RESERVE) only they can use, and no per-ASN cap outside the cloud
- *   providers, so a flood of fresh installations (a few dozen cloud machines, or one person
- *   cycling addresses on a mobile network) can't stop the people who already use the app;
+ * - a lane for established installations (whose first report with a solved proof of work is
+ *   ESTABLISHED_HOURS old): part of the global cap (ESTABLISHED_RESERVE) only they can use, and no
+ *   per-ASN cap outside the cloud providers, so a flood of fresh installations (a few dozen cloud
+ *   machines, or one person cycling addresses on a mobile network) can't stop the people who
+ *   already use the app. A ticket alone registers nothing, and each network registers at most
+ *   NETWORK_DAILY_INSTALLS new installations a day, so the lane can't be farmed for free;
  * - a daily byte budget for attachments, overall (DAILY_BYTES) and per network
  *   (NETWORK_DAILY_BYTES): past it, reports still arrive, without their files;
  * - Cloudflare's rate limiter per network on /challenge and /report;
@@ -52,7 +54,7 @@
  * rotation; without it reports arrive without their files) and optional `ALERT_WEBHOOK`;
  * vars `REPO` ("owner/name") and optionally `PUBLIC_URL`, `DAILY_LIMIT`, `NETWORK_DAILY_LIMIT`,
  * `ASN_DAILY_LIMIT`, `CLOUD_ASNS`, `CLOUD_ASN_DAILY_LIMIT`, `ESTABLISHED_HOURS`,
- * `ESTABLISHED_RESERVE`, `DAILY_BYTES`, `NETWORK_DAILY_BYTES`, `POW_BITS`, `RETENTION_DAYS`.
+ * `ESTABLISHED_RESERVE`, `NETWORK_DAILY_INSTALLS`, `DAILY_BYTES`, `NETWORK_DAILY_BYTES`, `POW_BITS`, `RETENTION_DAYS`.
  *
  * Logs (Workers Logs) carry events, statuses and counts only: never report text, IPs or ids.
  */
@@ -93,7 +95,10 @@ const HEALTH_FRESH = 10 * 60;
 const HEALTH_MEMORY = 60;
 /** GitHub's longest issue title, in characters. */
 const MAX_TITLE = 256;
-/** How long an installation's first ticket is remembered when it never sends a report, and after its last one. */
+/**
+ * How long an installation is remembered from its first report with a solved proof of work when
+ * none was filed (refused, or GitHub failed), and after its last filed one.
+ */
 const INSTALL_MEMORY = 7 * DAY;
 const INSTALL_MEMORY_AFTER_REPORT = 90 * DAY;
 /**
@@ -282,7 +287,7 @@ async function report(request, env) {
     throw e instanceof HttpError ? e : new HttpError(502, 'upstream');
   }
   try {
-    if (reportKey) await m.remember(reportKey, issue.number, issue.html_url);
+    await m.remember(reportKey, issue.number, issue.html_url, payload.ih);
     await m.noteUpstream(true);
   } catch (e) {
     log('error', 'remember_failed', { message: String(e?.message ?? e).slice(0, 200) });
@@ -507,10 +512,20 @@ class GitHubRejected extends HttpError {
 
 /**
  * A 4xx that is about the report itself. 401 and 403 (token, permissions, abuse limits), 404 (the
- * repository or the token's access to it is gone) and 429 (rate limited) are the relay's problem:
- * those stay upstream failures, the report is kept and tried again.
+ * repository or the token's access to it is gone), 410 (issues turned off on the repository), 429
+ * (rate limited) and a 422 about the labels (one the relay sets is missing or refused) are the
+ * relay's problem: those stay upstream failures, the report is kept and tried again, and
+ * /health/deep says the relay needs the maintainer.
  */
-export const rejectsTheReport = (status) => status >= 400 && status < 500 && ![401, 403, 404, 429].includes(status);
+export function rejectsTheReport(status, body = null) {
+  if (status < 400 || status >= 500 || [401, 403, 404, 410, 429].includes(status)) return false;
+  if (status === 422 && aboutLabels(body)) return false;
+  return true;
+}
+
+/** Whether a GitHub validation error names the labels. */
+const aboutLabels = (body) =>
+  Array.isArray(body?.errors) && body.errors.some((e) => /label/i.test(`${e?.resource ?? ''} ${e?.field ?? ''}`));
 
 function github(env) {
   const base = `https://api.github.com/repos/${env.REPO}`;
@@ -527,10 +542,11 @@ function github(env) {
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
+      const body = await res.json().catch(() => null);
       // GitHub's own message ("Bad credentials", "Not Found"), never the request.
-      const message = await res.json().then((j) => String(j?.message ?? '').slice(0, 120)).catch(() => '');
+      const message = String(body?.message ?? '').slice(0, 120);
       log('error', 'github_failed', { method, path: path.split('?')[0], status: res.status, message });
-      if (rejectsTheReport(res.status)) throw new GitHubRejected(res.status);
+      if (rejectsTheReport(res.status, body)) throw new GitHubRejected(res.status);
       throw new HttpError(502, `github ${res.status}`);
     }
     return res;
@@ -705,10 +721,11 @@ const meter = (env) => env.METER.get(env.METER.idFromName('global'));
 /**
  * Counter keys: the installation and the network get the spacing and the per-network cap; the ASN
  * only its own cap, a lower one for cloud providers. `install` names the installation for the
- * established lane.
+ * established lane, and `network` counts the installations its network registered today.
  */
 export const meterKeys = (ih, who, env = {}) => ({
   install: ih,
+  network: who.ipKey ? `installs:ip:${who.ipKey}` : null,
   spaced: [`install:${ih}`, ...(who.ipKey ? [`ip:${who.ipKey}`] : [])],
   asn: who.asn ? `asn:${who.asn}` : null,
   cloud: who.asn ? cloudAsns(env).has(who.asn) : false,
@@ -735,6 +752,7 @@ export const limits = (env) => {
     reserve: Math.min(daily, num(env.ESTABLISHED_RESERVE, Math.floor(daily / 4))),
     dailyBytes: num(env.DAILY_BYTES, 500 * MiB),
     networkBytes: num(env.NETWORK_DAILY_BYTES, 100 * MiB),
+    networkInstalls: num(env.NETWORK_DAILY_INSTALLS, 3),
   };
 };
 const retentionDays = (env) => num(env.RETENTION_DAYS, 90);
@@ -767,8 +785,8 @@ export class Meter extends DurableObject {
   }
 
   /**
-   * Before a ticket: whether this caller may report today, and how many it sent. A ticket given
-   * is the installation's first one, if none was given before: it starts its way to established.
+   * Before a ticket: whether this caller may report today, and how many it sent. It writes
+   * nothing: an installation starts its way to established with its first solved report.
    */
   status(keys, limits) {
     const now = nowSeconds();
@@ -776,9 +794,6 @@ export class Meter extends DurableObject {
     if (refusal) return refusal;
     let sent = 0;
     for (const row of this.#rows(keys.spaced, now)) sent = Math.max(sent, row.count);
-    if (keys.install) {
-      this.sql.exec('INSERT OR IGNORE INTO installs (ih, first, exp) VALUES (?, ?, ?)', keys.install, now, now + INSTALL_MEMORY);
-    }
     return { ok: true, sent };
   }
 
@@ -793,6 +808,8 @@ export class Meter extends DurableObject {
    * its way, 503 the global cap, 429 a per-installation, network or ASN cap, 403 a report from the
    * same installation or network came sooner than its wait allows. Its attachments count against
    * the byte budgets only when they fit (`keepFiles`); otherwise the report goes without them.
+   * Called only with a solved proof of work, so it is also where an installation is first seen,
+   * refused or not (see `#register`).
    */
   claim({ ticketId, keys, reportKey, bytes, limits }) {
     const now = nowSeconds();
@@ -800,6 +817,7 @@ export class Meter extends DurableObject {
     if (this.sql.exec('SELECT 1 FROM used WHERE id = ?', ticketId).toArray().length) {
       return { ok: false, status: 409, error: 'duplicate' };
     }
+    this.#register(keys, limits, now);
     if (reportKey) {
       const row = this.sql.exec('SELECT number, url FROM reports WHERE key = ? AND exp >= ?', reportKey, now).toArray()[0];
       if (row?.number != null) return { ok: false, existing: { number: row.number, url: row.url } };
@@ -841,13 +859,6 @@ export class Meter extends DurableObject {
     if (reportKey) {
       this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, NULL, NULL, ?)', reportKey, now + IN_PROGRESS);
     }
-    if (keys.install) {
-      // Remembered for longer once it has reported: it stays established.
-      this.sql.exec(
-        'INSERT INTO installs (ih, first, exp) VALUES (?1, ?2, ?3) ON CONFLICT (ih) DO UPDATE SET exp = MAX(exp, ?3)',
-        keys.install, now, now + INSTALL_MEMORY_AFTER_REPORT,
-      );
-    }
     return { ok: true, keepFiles: fits, counted, day: today, asnCounted };
   }
 
@@ -868,9 +879,18 @@ export class Meter extends DurableObject {
     if (reportKey) this.sql.exec('DELETE FROM reports WHERE key = ? AND number IS NULL', reportKey);
   }
 
-  /** The issue a report opened, for the same report sent again. */
-  remember(reportKey, number, url) {
-    this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, ?, ?, ?)', reportKey, number, url, nowSeconds() + REPORT_MEMORY);
+  /**
+   * A report filed: the issue it opened, for the same report sent again, and its installation (if
+   * registered) kept for longer, so it stays established. Only here, never at the claim: a claim GitHub then fails
+   * is refunded, and its installation keeps the week it was given.
+   */
+  remember(reportKey, number, url, install = null) {
+    const now = nowSeconds();
+    if (reportKey) {
+      this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, ?, ?, ?)', reportKey, number, url, now + REPORT_MEMORY);
+    }
+    // Only an installation the claim registered: past its network's daily count it stays new.
+    if (install) this.sql.exec('UPDATE installs SET exp = MAX(exp, ?) WHERE ih = ?', now + INSTALL_MEMORY_AFTER_REPORT, install);
   }
 
   /** Whether the last call to GitHub for a report worked. */
@@ -899,7 +919,28 @@ export class Meter extends DurableObject {
     this.sql.exec('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)', key, JSON.stringify(value));
   }
 
-  /** Whether the installation's first ticket is old enough for the established lane. */
+  /**
+   * Notes an installation the first time it sends a report with a solved proof of work, unless its
+   * network already registered `networkInstalls` new ones today (or the network is unknown): one
+   * machine minting install ids can't make a crowd of established ones, and the table stays small.
+   */
+  #register(keys, limits, now) {
+    if (!keys.install || !keys.network) return;
+    if (this.sql.exec('SELECT 1 FROM installs WHERE ih = ? AND exp >= ?', keys.install, now).toArray().length) return;
+    const [row] = this.#rows([keys.network], now);
+    if (row && row.count >= limits.networkInstalls) return;
+    this.sql.exec('INSERT OR REPLACE INTO installs (ih, first, exp) VALUES (?, ?, ?)', keys.install, now, now + INSTALL_MEMORY);
+    this.sql.exec(
+      `INSERT INTO meter_counts (key, count, bytes, since, last) VALUES (?1, 1, 0, ?2, ?2)
+       ON CONFLICT (key) DO UPDATE SET
+         count = CASE WHEN ?2 - since < ?3 THEN count + 1 ELSE 1 END,
+         since = CASE WHEN ?2 - since < ?3 THEN since ELSE ?2 END,
+         last = ?2`,
+      keys.network, now, DAY,
+    );
+  }
+
+  /** Whether the installation's first solved report is old enough for the established lane. */
   #established(keys, limits, now) {
     if (!keys.install) return false;
     const row = this.sql.exec('SELECT first FROM installs WHERE ih = ? AND exp >= ?', keys.install, now).toArray()[0];
