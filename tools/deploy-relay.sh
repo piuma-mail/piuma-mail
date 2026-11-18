@@ -7,7 +7,9 @@
 #   CLOUDFLARE_API_TOKEN   token from the "Edit Cloudflare Workers" template
 #   CLOUDFLARE_ACCOUNT_ID  the Cloudflare account id
 #   FEEDBACK_GITHUB_TOKEN  fine-grained token on the feedback repository only:
-#                          Issues + Contents, read and write
+#                          Issues, read and write
+#
+# The R2 bucket and its lifecycle rule must exist first: relay/README.md, "Setup".
 #   FEEDBACK_REPO          optional "owner/name"; REPO in relay/wrangler.toml
 #                          when unset
 #

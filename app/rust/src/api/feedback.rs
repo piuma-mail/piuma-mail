@@ -21,6 +21,7 @@ pub(crate) fn opened(db_path: &str) {
         .parent()
         .map(|d| d.join("feedback"))
         .unwrap_or_else(|| "feedback".into());
+    feedback::set_crash_dir(&dir);
     let _ = DIR.set(dir);
     refresh_personal();
 }
@@ -58,6 +59,17 @@ fn refresh_personal() {
         }
     }
     feedback::set_personal(words);
+}
+
+/// The people in the mail on this device, whose names a report's log must
+/// never carry. A query over the whole mailbox: run when the sheet opens,
+/// not on every keystroke.
+fn refresh_people() {
+    let Ok(reader) = reader() else { return };
+    if let Ok((names, addresses)) = reader.known_people(3000) {
+        drop(reader);
+        feedback::set_known_people(&names, &addresses);
+    }
 }
 
 const SHAKE: &str = "feedback.shake";
@@ -244,7 +256,52 @@ pub fn feedback_relay_enabled() -> bool {
 /// address.
 #[frb(sync)]
 pub fn feedback_address() -> String {
-    feedback::FEEDBACK_ADDRESS.to_string()
+    feedback::feedback_address().to_string()
+}
+
+/// What the privacy notice says about who handles reports, as this build
+/// sets it (see CONTRIBUTING.md, "Reports in a fork").
+#[derive(Debug, Clone)]
+pub struct FeedbackPrivacy {
+    /// Who decides what happens to reports.
+    pub controller: String,
+    /// Where to ask what is kept, or to have it erased.
+    pub contact: String,
+    /// The full notice.
+    pub url: String,
+    /// The relay's host; empty when this build has none.
+    pub relay_host: String,
+    /// Days attachments are kept.
+    pub files_days: u32,
+}
+
+#[frb(sync)]
+pub fn feedback_privacy() -> FeedbackPrivacy {
+    let p = feedback::privacy();
+    FeedbackPrivacy {
+        controller: p.controller,
+        contact: p.contact,
+        url: p.url,
+        relay_host: p.relay_host,
+        files_days: p.files_days,
+    }
+}
+
+/// The app started (desktop only): a session that never ended is kept as
+/// a crash, to offer a report.
+#[frb(sync)]
+pub fn feedback_session_start() {
+    if let Some(dir) = DIR.get() {
+        feedback::session_started(dir);
+    }
+}
+
+/// The app is closing normally (desktop only).
+#[frb(sync)]
+pub fn feedback_session_end() {
+    if let Some(dir) = DIR.get() {
+        feedback::session_ended(dir);
+    }
 }
 
 /// Adds a line to the recent log (cleaned before it is kept). `level` is
@@ -286,6 +343,7 @@ pub fn feedback_dismiss_crash() {
 /// Send is instant. Quietly does nothing offline or without a relay.
 pub async fn feedback_prepare() -> Result<(), EngineError> {
     refresh_personal();
+    refresh_people();
     if PREPARED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -418,13 +476,27 @@ pub fn feedback_email(id: String) -> Result<FeedbackEmail, EngineError> {
     let report = reports.get(&id).map_err(err)?;
     let (subject, body, files) = feedback::email(&reports, &report);
     Ok(FeedbackEmail {
-        to: feedback::FEEDBACK_ADDRESS.to_string(),
+        to: feedback::feedback_address().to_string(),
         subject,
         body,
         attachments: files
             .into_iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
+    })
+}
+
+/// "Delete" on a report already sent: an email asking the maintainers to
+/// erase it too, to the privacy contact. No files go with it.
+#[frb(sync)]
+pub fn feedback_erasure_email(id: String) -> Result<FeedbackEmail, EngineError> {
+    let report = reports()?.get(&id).map_err(err)?;
+    let (subject, body) = feedback::erasure_email(&report);
+    Ok(FeedbackEmail {
+        to: feedback::privacy().contact,
+        subject,
+        body,
+        attachments: Vec::new(),
     })
 }
 

@@ -50,6 +50,29 @@ cd ../wear && dart format lib test && flutter analyze && flutter test   # the wa
 - **Wear OS watch:** `wear/` is a small Flutter app with no engine of its own: the phone app sends it the inbox over the watch connection (`WatchLink.kt`, `app/rust/src/watch.rs`) and does what its buttons ask. It shares the phone app's application id and key, as Wear OS requires. `cd wear && flutter test`; to try it, start a Wear OS emulator (Round, API 33 or later), pair it with a phone or phone emulator through the Wear OS app, then `flutter run -d <watch>` with the phone app installed on the phone. Its icons and tokens come from `tools/gen_icons.py` and `tools/gen_tokens.py`, like the phone's.
 - **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without them, release builds keep the local debug key. The "Release" workflow builds the same APK, with the key from repository secrets, and attaches it to the GitHub prerelease.
 
+## Reports in a fork
+
+In-app reports go to the project's report relay ([`relay/`](relay/README.md)), which files them in
+the project's private feedback repository; the privacy notice ([PRIVACY.md](PRIVACY.md)) names who
+handles them. A fork that ships its own build points these at itself with environment variables
+read when the Rust engine is built (`flutter build`, `flutter run` and `cargo build` all pass them
+through; nothing is read at run time):
+
+| Variable | What | Project default |
+| --- | --- | --- |
+| `PIUMA_REPORT_RELAY` | The relay's address; empty turns the relay off, leaving "Send by email instead" | `https://piuma-report-relay.matte-maraffio.workers.dev` |
+| `PIUMA_FEEDBACK_ADDRESS` | Where "Send by email instead" writes; empty hides it | `piuma@matteomaraffio.com` |
+| `PIUMA_PRIVACY_CONTROLLER` | Who handles reports, as the privacy notice in the app says | `Matteo Maraffio, maintainer of Piuma Mail` |
+| `PIUMA_PRIVACY_CONTACT` | Where to ask about or erase a report | the feedback address |
+| `PIUMA_PRIVACY_URL` | The full privacy notice | this repository's `PRIVACY.md` |
+| `PIUMA_REPORT_FILES_DAYS` | Days the relay keeps attachments, as the notice says | `90` |
+
+For example `PIUMA_REPORT_RELAY=https://reports.example.org flutter build apk`. Run your own relay
+from `relay/` (its README has the setup, including the R2 bucket and its lifecycle rule), set
+`REPO` to your feedback repository, and adapt `PRIVACY.md`. Moving the project's own relay from
+`workers.dev` to a project domain is a maintainer step (DNS, a Workers route, then a build with the
+new address): see the relay's README, "A project domain".
+
 ## License and DCO sign-off
 
 - Every contribution is released under GPL-3.0-or-later plus the additional app store permission described in [`LICENSE-APPSTORE.md`](LICENSE-APPSTORE.md).

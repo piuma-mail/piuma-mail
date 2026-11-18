@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../engine/api/feedback.dart' as feedback;
 import '../engine/api/updates.dart' as engine;
 import '../engine/api/updates.dart' show UpdateRelease;
 
@@ -151,7 +152,12 @@ class Updates {
 
   /// "Restart now": closes the app, applies the update and opens it.
   Future<void> restart() async {
-    if (!_fake) await engine.updatesRestart();
+    if (_fake) return;
+    // Closing to update is a normal close, not a crash to report.
+    try {
+      feedback.feedbackSessionEnd();
+    } catch (_) {}
+    await engine.updatesRestart();
   }
 
   @visibleForTesting

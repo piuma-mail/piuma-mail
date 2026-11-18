@@ -1,0 +1,36 @@
+# Checks the report relay every day: GitHub token, attachment storage, and whether the last report
+# reached GitHub (GET /health/deep, 503 when something is wrong). A failed scheduled run makes
+# GitHub email the maintainer, so a broken pipeline is noticed without any extra service.
+#
+# Optional repository variable (Settings → Secrets and variables → Actions → Variables):
+#   RELAY_URL   the relay's address; the project's default relay when unset.
+name: Relay health
+
+on:
+  schedule:
+    - cron: "41 7 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    # Forks have no relay of the project's to look at.
+    if: github.repository == 'piuma-mail/piuma-mail' || vars.RELAY_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deep health check
+        env:
+          RELAY_URL: ${{ vars.RELAY_URL }}
+        run: |
+          url="${RELAY_URL:-https://piuma-report-relay.matte-maraffio.workers.dev}"
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' "$url/health/deep") || { echo "::error::Relay unreachable"; exit 1; }
+          code=$(printf '%s' "$body" | tail -n1)
+          json=$(printf '%s' "$body" | sed '$d')
+          echo "$json" | jq . || true
+          echo "### Report relay: $code" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"; echo "$json" >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != "200" ]; then
+            echo "::error::Report relay unhealthy (HTTP $code): see relay/README.md, Monitoring"
+            exit 1
+          fi

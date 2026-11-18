@@ -4,7 +4,7 @@
 # Repository secrets it needs:
 #   CLOUDFLARE_API_TOKEN   token from the "Edit Cloudflare Workers" template
 #   CLOUDFLARE_ACCOUNT_ID  the Cloudflare account id
-#   FEEDBACK_GITHUB_TOKEN  fine-grained PAT on the feedback repository only: Issues + Contents, read & write
+#   FEEDBACK_GITHUB_TOKEN  fine-grained PAT on the feedback repository only: Issues, read & write
 # Optional repository variable (Settings → Secrets and variables → Actions → Variables):
 #   FEEDBACK_REPO          "owner/name" of the repository the issues go to. Unset, the relay uses
 #                          REPO from relay/wrangler.toml.

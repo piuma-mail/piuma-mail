@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -40,6 +41,7 @@ Future<void> main(List<String> args) async {
   Updates.start(dir.path);
   engine.openEngine(dbPath: '${dir.path}/piuma.db');
   _keepCrashes();
+  _watchExits();
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();
   // The background service or the 15-minute look, as picked.
@@ -68,7 +70,10 @@ Future<void> main(List<String> args) async {
 }
 
 /// Keeps what went wrong for the next start, where the inbox offers to
-/// report it. Only the error and its stack: nothing from the screen.
+/// report it. Only the error and its stack: nothing from the screen. The
+/// engine keeps the message's first line, scrubbed, and the frames. In a
+/// release build nothing goes to the console either: an exception's text
+/// can quote mail, and on Android the console is the system log.
 void _keepCrashes() {
   void keep(Object error, StackTrace? stack) {
     try {
@@ -81,12 +86,38 @@ void _keepCrashes() {
   final flutter = FlutterError.onError;
   FlutterError.onError = (details) {
     if (!details.silent) keep(details.exception, details.stack);
-    flutter?.call(details);
+    if (!kReleaseMode) flutter?.call(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     keep(error, stack);
-    return false;
+    // Handled in a release build, so the engine doesn't print it.
+    return kReleaseMode;
   };
+}
+
+/// What stopped the app without a Dart or Rust error, kept like a crash to
+/// offer a report at this start: on Android, what the system recorded
+/// (stopped responding, native crashes); on the desktop, a last session
+/// that never closed normally.
+void _watchExits() {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    try {
+      feedback.feedbackSessionStart();
+    } catch (_) {}
+    AppLifecycleListener(
+      onExitRequested: () async {
+        try {
+          feedback.feedbackSessionEnd();
+        } catch (_) {}
+        return AppExitResponse.exit;
+      },
+    );
+  }
+  AndroidBackground.exitReasons().then((reasons) {
+    for (final r in reasons) {
+      feedback.feedbackRecordCrash(text: r);
+    }
+  }).ignore();
 }
 
 /// A reader window: the engine is already open in this process, and

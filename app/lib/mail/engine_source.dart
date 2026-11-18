@@ -2865,6 +2865,24 @@ class EngineMailSource extends MailSource {
   Future<void> reportEmailed(String id) async => fb.feedbackMarkEmailed(id: id);
 
   @override
+  late final ReportPrivacy reportPrivacy = () {
+    final p = fb.feedbackPrivacy();
+    return ReportPrivacy(
+      controller: p.controller,
+      contact: p.contact,
+      url: p.url,
+      relayHost: p.relayHost,
+      filesDays: p.filesDays,
+    );
+  }();
+
+  @override
+  Future<ReportEmail> erasureEmail(String id) async {
+    final e = fb.feedbackErasureEmail(id: id);
+    return ReportEmail(to: e.to, subject: e.subject, body: e.body);
+  }
+
+  @override
   bool get crashWaiting => fb.feedbackCrashWaiting();
 
   @override

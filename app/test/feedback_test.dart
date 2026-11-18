@@ -9,6 +9,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/feedback/crash_line.dart';
 import 'package:piuma_mail/feedback/help_page.dart';
+import 'package:piuma_mail/feedback/privacy_notice.dart';
 import 'package:piuma_mail/feedback/report_context.dart';
 import 'package:piuma_mail/feedback/report_sheet.dart';
 import 'package:piuma_mail/feedback/shake.dart';
@@ -19,6 +20,7 @@ import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/search/command_palette.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
 import 'package:piuma_mail/widgets/attachment_chip.dart';
+import 'package:piuma_mail/widgets/links.dart';
 import 'package:piuma_mail/widgets/switch.dart';
 
 /// A Thursday morning.
@@ -226,6 +228,17 @@ void main() {
 
   testWidgets('Delete takes a report off the list', (tester) async {
     await _help(tester);
+    await tester.longPress(find.text('Dark mode on the lock screen'));
+    await tester.pumpAndSettle();
+    // Never sent: it just goes.
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this report?'), findsNothing);
+    expect(find.text('Dark mode on the lock screen'), findsNothing);
+  });
+
+  testWidgets('deleting a sent report says the issue stays', (tester) async {
+    await _help(tester);
     await tester.longPress(find.text('Notification shows twice'));
     await tester.pumpAndSettle();
     // Sent already: nothing to try again or email.
@@ -233,7 +246,78 @@ void main() {
     expect(find.text('Send by email instead'), findsNothing);
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
+    expect(find.text('Delete this report?'), findsOneWidget);
+    expect(find.textContaining('(#12) stays with the maintainers'), findsOneWidget);
+    // Cancel keeps it.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Notification shows twice'), findsOneWidget);
+    await tester.longPress(find.text('Notification shows twice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete from this device'));
+    await tester.pumpAndSettle();
     expect(find.text('Notification shows twice'), findsNothing);
+  });
+
+  testWidgets('a sent report can be erased: the request opens in compose', (
+    tester,
+  ) async {
+    Draft? written;
+    await _help(tester, onWrite: (d) => written = d);
+    await tester.longPress(find.text('Notification shows twice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Also ask to erase it'));
+    await tester.pumpAndSettle();
+    expect(written?.to, ['piuma@example.org']);
+    expect(written?.subject, 'Erase my Piuma report');
+    expect(find.text('Notification shows twice'), findsNothing);
+  });
+
+  testWidgets('Reports and privacy says what goes, where and to whom', (
+    tester,
+  ) async {
+    final opened = <Uri>[];
+    final open = openExternalLink;
+    openExternalLink = (uri) async => opened.add(uri);
+    addTearDown(() => openExternalLink = open);
+    await _help(tester);
+    await tester.tap(find.text('Reports and privacy'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PrivacyNotice), findsOneWidget);
+    expect(find.textContaining('reports.example.org'), findsOneWidget);
+    expect(find.textContaining('in the United States'), findsOneWidget);
+    expect(find.textContaining('deleted after 90 days'), findsOneWidget);
+    expect(find.textContaining('The maintainers of Piuma Mail'), findsOneWidget);
+    expect(find.textContaining('write to piuma@example.org'), findsOneWidget);
+    expect(find.textContaining('removes only the copy on this device'), findsOneWidget);
+    await tester.tap(find.text('Full privacy notice'));
+    await tester.pump();
+    expect(opened.single.path, endsWith('/PRIVACY.md'));
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PrivacyNotice), findsNothing);
+  });
+
+  testWidgets('the sheet says where a report goes and links the notice', (
+    tester,
+  ) async {
+    await _help(tester);
+    await _openSheet(tester, 'Report a problem');
+    expect(
+      _inSheet(find.textContaining('private issue on GitHub')),
+      findsOneWidget,
+    );
+    expect(
+      _inSheet(find.text('Addresses and names removed. Check before sending')),
+      findsOneWidget,
+    );
+    await tester.tap(_inSheet(find.text('How reports are handled')));
+    await tester.pumpAndSettle();
+    expect(find.byType(PrivacyNotice), findsOneWidget);
   });
 
   testWidgets('a problem goes with the log and without the screenshot', (
