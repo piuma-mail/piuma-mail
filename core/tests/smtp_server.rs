@@ -11,21 +11,61 @@ use piuma_core::imap::ImapConfig;
 use piuma_core::outbox::{self, Outgoing};
 use piuma_core::remote;
 use piuma_core::remote::AccountCourier;
-use piuma_core::smtp::{ready, send, send_and_file, Draft, Filing, SendError, SmtpConfig};
+use piuma_core::smtp::{ready, send, send_and_file, Draft, Filing, Ready, SendError, SmtpConfig};
 use piuma_core::{Account, AccountId, AccountKind, Security, Server, Store};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::{TcpListener, TcpStream};
 
 /// What the fake server received.
 #[derive(Default, Debug)]
 struct Received {
     rcpt: Vec<String>,
+    /// The message, dot-stuffing undone, one "\n" after each line.
     data: String,
+    /// The message exactly as it came over the wire, dot-stuffing and
+    /// line endings included, without the final ".".
+    wire: Vec<u8>,
+    /// Commands the server read after the message.
+    after: Vec<String>,
+}
+
+/// How the fake server behaves.
+#[derive(Clone, Copy)]
+struct Sink {
+    /// Answers DATA's content with a 451 (a greylist), taking nothing.
+    defer: bool,
+    /// Its reply to EHLO.
+    ehlo: &'static str,
+    /// Answers DATA with this instead of 354, and takes no content.
+    data_reply: Option<&'static str>,
+    /// Answers the message itself with this instead of 250, having taken
+    /// it: a reply that breaks the exchange after the message went.
+    end_reply: Option<&'static str>,
+}
+
+impl Default for Sink {
+    fn default() -> Self {
+        Sink {
+            defer: false,
+            ehlo: "250-sink\r\n250 AUTH PLAIN LOGIN\r\n",
+            data_reply: None,
+            end_reply: None,
+        }
+    }
 }
 
 /// A one-connection-at-a-time SMTP server. Password "test" logs in. With
 /// `defer` it answers DATA with a 451 (a greylist), so it takes nothing.
 async fn smtp_sink(defer: bool) -> (u16, Arc<Mutex<Vec<Received>>>) {
+    smtp_sink_with(Sink {
+        defer,
+        ..Sink::default()
+    })
+    .await
+}
+
+async fn smtp_sink_with(sink: Sink) -> (u16, Arc<Mutex<Vec<Received>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let inbox = Arc::new(Mutex::new(Vec::new()));
@@ -33,21 +73,41 @@ async fn smtp_sink(defer: bool) -> (u16, Arc<Mutex<Vec<Received>>>) {
     tokio::spawn(async move {
         while let Ok((tcp, _)) = listener.accept().await {
             let seen = seen.clone();
-            tokio::spawn(async move { serve(tcp, seen, defer).await });
+            tokio::spawn(async move { serve(tcp, seen, sink).await });
         }
     });
     (port, inbox)
 }
 
-async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, defer: bool) {
+/// One line as sent, its ending included. Like many servers, it takes a
+/// bare LF for the end of a line.
+async fn read_line(r: &mut BufReader<OwnedReadHalf>) -> Option<Vec<u8>> {
+    let mut line = Vec::new();
+    match r.read_until(b'\n', &mut line).await {
+        Ok(0) | Err(_) => None,
+        Ok(_) => Some(line),
+    }
+}
+
+fn text(line: &[u8]) -> String {
+    String::from_utf8_lossy(line)
+        .trim_end_matches(['\r', '\n'])
+        .to_owned()
+}
+
+async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
     let (r, mut w) = tcp.into_split();
-    let mut lines = BufReader::new(r).lines();
+    let mut r = BufReader::new(r);
     w.write_all(b"220 sink ESMTP\r\n").await.unwrap();
     let mut current = Received::default();
-    while let Ok(Some(line)) = lines.next_line().await {
+    while let Some(raw) = read_line(&mut r).await {
+        let line = text(&raw);
         let upper = line.to_ascii_uppercase();
+        if let Some(last) = seen.lock().unwrap().last_mut() {
+            last.after.push(line.clone());
+        }
         let reply: &[u8] = if upper.starts_with("EHLO") {
-            b"250-sink\r\n250 AUTH PLAIN LOGIN\r\n"
+            sink.ehlo.as_bytes()
         } else if upper.starts_with("AUTH PLAIN") {
             // base64("\0user\0test") ends with "AHRlc3Q=" for any user.
             if line.ends_with("AHRlc3Q=") {
@@ -62,20 +122,30 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, defer: bool) {
             current.rcpt.push(line[8..].trim().to_owned());
             b"250 ok\r\n"
         } else if upper == "DATA" {
+            if let Some(reply) = sink.data_reply {
+                w.write_all(reply.as_bytes()).await.unwrap();
+                continue;
+            }
             w.write_all(b"354 go on\r\n").await.unwrap();
-            while let Ok(Some(l)) = lines.next_line().await {
+            while let Some(raw) = read_line(&mut r).await {
+                let l = text(&raw);
                 if l == "." {
                     break;
                 }
-                current.data.push_str(&l);
+                current.wire.extend_from_slice(&raw);
+                current.data.push_str(l.strip_prefix('.').unwrap_or(&l));
                 current.data.push('\n');
             }
-            if defer {
+            if sink.defer {
                 // A greylist: not a refusal, just not now. It takes nothing.
                 current = Received::default();
                 b"451 4.3.2 try again later\r\n"
             } else {
                 seen.lock().unwrap().push(std::mem::take(&mut current));
+                if let Some(reply) = sink.end_reply {
+                    w.write_all(reply.as_bytes()).await.ok();
+                    continue;
+                }
                 b"250 queued\r\n"
             }
         } else if upper == "QUIT" {
@@ -423,5 +493,245 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
         1,
         "{}",
         got[0].data
+    );
+}
+
+/// Every line of the message ends in CRLF on the wire: no bare CR or LF.
+fn only_crlf(wire: &[u8]) -> bool {
+    wire.iter().enumerate().all(|(i, &b)| match b {
+        b'\r' => wire.get(i + 1) == Some(&b'\n'),
+        b'\n' => i > 0 && wire[i - 1] == b'\r',
+        _ => true,
+    })
+}
+
+#[tokio::test]
+async fn a_body_with_bare_line_endings_and_a_lone_dot_arrives_whole() {
+    let (port, inbox) = smtp_sink(false).await;
+    let mut d = draft();
+    d.body = "First line\nsecond\rthird\n.\nafter the dot\n.\r\nend".into();
+    send(&smtp(port, "test"), &ready(&d).unwrap())
+        .await
+        .unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(only_crlf(&got[0].wire), "{:?}", got[0].wire);
+    // The lone dots went stuffed, so the server read them as text.
+    assert!(got[0].wire.windows(5).any(|w| w == b"\r\n..\r"));
+    assert!(
+        got[0].after.iter().all(|c| c == "QUIT"),
+        "{:?}",
+        got[0].after
+    );
+    let parsed = mail_parser::MessageParser::default()
+        .parse(got[0].data.as_bytes())
+        .unwrap();
+    assert_eq!(
+        parsed
+            .body_text(0)
+            .unwrap()
+            .replace("\r\n", "\n")
+            .trim_end(),
+        "First line\nsecond\nthird\n.\nafter the dot\n.\nend"
+    );
+}
+
+#[tokio::test]
+async fn a_raw_message_with_bare_line_endings_is_sent_with_crlf() {
+    // Like a message kept in the outbox by an older version.
+    let (port, inbox) = smtp_sink(false).await;
+    let message = Ready {
+        message_id: "<old@example.org>".into(),
+        from: "me@example.org".into(),
+        recipients: vec!["luca@example.org".into()],
+        raw: b"Subject: old\nMessage-ID: <old@example.org>\n\nline\n.\nafter\r.\rend\n".to_vec(),
+    };
+    send(&smtp(port, "test"), &message).await.unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(only_crlf(&got[0].wire), "{:?}", got[0].wire);
+    assert_eq!(
+        got[0].wire,
+        b"Subject: old\r\nMessage-ID: <old@example.org>\r\n\r\nline\r\n..\r\nafter\r\n..\r\nend\r\n"
+    );
+    assert!(
+        got[0].after.iter().all(|c| c == "QUIT"),
+        "{:?}",
+        got[0].after
+    );
+}
+
+#[tokio::test]
+async fn a_display_name_with_a_line_break_stays_on_one_line() {
+    let (port, inbox) = smtp_sink(false).await;
+    let mut d = draft();
+    d.from_name = "Matteo\r\nX-Injected: yes".into();
+    d.to = vec!["Luca\nBianchi\r <luca@example.org>".into()];
+    send(&smtp(port, "test"), &ready(&d).unwrap())
+        .await
+        .unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].rcpt, ["<luca@example.org>", "<sara@example.org>"]);
+    assert!(only_crlf(&got[0].wire));
+    let head = got[0].data.split("\n\n").next().unwrap();
+    assert!(!head.lines().any(|l| l.starts_with("X-Injected")), "{head}");
+    let parsed = mail_parser::MessageParser::default()
+        .parse(got[0].data.as_bytes())
+        .unwrap();
+    assert_eq!(
+        parsed.from().unwrap().first().unwrap().name(),
+        Some("Matteo X-Injected: yes")
+    );
+    assert_eq!(
+        parsed.to().unwrap().first().unwrap().name(),
+        Some("Luca Bianchi")
+    );
+}
+
+#[tokio::test]
+async fn a_quoted_local_part_goes_to_that_exact_address() {
+    let (port, inbox) = smtp_sink(false).await;
+    let mut d = draft();
+    d.to = vec!["D <\"d \"@example.org>".into()];
+    d.bcc.clear();
+    let message = ready(&d).unwrap();
+    assert_eq!(message.recipients, ["\"d \"@example.org"]);
+    send(&smtp(port, "test"), &message).await.unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    // Never rewritten to d@example.org, in the envelope or in the header.
+    assert_eq!(got[0].rcpt, ["<\"d \"@example.org>"]);
+    let parsed = mail_parser::MessageParser::default()
+        .parse(got[0].data.as_bytes())
+        .unwrap();
+    assert_eq!(
+        parsed.to().unwrap().first().unwrap().address(),
+        Some("\"d \"@example.org")
+    );
+    assert!(!got[0].data.contains("<d@example.org>"));
+}
+
+#[tokio::test]
+async fn an_ehlo_line_of_only_spaces_is_skipped() {
+    let (port, inbox) = smtp_sink_with(Sink {
+        ehlo: "250-sink\r\n250-   \r\n250 AUTH PLAIN LOGIN\r\n",
+        ..Sink::default()
+    })
+    .await;
+    send(&smtp(port, "test"), &ready(&draft()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_reply_out_of_turn_is_a_protocol_error() {
+    // DATA answered as if the message were already taken: nothing is
+    // sent, and it is not taken for a network failure to retry on its own.
+    let (port, inbox) = smtp_sink_with(Sink {
+        data_reply: Some("250 ok\r\n"),
+        ..Sink::default()
+    })
+    .await;
+    let err = send(&smtp(port, "test"), &ready(&draft()).unwrap())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Protocol(_)), "{err:?}");
+    assert!(!err.is_offline());
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_broken_reply_after_the_message_is_may_have_been_sent_not_resent() {
+    // The server takes the message, then answers it with something that
+    // is not SMTP: it may well have it.
+    let (port, inbox) = smtp_sink_with(Sink {
+        end_reply: Some("hello there\r\n"),
+        ..Sink::default()
+    })
+    .await;
+    let err = send(&smtp(port, "test"), &ready(&draft()).unwrap())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Uncertain(_)), "{err:?}");
+    assert!(!err.is_offline());
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+
+    // Through the outbox: marked "may have been sent", and never sent
+    // again on its own.
+    let store = Store::open_in_memory().unwrap();
+    let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
+    let store = Mutex::new(store);
+    let online = account(id, port, closed_port());
+    let out = Outgoing {
+        account: id,
+        draft: draft(),
+        ready: ready(&draft()).unwrap(),
+        saved: None,
+        send_at: None,
+        undo: false,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
+    for _ in 0..3 {
+        let sent = outbox::send(
+            &store,
+            &online,
+            &mut AccountCourier::new(&online, "test"),
+            "me",
+        )
+        .await
+        .unwrap();
+        assert!(sent.is_empty());
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2, "one more, only once");
+    let listed = store.lock().unwrap().outbox(None).unwrap();
+    assert_eq!(listed[0].id, queued);
+    assert_eq!(listed[0].state, outbox::State::Unknown);
+}
+
+#[tokio::test]
+async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
+    // DATA answered out of turn: nothing went, and the outbox shows why
+    // rather than waiting as if offline or sending it again.
+    let (port, inbox) = smtp_sink_with(Sink {
+        data_reply: Some("250 ok\r\n"),
+        ..Sink::default()
+    })
+    .await;
+    let store = Store::open_in_memory().unwrap();
+    let id = store.add_account(&account(AccountId(0), 25, 143)).unwrap();
+    let store = Mutex::new(store);
+    let online = account(id, port, closed_port());
+    let out = Outgoing {
+        account: id,
+        draft: draft(),
+        ready: ready(&draft()).unwrap(),
+        saved: None,
+        send_at: None,
+        undo: false,
+    };
+    store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
+    for _ in 0..2 {
+        outbox::send(
+            &store,
+            &online,
+            &mut AccountCourier::new(&online, "test"),
+            "me",
+        )
+        .await
+        .unwrap();
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+    let listed = store.lock().unwrap().outbox(None).unwrap();
+    assert_eq!(listed[0].state, outbox::State::Refused);
+    assert!(
+        listed[0].error.as_deref().unwrap().contains("not valid SMTP"),
+        "{:?}",
+        listed[0].error
     );
 }

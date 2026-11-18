@@ -182,6 +182,7 @@ impl From<SendError> for EngineError {
             SendError::Build(_) => EngineError::new(ErrorKind::Other, e.to_string()),
             SendError::Uncertain(_) => EngineError::new(ErrorKind::Other, e.to_string()),
             SendError::Tls { .. } => EngineError::new(ErrorKind::InsecureConnection, e.to_string()),
+            SendError::Protocol(_) => EngineError::new(ErrorKind::Other, e.to_string()),
         }
     }
 }
