@@ -430,14 +430,18 @@ impl Remote {
         })
     }
 
-    /// Sends the account's waiting changes now (labels, reads, moves),
-    /// as a sync round would first.
-    pub async fn send_pending(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
-        match self {
+    /// Sends the account's waiting changes that are due now (labels,
+    /// reads, moves), as a sync round would first. Returns how many the
+    /// server kept refusing and were given up.
+    pub async fn send_pending(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+    ) -> Result<usize> {
+        Ok(match self {
             Remote::Imap(c) => crate::pending::send(c, store, account).await?,
             Remote::Jmap(c) => crate::pending::send(c, store, account).await?,
-        }
-        Ok(())
+        })
     }
 
     pub async fn set_seen(
@@ -449,7 +453,7 @@ impl Remote {
         seen: bool,
     ) -> Result<()> {
         match self {
-            Remote::Imap(c) => c.set_seen(mailbox, uids, seen).await?,
+            Remote::Imap(c) => c.set_seen(store, account, mailbox, uids, seen).await?,
             Remote::Jmap(c) => c.set_seen(store, account, mailbox, uids, seen).await?,
         }
         Ok(())
@@ -466,7 +470,7 @@ impl Remote {
         junk: bool,
     ) -> Result<()> {
         match self {
-            Remote::Imap(c) => c.mark_junk(mailbox, uids, junk).await?,
+            Remote::Imap(c) => c.mark_junk(store, account, mailbox, uids, junk).await?,
             Remote::Jmap(c) => c.mark_junk(store, account, mailbox, uids, junk).await?,
         }
         Ok(())

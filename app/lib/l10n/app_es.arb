@@ -184,6 +184,9 @@
   "riskBodyDisguised": "{name} parece un {kind}, pero es un programa. Los programas que llegan por correo pueden tomar el control de tu dispositivo. Ábrelo solo si lo esperabas.",
   "riskBodyMacros": "{name} tiene macros, que pueden ejecutarse al abrirlo. Ábrelo solo si lo esperabas.",
   "riskBodyLocked": "{name} está protegido con contraseña, así que nadie puede mirar dentro. Ábrelo solo si lo esperabas.",
+  "riskWeb": "Una página web",
+  "riskOpenWeb": "¿Abrir esta página web?",
+  "riskBodyWeb": "{name} es una página web: se abre en tu navegador. Nunca escribas una contraseña ahí: una página enviada por correo puede parecerse a cualquier inicio de sesión.",
   "riskFileFrom": "{name} · {size} · de {email}",
   "settings": "Ajustes",
   "backToMail": "Volver al correo",
@@ -1507,5 +1510,8 @@
   "searchServerPartial": "Algunas carpetas no se han podido buscar por completo.",
   "searchServerFound": "{count, plural, =1{1 correo más encontrado en el servidor, ahora en este dispositivo.} other{{count} correos más encontrados en el servidor, ahora en este dispositivo.}}",
   "searchServerUnreachable": "{count, plural, =1{No se ha podido contactar con el servidor de 1 cuenta.} other{No se ha podido contactar con los servidores de {count} cuentas.}}",
-  "savedSearchEditNamed": "Cambiar el nombre o eliminar {name}"
+  "savedSearchEditNamed": "Cambiar el nombre o eliminar {name}",
+  "listFailed": "No se pudieron mostrar estos correos.",
+  "folderRefreshFailed": "No se pudo actualizar esta carpeta desde el servidor.",
+  "changesDropped": "{count, plural, =1{El servidor no aceptó un cambio que hiciste: ese correo vuelve a estar como antes.} other{El servidor no aceptó {count} cambios que hiciste: esos correos vuelven a estar como antes.}}"
 }

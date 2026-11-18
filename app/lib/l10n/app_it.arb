@@ -184,6 +184,9 @@
   "riskBodyDisguised": "{name} sembra un {kind}, ma è un programma. I programmi arrivati per email possono prendere il controllo del dispositivo. Aprilo solo se lo aspettavi.",
   "riskBodyMacros": "{name} ha delle macro, che possono avviarsi quando lo apri. Aprilo solo se lo aspettavi.",
   "riskBodyLocked": "{name} è protetto da password, quindi nessuno può guardarci dentro. Aprilo solo se lo aspettavi.",
+  "riskWeb": "Una pagina web",
+  "riskOpenWeb": "Aprire questa pagina web?",
+  "riskBodyWeb": "{name} è una pagina web: si apre nel browser. Non scriverci mai una password: una pagina arrivata per email può somigliare a qualsiasi accesso.",
   "riskFileFrom": "{name} · {size} · da {email}",
   "settings": "Impostazioni",
   "backToMail": "Torna alla posta",
@@ -1517,5 +1520,8 @@
   "searchServerPartial": "Alcune cartelle non sono state cercate per intero.",
   "searchServerFound": "{count, plural, =1{1 email in più trovata sul server, ora su questo dispositivo.} other{{count} email in più trovate sul server, ora su questo dispositivo.}}",
   "searchServerUnreachable": "{count, plural, =1{Il server di 1 account non era raggiungibile.} other{I server di {count} account non erano raggiungibili.}}",
-  "savedSearchEditNamed": "Rinomina o elimina {name}"
+  "savedSearchEditNamed": "Rinomina o elimina {name}",
+  "listFailed": "Impossibile mostrare queste email.",
+  "folderRefreshFailed": "Impossibile aggiornare questa cartella dal server.",
+  "changesDropped": "{count, plural, =1{Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.} other{Il server non ha accettato {count} modifiche fatte da te: quelle email sono tornate com’erano.}}"
 }

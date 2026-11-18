@@ -10,6 +10,19 @@ use hayro::{render, PixmapSettings, RenderCache, RenderSettings};
 /// Widest page drawn, in pixels, whatever the screen asks for.
 const MAX_WIDTH: u32 = 2400;
 
+/// Most pixels a page is drawn with: an A4 page 2,400 wide is about 8
+/// million. A tall, thin page is drawn smaller rather than taking hundreds
+/// of megabytes.
+const MAX_PIXELS: f32 = 16_000_000.0;
+
+/// The scale that draws a `w` × `h` page `width` pixels wide, within the
+/// width, the pixel budget and the surface's 65,535 pixels a side.
+fn page_scale(w: f32, h: f32, width: u32) -> f32 {
+    let scale = width.clamp(1, MAX_WIDTH) as f32 / w;
+    let scale = scale.min(65_000.0 / h).min(65_000.0 / w);
+    scale.min((MAX_PIXELS / (w * h)).sqrt())
+}
+
 /// How many pages the PDF has; None when it can't be read (damaged, or
 /// locked with a password).
 pub fn pages(data: &[u8]) -> Option<usize> {
@@ -25,9 +38,7 @@ pub fn page(data: &[u8], index: usize, width: u32) -> Option<Vec<u8>> {
     if w <= 0.0 || h <= 0.0 {
         return None;
     }
-    let scale = width.clamp(1, MAX_WIDTH) as f32 / w;
-    // The drawing surface is at most 65,535 pixels a side.
-    let scale = scale.min(65_000.0 / h);
+    let scale = page_scale(w, h, width);
     let pixmap = render(
         page,
         &RenderCache::new(),
@@ -45,6 +56,17 @@ pub fn page(data: &[u8], index: usize, width: u32) -> Option<Vec<u8>> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_tall_thin_page_is_drawn_within_the_pixel_budget() {
+        for (w, h) in [(1.0, 14_400.0), (595.0, 842.0), (14_400.0, 1.0), (3.0, 3.0)] {
+            let s = page_scale(w, h, 480);
+            assert!((w * s) * (h * s) <= MAX_PIXELS * 1.01, "{w}x{h}");
+            assert!(w * s <= 65_000.0 && h * s <= 65_000.0);
+        }
+        // An ordinary page keeps the width asked for.
+        assert!((595.0 * page_scale(595.0, 842.0, 480) - 480.0).abs() < 0.5);
+    }
 
     /// A PDF of [n] A4 pages, each with a line of Helvetica and a black bar.
     pub(crate) fn sample(n: usize) -> Vec<u8> {

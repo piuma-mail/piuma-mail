@@ -82,13 +82,40 @@ pub enum ImapError {
     #[error("the server does not keep stable message ids in this folder")]
     NoUidValidity,
     #[error("IMAP: {0}")]
-    Protocol(#[from] async_imap::error::Error),
+    Protocol(#[source] async_imap::error::Error),
+    /// The server stopped answering: no reply to a command, a greeting
+    /// that never came, a transfer that stalled.
+    #[error("the server stopped answering")]
+    TimedOut,
+    /// The folder's UIDVALIDITY is not the one its messages were stored
+    /// under: their numbers now name other messages, so nothing is done
+    /// to them.
+    #[error("the server renumbered the folder's messages")]
+    Renumbered,
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error("the message or attachment is no longer on the server")]
     Gone,
     #[error("the account has no folder for this")]
     NoFolder,
+    #[error("the message is larger than the app downloads")]
+    TooLarge,
+}
+
+impl From<async_imap::error::Error> for ImapError {
+    /// The connection's own deadline and budget (see [`crate::watchdog`])
+    /// come back as I/O errors: they get their own names.
+    fn from(e: async_imap::error::Error) -> Self {
+        match e {
+            async_imap::error::Error::Io(io) if crate::watchdog::stalled(&io) => {
+                ImapError::TimedOut
+            }
+            async_imap::error::Error::Io(io) if crate::watchdog::overflowed(&io) => {
+                ImapError::TooLarge
+            }
+            e => ImapError::Protocol(e),
+        }
+    }
 }
 
 impl ImapError {
@@ -99,6 +126,7 @@ impl ImapError {
             self,
             ImapError::Connect { .. }
                 | ImapError::Throttled(_)
+                | ImapError::TimedOut
                 | ImapError::Protocol(
                     async_imap::error::Error::Io(_) | async_imap::error::Error::ConnectionLost
                 )
@@ -123,7 +151,53 @@ pub struct Connection {
     uidplus: bool,
     /// Literals that need no go-ahead (RFC 7888), for UTF-8 search text.
     literal_plus: bool,
+    /// The deadline and budget of the commands under way.
+    limits: Arc<crate::watchdog::Limits>,
+    timing: Timing,
 }
+
+/// How long the connection waits on the server, and how long the watcher
+/// waits before trying again. [`Timing::default`] everywhere but in tests,
+/// which shorten it.
+#[derive(Debug, Clone, Copy)]
+pub struct Timing {
+    /// To reach one of the server's addresses.
+    pub connect: Duration,
+    /// For the whole of connecting, the greeting, TLS and the login: a
+    /// server that trickles bytes still ends.
+    pub open: Duration,
+    /// Silence allowed while the greeting, TLS or the login is awaited.
+    pub handshake_stall: Duration,
+    /// Silence allowed while any later answer is awaited. Answers that
+    /// keep coming (a 100 MB message) may take as long as they need.
+    pub command_stall: Duration,
+    /// The watcher's first wait after a failure (see [`crate::backoff`]).
+    pub retry_first: Duration,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Timing {
+            connect: Duration::from_secs(15),
+            open: Duration::from_secs(60),
+            handshake_stall: Duration::from_secs(30),
+            command_stall: Duration::from_secs(90),
+            retry_first: crate::backoff::FIRST,
+        }
+    }
+}
+
+/// What one command may bring back, unless it says otherwise: well above
+/// any folder listing or flag refresh, well under async-imap's own 512 MiB
+/// per response.
+const RESPONSE_BUDGET: u64 = 256 * 1024 * 1024;
+/// A whole message or one part of it: the largest message the app takes,
+/// plus the lines around it.
+const MESSAGE_BUDGET: u64 = crate::guard::MESSAGE_MAX as u64 + 1024 * 1024;
+/// One note of the sync space; bigger ones are skipped.
+const SPACE_NOTE_MAX: u32 = 16 * 1024 * 1024;
+/// Every note of the sync space, read in one command.
+const SPACE_NOTES_BUDGET: u64 = 64 * 1024 * 1024;
 
 /// Messages fetched per round trip while downloading a folder.
 const BATCH: usize = 250;
@@ -167,13 +241,23 @@ pub const FOLDERS_EVERY: Duration = Duration::from_secs(5 * 60);
 impl Connection {
     /// Connects and logs in.
     pub async fn open(cfg: &ImapConfig) -> Result<Self> {
-        let tcp = TcpStream::connect((cfg.host.as_str(), cfg.port))
+        Self::open_timed(cfg, Timing::default()).await
+    }
+
+    /// [`Self::open`] with other deadlines, for tests.
+    #[doc(hidden)]
+    pub async fn open_timed(cfg: &ImapConfig, timing: Timing) -> Result<Self> {
+        tokio::time::timeout(timing.open, Self::open_now(cfg, timing))
             .await
-            .map_err(|source| ImapError::Connect {
-                host: cfg.host.clone(),
-                source,
-            })?;
+            .unwrap_or(Err(ImapError::TimedOut))
+    }
+
+    async fn open_now(cfg: &ImapConfig, timing: Timing) -> Result<Self> {
+        let tcp = connect(&cfg.host, cfg.port, timing.connect).await?;
         tcp.set_nodelay(true).ok();
+        crate::watchdog::keep_alive(&tcp);
+        let limits = crate::watchdog::Limits::new(timing.handshake_stall, RESPONSE_BUDGET);
+        let tcp = crate::watchdog::Watched::new(tcp, limits.clone());
 
         let stream: Box<dyn Io> = match cfg.security {
             Security::Tls => Box::new(tls(&cfg.host, tcp).await?),
@@ -199,6 +283,7 @@ impl Connection {
         crate::feedback::note_server(crate::feedback::server_key(&cfg.host, &cfg.username), |c| {
             caps.has_str(c)
         });
+        limits.set_stall(timing.command_stall);
         Ok(Connection {
             session: Some(session),
             condstore: caps.has_str("CONDSTORE"),
@@ -206,7 +291,43 @@ impl Connection {
             moves: caps.has_str("MOVE"),
             uidplus: caps.has_str("UIDPLUS"),
             literal_plus: caps.has_str("LITERAL+") || caps.has_str("LITERAL-"),
+            limits,
+            timing,
         })
+    }
+
+    /// Selects `mailbox` to change its messages, after checking that the
+    /// numbers stored for them still name them. When the server renumbered
+    /// the folder (its UIDVALIDITY changed), the changes waiting for it are
+    /// dropped, the messages they had hidden show again, and this fails
+    /// with [`ImapError::Renumbered`]: nothing is done to whatever messages
+    /// carry those numbers now. The next sync rebuilds the folder.
+    ///
+    /// A SELECT answer without UIDVALIDITY can't say whether the numbers
+    /// still hold: nothing is done and nothing is dropped. The call fails
+    /// with [`ImapError::NoUidValidity`], which a queued change counts as a
+    /// refused try, so it waits and is given up (and its message shown)
+    /// only by the usual rules.
+    async fn select_checked(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<async_imap::types::Mailbox> {
+        let selected = self.session()?.select(mailbox).await?;
+        let stored = lock(store).mailbox_state(account, mailbox)?;
+        // A folder never synced has no numbers of ours to protect.
+        if let Some(stored) = stored {
+            match selected.uid_validity {
+                None => return Err(ImapError::NoUidValidity),
+                Some(now) if now != stored.uid_validity => {
+                    lock(store).drop_renumbered(account, mailbox)?;
+                    return Err(ImapError::Renumbered);
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(selected)
     }
 
     /// Acts as if the server had no MOVE, to test the COPY fallback.
@@ -298,13 +419,30 @@ impl Connection {
         // still arriving are history being filled in.
         let newest = local.iter().max().copied();
         let news = |uid: u32| prior.is_some() && newest.is_none_or(|n| uid > n);
-        for batch in missing.chunks(BATCH) {
+        for (i, batch) in missing.chunks(BATCH).enumerate() {
             let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
             let summaries: Vec<MessageSummary> = fetches
                 .iter()
                 .filter_map(|f| summary_with(f, account, mailbox, &html))
                 .collect();
-            lock(store).upsert_messages(&summaries)?;
+            {
+                let mut store = lock(store);
+                // Messages stored under no UIDVALIDITY could not be
+                // checked before acting on them: a first download that
+                // stops halfway keeps it already (no modseq yet, so the
+                // next round looks at every flag).
+                if prior.is_none() && i == 0 {
+                    store.set_mailbox_state(
+                        account,
+                        mailbox,
+                        MailboxState {
+                            uid_validity,
+                            highest_modseq: None,
+                        },
+                    )?;
+                }
+                store.upsert_messages(&summaries)?;
+            }
             let times: Vec<(u32, Option<i64>)> = fetches
                 .iter()
                 .filter_map(|f| Some((f.uid?, snooze_until(f))))
@@ -377,9 +515,19 @@ impl Connection {
                 let mut lists: Vec<(u32, ListInfo)> = fetches
                     .iter()
                     .filter_map(|f| {
-                        let m = MessageParser::default().parse_headers(f.header()?)?;
-                        recipients.push((f.uid?, groups::recipients(&m)));
-                        Some((f.uid?, newsletter::list_info(&m)))
+                        let uid = f.uid?;
+                        // One that trips the readers gets no list details,
+                        // and isn't asked again.
+                        let (to, list) = crate::guard::shielded(
+                            "list headers",
+                            || None,
+                            || {
+                                let m = MessageParser::default().parse_headers(f.header()?)?;
+                                Some((groups::recipients(&m), newsletter::list_info(&m)))
+                            },
+                        )?;
+                        recipients.push((uid, to));
+                        Some((uid, list))
                     })
                     .collect();
                 lock(store).set_recipients(account, mailbox, &recipients)?;
@@ -513,17 +661,10 @@ impl Connection {
         if let Some(body) = lock(store).full_body(account, mailbox, uid)? {
             return Ok(body);
         }
-        let session = self.session()?;
-        session.examine(mailbox).await?;
-        let fetches: Vec<Fetch> = session
-            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+        let body = self
+            .whole(mailbox, uid)
             .await?
-            .try_collect()
-            .await?;
-        let body = fetches
-            .iter()
-            .find_map(|f| f.body())
-            .map(parse_body)
+            .map(|raw| parse_body(&raw))
             .unwrap_or_default();
         lock(store).set_full_body(account, mailbox, uid, &body)?;
         Ok(body)
@@ -549,6 +690,9 @@ impl Connection {
             .map(str::parse)
             .collect::<std::result::Result<_, _>>()
             .map_err(|_| ImapError::Gone)?;
+        // No part is bigger than its message: what the server sends past
+        // that ends the command, whatever it said the size was.
+        let _cap = self.limits.cap(MESSAGE_BUDGET, RESPONSE_BUDGET);
         let session = self.session()?;
         session.examine(mailbox).await?;
         let fetches: Vec<Fetch> = session
@@ -565,17 +709,35 @@ impl Connection {
 
     /// One whole message as the server keeps it.
     pub async fn raw(&mut self, mailbox: &str, uid: u32) -> Result<Vec<u8>> {
+        self.whole(mailbox, uid).await?.ok_or(ImapError::Gone)
+    }
+
+    /// One whole message, after its size says it fits [`MESSAGE_MAX`]:
+    /// None when the server has no body for it.
+    ///
+    /// [`MESSAGE_MAX`]: crate::guard::MESSAGE_MAX
+    async fn whole(&mut self, mailbox: &str, uid: u32) -> Result<Option<Vec<u8>>> {
+        // RFC822.SIZE is the server's word: what it sends is counted too.
+        let _cap = self.limits.cap(MESSAGE_BUDGET, RESPONSE_BUDGET);
         let session = self.session()?;
         session.examine(mailbox).await?;
+        let sizes: Vec<Fetch> = session
+            .uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        if sizes.iter().any(|f| {
+            f.size
+                .is_some_and(|n| n as usize > crate::guard::MESSAGE_MAX)
+        }) {
+            return Err(ImapError::TooLarge);
+        }
         let fetches: Vec<Fetch> = session
             .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
             .await?
             .try_collect()
             .await?;
-        fetches
-            .iter()
-            .find_map(|f| f.body().map(<[u8]>::to_vec))
-            .ok_or(ImapError::Gone)
+        Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -603,8 +765,13 @@ impl Connection {
 
         // IDLE takes the session by value and gives it back when done.
         let mut handle = self.session.take().expect("checked above").idle();
+        let limits = self.limits.clone();
+        let stall = self.timing.command_stall;
         let outcome = async {
             handle.init().await?;
+            // Silence is what IDLE is: only our deadline below, and the
+            // system's keepalive probes, end it.
+            limits.set_stall(Duration::ZERO);
             let (wait, stop) = handle.wait_with_timeout(timeout);
             // async-imap starts its timeout over at every line, and servers
             // say "Still here" every few minutes: without a deadline of our
@@ -620,6 +787,7 @@ impl Connection {
             }
         }
         .await;
+        limits.set_stall(stall);
         self.session = Some(handle.done().await?);
         Ok(matches!(outcome?, IdleResponse::NewData(_)))
     }
@@ -868,8 +1036,8 @@ impl Connection {
             return Ok(());
         }
         let (moves, uidplus) = (self.moves, self.uidplus);
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let set = uids
             .iter()
             .map(u32::to_string)
@@ -909,8 +1077,8 @@ impl Connection {
             return Ok(());
         }
         let target = self.folder(FolderRole::Snoozed).await?;
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let old = snooze_keywords(session, uids).await?;
         // A server without keywords keeps the time on this device only.
         if !old.is_empty() {
@@ -958,8 +1126,8 @@ impl Connection {
         if uids.is_empty() {
             return Ok(());
         }
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let _: Vec<_> = session
             .uid_store(uid_set(uids), "-FLAGS.SILENT (\\Seen)")
             .await?
@@ -984,12 +1152,19 @@ impl Connection {
     }
 
     /// Marks messages of one folder read or unread on the server.
-    pub async fn set_seen(&mut self, mailbox: &str, uids: &[u32], seen: bool) -> Result<()> {
+    pub async fn set_seen(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        seen: bool,
+    ) -> Result<()> {
         if uids.is_empty() {
             return Ok(());
         }
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let set: Vec<String> = uids.iter().map(u32::to_string).collect();
         let op = if seen {
             "+FLAGS.SILENT (\\Seen)"
@@ -1019,12 +1194,12 @@ impl Connection {
         if uids.is_empty() {
             return Ok(());
         }
-        let session = self.session()?;
-        let selected = session.select(mailbox).await?;
+        let selected = self.select_checked(store, account, mailbox).await?;
         if !keeps_keywords(&selected) {
             lock(store).set_labels_local(account)?;
             return Ok(());
         }
+        let session = self.session()?;
         let op = format!("{}FLAGS.SILENT ({keyword})", if add { "+" } else { "-" });
         let _: Vec<_> = session
             .uid_store(uid_set(uids), op)
@@ -1037,15 +1212,22 @@ impl Connection {
     /// Tells the server's spam filter what the person said: `$Junk` on
     /// spam, `$NotJunk` on mail that isn't, each taking the other off. A
     /// folder that takes no new keywords is left as it is.
-    pub async fn mark_junk(&mut self, mailbox: &str, uids: &[u32], junk: bool) -> Result<()> {
+    pub async fn mark_junk(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        junk: bool,
+    ) -> Result<()> {
         if uids.is_empty() {
             return Ok(());
         }
-        let session = self.session()?;
-        let selected = session.select(mailbox).await?;
+        let selected = self.select_checked(store, account, mailbox).await?;
         if !keeps_keywords(&selected) {
             return Ok(());
         }
+        let session = self.session()?;
         let (on, off) = if junk {
             ("$Junk", "$NotJunk")
         } else {
@@ -1087,8 +1269,8 @@ impl Connection {
             return Ok(());
         }
         let uidplus = self.uidplus;
+        self.select_checked(store, account, mailbox).await?;
         let session = self.session()?;
-        session.select(mailbox).await?;
         let set = uids
             .iter()
             .map(u32::to_string)
@@ -1120,8 +1302,25 @@ impl Connection {
         if mailbox.exists == 0 {
             return Ok(Vec::new());
         }
+        // Notes are small: one that says it is big is not ours, and all
+        // of them together have a budget whatever their sizes claim.
+        let sizes: Vec<Fetch> = session
+            .fetch("1:*", "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        let wanted: Vec<u32> = sizes
+            .iter()
+            .filter(|f| f.size.is_some_and(|n| n <= SPACE_NOTE_MAX))
+            .filter_map(|f| f.uid)
+            .collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _cap = self.limits.cap(SPACE_NOTES_BUDGET, RESPONSE_BUDGET);
+        let session = self.session()?;
         let fetches: Vec<Fetch> = session
-            .fetch("1:*", "(UID BODY.PEEK[])")
+            .uid_fetch(uid_set(&wanted), "(UID BODY.PEEK[])")
             .await?
             .try_collect()
             .await?;
@@ -1274,10 +1473,10 @@ impl Round {
 
 /// A folder as LIST names it.
 #[derive(Debug, Clone)]
-struct Listed {
-    name: String,
-    delimiter: Option<String>,
-    selectable: bool,
+pub(crate) struct Listed {
+    pub(crate) name: String,
+    pub(crate) delimiter: Option<String>,
+    pub(crate) selectable: bool,
 }
 
 /// Folders with a job the app already shows, or that hold no mail of
@@ -1302,7 +1501,7 @@ const JUNK: &[&str] = &["Junk", "Spam", "Junk E-mail", "Posta indesiderata"];
 /// in `skip`, not spam. Servers that keep everything under INBOX
 /// ("INBOX.Clients") show it as a top folder; a parent the server doesn't
 /// list is added, as a folder that only holds others.
-fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
+pub(crate) fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
     let mut by_path: std::collections::BTreeMap<Vec<String>, crate::AccountFolder> =
         Default::default();
     for l in listed {
@@ -1433,7 +1632,7 @@ fn space_folder_in(names: &[async_imap::types::Name]) -> Option<String> {
 }
 
 /// "Piuma Sync", or "INBOX.Piuma Sync" and the like.
-fn is_space_folder(name: &str) -> bool {
+pub(crate) fn is_space_folder(name: &str) -> bool {
     let f = crate::space::FOLDER;
     name == f
         || (name.len() == 6 + f.len()
@@ -1442,10 +1641,16 @@ fn is_space_folder(name: &str) -> bool {
             && name.ends_with(f))
 }
 
+/// "INBOX.Work" and the like: a name under INBOX, as the server sent it
+/// (raw UTF-8 from some), compared without cutting a character.
+pub(crate) fn inside_inbox(name: &str) -> bool {
+    name.len() > 6 && crate::guard::strip_prefix_ci(name, "INBOX").is_some()
+}
+
 fn new_folder_name(names: &[async_imap::types::Name], base: &str) -> String {
     let under_inbox = |n: &&async_imap::types::Name| {
         let name = n.name();
-        name.len() > 6 && name[..5].eq_ignore_ascii_case("INBOX") && n.delimiter().is_some()
+        inside_inbox(name) && n.delimiter().is_some()
     };
     let others: Vec<_> = names
         .iter()
@@ -1526,11 +1731,14 @@ pub enum WatchEvent {
     },
     /// The connection failed; the watcher retries on its own.
     Offline { account: AccountId, reason: String },
+    /// Changes made on this device that the server kept refusing were
+    /// given up: the messages are back as the server has them.
+    Dropped { account: AccountId, changes: usize },
 }
 
 /// Keeps `mailbox` of one account in sync forever: sync, wait for a change
 /// with IDLE (or poll), sync again. Reconnects with a growing pause after
-/// errors. Wrong credentials end the loop.
+/// errors (see [`crate::backoff`]). Wrong credentials end the loop.
 pub async fn watch(
     cfg: ImapConfig,
     store: Arc<Mutex<Store>>,
@@ -1538,11 +1746,28 @@ pub async fn watch(
     mailbox: String,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    let mut pause = Duration::from_secs(2);
+    watch_timed(cfg, store, account, mailbox, events, Timing::default()).await
+}
+
+/// [`watch`] with other deadlines and waits, for tests.
+#[doc(hidden)]
+pub async fn watch_timed(
+    cfg: ImapConfig,
+    store: Arc<Mutex<Store>>,
+    account: AccountId,
+    mailbox: String,
+    events: impl Fn(WatchEvent),
+    timing: Timing,
+) -> Result<()> {
+    let mut backoff = crate::backoff::Backoff::new(timing.retry_first);
+    // Whether the server answered this time: then the waits may grow past
+    // the minute meant for a server that can't be reached.
+    let mut answered;
     loop {
+        answered = false;
         let session = async {
-            let mut conn = Connection::open(&cfg).await?;
-            pause = Duration::from_secs(2);
+            let mut conn = Connection::open_timed(&cfg, timing).await?;
+            answered = true;
             let mut folders_synced: Option<std::time::Instant> = None;
             // A big mailbox comes down in rounds, the inbox first: each
             // round also takes the newest mail, and only the first one
@@ -1554,8 +1779,13 @@ pub async fn watch(
             // from what is already here, so the total stays put.
             let had = lock(&store).uids(account, &mailbox)?.len();
             let mut first = true;
+            let dropped = |changes: usize| {
+                if changes > 0 {
+                    events(WatchEvent::Dropped { account, changes });
+                }
+            };
             loop {
-                crate::pending::send(&mut conn, &store, account).await?;
+                dropped(crate::pending::send(&mut conn, &store, account).await?);
                 let flags = inbox_more == 0;
                 let mut report = conn
                     .sync_round(
@@ -1577,7 +1807,7 @@ pub async fn watch(
                     )
                     .await?;
                 if crate::rules::after_sync(&store, account, &mut report)? {
-                    crate::pending::send(&mut conn, &store, account).await?;
+                    dropped(crate::pending::send(&mut conn, &store, account).await?);
                 }
                 inbox_more = report.more;
                 let base = if first && inbox_more > 0 { had } else { filled };
@@ -1607,12 +1837,16 @@ pub async fn watch(
                     // IDLE watches the selected folder.
                     conn.session()?.select(&mailbox).await?;
                 }
+                // A whole round went through: the next failure is a new
+                // one, with a short wait.
+                backoff.reset();
                 if inbox_more + folders_more > 0 {
                     continue;
                 }
                 let started = std::time::Instant::now();
-                // Snoozed mail comes back, and mail sent later goes, on
-                // time, mail or no mail.
+                // Snoozed mail comes back, mail sent later goes, and a
+                // change the server refused is tried again, on time, mail
+                // or no mail.
                 let wake = lock(&store)
                     .next_due(account, crate::pending::now())?
                     .map(|at| Duration::from_secs((at - crate::pending::now()).max(1) as u64));
@@ -1630,23 +1864,37 @@ pub async fn watch(
         let result: Result<()> = tokio::select! {
             result = session => result,
             () = crate::network::wait() => {
-                pause = Duration::ZERO;
-                Ok(())
+                backoff.reset();
+                continue;
             }
         };
-        match result {
+        let pause = match result {
             Err(ImapError::Auth) => return Err(ImapError::Auth),
-            Err(e) => events(WatchEvent::Offline {
-                account,
-                reason: e.to_string(),
-            }),
-            Ok(()) => {}
-        }
+            Err(e) => {
+                events(WatchEvent::Offline {
+                    account,
+                    reason: e.to_string(),
+                });
+                backoff.fail(retry_cap(answered, &e))
+            }
+            Ok(()) => backoff.fail(crate::backoff::OFFLINE_MOST),
+        };
         tokio::select! {
             () = tokio::time::sleep(pause) => {}
-            () = crate::network::wait() => {}
+            () = crate::network::wait() => backoff.reset(),
         }
-        pause = (pause * 2).clamp(Duration::from_secs(2), Duration::from_secs(60));
+    }
+}
+
+/// How long the waits may grow after `e`: short while the server can't be
+/// reached, long once it answered and still failed (it would only fail
+/// again, and a server asked too often throttles or bans the account).
+fn retry_cap(answered: bool, e: &ImapError) -> Duration {
+    // Busy at the login is the server asking for room.
+    if matches!(e, ImapError::Throttled(_)) || (answered && !e.is_offline()) {
+        crate::backoff::ANSWERED_MOST
+    } else {
+        crate::backoff::OFFLINE_MOST
     }
 }
 
@@ -1718,7 +1966,41 @@ where
     TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
-        .map_err(|e| ImapError::Tls(e.to_string()))
+        .map_err(|e| {
+            // A handshake the server never finished is no certificate
+            // problem.
+            if crate::watchdog::stalled(&e) {
+                ImapError::TimedOut
+            } else {
+                ImapError::Tls(e.to_string())
+            }
+        })
+}
+
+/// Connects to the first of the host's addresses that answers, each given
+/// `each` to do so: one address that drops packets (an IPv6 route that
+/// goes nowhere) doesn't hold up the others.
+async fn connect(host: &str, port: u16, each: Duration) -> Result<TcpStream> {
+    let failed = |source| ImapError::Connect {
+        host: host.to_owned(),
+        source,
+    };
+    let no_answer = || std::io::Error::new(std::io::ErrorKind::TimedOut, "no answer");
+    let addresses: Vec<std::net::SocketAddr> =
+        tokio::time::timeout(each, tokio::net::lookup_host((host, port)))
+            .await
+            .map_err(|_| failed(no_answer()))?
+            .map_err(failed)?
+            .collect();
+    let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, "no address");
+    for address in addresses {
+        match tokio::time::timeout(each, TcpStream::connect(address)).await {
+            Ok(Ok(tcp)) => return Ok(tcp),
+            Ok(Err(e)) => last = e,
+            Err(_) => last = no_answer(),
+        }
+    }
+    Err(failed(last))
 }
 
 /// Words that say the login failed because the credentials are wrong, the
@@ -1879,9 +2161,15 @@ fn flags(f: &Fetch) -> Flags {
 /// Turns a FETCH of headers and the start of the body into a list row.
 /// Whether the fetched headers say a machine sent it.
 fn is_automated(f: &Fetch) -> bool {
-    MessageParser::default()
-        .parse_headers(f.header().unwrap_or_default())
-        .is_some_and(|m| notify::automated(&m))
+    crate::guard::shielded(
+        "automated check",
+        || false,
+        || {
+            MessageParser::default()
+                .parse_headers(f.header().unwrap_or_default())
+                .is_some_and(|m| notify::automated(&m))
+        },
+    )
 }
 
 /// A message's summary, with the preview made from its HTML part when
@@ -1903,9 +2191,34 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
     let uid = f.uid?;
     let mut raw = f.header().unwrap_or_default().to_vec();
     raw.extend_from_slice(f.text().unwrap_or_default());
+    // A message the parsers trip on is still listed, with what the
+    // server said of it, instead of stopping the sync.
+    let (from_name, from_email, to, subject, preview, reply, list) =
+        crate::guard::shielded("message summary", Default::default, || summary_fields(raw));
+    Some(MessageSummary {
+        account,
+        mailbox: mailbox.to_owned(),
+        uid,
+        from_name,
+        from_email,
+        to,
+        subject,
+        preview,
+        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
+        flags: flags(f),
+        reply,
+        list,
+    })
+}
+
+type SummaryFields = (String, String, String, String, String, ReplyInfo, ListInfo);
+
+/// Sender, recipients, subject, preview, reply and list details read from
+/// the start of a message.
+fn summary_fields(raw: Vec<u8>) -> SummaryFields {
     let raw = close_parts(raw);
     let parsed = MessageParser::default().parse(&raw);
-    let (from_name, from_email, to, subject, preview, reply, list) = match &parsed {
+    match &parsed {
         Some(m) => {
             let from = m.from().and_then(|a| a.first());
             let from_email = from
@@ -1935,21 +2248,7 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
             )
         }
         None => Default::default(),
-    };
-    Some(MessageSummary {
-        account,
-        mailbox: mailbox.to_owned(),
-        uid,
-        from_name,
-        from_email,
-        to,
-        subject,
-        preview,
-        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
-        flags: flags(f),
-        reply,
-        list,
-    })
+    }
 }
 
 /// The start of a message, cut where the preview fetch stopped, made whole
@@ -2084,9 +2383,11 @@ fn first_html(m: &mail_parser::Message) -> Option<String> {
 
 /// The preview of a body as the reader draws it.
 pub(crate) fn reader_preview(text: &str, html: Option<&str>) -> String {
-    clean_preview(&crate::reading::plain_text(&crate::reading::readable(
-        text, html,
-    )))
+    crate::guard::shielded("preview", String::new, || {
+        clean_preview(&crate::reading::plain_text(&crate::reading::readable(
+            text, html,
+        )))
+    })
 }
 
 /// One line of plain words: no quoted replies, no runs of spaces, no
@@ -2290,9 +2591,15 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
         };
         let mut raw = f.header().unwrap_or_default().to_vec();
         raw.extend_from_slice(f.text().unwrap_or_default());
-        let reached = MessageParser::default()
-            .parse(&close_parts(raw))
-            .is_some_and(|m| first_html(&m).is_some());
+        let reached = crate::guard::shielded(
+            "html part check",
+            || true,
+            || {
+                MessageParser::default()
+                    .parse(&close_parts(raw))
+                    .is_some_and(|m| first_html(&m).is_some())
+            },
+        );
         if !reached {
             wanted
                 .entry(part.section.clone())
@@ -2333,7 +2640,9 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
                     continue;
                 };
                 let cut = data.len() >= bytes;
-                let preview = reader_preview("", Some(&part.decode(data, cut)));
+                let preview = crate::guard::shielded("html preview", String::new, || {
+                    reader_preview("", Some(&part.decode(data, cut)))
+                });
                 if !preview.is_empty() {
                     out.insert(uid, preview);
                 } else if cut {
@@ -2475,7 +2784,29 @@ async fn fetch_bodies(
     Ok(cached)
 }
 
+/// Text and HTML of a whole message. When the readers trip on it, what a
+/// plain reading gives is kept instead, so the message counts as read and
+/// is never fetched and parsed again in a loop.
 pub fn parse_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("message body", || plain_body(raw), || parse_body_whole(raw))
+}
+
+/// The text part alone, as the parser gives it: the fallback of a body
+/// the readers couldn't handle.
+fn plain_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("plain message body", Body::default, || {
+        let text = MessageParser::default()
+            .parse(raw)
+            .and_then(|m| m.body_text(0).map(|t| t.into_owned()))
+            .unwrap_or_default();
+        Body {
+            text,
+            ..Body::default()
+        }
+    })
+}
+
+pub(crate) fn parse_body_whole(raw: &[u8]) -> Body {
     let Some(m) = MessageParser::default().parse(raw) else {
         return Body::default();
     };
@@ -2541,7 +2872,11 @@ fn inline_images(m: &mail_parser::Message, html: &str) -> Vec<InlineImage> {
             continue;
         }
         let data = part.decoded();
-        if data.is_empty() || data.len() > INLINE_MAX || total + data.len() > INLINE_TOTAL {
+        if data.is_empty()
+            || data.len() > INLINE_MAX
+            || total + data.len() > INLINE_TOTAL
+            || !crate::images::fits(&data)
+        {
             continue;
         }
         total += data.len();
@@ -2878,11 +3213,39 @@ pub fn file_name(name: &str) -> String {
         })
         .collect();
     let clean = clean.trim().trim_start_matches('.').trim();
+    let clean: String = clean.chars().take(120).collect();
+    // Windows drops a final dot or space, so "a.exe." would open as "a.exe".
+    let clean = clean.trim_end_matches(['.', ' ']).trim();
     if clean.is_empty() {
-        "attachment".into()
-    } else {
-        clean.chars().take(120).collect()
+        return "attachment".into();
     }
+    // "NUL", "con.txt", "COM1.pdf" name devices on Windows, not files:
+    // saving there would report success and keep nothing.
+    let stem = clean.split('.').next().unwrap_or(clean).trim_end();
+    if windows_device(stem) {
+        format!("_{clean}")
+    } else {
+        clean.to_owned()
+    }
+}
+
+/// Whether a name (without its extension) is one of Windows' devices.
+fn windows_device(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let (Some(head), Some(digit)) = (upper.get(..3), upper.get(3..)) else {
+        return false;
+    };
+    matches!(head, "COM" | "LPT")
+        && matches!(
+            digit,
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
 }
 
 /// Namespace tag used by the attachment-ID schema migration.
@@ -2923,6 +3286,54 @@ pub(crate) fn attachment_data_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_names_under_inbox_are_compared_by_character() {
+        // The fifth byte falls inside "é".
+        assert!(!inside_inbox("INBO\u{e9}xx"));
+        assert!(inside_inbox("INBOX.Work"));
+        assert!(inside_inbox("inbox/Work"));
+        assert!(!inside_inbox("Work"));
+    }
+
+    #[test]
+    fn windows_device_names_and_trailing_dots_are_neutralised() {
+        assert_eq!(file_name("NUL"), "_NUL");
+        assert_eq!(file_name("con.txt"), "_con.txt");
+        assert_eq!(file_name("Com1.pdf"), "_Com1.pdf");
+        assert_eq!(file_name("lpt9"), "_lpt9");
+        assert_eq!(file_name("aux .doc"), "_aux .doc");
+        assert_eq!(file_name("invoice.exe."), "invoice.exe");
+        assert_eq!(file_name("report . . "), "report");
+        assert_eq!(file_name("console.txt"), "console.txt");
+        assert_eq!(file_name("COM10.txt"), "COM10.txt");
+        assert_eq!(file_name("..."), "attachment");
+    }
+
+    #[test]
+    fn a_body_the_readers_trip_on_is_kept_as_plain_text() {
+        crate::guard::install();
+        let raw = b"Subject: x\r\nContent-Type: text/plain\r\n\r\nHello there\r\n";
+        let body = crate::guard::shielded(
+            "test body",
+            || plain_body(raw),
+            || -> Body { panic!("a reader tripped") },
+        );
+        assert_eq!(body.text.trim(), "Hello there");
+        assert!(body.html.is_none());
+    }
+
+    #[test]
+    fn inline_pictures_too_big_to_draw_are_left_out() {
+        let huge = crate::images::tests::png_header(20_000, 20_000);
+        let raw = format!(
+            "Content-Type: multipart/related; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:p@x\">\r\n--b\r\nContent-Type: image/png\r\nContent-ID: <p@x>\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n--b--\r\n",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &huge)
+        );
+        let body = parse_body(raw.as_bytes());
+        assert!(body.html.is_some());
+        assert!(body.inline.is_empty());
+    }
 
     #[test]
     fn calendar_decodes_its_declared_charset() {

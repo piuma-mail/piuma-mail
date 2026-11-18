@@ -25,6 +25,19 @@ ignore = [
     { id = "RUSTSEC-2026-0368", reason = "zip 8.6 through velopack, which never calls zip's extract" },
     { id = "RUSTSEC-2026-0369", reason = "zip 8.6 through velopack, which never calls zip's extract" },
     { id = "RUSTSEC-2026-0429", reason = "zip 8.6 through velopack, which never calls zip's extract" },
+    # Four more on zip 8.6.0 (published 2026-10-17 and 2026-10-22), fixed
+    # only in zip 9; again no zip 8 release has the fix, and velopack
+    # 1.2.161 still requires zip ^8.6. Checked on 2026-11-18 against
+    # velopack 1.2.161's source: it builds zip with `deflate` only
+    # (default-features = false), so neither `aes-crypto` (0545) nor
+    # `legacy-zip` (0547) is compiled in, and it reads archives only with
+    # `ZipArchive::new` and `by_index` (`bundle.rs`), never with
+    # `ZipArchive::extract` (0546) or `ZipStreamReader` (0548). Remove
+    # with the entries above, when a stable velopack moves to zip 9.
+    { id = "RUSTSEC-2026-0545", reason = "zip 8.6 through velopack, built without aes-crypto" },
+    { id = "RUSTSEC-2026-0546", reason = "zip 8.6 through velopack, which never calls zip's extract" },
+    { id = "RUSTSEC-2026-0547", reason = "zip 8.6 through velopack, built without legacy-zip" },
+    { id = "RUSTSEC-2026-0548", reason = "zip 8.6 through velopack, which never uses ZipStreamReader" },
 ]
 
 [sources]

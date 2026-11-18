@@ -325,6 +325,10 @@
   "@riskBodyMacros": {"placeholders": {"name": {"type": "String"}}},
   "riskBodyLocked": "{name} is locked with a password, so nothing can look inside it. Open it only if you were expecting it.",
   "@riskBodyLocked": {"placeholders": {"name": {"type": "String"}}},
+  "riskWeb": "A web page",
+  "riskOpenWeb": "Open this web page?",
+  "riskBodyWeb": "{name} is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.",
+  "@riskBodyWeb": {"placeholders": {"name": {"type": "String"}}},
   "riskFileFrom": "{name} · {size} · from {email}",
   "@riskFileFrom": {"placeholders": {"name": {"type": "String"}, "size": {"type": "String"}, "email": {"type": "String"}}},
   "settings": "Settings",
@@ -2055,5 +2059,9 @@
   "searchServerUnreachable": "{count, plural, =1{1 account’s server couldn’t be reached.} other{{count} accounts’ servers couldn’t be reached.}}",
   "@searchServerUnreachable": {"placeholders": {"count": {"type": "int"}}},
   "savedSearchEditNamed": "Rename or delete {name}",
-  "@savedSearchEditNamed": {"placeholders": {"name": {"type": "String"}}}
+  "@savedSearchEditNamed": {"placeholders": {"name": {"type": "String"}}},
+  "listFailed": "Couldn’t show these emails.",
+  "folderRefreshFailed": "Couldn’t refresh this folder from the server.",
+  "changesDropped": "{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}",
+  "@changesDropped": {"placeholders": {"count": {"type": "int"}}}
 }

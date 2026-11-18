@@ -579,6 +579,8 @@ async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
             tokio::spawn(serve(shared.clone(), tcp, port));
         }
     });
+    // The local server speaks plain http; the app never may.
+    piuma_core::jmap::allow_loopback_http_for_tests();
     let cfg = JmapConfig {
         session_url: format!("http://127.0.0.1:{port}/jmap/session"),
         username: USER.into(),

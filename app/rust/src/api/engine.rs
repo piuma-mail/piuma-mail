@@ -138,7 +138,7 @@ impl From<ImapError> for EngineError {
     fn from(e: ImapError) -> Self {
         let kind = match &e {
             ImapError::Auth => ErrorKind::WrongPassword,
-            ImapError::Connect { .. } => ErrorKind::Unreachable,
+            ImapError::Connect { .. } | ImapError::TimedOut => ErrorKind::Unreachable,
             ImapError::Tls(_) => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
         };
@@ -151,6 +151,7 @@ impl From<JmapError> for EngineError {
         let kind = match &e {
             JmapError::Auth => ErrorKind::WrongPassword,
             JmapError::Connect { .. } => ErrorKind::Unreachable,
+            JmapError::Insecure => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
         };
         EngineError::new(kind, e.to_string())
@@ -339,6 +340,10 @@ pub enum SyncEventKind {
     SignInFailed,
     /// Mail waiting in the outbox went out; `added` says how many.
     OutboxSent,
+    /// Changes made here (a move, read or unread, a label) that the server
+    /// kept refusing were given up; `removed` says how many. Their
+    /// messages are back as the server has them.
+    ChangesDropped,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +465,10 @@ pub fn init_app() {
     } else {
         log::LevelFilter::Warn
     });
+    // After the bridge's hook, and the only place that decides what a
+    // panic prints: where it happened, never the text of the mail it was
+    // reading (the whole message only in debug builds).
+    piuma_core::guard::install();
 }
 
 /// Opens (or creates) the local database. Call once at startup.
@@ -469,6 +478,7 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         return Ok(());
     }
     piuma_core::tls::use_one_crypto_provider();
+    piuma_core::guard::install();
     let store = Store::open(&db_path)?;
     // Actions still inside their Undo window when the app quit never
     // happened: show those messages again.
@@ -1303,71 +1313,169 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
         }
         watched.push(id.0);
         let store = engine.store.clone();
-        let settings_store = engine.store.clone();
-        let task = engine.runtime.spawn(async move {
-            // A locked/unavailable keychain (or Android credentials not handed
-            // over yet) is not a server refusal. Retry without a notification
-            // that the password stopped working; stop_watching aborts this
-            // wait too.
-            let password = wait_for_credentials(
-                || credentials::read(id),
-                |kind| {
-                    set_waiting(id.0, Some(kind));
-                    emit(SyncEvent::new(kind, id.0));
-                },
-                HANDOVER,
-                backoff(RETRY_FIRST, RETRY_MOST),
-            )
-            .await;
-            set_waiting(id.0, None);
-            let (outbox_account, outbox_password) = (account.clone(), password.clone());
-            let result = remote::watch(&account, &password, store, move |e| {
-                // In touch with the server again: what waits can go.
-                if let WatchEvent::Synced { .. } = &e {
-                    save_waiting_drafts(outbox_account.clone(), outbox_password.clone());
-                    send_outbox(outbox_account.clone(), outbox_password.clone());
-                    super::away::keep_on_time(outbox_account.clone(), outbox_password.clone());
-                }
-                emit(match e {
-                    WatchEvent::Progress { done, total, .. } => SyncEvent {
-                        done: done as u32,
-                        total: total as u32,
-                        ..SyncEvent::new(SyncEventKind::Progress, id.0)
-                    },
-                    WatchEvent::Synced { report, .. } => {
-                        crate::background::signed_in(id);
-                        let notices = notices_for(&report.arrived, &settings_store);
-                        // With Android's background service on, it shows
-                        // them; the app does not.
-                        crate::background::push(&notices);
-                        SyncEvent {
-                            added: report.added as u32,
-                            removed: report.removed as u32,
-                            notices,
-                            ..SyncEvent::new(SyncEventKind::Synced, id.0)
-                        }
-                    }
-                    WatchEvent::Offline { reason, .. } => SyncEvent {
-                        reason,
-                        ..SyncEvent::new(SyncEventKind::Offline, id.0)
-                    },
-                });
-            })
-            .await;
-            WATCHED
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .retain(|a| *a != id.0);
-            if result.is_err_and(|e| e.is_auth()) {
-                emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-                crate::background::sign_in_failed(id);
-            }
-        });
+        let task = engine.runtime.spawn(supervise(account, store));
         let mut watchers = WATCHERS.lock().unwrap_or_else(|e| e.into_inner());
         watchers.retain(|(a, _)| *a != id.0);
         watchers.push((id.0, task.abort_handle()));
     }
     Ok(())
+}
+
+/// A watcher that ends for any reason but a refused password (a panic
+/// while reading a message, a server that made it give up) is logged and
+/// started again, 5 s later, then twice as long each time up to 5
+/// minutes, spread a little; one that got through a whole sync round
+/// before it ended starts from 5 s again. The same rules as the watcher's
+/// own retries (`piuma_core::backoff`), which come first: the watcher
+/// only ends after those. The account stays in WATCHED meanwhile, so
+/// nothing else starts a second one.
+async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
+    let id = account.id;
+    keep_following(
+        id,
+        |worked| follow(account.clone(), store.clone(), worked),
+        RESTART_FIRST,
+    )
+    .await;
+    WATCHED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|a| *a != id.0);
+    emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
+    crate::background::sign_in_failed(id);
+}
+
+/// Runs the watcher `start` makes until it ends with a refused password,
+/// starting it again whenever it ends otherwise or panics: after `first`,
+/// then longer each time in a row, up to [`RESTART_MOST`]. `start` gets a
+/// flag to raise once a sync round went through; then the waits start
+/// over.
+async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration)
+where
+    F: FnMut(Arc<std::sync::atomic::AtomicBool>) -> Fut,
+    Fut: std::future::Future<Output = Followed> + Send + 'static,
+{
+    let mut waits = piuma_core::backoff::Backoff::new(first);
+    loop {
+        let worked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Aborting the supervisor (stop_watching) drops this, which aborts
+        // the watcher too.
+        let mut follow = AbortOnDrop(tokio::spawn(start(worked.clone())));
+        let why = match (&mut follow.0).await {
+            Ok(Followed::SignInFailed) => return,
+            Ok(Followed::Ended(why)) => why,
+            Err(e) if e.is_panic() => {
+                format!("panic{}", piuma_core::guard::last_panic_place())
+            }
+            // Cancelled from outside, as when the runtime shuts down.
+            Err(_) => "cancelled".into(),
+        };
+        if worked.load(std::sync::atomic::Ordering::Relaxed) {
+            waits.reset();
+        }
+        let wait = waits.fail(RESTART_MOST);
+        piuma_core::feedback::log(
+            piuma_core::feedback::Level::Error,
+            "sync",
+            &format!(
+                "account {} watcher stopped ({why}); again in {} s",
+                id.0,
+                wait.as_secs()
+            ),
+        );
+        tokio::time::sleep(wait).await;
+    }
+}
+
+/// How a watcher ended.
+#[derive(Debug)]
+enum Followed {
+    /// The server refused the password: it waits for a new one.
+    SignInFailed,
+    /// Anything else, with what happened.
+    Ended(String),
+}
+
+/// A task aborted when this handle goes.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+const RESTART_FIRST: Duration = Duration::from_secs(5);
+const RESTART_MOST: Duration = Duration::from_secs(5 * 60);
+
+/// Follows one account until the server refuses its password or the
+/// watcher ends, raising `worked` at each sync round that goes through.
+async fn follow(
+    account: Account,
+    store: Arc<Mutex<Store>>,
+    worked: Arc<std::sync::atomic::AtomicBool>,
+) -> Followed {
+    let id = account.id;
+    let settings_store = store.clone();
+    // A locked/unavailable keychain (or Android credentials not handed
+    // over yet) is not a server refusal. Retry without a notification
+    // that the password stopped working; stop_watching aborts this
+    // wait too.
+    let password = wait_for_credentials(
+        || credentials::read(id),
+        |kind| {
+            set_waiting(id.0, Some(kind));
+            emit(SyncEvent::new(kind, id.0));
+        },
+        HANDOVER,
+        backoff(RETRY_FIRST, RETRY_MOST),
+    )
+    .await;
+    set_waiting(id.0, None);
+    let (outbox_account, outbox_password) = (account.clone(), password.clone());
+    let result = remote::watch(&account, &password, store, move |e| {
+        // In touch with the server again: what waits can go.
+        if let WatchEvent::Synced { .. } = &e {
+            worked.store(true, std::sync::atomic::Ordering::Relaxed);
+            save_waiting_drafts(outbox_account.clone(), outbox_password.clone());
+            send_outbox(outbox_account.clone(), outbox_password.clone());
+            super::away::keep_on_time(outbox_account.clone(), outbox_password.clone());
+        }
+        emit(match e {
+            WatchEvent::Progress { done, total, .. } => SyncEvent {
+                done: done as u32,
+                total: total as u32,
+                ..SyncEvent::new(SyncEventKind::Progress, id.0)
+            },
+            WatchEvent::Synced { report, .. } => {
+                crate::background::signed_in(id);
+                let notices = notices_for(&report.arrived, &settings_store);
+                // With Android's background service on, it shows
+                // them; the app does not.
+                crate::background::push(&notices);
+                SyncEvent {
+                    added: report.added as u32,
+                    removed: report.removed as u32,
+                    notices,
+                    ..SyncEvent::new(SyncEventKind::Synced, id.0)
+                }
+            }
+            WatchEvent::Offline { reason, .. } => SyncEvent {
+                reason,
+                ..SyncEvent::new(SyncEventKind::Offline, id.0)
+            },
+            WatchEvent::Dropped { changes, .. } => SyncEvent {
+                removed: changes as u32,
+                ..SyncEvent::new(SyncEventKind::ChangesDropped, id.0)
+            },
+        });
+    })
+    .await;
+    match result {
+        Err(e) if e.is_auth() => Followed::SignInFailed,
+        Err(e) => Followed::Ended(e.to_string()),
+        Ok(()) => Followed::Ended("finished".into()),
+    }
 }
 
 /// How long Android's app or service may take to hand the passwords over
@@ -1381,7 +1489,7 @@ const HANDOVER: Duration = Duration::from_secs(if cfg!(target_os = "android") { 
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_MOST: Duration = Duration::from_secs(5 * 60);
 
-fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> {
+fn backoff(first: Duration, most: Duration) -> impl Iterator<Item = Duration> + Clone {
     std::iter::successors(Some(first), move |d| Some((*d * 2).min(most)))
 }
 
@@ -1415,6 +1523,253 @@ async fn wait_for_credentials(
         }
         let next = retry.next().unwrap_or(RETRY_MOST);
         tokio::time::sleep(wait.map_or(next, |w| next.min(w))).await;
+    }
+}
+
+#[cfg(test)]
+mod seen_rollback_tests {
+    use super::*;
+    use piuma_core::model::ReplyInfo;
+    use piuma_core::{Flags, ListInfo, Security, Server};
+
+    fn message(account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
+        MessageSummary {
+            account,
+            mailbox: mailbox.into(),
+            uid,
+            from_name: "Julia".into(),
+            from_email: "julia@example.org".into(),
+            to: String::new(),
+            subject: format!("Message {uid}"),
+            preview: String::new(),
+            received_at: 1_000 + uid as i64,
+            flags: Flags::default(),
+            reply: ReplyInfo::default(),
+            list: ListInfo::default(),
+        }
+    }
+
+    /// Marked read in two folders; the server took the first and refused
+    /// the second: only the second goes back to unread and leaves the
+    /// queue.
+    #[test]
+    fn a_failed_push_undoes_only_the_folders_the_server_did_not_take() {
+        let mut store = Store::open_in_memory().unwrap();
+        let server = Server {
+            host: "127.0.0.1".into(),
+            port: 1,
+            security: Security::None,
+        };
+        let id = store
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Test".into(),
+                email: "me@example.org".into(),
+                sender_name: String::new(),
+                color: "#2F8F83".into(),
+                kind: AccountKind::Imap {
+                    imap: server.clone(),
+                    smtp: server,
+                    username: "me".into(),
+                },
+            })
+            .unwrap();
+        store
+            .upsert_messages(&[message(id, "INBOX", 1), message(id, "Work", 2)])
+            .unwrap();
+        let list = vec![("INBOX".to_owned(), 1), ("Work".to_owned(), 2)];
+        for (mailbox, uid) in &list {
+            store.set_seen(id, mailbox, *uid, true).unwrap();
+            store
+                .queue_change(id, mailbox, *uid, Change::Seen(true))
+                .unwrap();
+        }
+        // The inbox went through and was settled, as the push does.
+        store.settle_seen(id, "INBOX", &[1], true).unwrap();
+        undo_seen(&store, id, &list, &["INBOX".to_owned()], true).unwrap();
+        let seen = |m: &str, u| store.message(id, m, u).unwrap().unwrap().flags.seen;
+        assert!(seen("INBOX", 1), "delivered: stays read");
+        assert!(!seen("Work", 2), "not delivered: back to unread");
+        assert!(store.pending_changes(id).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod watcher_supervision_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn a_watcher_that_panics_or_ends_is_started_again() {
+        piuma_core::guard::install();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(keep_following(
+            AccountId(7),
+            move |_| {
+                let run = counted.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    match run {
+                        0 => panic!("a message tripped the reader"),
+                        1 => Followed::Ended("server gave up".into()),
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            Duration::from_millis(1),
+        ));
+        assert_eq!(runs.load(Ordering::SeqCst), 3);
+        let log = piuma_core::feedback::recent_log();
+        assert!(log.contains("watcher stopped (panic"), "{log}");
+        assert!(!log.contains("tripped"), "{log}");
+    }
+
+    /// Adapted from #76's test of the same name: since restarts start over
+    /// after a sync round that went through, not after a run of a given
+    /// length, a watcher that ran a long time without completing a round
+    /// keeps the growing wait, and the next one that completes a round
+    /// brings back the first wait.
+    #[test]
+    fn a_watcher_that_ran_long_restarts_from_the_first_wait() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let seen = starts.clone();
+        let first = Duration::from_secs(5);
+        runtime.block_on(keep_following(
+            AccountId(10),
+            move |worked| {
+                let mut starts = seen.lock().unwrap();
+                starts.push(tokio::time::Instant::now());
+                let run = starts.len();
+                async move {
+                    match run {
+                        // Ends at once.
+                        1 => Followed::Ended("gone".into()),
+                        // Runs an hour without a round: no reset.
+                        2 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            Followed::Ended("gone after a while".into())
+                        }
+                        // Runs an hour and gets through a round: reset.
+                        3 => {
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                            worked.store(true, Ordering::Relaxed);
+                            Followed::Ended("gone after a round".into())
+                        }
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            first,
+        ));
+        let starts = starts.lock().unwrap();
+        assert_eq!(starts.len(), 4);
+        // The wait between a run's end and the next start.
+        let wait = |i: usize, ran: u64| (starts[i + 1] - starts[i]).as_secs_f64() - ran as f64;
+        // 5 s, then 10 s even after an hour's run, then 5 s after a round;
+        // each ±20 %.
+        assert!((4.0..=6.0).contains(&wait(0, 0)), "{starts:?}");
+        assert!((8.0..=12.0).contains(&wait(1, 3600)), "{starts:?}");
+        assert!((4.0..=6.0).contains(&wait(2, 3600)), "{starts:?}");
+    }
+
+    #[test]
+    fn stopping_the_supervisor_stops_the_watcher() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        let alive = Arc::new(AtomicUsize::new(0));
+        let inside = alive.clone();
+        runtime.block_on(async move {
+            let task = tokio::spawn(keep_following(
+                AccountId(8),
+                move |_| {
+                    let inside = inside.clone();
+                    async move {
+                        inside.fetch_add(1, Ordering::SeqCst);
+                        let _guard = Bye(inside);
+                        std::future::pending::<Followed>().await
+                    }
+                },
+                Duration::from_millis(1),
+            ));
+            while alive.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            task.abort();
+            let _ = task.await;
+            // The watcher was dropped with its supervisor.
+            for _ in 0..1000 {
+                if alive.load(Ordering::SeqCst) == 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert_eq!(alive.load(Ordering::SeqCst), 0);
+        });
+    }
+
+    /// Restarts in a row wait longer each time; one after a watcher that
+    /// got through a sync round is quick again.
+    #[test]
+    fn restarts_wait_longer_until_a_round_goes_through() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let seen = starts.clone();
+        runtime.block_on(keep_following(
+            AccountId(9),
+            move |worked| {
+                let mut starts = seen.lock().unwrap();
+                starts.push(tokio::time::Instant::now());
+                let run = starts.len();
+                async move {
+                    match run {
+                        // The third run gets through a round, then ends.
+                        3 => {
+                            worked.store(true, Ordering::Relaxed);
+                            Followed::Ended("server gave up".into())
+                        }
+                        5 => Followed::SignInFailed,
+                        _ => Followed::Ended("server gave up".into()),
+                    }
+                }
+            },
+            Duration::from_secs(5),
+        ));
+        let starts = starts.lock().unwrap();
+        let gaps: Vec<f64> = starts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).as_secs_f64())
+            .collect();
+        assert_eq!(gaps.len(), 4);
+        // 5 s, 10 s, then 5 s again after the round, then 10 s; ±20 %.
+        assert!((4.0..=6.0).contains(&gaps[0]), "{gaps:?}");
+        assert!((8.0..=12.0).contains(&gaps[1]), "{gaps:?}");
+        assert!((4.0..=6.0).contains(&gaps[2]), "{gaps:?}");
+        assert!((8.0..=12.0).contains(&gaps[3]), "{gaps:?}");
+    }
+
+    struct Bye(Arc<AtomicUsize>);
+
+    impl Drop for Bye {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -1848,6 +2203,8 @@ pub enum FileRisk {
     Macros,
     /// An archive locked with a password.
     Locked,
+    /// A web page, which opens in the browser.
+    Web,
 }
 
 impl From<files::FileRisk> for FileRisk {
@@ -1857,6 +2214,7 @@ impl From<files::FileRisk> for FileRisk {
             files::FileRisk::Disguised => FileRisk::Disguised,
             files::FileRisk::Macros => FileRisk::Macros,
             files::FileRisk::Locked => FileRisk::Locked,
+            files::FileRisk::Web => FileRisk::Web,
         }
     }
 }
@@ -3622,12 +3980,25 @@ pub fn set_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result<(), En
     Ok(())
 }
 
-/// Tells the servers which messages were marked read or unread. When a
-/// server can't be reached the change waits and goes out once it can;
-/// on any other failure they go back to how they were here, and this
-/// fails.
+/// Tells the servers which messages were marked read or unread. The
+/// change is queued first, so a sync whose flags were read before it
+/// reached the server doesn't put the old state back meanwhile; it leaves
+/// the queue once the server has it. When a server can't be reached the
+/// change waits and goes out once it can; on any other failure they go
+/// back to how they were here, and this fails.
 pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result<(), EngineError> {
     let engine = engine()?;
+    {
+        let store = store()?;
+        for m in &messages {
+            store.queue_change(
+                AccountId(m.account_id),
+                &m.mailbox,
+                m.uid,
+                Change::Seen(seen),
+            )?;
+        }
+    }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();
     for m in &messages {
         by_account
@@ -3638,11 +4009,13 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
     let mut result = Ok(());
     for (account_id, list) in by_account {
         let id = AccountId(account_id);
+        // Folders whose server took the change, in case a later one fails.
+        let mut delivered: Vec<String> = Vec::new();
         let pushed = async {
             let (account, password) = signed_in(id)?;
             let shared = engine.store.clone();
             let list = list.clone();
-            engine
+            let (done, sent) = engine
                 .runtime
                 .spawn(async move {
                     let mut by_folder: std::collections::BTreeMap<String, Vec<u32>> =
@@ -3650,42 +4023,57 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
                     for (mailbox, uid) in list {
                         by_folder.entry(mailbox).or_default().push(uid);
                     }
+                    let mut done = Vec::new();
                     let pushed = async {
                         let mut conn = Remote::open(&account, &password).await?;
                         for (mailbox, uids) in &by_folder {
                             conn.set_seen(&shared, id, mailbox, uids, seen).await?;
+                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            store.settle_seen(id, mailbox, uids, seen)?;
+                            done.push(mailbox.clone());
                         }
                         conn.close().await;
                         Ok::<_, RemoteError>(())
                     }
                     .await;
-                    match pushed {
-                        Err(e) if e.is_offline() => {
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
-                            for (mailbox, uids) in &by_folder {
-                                for uid in uids {
-                                    store.queue_change(id, mailbox, *uid, Change::Seen(seen))?;
-                                }
-                            }
-                            Ok(())
-                        }
+                    let pushed = match pushed {
+                        // Queued already: it goes out once the server can
+                        // be reached.
+                        Err(e) if e.is_offline() => Ok(()),
                         other => other,
-                    }
+                    };
+                    (done, pushed)
                 })
                 .await
-                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
-                .map_err(EngineError::from)
+                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
+            delivered = done;
+            sent.map_err(EngineError::from)
         }
         .await;
         if let Err(e) = pushed {
             let store = store()?;
-            for (mailbox, uid) in &list {
-                store.set_seen(id, mailbox, *uid, !seen)?;
-            }
+            undo_seen(&store, id, &list, &delivered, seen)?;
             result = Err(e);
         }
     }
     result
+}
+
+/// A read or unread change that didn't reach the server: out of the queue,
+/// and back as it was here, for every message but those in `delivered`,
+/// folders whose server already took it.
+fn undo_seen(
+    store: &Store,
+    id: AccountId,
+    list: &[(String, u32)],
+    delivered: &[String],
+    seen: bool,
+) -> Result<(), piuma_core::StoreError> {
+    for (mailbox, uid) in list.iter().filter(|(m, _)| !delivered.contains(m)) {
+        store.settle_seen(id, mailbox, &[*uid], seen)?;
+        store.set_seen(id, mailbox, *uid, !seen)?;
+    }
+    Ok(())
 }
 
 /// Where a message goes.

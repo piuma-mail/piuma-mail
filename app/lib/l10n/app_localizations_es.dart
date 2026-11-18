@@ -699,6 +699,17 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Una página web';
+
+  @override
+  String get riskOpenWeb => '¿Abrir esta página web?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name es una página web: se abre en tu navegador. Nunca escribas una contraseña ahí: una página enviada por correo puede parecerse a cualquier inicio de sesión.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · de $email';
   }
@@ -6218,5 +6229,24 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String savedSearchEditNamed(String name) {
     return 'Cambiar el nombre o eliminar $name';
+  }
+
+  @override
+  String get listFailed => 'No se pudieron mostrar estos correos.';
+
+  @override
+  String get folderRefreshFailed =>
+      'No se pudo actualizar esta carpeta desde el servidor.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'El servidor no aceptó $count cambios que hiciste: esos correos vuelven a estar como antes.',
+      one: 'El servidor no aceptó un cambio que hiciste: ese correo vuelve a estar como antes.',
+    );
+    return '$_temp0';
   }
 }
