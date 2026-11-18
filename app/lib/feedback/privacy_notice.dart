@@ -159,6 +159,8 @@ Future<DeleteSent?> askDeleteSent(BuildContext context, int issue) {
       : showPiumaDialog<DeleteSent>(
           context,
           label: l.reportDeleteTitle,
+          // Wide enough for its three buttons on one line.
+          width: 520,
           builder: panel,
         );
 }
