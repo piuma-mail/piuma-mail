@@ -9,6 +9,7 @@ import '../inbox/message_list.dart' show initials;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/message_row.dart';
+import 'saved_searches.dart';
 
 /// The kinds of mail "Search by type" offers, as the operators they add.
 const searchTypes = [
@@ -115,7 +116,7 @@ class SearchStartView extends StatelessWidget {
             child: title(l.savedSearches),
           ),
           for (final s in saved)
-            _Saved(
+            SavedSearchRow(
               search: s,
               onTap: () => onSaved?.call(s),
               onEdit: () => onEditSaved?.call(s),
@@ -433,86 +434,6 @@ class _Recent extends StatelessWidget {
               dimension: 44,
               child: Center(
                 child: PiumaIconView(PiumaIcon.close, size: 15, color: c.muted),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A saved search: the search icon, its name and query, and a button that
-/// renames or deletes it.
-class _Saved extends StatelessWidget {
-  const _Saved({
-    required this.search,
-    required this.onTap,
-    required this.onEdit,
-  });
-
-  final SavedSearch search;
-  final VoidCallback onTap;
-  final VoidCallback onEdit;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = PiumaTheme.of(context);
-    final l = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.only(left: 20, right: 8),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.line)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: PiumaPressable(
-              onTap: onTap,
-              semanticLabel: '${search.name}, ${search.query}',
-              child: ExcludeSemantics(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 52),
-                  child: Row(
-                    children: [
-                      PiumaIconView(PiumaIcon.search, size: 17, color: c.muted),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              search.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: PiumaType.body.copyWith(color: c.fg),
-                            ),
-                            Text(
-                              search.query,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: PiumaType.mono.copyWith(
-                                fontSize: 12,
-                                color: c.muted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          PiumaPressable(
-            onTap: onEdit,
-            semanticLabel: l.savedSearchEditNamed(search.name),
-            child: SizedBox.square(
-              dimension: 44,
-              child: Center(
-                child: PiumaIconView(PiumaIcon.more, size: 16, color: c.muted),
               ),
             ),
           ),

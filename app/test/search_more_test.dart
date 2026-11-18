@@ -431,4 +431,121 @@ void main() {
     ]);
     await tester.pump(const Duration(seconds: 1));
   });
+
+  group('phone, as on the desktop', () {
+    const phone = Size(390, 844);
+
+    Future<void> openPhone(WidgetTester tester) async {
+      await tester.tap(find.text('Search 3 accounts'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('suggestions are a row of buttons under the field', (
+      tester,
+    ) async {
+      await _pump(tester, DemoMailSource(now: _now), size: phone);
+      await openPhone(tester);
+      await _type(tester, 'quote in:acm');
+      expect(_inPanel(find.bySemanticsLabel('Suggestions')), findsWidgets);
+      final pick = _inPanel(find.text('in:Clients/Acme'));
+      expect(pick, findsOneWidget);
+      // A finger's size.
+      expect(tester.getSize(pick).height, lessThanOrEqualTo(44));
+      await tester.tap(pick);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      expect(_text(tester), 'quote in:Clients/Acme ');
+      await _type(tester, 'from:sa');
+      await tester.tap(_inPanel(find.textContaining('from:sara@studio.it')));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      expect(_text(tester), 'from:sara@studio.it ');
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('nothing here: the server is asked; a tap opens its mail', (
+      tester,
+    ) async {
+      await _pump(tester, DemoMailSource(now: _now), size: phone);
+      await openPhone(tester);
+      await _type(tester, 'spring catalog');
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(_inPanel(find.text('On the server')), findsOneWidget);
+      expect(
+        _inPanel(find.bySemanticsLabel(RegExp('Found on the server'))),
+        findsWidgets,
+      );
+      await tester.tap(
+        _inPanel(find.text('Print quote for the spring catalog')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Print quote for the spring catalog'), findsWidgets);
+    });
+
+    testWidgets('with results here, Search on server asks', (tester) async {
+      await _pump(tester, DemoMailSource(now: _now), size: phone);
+      await openPhone(tester);
+      await _type(tester, 'quote');
+      final button = _inPanel(find.text('Search on server'));
+      await tester.scrollUntilVisible(
+        button,
+        200,
+        scrollable: _inPanel(find.byType(Scrollable)).last,
+      );
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(_inPanel(find.text('On the server')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+    });
+  });
+
+  group('desktop, as on the phone', () {
+    for (final (name, size) in [
+      ('wide', const Size(1440, 900)),
+      // The sidebar is a rail of icons here: no saved searches in it.
+      ('narrow', const Size(1000, 800)),
+    ]) {
+      testWidgets('saved searches in the empty search ($name window)', (
+        tester,
+      ) async {
+        final source = DemoMailSource(now: _now)
+          ..savedSearchList.add(
+            const SavedSearch(
+              id: 1,
+              name: 'Sara quotes',
+              query: 'quote from:sara',
+            ),
+          );
+        await _pump(tester, source, size: size);
+        await tester.tap(find.bySemanticsLabel(RegExp(r'^Search')).first);
+        await tester.pumpAndSettle();
+        expect(_inPanel(find.text('Saved searches')), findsOneWidget);
+        // ⋯ renames or deletes, as on the phone.
+        await tester.tap(
+          _inPanel(find.bySemanticsLabel('Rename or delete Sara quotes')),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(SavedSearchEditor), findsOneWidget);
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(SavedSearchEditor),
+            matching: find.byType(TextField),
+          ),
+          'Quotes',
+        );
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+        expect(_inPanel(find.text('Quotes')), findsOneWidget);
+        await tester.tap(_inPanel(find.text('Quotes')));
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pumpAndSettle();
+        expect(_text(tester), 'quote from:sara');
+        expect(_inPanel(find.text('2 results')), findsOneWidget);
+        await tester.pump(const Duration(seconds: 1));
+      });
+    }
+  });
 }

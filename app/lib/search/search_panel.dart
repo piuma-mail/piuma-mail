@@ -137,7 +137,11 @@ class _SearchPanelState extends State<SearchPanel> {
     _field.addListener(_typed);
     _changes = widget.source.changes.listen((_) => _run());
     _run();
-    if (widget.phone) _loadStart();
+    if (widget.phone) {
+      _loadStart();
+    } else {
+      _loadSaved();
+    }
     _loadSuggestData();
     // The inbox may hold focus already, so autofocus alone isn't enough.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -317,7 +321,22 @@ class _SearchPanelState extends State<SearchPanel> {
     final query = _query;
     if (query.isEmpty) return;
     await showSavedSearchEditor(context, source: widget.source, query: query);
-    if (widget.phone) await _loadStart();
+    await _reloadSaved();
+  }
+
+  /// The saved searches, for the desktop's empty search (the phone's come
+  /// with its start screen).
+  Future<void> _loadSaved() async {
+    final saved = await widget.source.savedSearches();
+    if (mounted) setState(() => _saved = saved);
+  }
+
+  Future<void> _reloadSaved() => widget.phone ? _loadStart() : _loadSaved();
+
+  /// ⋯ on a saved search: rename or delete it.
+  Future<void> _editSaved(SavedSearch s) async {
+    await showSavedSearchEditor(context, source: widget.source, saved: s);
+    await _reloadSaved();
   }
 
   /// Opens a result, keeping what was searched among the recent ones.
@@ -1101,19 +1120,44 @@ class _SearchPanelState extends State<SearchPanel> {
         onClear: _clearRecent,
         saved: _saved,
         onSaved: (s) => _again(s.query),
-        onEditSaved: (s) async {
-          await showSavedSearchEditor(context, source: widget.source, saved: s);
-          await _loadStart();
-        },
+        onEditSaved: _editSaved,
       );
     }
     if (!searching) {
-      return Padding(
-        padding: EdgeInsets.all(side),
-        child: Text(
-          l.searchEmptyHint,
-          style: PiumaType.body.copyWith(color: c.muted),
-        ),
+      // The saved searches here too, as on the phone's start screen: the
+      // sidebar is only icons in a narrow window.
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 16),
+        children: [
+          Padding(
+            padding: EdgeInsets.all(side),
+            child: Text(
+              l.searchEmptyHint,
+              style: PiumaType.body.copyWith(color: c.muted),
+            ),
+          ),
+          if (_saved.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(side, 4, side, 2),
+              child: Semantics(
+                header: true,
+                child: Text(
+                  l.savedSearches,
+                  style: PiumaType.label.copyWith(
+                    color: c.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            for (final s in _saved)
+              SavedSearchRow(
+                search: s,
+                onTap: () => _again(s.query),
+                onEdit: () => _editSaved(s),
+              ),
+          ],
+        ],
       );
     }
     final server = _serverHits;
