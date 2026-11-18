@@ -899,8 +899,9 @@ class _ServersFormState extends State<_ServersForm> {
     try {
       await widget.source.trustCertificate(widget.accountId, cert.trusted);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() => _error = AppLocalizations.of(context).errorOther);
+      }
       return;
     }
     await _save();

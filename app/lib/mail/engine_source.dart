@@ -2116,7 +2116,6 @@ class EngineMailSource extends MailSource {
       smtp: server(s.smtp),
       username: s.username,
       jmapUrl: s.jmapUrl,
-      oauth: s.oauth,
     );
   }
 
@@ -2447,6 +2446,7 @@ class EngineMailSource extends MailSource {
         engine.SettingsSource.guessed => SettingsSource.guessed,
       },
       jmapUrl: s.jmapUrl,
+      oauth: s.oauth,
     );
   }
 

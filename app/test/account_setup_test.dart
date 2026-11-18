@@ -24,7 +24,7 @@ const _selfSigned = CertificateProblem(
 /// A source whose adding does what the test says, and remembers how it
 /// was asked.
 class _Scripted extends DemoMailSource {
-  _Scripted({this.fail, this.providers = const [], this.found})
+  _Scripted({this.fail, this.oauthProviders = const [], this.found})
     : super(now: _now);
 
   /// Thrown by the first add; later ones succeed.
@@ -34,7 +34,7 @@ class _Scripted extends DemoMailSource {
   final FoundSettings? found;
 
   int adds = 0;
-  List<TrustedCertificate> trusted = const [];
+  List<TrustedCertificate> gotTrusted = const [];
   int? imapPort;
   String? host;
   String? oauthProvider;
@@ -59,7 +59,7 @@ class _Scripted extends DemoMailSource {
     List<TrustedCertificate> trusted = const [],
   }) async {
     adds++;
-    this.trusted = trusted;
+    gotTrusted = trusted;
     imapPort = port;
     this.host = host;
     if (adds == 1 && fail != null) throw fail!;
@@ -202,7 +202,7 @@ void main() {
     await _manual(tester, 'anna@example.org');
     await tester.tap(find.text('Verify and connect'));
     await tester.pumpAndSettle();
-    expect(source.trusted, isEmpty);
+    expect(source.gotTrusted, isEmpty);
     expect(
       find.text('The server’s certificate can’t be trusted.'),
       findsOneWidget,
@@ -214,8 +214,8 @@ void main() {
     await tester.tap(find.text('Trust this certificate'));
     await tester.pumpAndSettle();
     expect(source.adds, 2);
-    expect(source.trusted.single.host, 'mail.studio.it');
-    expect(source.trusted.single.fingerprint, _selfSigned.fingerprint);
+    expect(source.gotTrusted.single.host, 'mail.studio.it');
+    expect(source.gotTrusted.single.fingerprint, _selfSigned.fingerprint);
     expect(find.text('Account connected'), findsOneWidget);
   });
 
@@ -260,7 +260,7 @@ void main() {
 
   testWidgets('Outlook signs in on Microsoft’s page', (tester) async {
     final source = _Scripted(
-      providers: const [
+      oauthProviders: const [
         OAuthProviderInfo(
           id: 'microsoft',
           name: 'Microsoft',
@@ -348,7 +348,7 @@ void main() {
     tester,
   ) async {
     final source = _Scripted(
-      providers: const [
+      oauthProviders: const [
         OAuthProviderInfo(
           id: 'google',
           name: 'Google',
@@ -370,7 +370,7 @@ void main() {
   testWidgets('a cancelled sign-in is said', (tester) async {
     final source = _Scripted(
       fail: const AddAccountException(AddAccountError.signInCancelled),
-      providers: const [
+      oauthProviders: const [
         OAuthProviderInfo(
           id: 'microsoft',
           name: 'Microsoft',
