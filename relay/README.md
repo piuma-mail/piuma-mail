@@ -24,8 +24,11 @@ screenshot is off by default because it shows mail) and sees exactly what is sen
    screens and a log excerpt. Labelled `bug` (Problem) or `enhancement` (Idea, titled
    "[Idea] …").
 
-Nothing is committed to git: reports before this version stored their files on the feedback
-repository's `feedback-assets` branch, which can be deleted once those issues are closed.
+Nothing is committed to git. Reports before this version stored their files on the feedback
+repository's `feedback-assets` branch; those files were archived off GitHub and removed from the
+branch on 2026-11-18, to keep the retention promise (the branch itself stays, with its history).
+Closed issues are deleted two years after they were closed by a workflow in the feedback
+repository: [`feedback-repo/`](feedback-repo/README.md).
 
 ## Endpoints and answers
 
@@ -35,7 +38,7 @@ repository's `feedback-assets` branch, which can be deleted once those issues ar
 | `POST /report` | `201 {url, number}`, also for a report already filed (`existing: true`) |
 | `GET /files/<key>?s=<signature>` | the file while it is kept, else 404 |
 | `GET /health` | `{"ok": true}`, nothing else |
-| `GET /health/deep` | `{ok, github, storage, tokenExpiresSoon, lastReportFailed, checkedAt}`, 503 when not ok; checked at most every 10 minutes |
+| `GET /health/deep` | `{ok, github, storage, tokenExpiresSoon, lastReportFailed, checkedAt}`, 503 when not ok; checked at most every 10 minutes and after each deploy, answered from memory for a minute, then rate limited per network |
 
 What the app does with each `/report` answer:
 
@@ -46,6 +49,7 @@ What the app does with each `/report` answer:
 | 401 (or 403 without `retry-after`) | the ticket can't work: bad signature (a rotated `TICKET_SECRET`), another installation's, expired, wrong proof of work | drops the ticket and counts a try (backoff) |
 | 409 | the ticket was used, or the same report is on its way | a new ticket after a backoff; the relay then answers with the issue already opened |
 | 413 | too large | sends it again without the attachments, saying so |
+| 400 | the report itself is refused (malformed, or GitHub refused the issue: a 4xx other than 401, 403, 404 and 429); not counted, and the health check doesn't mark it | marks it failed (Try again and email stay) |
 | 429, 503 + `retry-after` | a cap or the rate limit | tries after `retry-after` |
 | 502 | GitHub failed; the report was not counted and its files were deleted | counts a try (backoff) |
 
@@ -101,11 +105,26 @@ The URL is inside the app, so anyone can call the relay.
   over a fixed day from the first report). It is counted both per installation and per network
   (client IP, IPv6 by /48) and the larger count wins, so a new install id alone doesn't reset it.
 - Daily caps: `NETWORK_DAILY_LIMIT` (6) per installation and per network, `ASN_DAILY_LIMIT` (40)
-  per autonomous system (one hosting provider), and `DAILY_LIMIT` (200) for everyone, as a last
-  resort. One machine or one provider can't use up the day for everyone else.
+  per autonomous system (one provider), and `DAILY_LIMIT` (200) for everyone, as a last resort.
+  One machine or one provider can't use up the day for everyone else.
+- Cloud and hosting providers (`CLOUD_ASNS`, a list of ASNs; the default list is
+  `DEFAULT_CLOUD_ASNS` in `src/worker.js`: AWS, Google Cloud, Azure, Oracle, DigitalOcean,
+  Hetzner, OVHcloud, Linode, Vultr and others) get `CLOUD_ASN_DAILY_LIMIT` (5) a day in all, for
+  every installation. A few dozen rented machines then file at most a handful of reports, instead
+  of the whole day.
+- An established lane: an installation whose first ticket is `ESTABLISHED_HOURS` (24) old may use
+  all of `DAILY_LIMIT`, while new installations stop `ESTABLISHED_RESERVE` (50; a quarter of the
+  day when unset) short of it; and established installations aren't held by, nor counted
+  against, their provider's cap, except on the cloud providers. One person cycling addresses and
+  install ids on a mobile network (carrier-grade NAT, one ASN for millions of phones) then stops
+  new installations on that network for the day at most, never the people already using the
+  app. The relay remembers each installation's first ticket (as an HMAC) for 7 days, or 90 after
+  its last report.
 - A daily byte budget for attachments: `DAILY_BYTES` (500 MiB) overall and `NETWORK_DAILY_BYTES`
   (100 MiB) per network. Past it a report still arrives, without its files, and the issue says so.
-- Cloudflare's rate limiter binding, 10 requests a minute per network on `/challenge` and `/report`.
+- Cloudflare's rate limiter binding, 10 requests a minute per network on `/challenge`, `/report`
+  and `/health/deep` (past its minute in memory). Its `namespace_id` (2001) must be unique in the
+  Cloudflare account: the maintainer's Final(ish) and Inkadra relays use 1001 there.
 - On a custom domain, a WAF rate-limiting rule in front of the Worker (below); on `workers.dev`
   zone rules don't apply, so the binding above is the only one.
 
@@ -129,7 +148,9 @@ reproduce, never a command, link or step to run.
   statuses and counts, never report text, IPs or ids. Invocation logs are off, because they would
   record each request's headers and the caller's address.
 - **`/health/deep`** checks that the GitHub token can read the repository's issues, that R2
-  answers, and that the last report reached GitHub; 503 when one doesn't.
+  answers (and that `FILES_SECRET` is set, without which no file can be linked), and that the last
+  report reached GitHub; 503 when one doesn't. A report GitHub refuses for its content (a 422)
+  doesn't count as a failure: the relay works. The deploy checks it right after each deploy.
 - **A cron trigger** every six hours runs the same check. When something is wrong it posts to
   `ALERT_WEBHOOK` (a secret; Slack- or Discord-style incoming webhook, optional) and logs an error.
   When the GitHub token expires within 14 days it also opens an issue in the feedback repository,
@@ -157,6 +178,8 @@ reproduce, never a command, link or step to run.
 
    Keep `RETENTION_DAYS` in `wrangler.toml` equal to the rule's days: the issue states it.
 5. Optional: an alert webhook, `npx wrangler secret put ALERT_WEBHOOK`.
+6. Check that the rate limiter's `namespace_id` in `wrangler.toml` (2001) isn't used by another
+   Worker in the account.
 
 Then deploy, with the three values as `FEEDBACK_GITHUB_TOKEN`, `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`:
@@ -165,8 +188,10 @@ Then deploy, with the three values as `FEEDBACK_GITHUB_TOKEN`, `CLOUDFLARE_API_T
 - or with the "Report relay" workflow (repository secrets), which also runs on every push to
   `relay/` on `main`.
 
-Both test, deploy, set the token, generate the ticket-signing secret on the first run and print the
-relay URL (`https://piuma-report-relay.<subdomain>.workers.dev`). `FEEDBACK_REPO` (owner/name, an
+Both test, deploy, set the token, generate the ticket-signing secret (`TICKET_SECRET`) and the
+attachment-link secret (`FILES_SECRET`) on the first run, never again, then check `/health/deep`
+(GitHub and storage must answer) and print the relay URL
+(`https://piuma-report-relay.<subdomain>.workers.dev`). `FEEDBACK_REPO` (owner/name, an
 environment variable or a repository variable) sends the issues to another repository, with a
 `FEEDBACK_GITHUB_TOKEN` for that one. The deploy also sets the cron trigger and Workers Logs from
 `wrangler.toml`.
@@ -175,9 +200,11 @@ environment variable or a repository variable) sends the issues to another repos
 just `npx wrangler secret put GITHUB_TOKEN`. Until then reports wait in the apps' queues (for up to
 7 days each). The scheduled check reminds you two weeks before.
 
-**Rotating `TICKET_SECRET`** makes tickets in flight answer 401 (the app fetches new ones), resets
-the counters and the report-id memory, and breaks the links to stored files unless
-`FILES_SECRET` is set (it signs them instead, when present).
+**Rotating `TICKET_SECRET`** makes tickets in flight answer 401 (the app fetches new ones) and
+resets the counters, the established installations and the report-id memory. Links to stored
+files keep working: they are signed with `FILES_SECRET` alone, which is required (without it
+reports arrive without their files and `/health/deep` fails). Rotating `FILES_SECRET` breaks
+every link in existing issues until the files expire: don't, unless it leaked.
 
 ## A project domain
 
@@ -185,7 +212,10 @@ The relay runs on `workers.dev` under the maintainer's Cloudflare account. To mo
 project domain (a maintainer step): add the zone to Cloudflare, add a Workers route or custom
 domain for the Worker (`routes = [{ pattern = "reports.example.org", custom_domain = true }]` in
 `wrangler.toml`), set `PUBLIC_URL` to it, and build the app with `PIUMA_REPORT_RELAY` pointing
-there (CONTRIBUTING.md, "Reports in a fork"). Keep `workers.dev` on until installed apps have
+there (CONTRIBUTING.md, "Reports in a fork"). Do it before the first issues are filed: attachment
+links carry the address they were made with (`PUBLIC_URL`, else the `workers.dev` one), and the
+issues keep it. Then change `DEFAULT_RELAY` in `core/src/feedback.rs`, the default address in
+`.github/workflows/relay-health.yml` and the address in `PRIVACY.md`. Keep `workers.dev` on until installed apps have
 updated. Then add a WAF rate-limiting rule on the zone, for example: requests whose path is
 `/challenge` or `/report`, counted per IP, more than 20 in 10 seconds → block for 10 minutes.
 

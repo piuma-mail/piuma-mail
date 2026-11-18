@@ -19,7 +19,8 @@
  * Statuses the app acts on: 403 with retry-after means "this ticket works later"; 401 means the
  * ticket can't be used (bad signature, expired, wrong proof of work): get a new one; 409 means
  * the ticket was used or the same report is on its way; 429 and 503 come with retry-after; 413
- * is too large; 502 is GitHub or storage failing, and the report was not counted.
+ * is too large; 400 is a report GitHub itself refuses (the app stops retrying it); 502 is GitHub
+ * or storage failing, and the report was not counted.
  *
  * Abuse guards (the relay URL ships inside the app, so it is public):
  * - every ticket is signed, short-lived, bound to the install id and usable once;
@@ -27,8 +28,13 @@
  * - a wait before each further report that doubles each time, counted both per installation and
  *   per network (IPv4 address, IPv6 /48), so a fresh install id alone does not reset it;
  * - daily caps per installation and per network (NETWORK_DAILY_LIMIT) and per autonomous system
- *   (ASN_DAILY_LIMIT), so one host or provider can't use up the day for everyone; a global cap
- *   (DAILY_LIMIT) stays as a last resort;
+ *   (ASN_DAILY_LIMIT), so one host or provider can't use up the day for everyone; known cloud and
+ *   hosting providers (CLOUD_ASNS) get a much lower cap (CLOUD_ASN_DAILY_LIMIT) that holds for
+ *   every installation; a global cap (DAILY_LIMIT) stays as a last resort;
+ * - a lane for established installations (whose first ticket is ESTABLISHED_HOURS old): part of
+ *   the global cap (ESTABLISHED_RESERVE) only they can use, and no per-ASN cap outside the cloud
+ *   providers, so a flood of fresh installations (a few dozen cloud machines, or one person
+ *   cycling addresses on a mobile network) can't stop the people who already use the app;
  * - a daily byte budget for attachments, overall (DAILY_BYTES) and per network
  *   (NETWORK_DAILY_BYTES): past it, reports still arrive, without their files;
  * - Cloudflare's rate limiter per network on /challenge and /report;
@@ -42,9 +48,11 @@
  *
  * Bindings: Durable Object `METER` (class `Meter`), R2 bucket `ATTACHMENTS`, optional rate
  * limiter `RATE_LIMITER`; secrets `GITHUB_TOKEN` (fine-grained: Issues on REPO), `TICKET_SECRET`,
- * optional `FILES_SECRET` (signs attachment links; TICKET_SECRET when unset) and `ALERT_WEBHOOK`;
+ * `FILES_SECRET` (signs attachment links, apart from tickets so links outlive a TICKET_SECRET
+ * rotation; without it reports arrive without their files) and optional `ALERT_WEBHOOK`;
  * vars `REPO` ("owner/name") and optionally `PUBLIC_URL`, `DAILY_LIMIT`, `NETWORK_DAILY_LIMIT`,
- * `ASN_DAILY_LIMIT`, `DAILY_BYTES`, `NETWORK_DAILY_BYTES`, `POW_BITS`, `RETENTION_DAYS`.
+ * `ASN_DAILY_LIMIT`, `CLOUD_ASNS`, `CLOUD_ASN_DAILY_LIMIT`, `ESTABLISHED_HOURS`,
+ * `ESTABLISHED_RESERVE`, `DAILY_BYTES`, `NETWORK_DAILY_BYTES`, `POW_BITS`, `RETENTION_DAYS`.
  *
  * Logs (Workers Logs) carry events, statuses and counts only: never report text, IPs or ids.
  */
@@ -81,6 +89,38 @@ const REPORT_MEMORY = 30 * DAY;
 const IN_PROGRESS = 10 * 60;
 /** The deep health check runs at most this often on request (the cron runs it anyway). */
 const HEALTH_FRESH = 10 * 60;
+/** /health/deep answers from this Worker's memory for this long, without touching the Meter. */
+const HEALTH_MEMORY = 60;
+/** GitHub's longest issue title, in characters. */
+const MAX_TITLE = 256;
+/** How long an installation's first ticket is remembered when it never sends a report, and after its last one. */
+const INSTALL_MEMORY = 7 * DAY;
+const INSTALL_MEMORY_AFTER_REPORT = 90 * DAY;
+/**
+ * Cloud and hosting providers (autonomous system numbers): rented machines, not people's phones
+ * and computers. Overridden by CLOUD_ASNS (comma-separated; empty for none).
+ */
+export const DEFAULT_CLOUD_ASNS = [
+  16509, 14618, 8987, // Amazon AWS
+  15169, 396982, 19527, // Google Cloud
+  8075, 8068, // Microsoft Azure
+  31898, // Oracle Cloud
+  14061, // DigitalOcean
+  24940, 213230, // Hetzner
+  16276, // OVHcloud
+  63949, // Akamai Linode
+  20473, // Vultr (Choopa)
+  12876, // Scaleway
+  51167, // Contabo
+  60781, 28753, // Leaseweb
+  45102, // Alibaba Cloud
+  132203, // Tencent Cloud
+  9009, // M247
+  36352, // ColoCrossing
+  53667, // FranTech (BuyVM)
+  202425, // IP Volume
+  197540, // netcup
+];
 /** Days before the GitHub token expires when the maintainer is told. */
 const TOKEN_WARNING_DAYS = 14;
 
@@ -92,7 +132,7 @@ export default {
       if (request.method === 'POST' && path === '/report') return await report(request, env);
       if (request.method === 'GET' && path.startsWith('/files/')) return await serveFile(request, env, path);
       if (path === '/health') return json({ ok: true });
-      if (path === '/health/deep') return await deepHealth(env, false);
+      if (path === '/health/deep') return await deepHealth(request, env);
       return json({ error: 'not found' }, 404);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status, e.headers);
@@ -131,7 +171,7 @@ async function challenge(request, env) {
   const { installId } = await request.json().catch(() => ({}));
   if (!validInstallId(installId)) throw new HttpError(400, 'installId');
   const ih = await hmacHex(env.TICKET_SECRET, `install:${installId}`);
-  const status = await meter(env).status(meterKeys(ih, who), limits(env));
+  const status = await meter(env).status(meterKeys(ih, who, env), limits(env));
   if (!status.ok) throw new HttpError(status.status, status.error, { 'retry-after': String(status.retryAfter) });
   const now = nowSeconds();
   // First report: a few seconds (the user is still typing). Each further one in a day doubles it,
@@ -201,7 +241,7 @@ async function report(request, env) {
   // One atomic step in the Durable Object: refuse a used ticket, a full day, a report sent before
   // the wait or one already on its way, else mark the ticket used, count the report and reserve
   // its id. If GitHub then fails, `refund` takes it all back, so an outage doesn't use up the day.
-  const keys = meterKeys(payload.ih, who);
+  const keys = meterKeys(payload.ih, who, env);
   const ticketId = ticket.split('.')[1];
   const claim = await m.claim({ ticketId, keys, reportKey, bytes, limits: limits(env) });
   if (!claim.ok) {
@@ -213,7 +253,7 @@ async function report(request, env) {
   const stored = [];
   let dropped = null;
   if (files.length && !claim.keepFiles) dropped = 'the daily storage budget was reached';
-  else if (files.length && !env.ATTACHMENTS) dropped = 'this relay has no attachment storage';
+  else if (files.length && (!env.ATTACHMENTS || !env.FILES_SECRET)) dropped = 'this relay has no attachment storage';
   else if (files.length) {
     try {
       await storeFiles(env, request, files, stored);
@@ -234,7 +274,10 @@ async function report(request, env) {
     });
   } catch (e) {
     await deleteFiles(env, stored);
-    await m.refund({ ticketId, keys, reportKey, counted: claim.counted });
+    await m.refund({ ticketId, keys, reportKey, counted: claim.counted, day: claim.day, asnCounted: claim.asnCounted });
+    // GitHub refusing this one report (a 422 for its title or body) says nothing about the relay:
+    // the app is told it was rejected and stops, and /health/deep stays as it was.
+    if (e instanceof GitHubRejected) throw new HttpError(400, 'report rejected');
     await m.noteUpstream(false);
     throw e instanceof HttpError ? e : new HttpError(502, 'upstream');
   }
@@ -353,8 +396,10 @@ async function deleteFiles(env, stored) {
   }
 }
 
+/** Attachment links are signed with FILES_SECRET alone, so rotating TICKET_SECRET keeps them working. */
 export async function fileSignature(env, key) {
-  return (await hmacHex(env.FILES_SECRET || env.TICKET_SECRET, `file:${key}`)).slice(0, 32);
+  if (!env.FILES_SECRET) throw new HttpError(404, 'not found');
+  return (await hmacHex(env.FILES_SECRET, `file:${key}`)).slice(0, 32);
 }
 
 async function serveFile(request, env, path) {
@@ -397,8 +442,18 @@ export function fenced(content) {
   return [`${fence}text`, content, fence];
 }
 
+/**
+ * The issue's title: GitHub takes at most 256 characters, and noMentions adds one per "@", so the
+ * title is cut after it (on a character, never inside one), else GitHub would answer 422 forever.
+ */
 export function issueTitle(r) {
-  return (r.kind === 'idea' ? '[Idea] ' : '') + noMentions(r.title);
+  const full = (r.kind === 'idea' ? '[Idea] ' : '') + noMentions(r.title);
+  const chars = Array.from(full);
+  if (chars.length <= MAX_TITLE) return full;
+  // A cut "@" with its zero-width space gone would become a mention again: drop it too.
+  const cut = chars.slice(0, MAX_TITLE - 1);
+  while (cut.length && cut[cut.length - 1] === '@') cut.pop();
+  return `${cut.join('')}…`;
 }
 
 export const UNTRUSTED_NOTE =
@@ -442,6 +497,21 @@ export function issueBody(r, files, { dropped = null, retentionDays: days = 90 }
 
 // ---- GitHub -------------------------------------------------------------------------------
 
+/** GitHub refused this request for what it holds (400, 422, 413...), not for the relay's access. */
+class GitHubRejected extends HttpError {
+  constructor(status) {
+    super(502, `github ${status}`);
+    this.githubStatus = status;
+  }
+}
+
+/**
+ * A 4xx that is about the report itself. 401 and 403 (token, permissions, abuse limits), 404 (the
+ * repository or the token's access to it is gone) and 429 (rate limited) are the relay's problem:
+ * those stay upstream failures, the report is kept and tried again.
+ */
+export const rejectsTheReport = (status) => status >= 400 && status < 500 && ![401, 403, 404, 429].includes(status);
+
 function github(env) {
   const base = `https://api.github.com/repos/${env.REPO}`;
   const call = async (method, path, body) => {
@@ -460,6 +530,7 @@ function github(env) {
       // GitHub's own message ("Bad credentials", "Not Found"), never the request.
       const message = await res.json().then((j) => String(j?.message ?? '').slice(0, 120)).catch(() => '');
       log('error', 'github_failed', { method, path: path.split('?')[0], status: res.status, message });
+      if (rejectsTheReport(res.status)) throw new GitHubRejected(res.status);
       throw new HttpError(502, `github ${res.status}`);
     }
     return res;
@@ -492,7 +563,8 @@ export async function deepCheck(env) {
   if (env.ATTACHMENTS) {
     try {
       await env.ATTACHMENTS.head('health-probe');
-      out.storage = true;
+      // Without its signing key no attachment can be linked: storage doesn't work either.
+      out.storage = Boolean(env.FILES_SECRET);
     } catch {
       out.storage = false;
     }
@@ -515,25 +587,48 @@ function publicHealth(h) {
   };
 }
 
-async function deepHealth(env, force) {
+/** The deployed version (wrangler.toml `[version_metadata]`), or null without the binding. */
+const versionId = (env) => env.VERSION?.id ?? null;
+
+/** This isolate's last answer to /health/deep: anyone can ask, so most answers come from here. */
+let healthMemory = null;
+
+/** Forgets the remembered /health/deep answer, for tests. */
+export function forgetHealth() {
+  healthMemory = null;
+}
+
+async function deepHealth(request, env) {
+  const now = nowSeconds();
+  if (healthMemory && now >= healthMemory.at && now - healthMemory.at < HEALTH_MEMORY) {
+    return json(healthMemory.body, healthMemory.body.ok ? 200 : 503);
+  }
+  // Past the memory, each network may ask as often as it may ask for tickets.
+  await rateLimit(env, await client(request, env));
   const m = meter(env);
   let h = await m.getState('health');
-  if (force || !h || nowSeconds() * 1000 - h.checkedAt > HEALTH_FRESH * 1000) {
-    h = await deepCheck(env);
+  // A new deployment (a new version, also after `wrangler secret put`) checks again at once, so
+  // the deploy's own check sees the token and storage it was just given.
+  if (!h || h.version !== versionId(env) || now * 1000 - h.checkedAt > HEALTH_FRESH * 1000) {
+    h = { ...(await deepCheck(env)), version: versionId(env) };
     await m.setState('health', h);
   }
-  return json(publicHealth(h), h.ok ? 200 : 503);
+  const body = publicHealth(h);
+  healthMemory = { at: now, body };
+  return json(body, body.ok ? 200 : 503);
 }
 
 /** The cron trigger: check, log, and tell the maintainer what needs them. */
 export async function scheduledCheck(env) {
   const m = meter(env);
-  const h = await deepCheck(env);
+  const h = { ...(await deepCheck(env)), version: versionId(env) };
   await m.setState('health', h);
   log(h.ok ? 'info' : 'error', 'health', publicHealth(h));
   const problems = [];
   if (!h.github) problems.push('GitHub refuses the relay (token expired or revoked, or GitHub is down)');
-  if (h.storage === false) problems.push('the attachment storage (R2) fails');
+  if (h.storage === false) {
+    problems.push(env.FILES_SECRET ? 'the attachment storage (R2) fails' : 'FILES_SECRET is not set: reports arrive without attachments');
+  }
   if (h.lastReportFailed) problems.push('the last report could not be filed');
   if (h.tokenExpiresInDays !== null && h.tokenExpiresInDays <= TOKEN_WARNING_DAYS) {
     problems.push(`the GitHub token expires in ${h.tokenExpiresInDays} days`);
@@ -607,22 +702,41 @@ async function rateLimit(env, who) {
 // ---- Metering -----------------------------------------------------------------------------
 
 const meter = (env) => env.METER.get(env.METER.idFromName('global'));
-/** Counter keys: the installation and the network get the spacing and the per-network cap; the ASN only its own cap. */
-const meterKeys = (ih, who) => ({
+/**
+ * Counter keys: the installation and the network get the spacing and the per-network cap; the ASN
+ * only its own cap, a lower one for cloud providers. `install` names the installation for the
+ * established lane.
+ */
+export const meterKeys = (ih, who, env = {}) => ({
+  install: ih,
   spaced: [`install:${ih}`, ...(who.ipKey ? [`ip:${who.ipKey}`] : [])],
   asn: who.asn ? `asn:${who.asn}` : null,
+  cloud: who.asn ? cloudAsns(env).has(who.asn) : false,
 });
+
+/** CLOUD_ASNS as a set: the default list when unset, none when set empty. */
+export function cloudAsns(env) {
+  if (env.CLOUD_ASNS === undefined || env.CLOUD_ASNS === null) return new Set(DEFAULT_CLOUD_ASNS);
+  return new Set(String(env.CLOUD_ASNS).split(/[\s,]+/).map(Number).filter((n) => Number.isInteger(n) && n > 0));
+}
 const num = (v, fallback) => {
   const n = Number(v ?? fallback);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 };
-export const limits = (env) => ({
-  daily: num(env.DAILY_LIMIT, 200),
-  network: num(env.NETWORK_DAILY_LIMIT, 6),
-  asn: num(env.ASN_DAILY_LIMIT, 40),
-  dailyBytes: num(env.DAILY_BYTES, 500 * MiB),
-  networkBytes: num(env.NETWORK_DAILY_BYTES, 100 * MiB),
-});
+export const limits = (env) => {
+  const daily = num(env.DAILY_LIMIT, 200);
+  return {
+    daily,
+    network: num(env.NETWORK_DAILY_LIMIT, 6),
+    asn: num(env.ASN_DAILY_LIMIT, 40),
+    cloudAsn: num(env.CLOUD_ASN_DAILY_LIMIT, 5),
+    establishedAfter: num(env.ESTABLISHED_HOURS, 24) * 60 * 60,
+    // A quarter of the day unless set; never more than all of it.
+    reserve: Math.min(daily, num(env.ESTABLISHED_RESERVE, Math.floor(daily / 4))),
+    dailyBytes: num(env.DAILY_BYTES, 500 * MiB),
+    networkBytes: num(env.NETWORK_DAILY_BYTES, 100 * MiB),
+  };
+};
 const retentionDays = (env) => num(env.RETENTION_DAYS, 90);
 /** The wait before a report, after `sent` reports in the current day. */
 const waitAfter = (sent) => Math.min(5 * 2 ** sent, MAX_WAIT);
@@ -648,16 +762,23 @@ export class Meter extends DurableObject {
       CREATE TABLE IF NOT EXISTS meter_days (day TEXT PRIMARY KEY, total INTEGER NOT NULL, bytes INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS reports (key TEXT PRIMARY KEY, number INTEGER, url TEXT, exp INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS installs (ih TEXT PRIMARY KEY, first INTEGER NOT NULL, exp INTEGER NOT NULL);
     `);
   }
 
-  /** Before a ticket: whether this caller may report today, and how many it sent. */
+  /**
+   * Before a ticket: whether this caller may report today, and how many it sent. A ticket given
+   * is the installation's first one, if none was given before: it starts its way to established.
+   */
   status(keys, limits) {
     const now = nowSeconds();
     const refusal = this.#refusal(keys, limits, now);
     if (refusal) return refusal;
     let sent = 0;
     for (const row of this.#rows(keys.spaced, now)) sent = Math.max(sent, row.count);
+    if (keys.install) {
+      this.sql.exec('INSERT OR IGNORE INTO installs (ih, first, exp) VALUES (?, ?, ?)', keys.install, now, now + INSTALL_MEMORY);
+    }
     return { ok: true, sent };
   }
 
@@ -691,6 +812,7 @@ export class Meter extends DurableObject {
     if (ready > now) return { ok: false, status: 403, error: 'early', retryAfter: ready - now };
 
     const day = this.#day(now);
+    const today = utcDay(now);
     const fits = bytes > 0
       && day.bytes + bytes <= limits.dailyBytes
       && this.#rows(keys.spaced, now).every((row) => row.bytes + bytes <= limits.networkBytes)
@@ -698,7 +820,9 @@ export class Meter extends DurableObject {
     const counted = fits ? bytes : 0;
 
     this.sql.exec('INSERT INTO used (id, exp) VALUES (?, ?)', ticketId, now + 2 * DAY);
-    for (const key of [...keys.spaced, ...(keys.asn ? [keys.asn] : [])]) {
+    // Established installations outside the cloud providers don't use up their provider's day.
+    const asnCounted = Boolean(keys.asn) && (keys.cloud || !this.#established(keys, limits, now));
+    for (const key of [...keys.spaced, ...(asnCounted ? [keys.asn] : [])]) {
       // A fixed day from the first report: later reports don't push the reset further away.
       this.sql.exec(
         `INSERT INTO meter_counts (key, count, bytes, since, last) VALUES (?1, 1, ?4, ?2, ?2)
@@ -712,26 +836,35 @@ export class Meter extends DurableObject {
     }
     this.sql.exec(
       'INSERT INTO meter_days (day, total, bytes) VALUES (?, 1, ?) ON CONFLICT (day) DO UPDATE SET total = total + 1, bytes = bytes + excluded.bytes',
-      utcDay(now), counted,
+      today, counted,
     );
     if (reportKey) {
       this.sql.exec('INSERT OR REPLACE INTO reports (key, number, url, exp) VALUES (?, NULL, NULL, ?)', reportKey, now + IN_PROGRESS);
     }
-    return { ok: true, keepFiles: fits, counted };
+    if (keys.install) {
+      // Remembered for longer once it has reported: it stays established.
+      this.sql.exec(
+        'INSERT INTO installs (ih, first, exp) VALUES (?1, ?2, ?3) ON CONFLICT (ih) DO UPDATE SET exp = MAX(exp, ?3)',
+        keys.install, now, now + INSTALL_MEMORY_AFTER_REPORT,
+      );
+    }
+    return { ok: true, keepFiles: fits, counted, day: today, asnCounted };
   }
 
-  /** Takes back a claim whose issue could not be opened: the ticket, the counts, the bytes. */
-  refund({ ticketId, keys, reportKey, counted }) {
-    const now = nowSeconds();
+  /**
+   * Takes back a claim whose issue could not be opened: the ticket, the counts, the bytes, on the
+   * day the claim counted them (`day`, which may be yesterday by now).
+   */
+  refund({ ticketId, keys, reportKey, counted, day = utcDay(nowSeconds()), asnCounted = Boolean(keys.asn) }) {
     this.sql.exec('DELETE FROM used WHERE id = ?', ticketId);
-    for (const key of [...keys.spaced, ...(keys.asn ? [keys.asn] : [])]) {
+    for (const key of [...keys.spaced, ...(asnCounted && keys.asn ? [keys.asn] : [])]) {
       // Back to no wait when this was the only report; otherwise the wait for the count before.
       this.sql.exec(
         'UPDATE meter_counts SET last = CASE WHEN count <= 1 THEN 0 ELSE last END, count = MAX(count - 1, 0), bytes = MAX(bytes - ?, 0) WHERE key = ?',
         counted, key,
       );
     }
-    this.sql.exec('UPDATE meter_days SET total = MAX(total - 1, 0), bytes = MAX(bytes - ?, 0) WHERE day = ?', counted, utcDay(now));
+    this.sql.exec('UPDATE meter_days SET total = MAX(total - 1, 0), bytes = MAX(bytes - ?, 0) WHERE day = ?', counted, day);
     if (reportKey) this.sql.exec('DELETE FROM reports WHERE key = ? AND number IS NULL', reportKey);
   }
 
@@ -766,15 +899,29 @@ export class Meter extends DurableObject {
     this.sql.exec('INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)', key, JSON.stringify(value));
   }
 
-  /** A cap that refuses this caller now, with how long until it lifts. */
+  /** Whether the installation's first ticket is old enough for the established lane. */
+  #established(keys, limits, now) {
+    if (!keys.install) return false;
+    const row = this.sql.exec('SELECT first FROM installs WHERE ih = ? AND exp >= ?', keys.install, now).toArray()[0];
+    return Boolean(row) && now - row.first >= limits.establishedAfter;
+  }
+
+  /**
+   * A cap that refuses this caller now, with how long until it lifts. New installations share the
+   * global cap less the established reserve; established ones may use all of it, and skip the
+   * per-ASN cap except on cloud providers.
+   */
   #refusal(keys, limits, now) {
-    if (this.#day(now).total >= limits.daily) {
+    const established = this.#established(keys, limits, now);
+    const daily = established ? limits.daily : Math.max(0, limits.daily - (limits.reserve ?? 0));
+    if (this.#day(now).total >= daily) {
       return { ok: false, status: 503, error: 'daily limit', retryAfter: Math.min(untilTomorrow(now), SIX_HOURS) };
     }
     const capped = (rows, cap) => rows.filter((row) => row.count >= cap);
+    const asnCap = keys.cloud ? Math.min(limits.cloudAsn ?? limits.asn, limits.asn) : limits.asn;
     const over = [
       ...capped(this.#rows(keys.spaced, now), limits.network),
-      ...(keys.asn ? capped(this.#rows([keys.asn], now), limits.asn) : []),
+      ...(keys.asn && (keys.cloud || !established) ? capped(this.#rows([keys.asn], now), asnCap) : []),
     ];
     if (over.length) {
       const lifts = Math.max(...over.map((row) => row.since + DAY - now));
@@ -797,6 +944,7 @@ export class Meter extends DurableObject {
     this.sql.exec('DELETE FROM meter_counts WHERE ? - since >= ?', now, DAY);
     this.sql.exec('DELETE FROM meter_days WHERE day < ?', utcDay(now - DAY));
     this.sql.exec('DELETE FROM reports WHERE exp < ?', now);
+    this.sql.exec('DELETE FROM installs WHERE exp < ?', now);
   }
 }
 

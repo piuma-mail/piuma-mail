@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import worker, { Meter, UNTRUSTED_NOTE, collectFiles, fenced, ipPrefix, issueBody, issueTitle, powOk, leadingZeroBits, sanitizeReport, scheduledCheck, verify } from '../src/worker.js';
+import worker, { DEFAULT_CLOUD_ASNS, Meter, UNTRUSTED_NOTE, cloudAsns, collectFiles, fenced, forgetHealth, ipPrefix, issueBody, issueTitle, limits, meterKeys, powOk, leadingZeroBits, rejectsTheReport, sanitizeReport, scheduledCheck, verify } from '../src/worker.js';
 
 /** A Durable Object's `ctx.storage.sql`, on Node's SQLite. */
 function sqlStorage() {
@@ -28,7 +28,7 @@ function meterNamespace() {
   for (const name of ['status', 'lookup', 'claim', 'refund', 'remember', 'noteUpstream', 'upstream', 'getState', 'setState']) {
     stub[name] = async (...a) => structuredClone(instance[name](...a));
   }
-  return { sql, idFromName: (name) => name, get: () => stub };
+  return { sql, instance, idFromName: (name) => name, get: () => stub };
 }
 
 /** An R2 bucket in memory. */
@@ -56,7 +56,7 @@ function bucket() {
 }
 
 function env() {
-  return { METER: meterNamespace(), ATTACHMENTS: bucket(), GITHUB_TOKEN: 'gh', TICKET_SECRET: 'secret', REPO: 'o/r', POW_BITS: '4', DAILY_LIMIT: '30' };
+  return { METER: meterNamespace(), ATTACHMENTS: bucket(), GITHUB_TOKEN: 'gh', TICKET_SECRET: 'secret', FILES_SECRET: 'files', REPO: 'o/r', POW_BITS: '4', DAILY_LIMIT: '30' };
 }
 
 const INSTALL = '0123456789abcdef0123456789abcdef';
@@ -542,6 +542,7 @@ test('/health says only that it is up', async () => {
 });
 
 test('/health/deep checks GitHub and storage, and fails when they do', async () => {
+  forgetHealth();
   const e = env();
   const calls = mockGitHub();
   const ok = await worker.fetch(new Request('https://relay.test/health/deep'), e);
@@ -564,6 +565,7 @@ test('/health/deep checks GitHub and storage, and fails when they do', async () 
 });
 
 test('a report that GitHub refused makes the health check fail until one goes through', async () => {
+  forgetHealth();
   const e = env();
   const calls = mockGitHub();
   calls.down = true;
@@ -837,4 +839,261 @@ test('logs never carry report text, addresses or ids', async () => {
   assert.ok(lines.length >= 2);
   const all = lines.join('\n');
   for (const s of ['Secret', 'anna@', 'private', IP, INSTALL]) assert.ok(!all.includes(s), s);
+});
+
+// ---- Review fixes: budgets, titles, health ------------------------------------------------
+
+const HOUR_MS = 60 * 60_000;
+const today = () => new Date(Date.now()).toISOString().slice(0, 10);
+
+test('cloud providers get a much lower per-ASN cap, for every installation', async () => {
+  assert.ok(cloudAsns({}).has(16509), 'AWS is a cloud provider by default');
+  assert.equal(cloudAsns({ CLOUD_ASNS: '' }).size, 0);
+  assert.deepEqual([...cloudAsns({ CLOUD_ASNS: '64510, 64511 x' })], [64510, 64511]);
+  assert.equal(DEFAULT_CLOUD_ASNS.length, new Set(DEFAULT_CLOUD_ASNS).size);
+  assert.equal(meterKeys('ih', { ipKey: null, asn: 64510 }, { CLOUD_ASNS: '64510' }).cloud, true);
+  assert.equal(meterKeys('ih', { ipKey: null, asn: 64500 }, { CLOUD_ASNS: '64510' }).cloud, false);
+
+  const e = env();
+  e.CLOUD_ASNS = '64510';
+  e.CLOUD_ASN_DAILY_LIMIT = '2';
+  e.ASN_DAILY_LIMIT = '40';
+  e.DAILY_LIMIT = '200';
+  mockGitHub();
+  // An installation that will be established by the time the VMs come.
+  const old = `${'e'.repeat(32)}`;
+  await ticketFor(e, old, '198.51.100.99');
+  await later(25 * HOUR_MS, async () => {
+    // Thirty machines on one cloud provider, each its own address and installation.
+    const statuses = [];
+    for (let i = 0; i < 30; i++) {
+      const install = `${'b'.repeat(30)}${String(i).padStart(2, '0')}`;
+      const ready = await readyForm(e, {}, install, `198.51.100.${i + 1}`);
+      statuses.push((await ready.send(64510)).status);
+    }
+    assert.deepEqual(statuses.filter((s) => s === 201).length, 2);
+    assert.ok(statuses.slice(2).every((s) => s === 429));
+    // Established or not, the cloud cap holds there.
+    const fromCloud = await readyForm(e, {}, old, '198.51.100.99');
+    assert.equal((await fromCloud.send(64510)).status, 429);
+    // The day is still there for everyone else.
+    const elsewhere = await readyForm(e, {}, OTHER_INSTALL, '192.0.2.10');
+    assert.equal((await elsewhere.send(64500)).status, 201);
+  });
+});
+
+test('established installations keep a lane of the day a flood of new ones cannot use', async () => {
+  const e = env();
+  e.DAILY_LIMIT = '10';
+  e.ESTABLISHED_RESERVE = '3';
+  e.ESTABLISHED_HOURS = '24';
+  assert.equal(limits(e).reserve, 3);
+  assert.equal(limits({ DAILY_LIMIT: '200' }).reserve, 50, 'a quarter of the day by default');
+  assert.equal(limits({ DAILY_LIMIT: '2', ESTABLISHED_RESERVE: '9' }).reserve, 2);
+  mockGitHub();
+  // Its first ticket, a day and more before.
+  await ticketFor(e, INSTALL, '192.0.2.1');
+  await later(25 * HOUR_MS, async () => {
+    // Another installation's first ticket, just now.
+    await ticketFor(e, `${'f'.repeat(32)}`, '198.51.100.21');
+    // New installations have used the day but the reserve.
+    e.METER.sql.exec('INSERT OR REPLACE INTO meter_days (day, total, bytes) VALUES (?, 7, 0)', today());
+    const fresh = await challengeRes(e, OTHER_INSTALL, '198.51.100.20');
+    assert.equal(fresh.status, 503);
+    const ready = await readyForm(e, {}, INSTALL, '192.0.2.1');
+    assert.equal((await ready.send()).status, 201);
+    // Nor does an installation whose first ticket is an hour old.
+    await later(HOUR_MS, async () => {
+      // (The hour may cross midnight: the same count on whichever day it is.)
+      e.METER.sql.exec('INSERT OR REPLACE INTO meter_days (day, total, bytes) VALUES (?, 7, 0)', today());
+      assert.equal((await challengeRes(e, `${'f'.repeat(32)}`, '198.51.100.21')).status, 503);
+    });
+    // The whole day used: everyone waits for tomorrow.
+    e.METER.sql.exec('UPDATE meter_days SET total = 10 WHERE day = ?', today());
+    assert.equal((await challengeRes(e, INSTALL, '192.0.2.1')).status, 503);
+  });
+});
+
+test('one person cycling addresses on a mobile network cannot shut out its established users', async () => {
+  const e = env();
+  e.ASN_DAILY_LIMIT = '3';
+  const calls = mockGitHub();
+  const mobile = 64520;
+  // A beta tester on the carrier, using the app for a while.
+  await ticketFor(e, INSTALL, '100.64.0.1');
+  await later(30 * HOUR_MS, async () => {
+    // Fresh installations, a new carrier-grade NAT address each: they fill the ASN's cap.
+    const statuses = [];
+    for (let i = 0; i < 5; i++) {
+      const install = `${'d'.repeat(30)}${String(i).padStart(2, '0')}`;
+      const ready = await readyForm(e, {}, install, `100.64.1.${i + 1}`);
+      statuses.push((await ready.send(mobile)).status);
+    }
+    assert.deepEqual(statuses, [201, 201, 201, 429, 429]);
+    // The tester still reports, and doesn't use up the carrier's count.
+    const tester = await readyForm(e, {}, INSTALL, '100.64.0.1');
+    assert.equal((await tester.send(mobile)).status, 201);
+    const asnRow = e.METER.sql.exec('SELECT count FROM meter_counts WHERE key = ?', `asn:${mobile}`).toArray()[0];
+    assert.equal(asnRow.count, 3);
+    assert.equal(issues(calls).length, 4);
+  });
+});
+
+test('an installation never seen is forgotten after a week, one that reported is kept longer', async () => {
+  const e = env();
+  mockGitHub();
+  await ticketFor(e, OTHER_INSTALL, '192.0.2.40');
+  await later(10_000, async () => {
+    const ready = await readyForm(e, {}, INSTALL, '192.0.2.41');
+    assert.equal((await ready.send()).status, 201);
+  });
+  const rows = e.METER.sql.exec('SELECT exp - first AS kept FROM installs ORDER BY kept').toArray().map((r) => r.kept);
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0] <= 7 * 86400);
+  assert.ok(rows[1] >= 89 * 86400);
+});
+
+test('a long title full of @ stays within GitHub limit and never mentions anyone', () => {
+  const r = sanitizeReport({ kind: 'idea', title: '@a'.repeat(150) });
+  const title = issueTitle(r);
+  assert.ok(Array.from(title).length <= 256, `title has ${Array.from(title).length} characters`);
+  assert.ok(title.startsWith('[Idea] @​a'));
+  assert.ok(title.endsWith('…'));
+  for (let i = title.indexOf('@'); i !== -1; i = title.indexOf('@', i + 1)) assert.equal(title[i + 1], '​');
+  // Cut right after an "@": it goes rather than mention someone.
+  const atEdge = issueTitle({ kind: 'problem', title: `${'x'.repeat(254)}@bob` });
+  assert.ok(!/@(?!​)/.test(atEdge));
+  // Emoji (two UTF-16 units) are never split.
+  const emoji = issueTitle({ kind: 'problem', title: '😀'.repeat(300) });
+  assert.equal(Array.from(emoji).length, 256);
+  assert.ok(!/[\ud800-\udbff](?![\udc00-\udfff])/.test(emoji));
+  // A short title is left alone.
+  assert.equal(issueTitle({ kind: 'problem', title: 'Hi @bob' }), 'Hi @​bob');
+});
+
+test('GitHub refusing a report is a 400 for the app, and leaves the health check alone', async () => {
+  forgetHealth();
+  assert.equal(rejectsTheReport(422), true);
+  assert.equal(rejectsTheReport(400), true);
+  for (const s of [401, 403, 404, 429, 500, 502]) assert.equal(rejectsTheReport(s), false, String(s));
+  const e = env();
+  const calls = mockGitHub();
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (init.method === 'POST' && url.endsWith('/issues')) {
+      calls.push({ url, method: init.method });
+      return Response.json({ message: 'Validation Failed' }, { status: 422 });
+    }
+    return real(url, init);
+  };
+  await later(10_000, async () => {
+    const ready = await readyForm(e, { reportId: 'r-422' });
+    const res = await ready.send();
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: 'report rejected' });
+    // Nothing kept or counted.
+    assert.equal(e.ATTACHMENTS.objects.size, 0);
+    assert.equal(e.METER.sql.exec('SELECT COUNT(*) AS n FROM used').toArray()[0].n, 0);
+    const upstream = await e.METER.get().upstream();
+    assert.equal(upstream.lastFailure, 0);
+    const h = await worker.fetch(new Request('https://relay.test/health/deep'), e);
+    assert.equal(h.status, 200);
+    assert.equal((await h.json()).lastReportFailed, false);
+  });
+});
+
+test('/health/deep answers from memory for a minute, then rate limited per network', async () => {
+  forgetHealth();
+  const e = env();
+  const calls = mockGitHub();
+  const deep = () => worker.fetch(new Request('https://relay.test/health/deep', { headers: { 'cf-connecting-ip': IP } }), e);
+  assert.equal((await deep()).status, 200);
+  // A flood within the minute never reaches the Meter, GitHub or the rate limiter.
+  const meterCalls = [];
+  const stub = e.METER.get();
+  e.METER.get = () => new Proxy(stub, { get: (t, k) => { meterCalls.push(k); return t[k]; } });
+  let limited = 0;
+  e.RATE_LIMITER = { limit: async () => { limited++; return { success: false }; } };
+  const before = calls.length;
+  for (let i = 0; i < 50; i++) assert.equal((await deep()).status, 200);
+  assert.equal(calls.length, before);
+  assert.deepEqual(meterCalls, []);
+  assert.equal(limited, 0);
+  // Past it, the rate limiter decides.
+  await later(61_000, async () => {
+    const res = await deep();
+    assert.equal(res.status, 429);
+    assert.equal(limited, 1);
+  });
+  forgetHealth();
+});
+
+test('a refund after midnight takes the report back from the day it counted on', async () => {
+  const e = env();
+  const m = e.METER.instance;
+  const midnight = Date.UTC(2030, 0, 2);
+  const keys = meterKeys('ih', { ipKey: 'ip', asn: 64530 }, {});
+  const realNow = Date.now;
+  try {
+    Date.now = () => midnight - 2000;
+    const claim = m.claim({ ticketId: 't1', keys, reportKey: null, bytes: 0, limits: limits(e) });
+    assert.equal(claim.ok, true);
+    assert.equal(claim.day, '2030-01-01');
+    Date.now = () => midnight + 2000;
+    m.refund({ ticketId: 't1', keys, reportKey: null, counted: claim.counted, day: claim.day, asnCounted: claim.asnCounted });
+    const days = e.METER.sql.exec('SELECT day, total FROM meter_days ORDER BY day').toArray().map((r) => ({ ...r }));
+    assert.deepEqual(days, [{ day: '2030-01-01', total: 0 }]);
+    const asn = e.METER.sql.exec('SELECT count FROM meter_counts WHERE key = ?', 'asn:64530').toArray()[0];
+    assert.equal(asn.count, 0);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('without FILES_SECRET no attachment is kept or served, and the health check says so', async () => {
+  forgetHealth();
+  const e = env();
+  delete e.FILES_SECRET;
+  const calls = mockGitHub();
+  await later(10_000, async () => {
+    const ready = await readyForm(e);
+    assert.equal((await ready.send()).status, 201);
+  });
+  assert.equal(e.ATTACHMENTS.objects.size, 0);
+  assert.match(issues(calls)[0].body.body, /2 not kept: this relay has no attachment storage/);
+  const files = await worker.fetch(new Request('https://relay.test/files/2030-01-01/0123456789abcdef01234567/a.png?s=x'), e);
+  assert.equal(files.status, 404);
+  const h = await worker.fetch(new Request('https://relay.test/health/deep'), e);
+  assert.equal(h.status, 503);
+  assert.equal((await h.json()).storage, false);
+  forgetHealth();
+});
+
+test('attachment links outlive a TICKET_SECRET rotation', async () => {
+  const e = env();
+  const calls = mockGitHub();
+  await later(10_000, async () => {
+    const ready = await readyForm(e);
+    assert.equal((await ready.send()).status, 201);
+  });
+  const link = issues(calls)[0].body.body.match(/\((https:\/\/relay\.test\/files\/[^)]+)\)/)[1];
+  e.TICKET_SECRET = 'rotated';
+  const res = await worker.fetch(new Request(link), e);
+  assert.equal(res.status, 200);
+});
+
+test('a new deployment checks again at once, not ten minutes later', async () => {
+  forgetHealth();
+  const e = env();
+  e.VERSION = { id: 'v1' };
+  const calls = mockGitHub();
+  calls.down = true;
+  assert.equal((await worker.fetch(new Request('https://relay.test/health/deep'), e)).status, 503);
+  // The token is fixed and the relay deployed again (a new version, a new isolate).
+  calls.down = false;
+  forgetHealth();
+  e.VERSION = { id: 'v2' };
+  const res = await worker.fetch(new Request('https://relay.test/health/deep'), e);
+  assert.equal(res.status, 200);
+  forgetHealth();
 });
