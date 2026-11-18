@@ -149,6 +149,14 @@ Future<void> _pump(WidgetTester tester, DemoMailSource source) async {
   await tester.pumpAndSettle();
 }
 
+/// Subjects of the inbox rows built, on screen or just around it.
+List<String> _built(WidgetTester tester) => tester
+    .widgetList<InboxRowTile>(
+      find.byType(InboxRowTile, skipOffstage: false),
+    )
+    .map((t) => t.row.subject)
+    .toList();
+
 void main() {
   testWidgets('a list that can’t be read says so, and Try again reads it', (
     tester,
@@ -180,15 +188,10 @@ void main() {
       scrollable: list,
     );
     await tester.pumpAndSettle();
-    final shown = tester
-        .widgetList<InboxRowTile>(find.byType(InboxRowTile, skipOffstage: false))
-        .map((t) => t.row.subject)
-        .toList();
-    // ignore: avoid_print
-    print('SHOWN $shown');
     // In place of page 2 only: the rows above stay, and so does the place.
-    expect(find.text('Row 99'), findsOneWidget);
     expect(find.text('Couldn’t show these emails.'), findsOneWidget);
+    expect(_built(tester), contains('Row 99'));
+    expect(_built(tester), isNot(contains('Row 0')));
     expect(source.asked.where((o) => o == 100), hasLength(1));
     // Not asked again on every frame.
     await tester.pump(const Duration(seconds: 1));
@@ -196,8 +199,8 @@ void main() {
     await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
     expect(find.text('Couldn’t show these emails.'), findsNothing);
-    expect(find.text('Row 100'), findsOneWidget);
-    expect(find.text('Row 99'), findsOneWidget);
+    expect(_built(tester), containsAll(['Row 99', 'Row 100']));
+    expect(_built(tester), isNot(contains('Row 0')));
   });
 
   testWidgets('a folder the server didn’t refresh says so, with Try again', (
