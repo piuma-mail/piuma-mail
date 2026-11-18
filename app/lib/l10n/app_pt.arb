@@ -1049,6 +1049,7 @@
   "pairPhraseCount": "{count} de 24 palavras",
   "pairPhraseWrong": "Estas palavras não abrem seu espaço. Confira-as e tente de novo.",
   "pairPhraseOld": "Esta frase de recuperação foi substituída: seu espaço recebeu uma mais nova quando um dispositivo foi desvinculado ou desativou a sincronização. Use a frase mais recente, ou um código de um dispositivo vinculado.",
+  "pairConflict": "Dois dos seus dispositivos removeram um ao outro, por isso ainda não é possível entrar neste espaço. Altere a senha da caixa de correio que o guarda, sincronize um dispositivo que você ainda tem e tente de novo.",
   "pairContinue": "Continuar",
   "pairDoneTitle": "{kind, select, phone{Celular vinculado} tablet{Tablet vinculado} other{Computador vinculado}}",
   "pairDoneBody": "Isto é o que veio do seu espaço criptografado.",

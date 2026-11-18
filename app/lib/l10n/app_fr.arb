@@ -1049,6 +1049,7 @@
   "pairPhraseCount": "{count} mots sur 24",
   "pairPhraseWrong": "Ces mots n’ouvrent pas votre espace. Vérifiez-les et réessayez.",
   "pairPhraseOld": "Cette phrase de récupération a été remplacée : votre espace en a reçu une plus récente quand un appareil a été dissocié ou a désactivé la synchronisation. Utilisez la phrase la plus récente, ou un code d’un appareil associé.",
+  "pairConflict": "Deux de vos appareils se sont retirés l’un l’autre : vous ne pouvez pas encore rejoindre cet espace. Changez le mot de passe de la boîte qui le contient, synchronisez un appareil que vous avez encore, puis réessayez.",
   "pairContinue": "Continuer",
   "pairDoneTitle": "{kind, select, phone{Téléphone associé} tablet{Tablette associée} other{Ordinateur associé}}",
   "pairDoneBody": "Voici ce qui est arrivé de votre espace chiffré.",

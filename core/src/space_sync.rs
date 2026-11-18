@@ -17,7 +17,7 @@ use crate::remote::{Remote, RemoteError};
 use crate::space::{
     self, Device, Key, Note, PairAnswer, PairRequest, Pairing, SealedSpace, Space, SpaceError,
 };
-use crate::space_log::{Entry, Member, Members, Op};
+use crate::space_log::{self, Entry, Member, Members, Op};
 use crate::space_merge::{self, Local, Tables, FORMAT, SCHEMA, SECRETS};
 use crate::space_trust::{self, Anchor, Trust};
 use crate::store::Applied;
@@ -405,17 +405,42 @@ fn open_copies(
         return Err(SyncError::Conflict(verdict.conflict.into_iter().collect()));
     }
     let members = verdict.state.members.clone();
-    if let Anchor::Phrase(_) = anchor {
+    if let Anchor::Phrase(public) = anchor {
         // Copies the phrase can't open, signed by a device of the space it
-        // opens: they were sealed after the phrase was replaced.
+        // opens, whose log replaces the phrase: they were sealed after it.
+        // An older copy (sealed while it was still in force, and put back)
+        // brings nothing the opened ones don't have, and doesn't count.
+        // One from a build that kept the log inside can't be told apart:
+        // it counts, as before.
+        let root = &verdict.trust.root;
+        let mut stop = None;
         let newer = copies.iter().any(|(sealed, space)| {
-            space.is_none()
-                && members
+            if space.is_some()
+                || !members
                     .get(&sealed.signer)
                     .is_some_and(|m| sealed.signed_by(&m.sign))
+            {
+                return false;
+            }
+            if sealed.log.is_empty() {
+                return true;
+            }
+            let e = space_log::evaluate(
+                verdict.trust.log.iter().chain(&sealed.log).cloned(),
+                root,
+                &Default::default(),
+            );
+            if !e.conflict.is_empty() {
+                stop.get_or_insert(e.conflict);
+                return false;
+            }
+            e.state.recovery.as_deref() != Some(public)
         });
         if newer {
             return Err(SyncError::PhraseReplaced);
+        }
+        if let Some(who) = stop {
+            return Err(SyncError::Conflict(who.into_iter().collect()));
         }
     }
     let mut refused = verdict.refused + failed;
@@ -1179,11 +1204,16 @@ pub async fn join(
     // The entry must add this very device, by the device that answered:
     // the request travelled in the clear, and its keys could have been
     // swapped on the way.
+    // Without an entry, the log handed over must list this very device
+    // already ([space_trust::judge] checks it).
+    let member = Member::of(&device(me));
     let mine = Op::Add {
-        device: Member::of(&device(me)),
+        device: member.clone(),
     };
-    if answered.entry.by != answered.by || answered.entry.op != mine {
-        return Err(SpaceError::Code.into());
+    if let Some(e) = &answered.entry {
+        if e.by != answered.by || e.op != mine {
+            return Err(SpaceError::Code.into());
+        }
     }
     let notes = t.notes().await?;
     let opened = open_copies(
@@ -1192,7 +1222,8 @@ pub async fn join(
         Opener::Key(&key),
         Anchor::Paired {
             log: &answered.log,
-            entry: &answered.entry,
+            entry: answered.entry.as_ref(),
+            device: &member,
         },
         None,
     )?;
@@ -1270,7 +1301,7 @@ async fn start(
         opened.trust.push(add);
     }
     opened.members = opened.trust.state().members;
-    if !opened.members.contains_key(&me.device.id) {
+    if opened.members.get(&me.device.id) != Some(&Member::of(&dev)) {
         return Err(if phrase.is_some() {
             SpaceError::Sealed
         } else {
@@ -1300,15 +1331,14 @@ async fn to_hand_over(t: &mut impl Transport, store: &Mutex<Store>, me: &Me) -> 
 }
 
 /// This device's answer to `request` with `code`: the content key, its
-/// signed entry adding the device that asked, and the log it trusts.
+/// signed entry adding the device that asked, and the log it trusts. A
+/// device the log lists already, with the same keys, is being linked again
+/// (after a stop, say): adding it again wouldn't count, so the log alone
+/// goes, and it starts from that.
 fn answer_with(opened: &Opened, request: &PairRequest, code: &str, me: &Me) -> PairAnswer {
-    let add = entry(
-        &opened.trust,
-        Op::Add {
-            device: Member::of(&request.device),
-        },
-        me,
-    );
+    let asking = Member::of(&request.device);
+    let add = (opened.members.get(&asking.id) != Some(&asking))
+        .then(|| entry(&opened.trust, Op::Add { device: asking }, me));
     space::pair_answer(
         code,
         request,

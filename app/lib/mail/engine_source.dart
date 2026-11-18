@@ -384,6 +384,7 @@ class EngineMailSource extends MailSource {
       engine.ErrorKind.taken => SyncProblem.taken,
       engine.ErrorKind.rollback => SyncProblem.rollback,
       engine.ErrorKind.outdated => SyncProblem.outdated,
+      engine.ErrorKind.conflict => SyncProblem.conflict,
       engine.ErrorKind.unreachable => SyncProblem.offline,
       _ => SyncProblem.other,
     },

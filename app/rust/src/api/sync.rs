@@ -201,6 +201,7 @@ impl From<SyncError> for EngineError {
             SyncError::Taken => ErrorKind::Taken,
             SyncError::Rollback => ErrorKind::Rollback,
             SyncError::Space(SpaceError::Newer) => ErrorKind::Outdated,
+            SyncError::Conflict(_) => ErrorKind::Conflict,
             _ => ErrorKind::Other,
         };
         EngineError::new(kind, e.to_string())

@@ -18,7 +18,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::space::{SealedSpace, Space, RECOVERY};
-use crate::space_log::{self, Entry, Eval, State, MAX_ENTRIES};
+use crate::space_log::{self, Entry, Eval, Member, State, MAX_ENTRIES};
 
 /// How far ahead of the newest generation a device took a copy may be: a
 /// device writes once per change, so years of use stay well under it; a
@@ -113,8 +113,13 @@ pub enum Anchor<'a> {
     /// A linked device: from what it trusts already.
     Linked,
     /// Joining with a code: from the log the approving device handed over,
-    /// with its entry adding this device.
-    Paired { log: &'a [Entry], entry: &'a Entry },
+    /// with its entry adding this device (none when that log lists this
+    /// device already, with these keys: `device`).
+    Paired {
+        log: &'a [Entry],
+        entry: Option<&'a Entry>,
+        device: &'a Member,
+    },
     /// Joining with the recovery phrase, by its signing key: from the log
     /// of the copies it opens, whose phrase in force must be this one.
     Phrase(&'a [u8]),
@@ -269,23 +274,32 @@ pub fn judge(trust: &Trust, anchor: Anchor<'_>, copies: &[Stored<'_>]) -> Verdic
                 trust.generation,
             )
         }
-        Anchor::Paired { log, entry } => {
+        Anchor::Paired { log, entry, .. } => {
             let Some(root) = space_log::roots(log).into_iter().next() else {
                 return Verdict::none(trust, copies.len() as u32);
             };
             let mut entries = log.to_vec();
-            entries.push(entry.clone());
+            entries.extend(entry.cloned());
             entries.extend(opened());
             (root, BTreeSet::new(), entries, 0)
         }
         Anchor::Phrase(public) => {
             let all: Vec<Entry> = opened().collect();
+            let mut stop = BTreeSet::new();
             let root = space_log::roots(&all).into_iter().find(|r| {
                 let e = space_log::evaluate(all.iter().cloned(), r, &BTreeSet::new());
+                if stop.is_empty() {
+                    stop.clone_from(&e.conflict);
+                }
                 e.state.recovery.as_deref() == Some(public)
             });
             let Some(root) = root else {
-                return Verdict::none(trust, copies.len() as u32);
+                // A log that stops on removals contradicting each other has
+                // no phrase in force: said as such, not as the wrong words.
+                return Verdict {
+                    conflict: stop,
+                    ..Verdict::none(trust, copies.len() as u32)
+                };
             };
             (root, BTreeSet::new(), all, 0)
         }
@@ -303,8 +317,12 @@ pub fn judge(trust: &Trust, anchor: Anchor<'_>, copies: &[Stored<'_>]) -> Verdic
             ..Verdict::none(trust, 0)
         };
     }
-    if let Anchor::Paired { entry, .. } = anchor {
-        if !eval.accepted.contains(&entry.id()) {
+    if let Anchor::Paired { entry, device, .. } = anchor {
+        let added = match entry {
+            Some(e) => eval.accepted.contains(&e.id()),
+            None => eval.state.members.get(&device.id) == Some(device),
+        };
+        if !added {
             return Verdict::none(trust, copies.len() as u32);
         }
     }

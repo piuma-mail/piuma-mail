@@ -103,6 +103,10 @@ pub enum ErrorKind {
     Rollback,
     /// Sync: the space was written by a newer version of Piuma.
     Outdated,
+    /// Sync: two devices removed each other and nothing tells which came
+    /// first: the space can't be joined until the mailbox holds only one
+    /// side.
+    Conflict,
     Other,
 }
 

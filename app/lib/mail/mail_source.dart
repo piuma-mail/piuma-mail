@@ -2181,6 +2181,9 @@ enum SyncProblem {
 
   /// A newer version of Piuma wrote the space.
   outdated,
+
+  /// Two devices removed each other, and nothing tells which is right.
+  conflict,
   other,
 }
 

@@ -1840,3 +1840,223 @@ async fn copies_full_of_entries_nobody_signed_are_not_read() {
     assert_eq!(readers(&t), ids(&[&a, &b]));
     assert!(space_sync::state(&b.store).unwrap().trust.log.len() < 10);
 }
+
+/// The phrase in force, as the newest copy `d` opens carries it.
+async fn newest_phrase(t: &mut Memory, d: &Dev) -> Key {
+    Key::from_hex(&open(t, d).await.content.recovery).unwrap()
+}
+
+/// `d` links with a code, approved on `by`.
+async fn link_by_code(t: &mut Memory, by: &Dev, d: &Dev) -> Result<Report, SyncError> {
+    let pairing = space_sync::request(t, "482615", &d.me).await?;
+    let asking = space_sync::requests(t)
+        .await?
+        .into_iter()
+        .find(|r| r.id == pairing.request.id)
+        .unwrap();
+    space_sync::approve(t, &by.store, &asking, "482615", &by.me).await?;
+    space_sync::join(
+        t,
+        pairing,
+        &d.store,
+        d.secrets(),
+        &d.me,
+        Some(HOME),
+        Duration::from_millis(1),
+    )
+    .await
+}
+
+/// Fourth review, finding 1: B took the old phone's back-dated unlink of
+/// the Mac first and wrote on top of it (a new phrase). The Mac, which made
+/// the genuine unlink, carries none of that on: once the old phone is
+/// locked out of the mailbox and the Mac has written over the folder, B
+/// links again (with the phrase or a code), new devices join, and the iPad,
+/// which took the genuine unlink, goes on by itself.
+#[tokio::test]
+async fn a_back_dated_unlink_written_on_stops_nobody_for_good() {
+    let (a, b, c, e) = (dev("Mac"), dev("Pixel"), dev("Old phone"), dev("iPad"));
+    for d in [&a, &b, &c, &e] {
+        d.add(HOME);
+    }
+    let (t, _) = space(&[&a, &b, &c, &e]).await;
+    let mut tb = fork(&t).await;
+    let mut forged = open(&mut tb, &c).await;
+    let mut ta = t;
+    space_sync::unlink(&mut ta, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    e.round(&mut ta).await;
+    let ra = signed(
+        &forged,
+        Op::Remove {
+            device: a.me.device.id.clone(),
+        },
+        &c,
+    );
+    forged.content.log.push(ra.clone());
+    forged.content.generation += 2;
+    let old: Vec<String> = spaces(&tb).into_iter().map(|(id, _)| id).collect();
+    forge(&mut tb, &forged, &c, &[&b, &c, &e]).await;
+    tb.remove(&old).await.unwrap();
+    // B takes it and writes on it.
+    assert!(b.round(&mut tb).await.recovery_changed);
+    b.set("notify.mode", "people");
+    b.round(&mut tb).await;
+    let mut both = Memory::new();
+    for m in [&ta, &tb] {
+        for (_, n) in spaces(m) {
+            both.put(&n).await.unwrap();
+        }
+    }
+    // A new device can't join while both sides are in the folder: said as
+    // such, not as the wrong words.
+    let phrase = newest_phrase(&mut ta, &a).await;
+    let y = dev("New laptop");
+    y.add(HOME);
+    let joined = space_sync::recover(
+        &mut both,
+        &phrase.phrase(),
+        &y.store,
+        y.secrets(),
+        &y.me,
+        Some(HOME),
+    )
+    .await;
+    assert!(matches!(joined, Err(SyncError::Conflict(_))), "{joined:?}");
+    // The Mac writes over the folder; the old phone is locked out of the
+    // mailbox from here on (its password was changed).
+    a.round(&mut both).await;
+    let trust = space_sync::state(&a.store).unwrap().trust;
+    assert!(!trust.log.contains(&ra));
+    assert_eq!(spaces(&both).len(), 1);
+    assert_eq!(readers(&both), ids(&[&a, &b, &e]));
+    // The iPad goes on by itself.
+    e.round(&mut both).await;
+    assert!(space_sync::state(&e.store).unwrap().conflict.is_empty());
+    // B, which carries the back-dated unlink itself, stays stopped until
+    // it is linked again: with a code from the Mac...
+    let mut by_code = fork(&both).await;
+    let by_phrase = fork(&both).await;
+    assert!(matches!(
+        space_sync::round(&mut by_code, &b.store, b.secrets(), &b.me, Some(HOME)).await,
+        Ok(Round::Conflict(_))
+    ));
+    let saved = space_sync::state(&b.store).unwrap();
+    link_by_code(&mut by_code, &a, &b).await.unwrap();
+    assert!(space_sync::state(&b.store).unwrap().conflict.is_empty());
+    b.round(&mut by_code).await;
+    a.round(&mut by_code).await;
+    e.round(&mut by_code).await;
+    assert_eq!(readers(&by_code), ids(&[&a, &b, &e]));
+    // ...or with the newest phrase (from where it stood before).
+    let b2 = Dev {
+        store: Mutex::new(Store::open_in_memory().unwrap()),
+        me: b.me.clone(),
+    };
+    b2.add(HOME);
+    b2.store.lock().unwrap().set_space_local(&saved).unwrap();
+    let mut by_phrase = by_phrase;
+    let phrase = newest_phrase(&mut by_phrase, &a).await;
+    space_sync::recover(
+        &mut by_phrase,
+        &phrase.phrase(),
+        &b2.store,
+        b2.secrets(),
+        &b2.me,
+        Some(HOME),
+    )
+    .await
+    .unwrap();
+    b2.round(&mut by_phrase).await;
+    assert_eq!(readers(&by_phrase), ids(&[&a, &b, &e]));
+    // New devices join, with the phrase and with a code.
+    space_sync::recover(
+        &mut by_phrase,
+        &phrase.phrase(),
+        &y.store,
+        y.secrets(),
+        &y.me,
+        Some(HOME),
+    )
+    .await
+    .unwrap();
+    let z = dev("New phone");
+    z.add(HOME);
+    link_by_code(&mut by_phrase, &a, &z).await.unwrap();
+    a.round(&mut by_phrase).await;
+    assert_eq!(readers(&by_phrase), ids(&[&a, &b, &e, &y, &z]));
+    assert!(!space_sync::state(&a.store).unwrap().trust.log.contains(&ra));
+}
+
+/// Fourth review, finding 3: an older copy the Mac signed, put back beside
+/// the newest one after an unlink, doesn't lock the newest phrase out: its
+/// log brings nothing new. The replaced phrase stays refused.
+#[tokio::test]
+async fn an_old_copy_by_a_member_does_not_lock_the_newest_phrase_out() {
+    let (a, b, c) = (dev("Mac"), dev("Pixel"), dev("Old phone"));
+    for d in [&a, &b, &c] {
+        d.add(HOME);
+    }
+    let (mut t, old_phrase) = space(&[&a, &b, &c]).await;
+    a.set("appearance.theme", "dark");
+    a.note();
+    a.round(&mut t).await;
+    let kept = spaces(&t);
+    assert!(kept
+        .iter()
+        .all(|(_, n)| matches!(n, Note::Space(s) if s.signer == a.me.device.id)));
+    let gone = space_sync::unlink(&mut t, &a.store, &c.me.device.id, &a.me)
+        .await
+        .unwrap();
+    for (_, n) in kept {
+        t.put(&n).await.unwrap();
+    }
+    let y = dev("New laptop");
+    y.add(HOME);
+    assert!(matches!(
+        space_sync::recover(
+            &mut t,
+            &old_phrase.phrase(),
+            &y.store,
+            y.secrets(),
+            &y.me,
+            Some(HOME)
+        )
+        .await,
+        Err(SyncError::PhraseReplaced)
+    ));
+    space_sync::recover(
+        &mut t,
+        &gone.recovery.phrase(),
+        &y.store,
+        y.secrets(),
+        &y.me,
+        Some(HOME),
+    )
+    .await
+    .unwrap();
+    assert_eq!(readers(&t), ids(&[&a, &b, &y]));
+    assert_eq!(y.get("appearance.theme").as_deref(), Some("dark"));
+}
+
+/// Fourth review, finding 4: a device the log still lists (stopped, say)
+/// links again with a code: the approving device hands over its log
+/// without adding it again.
+#[tokio::test]
+async fn a_device_still_listed_links_again_with_a_code() {
+    let (a, b) = (dev("Mac"), dev("Pixel"));
+    for d in [&a, &b] {
+        d.add(HOME);
+    }
+    let (mut t, _) = space(&[&a, &b]).await;
+    let before = space_sync::state(&a.store).unwrap().trust.log.len();
+    link_by_code(&mut t, &a, &b).await.unwrap();
+    a.set("appearance.theme", "dark");
+    a.note();
+    a.round(&mut t).await;
+    b.round(&mut t).await;
+    assert_eq!(b.get("appearance.theme").as_deref(), Some("dark"));
+    assert_eq!(readers(&t), ids(&[&a, &b]));
+    assert_eq!(space_sync::state(&a.store).unwrap().trust.log.len(), before);
+}

@@ -1445,6 +1445,7 @@
   "@pairPhraseCount": {"placeholders": {"count": {"type": "int"}}},
   "pairPhraseWrong": "These words don't open your space. Check them and try again.",
   "pairPhraseOld": "This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.",
+  "pairConflict": "Two of your devices removed each other, so this space can't be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.",
   "pairContinue": "Continue",
   "pairDoneTitle": "{kind, select, phone{Phone paired} tablet{Tablet paired} other{Computer paired}}",
   "@pairDoneTitle": {"placeholders": {"kind": {"type": "String"}}},

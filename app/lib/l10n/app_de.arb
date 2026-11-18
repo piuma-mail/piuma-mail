@@ -1049,6 +1049,7 @@
   "pairPhraseCount": "{count} von 24 Wörtern",
   "pairPhraseWrong": "Diese Wörter öffnen deinen Bereich nicht. Prüfe sie und versuche es erneut.",
   "pairPhraseOld": "Diese Wiederherstellungsphrase wurde ersetzt: Dein Bereich hat eine neuere bekommen, als ein Gerät getrennt wurde oder die Synchronisierung ausgeschaltet hat. Verwende die neueste Phrase oder einen Code von einem verbundenen Gerät.",
+  "pairConflict": "Zwei deiner Geräte haben sich gegenseitig entfernt, daher kannst du diesem Bereich noch nicht beitreten. Ändere das Passwort des Postfachs, das ihn enthält, synchronisiere ein Gerät, das du noch hast, und versuche es dann erneut.",
   "pairContinue": "Weiter",
   "pairDoneTitle": "{kind, select, phone{Telefon verknüpft} tablet{Tablet verknüpft} other{Computer verknüpft}}",
   "pairDoneBody": "Das kam aus deinem verschlüsselten Bereich herüber.",

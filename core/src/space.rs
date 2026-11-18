@@ -829,13 +829,18 @@ pub struct PairAnswer {
 /// device (by name, to show, and id), the log entry adding the new device
 /// signed by the approving one, and the log as that device trusts it: the
 /// new device's starting point, checked by the code like the rest.
+///
+/// No entry when the device that asked already belongs, with the same
+/// keys, by that log (it is linked again after a stop): adding it again
+/// wouldn't count, and the log alone lists it.
 #[derive(Serialize, Deserialize)]
 pub struct Answered {
     #[serde(with = "b64")]
     key: Vec<u8>,
     pub name: String,
     pub by: String,
-    pub entry: Entry,
+    #[serde(default)]
+    pub entry: Option<Entry>,
     pub log: Vec<Entry>,
 }
 
@@ -903,7 +908,7 @@ pub fn pair_answer(
     request: &PairRequest,
     by: &Device,
     key: &Key,
-    entry: Entry,
+    entry: Option<Entry>,
     log: Vec<Entry>,
 ) -> PairAnswer {
     let (state, msg) = Spake2::<Ed25519Group>::start_symmetric(
@@ -1369,7 +1374,7 @@ mod tests {
             &pairing.request,
             &mac,
             space.content_key(),
-            entry.clone(),
+            Some(entry.clone()),
             space.content.log.clone(),
         );
         // The folder shows no name: it travels sealed with the key.
@@ -1381,9 +1386,9 @@ mod tests {
         assert_eq!(answered.key().unwrap(), *space.content_key());
         assert_eq!(answered.name, "Matteo's MacBook");
         // The Mac's signed entry adds the Pixel to the log it handed over.
-        assert_eq!(answered.entry, entry);
+        assert_eq!(answered.entry.as_ref(), Some(&entry));
         let mut log = answered.log.clone();
-        log.push(answered.entry.clone());
+        log.extend(answered.entry.clone());
         let root = space_log::roots(&log)[0].clone();
         let e = space_log::evaluate(log, &root, &Default::default());
         assert!(e.state.members.contains_key("pixel"));
@@ -1394,7 +1399,7 @@ mod tests {
             &pairing.request,
             &mac,
             space.content_key(),
-            entry,
+            Some(entry),
             Vec::new(),
         );
         assert_eq!(pairing.finish(&wrong).err(), Some(SpaceError::Code));

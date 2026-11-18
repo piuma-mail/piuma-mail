@@ -15,6 +15,11 @@
 //!
 //! - An entry counts only if its author belonged in the state its own
 //!   parents lead to, and its signature checks out with that author's key.
+//! - An entry counts only if every entry it follows counts. A device that
+//!   took an entry that later turns out not to count (it saw a removed
+//!   device's back-dated removal first, say) wrote on top of it: none of
+//!   that counts, and no copy carries it on, so it can't stop the devices
+//!   that read the log later.
 //! - A removal wins over what the removed device did without knowing of it
 //!   (entries neither before nor after the removal): a device that missed
 //!   its own unlink can't vouch for anyone, unlink anyone or replace the
@@ -226,8 +231,8 @@ pub struct Eval {
     pub state: State,
     /// The entries that count.
     pub accepted: BTreeSet<String>,
-    /// Those entries and every one they follow, oldest first: what a copy
-    /// carries on.
+    /// Those entries, oldest first (every one they follow counts too):
+    /// what a copy carries on.
     pub kept: Vec<Entry>,
     /// Devices in removals that contradict each other with nothing to tell
     /// which came first. Empty when the log is clear.
@@ -522,9 +527,12 @@ fn authorized(g: &Graph, counted: &Counted<'_>, i: usize) -> bool {
 /// one by which it saw first.
 ///
 /// Each entry is read once its parents are, from what counts among its
-/// ancestors; one that waits on a removal made beside it is read again
-/// when that removal is decided. Entries still waiting at the end are
-/// removals that contradict each other ([Eval::conflict]).
+/// ancestors; one that waits on removals made beside it is decided when
+/// the first of them counts (it doesn't) or once none of them does (it
+/// does). Each entry is read once and waits on each removal once, so the
+/// work grows with the entries times the removals beside each, whatever
+/// shape the log has. Entries still waiting at the end are removals that
+/// contradict each other ([Eval::conflict]).
 pub fn evaluate(
     entries: impl IntoIterator<Item = Entry>,
     root: &str,
@@ -566,93 +574,108 @@ pub fn evaluate(
     let mut labels = vec![Label::Undecided; n];
     let mut counted = Counted::default();
     labels[0] = Label::In;
-    counted.take(&g, 0);
-    // This device's own removals stand, whatever was made beside them.
-    for i in 1..n {
-        if g.entries[i].removes().is_some() && own.contains(&g.ids[i]) {
-            labels[i] = Label::In;
-        }
-    }
-    // Parents not yet read, entries ready to read, entries waiting on a
-    // removal made beside them.
+    // Parents not yet decided; for an entry waiting on removals made
+    // beside it, how many of them are still undecided, and on each
+    // removal the entries waiting on it (each once).
     let mut unread: Vec<usize> = g.parents.iter().map(Vec::len).collect();
-    let mut ready: Vec<usize> = Vec::new();
+    let mut pending = vec![0usize; n];
     let mut waiters: Vec<Vec<usize>> = vec![Vec::new(); n];
-    let mut read = vec![false; n];
-    read[0] = true;
-    for &c in &g.children[0] {
-        unread[c] -= 1;
-        if unread[c] == 0 {
-            ready.push(c);
-        }
-    }
-    while let Some(i) = ready.pop() {
-        if read[i] {
-            continue;
-        }
-        if labels[i] == Label::Undecided {
-            let e = &g.entries[i];
-            let against: Vec<usize> = if e.by == RECOVERY {
-                &turns
-            } else {
-                removals_of
-                    .get(e.by.as_str())
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-            }
-            .iter()
-            .copied()
-            .filter(|&r| g.concurrent(i, r))
-            .collect();
-            let label = if against.iter().any(|&r| labels[r] == Label::In)
-                || !authorized(&g, &counted, i)
-            {
-                Label::Out
-            } else if against.iter().any(|&r| labels[r] == Label::Undecided) {
-                for &r in &against {
-                    if labels[r] == Label::Undecided {
-                        waiters[r].push(i);
-                    }
-                }
-                continue;
-            } else {
-                Label::In
-            };
-            labels[i] = label;
-        }
-        // Decided, with everything before it: its children may be read,
-        // and whatever waited on it read again.
-        read[i] = true;
+    // Entries just decided, whose children and waiters are looked at next.
+    let mut decided: Vec<usize> = vec![0];
+    while let Some(i) = decided.pop() {
         if labels[i] == Label::In {
             counted.take(&g, i);
         }
-        ready.append(&mut waiters[i]);
-        for &c in &g.children[i] {
-            unread[c] -= 1;
-            if unread[c] == 0 {
-                ready.push(c);
+        // What waited on it: out as soon as one removal beside it counts,
+        // in once none of them does.
+        for w in std::mem::take(&mut waiters[i]) {
+            if labels[w] != Label::Undecided {
+                continue;
             }
+            if labels[i] == Label::In {
+                labels[w] = Label::Out;
+                decided.push(w);
+            } else {
+                pending[w] -= 1;
+                if pending[w] == 0 {
+                    labels[w] = Label::In;
+                    decided.push(w);
+                }
+            }
+        }
+        for k in 0..g.children[i].len() {
+            let c = g.children[i][k];
+            unread[c] -= 1;
+            if unread[c] > 0 {
+                continue;
+            }
+            // Every parent decided, and so everything before it.
+            let e = &g.entries[c];
+            let label = if g.parents[c].iter().any(|&p| labels[p] != Label::In)
+                || !authorized(&g, &counted, c)
+            {
+                // What follows an entry that doesn't count doesn't either.
+                Label::Out
+            } else if e.removes().is_some() && own.contains(&g.ids[c]) {
+                // This device's own removals stand, whatever was made
+                // beside them.
+                Label::In
+            } else {
+                let against = if e.by == RECOVERY {
+                    &turns[..]
+                } else {
+                    removals_of
+                        .get(e.by.as_str())
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                };
+                let mut out = false;
+                let mut open = 0;
+                for &r in against.iter().filter(|&&r| g.concurrent(c, r)) {
+                    match labels[r] {
+                        Label::In => {
+                            out = true;
+                            break;
+                        }
+                        Label::Undecided => open += 1,
+                        Label::Out => {}
+                    }
+                }
+                if out {
+                    Label::Out
+                } else if open > 0 {
+                    pending[c] = open;
+                    for &r in against.iter().filter(|&&r| g.concurrent(c, r)) {
+                        if labels[r] == Label::Undecided {
+                            waiters[r].push(c);
+                        }
+                    }
+                    continue;
+                } else {
+                    Label::In
+                }
+            };
+            labels[c] = label;
+            decided.push(c);
         }
     }
-    // What still waits with everything before it read: the removals that
-    // contradict each other, and what they undo (what follows them waits
-    // only because they do).
+    // What is still undecided with every parent decided: the removals
+    // that contradict each other, and what they undo (what follows them
+    // waits only because they do).
     let mut conflict = BTreeSet::new();
     for i in 0..n {
-        if read[i] {
+        if labels[i] != Label::Undecided
+            || g.parents[i].iter().any(|&p| labels[p] == Label::Undecided)
+        {
             continue;
         }
-        if g.parents[i].iter().all(|&p| read[p]) {
-            let e = &g.entries[i];
-            if let Some(d) = e.removes() {
-                conflict.insert(d.to_owned());
-            }
-            if e.by != RECOVERY {
-                conflict.insert(e.by.clone());
-            }
+        let e = &g.entries[i];
+        if let Some(d) = e.removes() {
+            conflict.insert(d.to_owned());
         }
-        // An own removal waiting on its parents counts for nothing yet.
-        labels[i] = Label::Undecided;
+        if e.by != RECOVERY {
+            conflict.insert(e.by.clone());
+        }
     }
     // Who belongs after everything that counts, and its newest entries.
     let mut state = State::default();
@@ -668,28 +691,22 @@ pub fn evaluate(
         }
     }
     state.recovery = counted.recovery(&g, None).map(<[u8]>::to_vec);
-    let mut followed = vec![false; n];
-    let mut keep = vec![false; n];
-    for i in (0..n).rev() {
-        let counts = labels[i] == Label::In;
-        if counts && !followed[i] {
-            state.heads.push(g.ids[i].clone());
-        }
-        keep[i] |= counts;
-        for &p in &g.parents[i] {
-            followed[p] |= counts || followed[i];
-            keep[p] |= keep[i];
-        }
-    }
+    // Every entry that counts follows only entries that count: the heads
+    // are those no entry that counts follows.
+    let counts = |i: usize| labels[i] == Label::In;
+    state.heads = (0..n)
+        .filter(|&i| counts(i) && !g.children[i].iter().any(|&c| counts(c)))
+        .map(|i| g.ids[i].clone())
+        .collect();
     state.heads.sort();
     Eval {
         state,
         accepted: (0..n)
-            .filter(|&i| labels[i] == Label::In)
+            .filter(|&i| counts(i))
             .map(|i| g.ids[i].clone())
             .collect(),
         kept: (0..n)
-            .filter(|&i| keep[i])
+            .filter(|&i| counts(i))
             .map(|i| g.entries[i].clone())
             .collect(),
         conflict,
@@ -926,14 +943,135 @@ mod tests {
         );
         let mut log = first.kept.clone();
         log.push(pb.clone());
-        let all = [g.clone(), ab, ac, rc.clone(), ra, pb];
+        let all = [g.clone(), ab, ac, rc.clone(), ra.clone(), pb.clone()];
         let e = evaluate(log.into_iter().chain(all.clone()), &g.id(), &none);
         assert_eq!(
             e.conflict.iter().map(String::as_str).collect::<Vec<_>>(),
             ["a", "c"]
         );
-        // A stands by its own.
+        // A stands by its own, and carries neither the back-dated removal
+        // nor what B wrote on it.
         let e = evaluate(all, &g.id(), &[rc.id()].into());
+        assert!(e.conflict.is_empty());
+        assert_eq!(ids(&e.state), ["a", "b"]);
+        assert!(!e.kept.contains(&ra) && !e.kept.contains(&pb));
+    }
+
+    /// Fourth review, finding 1: B took the removed device's back-dated
+    /// removal of A first and wrote on top of it. On A, which stands by
+    /// its genuine removal, what B wrote there doesn't count either, so A's
+    /// log carries neither: a device that reads only A's log later has
+    /// nothing to stop on.
+    #[test]
+    fn what_follows_an_entry_that_does_not_count_does_not_count() {
+        let (a, b, c) = (d("a"), d("b"), d("c"));
+        let g = start(&a, &Key::generate());
+        let ab = after(&[&g], add(&b), &a);
+        let ac = after(&[&ab], add(&c), &a);
+        let rc = after(&[&ac], remove(&c), &a);
+        let pa = after(
+            &[&rc],
+            Op::Phrase {
+                recovery: phrase(&Key::generate()),
+            },
+            &a,
+        );
+        let ra = after(&[&ac], remove(&a), &c);
+        let pb = after(
+            &[&ra],
+            Op::Phrase {
+                recovery: phrase(&Key::generate()),
+            },
+            &b,
+        );
+        let bx = after(&[&pb], add(&d("x")), &b);
+        let all = [
+            g.clone(),
+            ab,
+            ac,
+            rc.clone(),
+            pa.clone(),
+            ra.clone(),
+            pb.clone(),
+            bx.clone(),
+        ];
+        let on_a = evaluate(all.clone(), &g.id(), &[rc.id()].into());
+        assert!(on_a.conflict.is_empty());
+        assert_eq!(ids(&on_a.state), ["a", "b"]);
+        assert_eq!(on_a.state.heads, [pa.id()]);
+        for e in [&ra, &pb, &bx] {
+            assert!(!on_a.accepted.contains(&e.id()));
+            assert!(!on_a.kept.contains(e));
+        }
+        // Every entry kept follows only entries kept.
+        let kept: BTreeSet<String> = on_a.kept.iter().map(Entry::id).collect();
+        assert_eq!(kept, on_a.accepted);
+        // Read from A's log alone, by any other device: clear.
+        let later = evaluate(on_a.kept.clone(), &g.id(), &BTreeSet::new());
+        assert!(later.conflict.is_empty());
+        assert_eq!(ids(&later.state), ["a", "b"]);
+        // Beside the removed device's entries, still a stop elsewhere.
+        let e = evaluate(all, &g.id(), &BTreeSet::new());
+        assert_eq!(
+            e.conflict.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "c"]
+        );
+    }
+
+    /// Fourth review, finding 2: a removed device whose key is still known
+    /// fills its copy with removals of itself (unsigned, and signed) and
+    /// entries of its own beside the genuine unlink, and a removal of the
+    /// unlinker so that the unlink waits too. Each entry waits on each
+    /// removal once: the reading stays quick, on the unlinker and
+    /// everywhere else.
+    #[test]
+    fn many_removals_beside_one_entry_read_quickly() {
+        const M: usize = 64;
+        let (a, b, c) = (d("a"), d("b"), d("c"));
+        let g = start(&a, &Key::generate());
+        let ab = after(&[&g], add(&b), &a);
+        let ac = after(&[&ab], add(&c), &a);
+        let rc = after(&[&ac], remove(&c), &a);
+        let ra = after(&[&ac], remove(&a), &c);
+        let mut all = vec![g.clone(), ab, ac.clone(), rc.clone(), ra];
+        for k in 0..M {
+            // Unsigned, by nobody the log knows.
+            all.push(Entry {
+                parents: vec![ac.id()],
+                op: remove(&c),
+                by: format!("j{k}"),
+                sig: vec![0; 64],
+            });
+            // Signed by the removed device: each one different.
+            let j = d(&format!("x{k}"));
+            all.push(after(&[&ac], remove(&c), &c));
+            all.push(after(&[&ac], add(&j), &c));
+            all.push(after(
+                &[&ac],
+                Op::Phrase {
+                    recovery: phrase(&Key::generate()),
+                },
+                &c,
+            ));
+        }
+        for (own, stops) in [(BTreeSet::from([rc.id()]), false), (BTreeSet::new(), true)] {
+            let t = std::time::Instant::now();
+            let e = evaluate(all.iter().cloned(), &g.id(), &own);
+            let took = t.elapsed().as_secs_f64();
+            assert!(took < 1.0, "{took} s");
+            assert_eq!(!e.conflict.is_empty(), stops);
+            if !stops {
+                assert_eq!(ids(&e.state), ["a", "b"]);
+                assert_eq!(e.accepted.len(), 4);
+            }
+        }
+        // Without the removal of the unlinker, the unlink stands everywhere
+        // and the rest goes out.
+        let all: Vec<Entry> = all
+            .into_iter()
+            .filter(|e| e.removes() != Some("a"))
+            .collect();
+        let e = evaluate(all, &g.id(), &BTreeSet::new());
         assert!(e.conflict.is_empty());
         assert_eq!(ids(&e.state), ["a", "b"]);
     }

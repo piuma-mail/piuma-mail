@@ -120,6 +120,7 @@ class _PairScreenState extends State<PairScreen> {
           },
           SyncProblem.wrongCode => l.pairWrongCode,
           SyncProblem.expired => l.pairExpired,
+          SyncProblem.conflict => l.pairConflict,
           SyncProblem.offline => l.syncFailOffline(widget.account.email),
           _ => l.syncFailOther,
         };
@@ -142,6 +143,7 @@ class _PairScreenState extends State<PairScreen> {
         _error = switch (e.problem) {
           SyncProblem.wrongPhrase => l.pairPhraseWrong,
           SyncProblem.oldPhrase => l.pairPhraseOld,
+          SyncProblem.conflict => l.pairConflict,
           SyncProblem.offline => l.syncFailOffline(widget.account.email),
           _ => l.syncFailOther,
         };

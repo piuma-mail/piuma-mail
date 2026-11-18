@@ -562,10 +562,42 @@ class _Trust extends DemoMailSource {
   @override
   Future<void> recoverSpace(int accountId, String phrase) async {
     await super.recoverSpace(accountId, phrase);
+    _cleared();
+  }
+
+  @override
+  Future<void> joinSpace(int accountId, String code) async {
+    await super.joinSpace(accountId, code);
+    _cleared();
+  }
+
+  void _cleared() {
     unverified = false;
     conflict = false;
     unlinked = false;
   }
+}
+
+/// Links again with a code from the card's button: the Mac approves (or,
+/// with [problem], the engine refuses).
+Future<void> _linkWithCode(
+  WidgetTester tester,
+  _Trust source,
+  String button, {
+  SyncProblem? problem,
+}) async {
+  await tester.ensureVisible(find.text(button));
+  await tester.tap(find.text(button));
+  await _settle(tester);
+  expect(find.text('We found your space'), findsOneWidget);
+  await tester.tap(find.text('Show code'));
+  await _settle(tester);
+  expect(find.bySemanticsLabel(RegExp('^Code ')), findsOneWidget);
+  source.answerJoin(problem);
+  await _settle(tester);
+  if (problem != null) return;
+  await tester.tap(find.text('Go to inbox'));
+  await _settle(tester);
 }
 
 /// Confirms (or links again) with the phrase, from the card's button.
@@ -631,6 +663,42 @@ void _trustTests({required bool phone}) {
     await _linkWithPhrase(tester, 'Link again');
     expect(find.text('Pixel 8 removed this device'), findsNothing);
     expect(source.syncState().on, isTrue);
+  });
+
+  testWidgets('${on}two devices removing each other: linked again with a '
+      'code', (tester) async {
+    final source = _Trust(now: _now, conflict: true);
+    await _settings(tester, phone: phone, demo: source);
+    await _linkWithCode(tester, source, 'Link again');
+    expect(find.text('Two devices removed each other'), findsNothing);
+    expect(source.syncState().conflict, isEmpty);
+  });
+
+  testWidgets('${on}another device removing this one: linked again with a '
+      'code', (tester) async {
+    final source = _Trust(now: _now, unlinked: true);
+    await _settings(tester, phone: phone, demo: source);
+    await _linkWithCode(tester, source, 'Link again');
+    expect(find.text('Pixel 8 removed this device'), findsNothing);
+    expect(source.syncState().on, isTrue);
+  });
+
+  testWidgets('${on}linking again while the space still stops says why', (
+    tester,
+  ) async {
+    final source = _Trust(now: _now, conflict: true);
+    await _settings(tester, phone: phone, demo: source);
+    await _linkWithCode(
+      tester,
+      source,
+      'Link again',
+      problem: SyncProblem.conflict,
+    );
+    expect(
+      find.textContaining('Two of your devices removed each other, so this'),
+      findsOneWidget,
+    );
+    expect(source.syncState().conflict, isNotEmpty);
   });
 
   testWidgets('${on}a device another one removed turns sync off when asked', (
