@@ -21,6 +21,7 @@ import javax.crypto.spec.GCMParameterSpec
 class MainActivity : FlutterActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
+    private var shared: Shared? = null
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
@@ -32,22 +33,29 @@ class MainActivity : FlutterActivity() {
         launchPayload = Background.payload(applicationContext, intent)
         oauthRedirect(intent)
         super.onCreate(savedInstanceState)
+        // A link or a share that started the app; not again when Android
+        // brings the activity back after it was gone.
+        if (savedInstanceState == null) shared?.handle(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
         oauthRedirect(intent)
+        shared?.handle(intent)
     }
 
     /**
      * The browser coming back from Microsoft's or Google's sign-in page.
      * The engine checks the answer's `state` against the sign-in it
-     * started and ignores anything else.
+     * started and ignores anything else. Links and files other apps hand
+     * Piuma go to [Shared] instead.
      */
     private fun oauthRedirect(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val data = intent.data ?: return
+        val scheme = data.scheme ?: return
+        if (scheme.equals("mailto", ignoreCase = true) || scheme.equals("content", ignoreCase = true)) return
         MailNative.oauthRedirect(data.toString())
     }
 
@@ -86,6 +94,7 @@ class MainActivity : FlutterActivity() {
         Model(flutterEngine.dartExecutor.binaryMessenger)
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
         val context = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/background")
             .setMethodCallHandler { call, result ->
@@ -162,6 +171,8 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         shake?.stop()
         shake = null
+        shared?.stop()
+        shared = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

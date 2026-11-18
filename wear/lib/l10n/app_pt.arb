@@ -21,5 +21,7 @@
   "archived": "Arquivado",
   "snoozed": "Adiado",
   "sent": "Enviado",
-  "undo": "Desfazer"
+  "undo": "Desfazer",
+  "replyAll": "Responder a todos",
+  "replyToAll": "Responder a {name} e {count, plural, =1{mais 1 pessoa} other{mais {count} pessoas}}"
 }

@@ -5,11 +5,13 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
 
 import 'calendars.dart';
+import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
 
 export 'calendars.dart';
+export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
 
@@ -59,6 +61,9 @@ enum MailFolder {
 
   /// Every email with one label, wherever it is (`LabelsToApprove`).
   label,
+
+  /// Every starred email, wherever it is but Trash, spam and Drafts.
+  starred,
 }
 
 /// A colored word on emails, shared across accounts (`LabelsToApprove`).
@@ -425,6 +430,7 @@ class AccountFolder {
     this.selectable = true,
     this.unread = 0,
     this.total = 0,
+    this.subscribed = true,
   });
 
   /// What the server calls it, e.g. "Clients/Acme": what opens it.
@@ -442,6 +448,9 @@ class AccountFolder {
 
   /// How many emails it holds on the server.
   final int total;
+
+  /// Subscribed: shown in the lists. The others show on demand.
+  final bool subscribed;
 }
 
 /// The folders of [list] that share [folder]'s parent, [folder] among them,
@@ -508,6 +517,81 @@ List<AccountFolder> withFolderOrder(
     end++;
   }
   return (start, end);
+}
+
+/// A job a folder does for an account.
+enum SpecialRole { sent, drafts, trash, junk, archive }
+
+/// The folder doing one job for an account.
+class SpecialFolder {
+  const SpecialFolder(this.role, this.mailbox, {this.chosen = false});
+
+  final SpecialRole role;
+
+  /// Its server name; null while no folder does that job.
+  final String? mailbox;
+
+  /// The person chose it, rather than the server's marks or its name.
+  final bool chosen;
+}
+
+/// How a list is sorted.
+enum ListOrder { newest, oldest, sender }
+
+/// What a swipe on a row does.
+enum SwipeChoice { archive, snooze, delete, read, star, move, nothing }
+
+/// How the lists look (Settings › Appearance): newest first, in
+/// conversations, Archive to the right and Snooze to the left until
+/// changed.
+class ListPrefs {
+  const ListPrefs({
+    this.order = ListOrder.newest,
+    this.threads = true,
+    this.swipeRight = SwipeChoice.archive,
+    this.swipeLeft = SwipeChoice.snooze,
+  });
+
+  final ListOrder order;
+  final bool threads;
+  final SwipeChoice swipeRight;
+  final SwipeChoice swipeLeft;
+
+  ListPrefs copyWith({
+    ListOrder? order,
+    bool? threads,
+    SwipeChoice? swipeRight,
+    SwipeChoice? swipeLeft,
+  }) => ListPrefs(
+    order: order ?? this.order,
+    threads: threads ?? this.threads,
+    swipeRight: swipeRight ?? this.swipeRight,
+    swipeLeft: swipeLeft ?? this.swipeLeft,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListPrefs &&
+      other.order == order &&
+      other.threads == threads &&
+      other.swipeRight == swipeRight &&
+      other.swipeLeft == swipeLeft;
+
+  @override
+  int get hashCode => Object.hash(order, threads, swipeRight, swipeLeft);
+}
+
+/// How full a mailbox is, in bytes.
+class MailQuota {
+  const MailQuota(this.used, this.limit);
+  final int used;
+  final int limit;
+
+  /// From 0 to 1.
+  double get share => limit <= 0 ? 0 : (used / limit).clamp(0, 1);
+
+  /// Nearly full: a gentle word in the account's settings.
+  bool get nearlyFull => share >= 0.9;
 }
 
 /// What a rule looks at. The body is its first words as it arrives, all
@@ -693,6 +777,7 @@ class MailRow {
     this.waitingFor = const [],
     this.labels = const [],
     this.remindAt,
+    this.starred = false,
   });
 
   /// Empty for a single-account row; otherwise every server copy.
@@ -759,6 +844,9 @@ class MailRow {
   /// if nobody has replied by then. Null without a reminder.
   final DateTime? remindAt;
 
+  /// Starred (IMAP `\Flagged`, JMAP `$flagged`).
+  final bool starred;
+
   bool get isConversation => messages > 1 && thread.isNotEmpty;
 
   MailRow withSeen(bool seen) => copyWith(seen: seen);
@@ -772,6 +860,7 @@ class MailRow {
     List<String>? waitingFor,
     List<String>? labels,
     Object? remindAt = _unchanged,
+    bool? starred,
   }) => MailRow(
     copies: copies,
     accountId: accountId,
@@ -800,6 +889,7 @@ class MailRow {
     remindAt: identical(remindAt, _unchanged)
         ? this.remindAt
         : remindAt as DateTime?,
+    starred: starred ?? this.starred,
   );
 
   /// Name if the sender has one, otherwise the address.
@@ -1221,10 +1311,16 @@ class OutboxItem {
     this.sendAt,
     this.state = OutboxState.waiting,
     this.undo = false,
+    this.redirect = false,
   });
 
   final int id;
   final int accountId;
+
+  /// A Redirect: the email as it came, with nothing of its own to edit.
+  /// It never opens in compose; it is cancelled or tried again
+  /// ([MailSource.cancelOutgoing], [MailSource.retryOutgoing]).
+  final bool redirect;
 
   /// Where it stands: waiting, on its way, refused, or maybe sent.
   final OutboxState state;
@@ -1263,6 +1359,7 @@ class OutboxItem {
     sendAt: clearSendAt ? null : sendAt,
     state: state ?? this.state,
     undo: undo ?? this.undo,
+    redirect: redirect,
   );
 
   /// Who it goes to, by name where there is one.
@@ -1696,6 +1793,68 @@ enum LogoError { notAnImage, tooBig }
 class LogoException implements Exception {
   const LogoException(this.error);
   final LogoError error;
+}
+
+/// An email file opened from outside the app, read for the reader.
+class EmlMessage {
+  const EmlMessage({
+    required this.path,
+    required this.readable,
+    this.fromName = '',
+    this.fromEmail = '',
+    this.to = const [],
+    this.cc = const [],
+    this.subject = '',
+    this.date,
+  });
+
+  /// Where the file is: the engine reads it again to save or import.
+  final String path;
+  final String fromName;
+  final String fromEmail;
+
+  /// `Name <a@b.c>` or `a@b.c`.
+  final List<String> to;
+  final List<String> cc;
+  final String subject;
+  final DateTime? date;
+  final Readable readable;
+}
+
+enum EmlProblem { notMail, tooLarge }
+
+class EmlException implements Exception {
+  const EmlException(this.problem);
+  final EmlProblem problem;
+
+  @override
+  String toString() => 'EmlException($problem)';
+}
+
+/// How the desktop app behaves when its window is closed, and at sign-in.
+class DesktopSettings {
+  const DesktopSettings({this.keepRunning = true, this.startAtLogin = false});
+
+  /// Closing the window leaves Piuma in the tray, still notifying.
+  final bool keepRunning;
+
+  /// Piuma starts at sign-in, without its window.
+  final bool startAtLogin;
+
+  DesktopSettings copyWith({bool? keepRunning, bool? startAtLogin}) =>
+      DesktopSettings(
+        keepRunning: keepRunning ?? this.keepRunning,
+        startAtLogin: startAtLogin ?? this.startAtLogin,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DesktopSettings &&
+      other.keepRunning == keepRunning &&
+      other.startAtLogin == startAtLogin;
+
+  @override
+  int get hashCode => Object.hash(keepRunning, startAtLogin);
 }
 
 /// A file attached to a draft.
@@ -2417,6 +2576,24 @@ abstract class MailSource {
   /// The message made safe to read, with what was stopped.
   Future<Readable> readable(MailRow row);
 
+  /// Reads an email file (`.eml`) opened from outside the app, made safe
+  /// exactly like a synced message; nothing is stored or fetched. Throws
+  /// an [EmlException] when it isn't one, or is too large.
+  Future<EmlMessage> openEml(String path) async =>
+      throw const EmlException(EmlProblem.notMail);
+
+  /// Saves one of an email file's attachments in Downloads; returns where.
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) =>
+      throw UnimplementedError();
+
+  /// Puts an email file in one of an account's folders on its server.
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) =>
+      throw UnimplementedError();
+
+  /// Keeping running with the window closed, and starting at sign-in.
+  DesktopSettings get desktopSettings => const DesktopSettings();
+  set desktopSettings(DesktopSettings settings) {}
+
   /// The message's original layout, made safe; with [loadImages] its
   /// remote images come in too.
   Future<OriginalDoc> original(MailRow row, {required bool loadImages});
@@ -2498,6 +2675,36 @@ abstract class MailSource {
 
   /// Mute a sender's notifications, or let them come again.
   Future<void> setMuted(String email, bool muted);
+
+  /// Who [row] went to, and who Reply, Reply all and Reply to list write
+  /// to. Null when it can't be known (mail kept before its headers were
+  /// read, with the server out of reach): Reply then goes to the sender.
+  Future<MailEnvelope?> envelope(MailRow row) async => null;
+
+  /// [row] as it came from the server, byte for byte: View source, Save
+  /// as .eml, Forward as attachment and Redirect start from it.
+  Future<Uint8List> rawMessage(MailRow row) =>
+      Future.error(UnsupportedError('no raw message'));
+
+  /// The headers of a raw message, in order, encoded words decoded.
+  List<MailHeader> headersOf(Uint8List raw) => const [];
+
+  /// Redirect: [row] unchanged, with Resent-* headers on top, to [to],
+  /// from the account (or the alias it was written to). It goes through
+  /// the outbox like any message, after [window] (Undo takes it back with
+  /// [cancelOutgoing]); returns its id there, for [deliver]. Throws
+  /// [SendException] for an address that isn't one.
+  Future<int> redirect(MailRow row, List<String> to, Duration window) =>
+      Future.error(UnsupportedError('no redirect'));
+
+  /// Mutes [row]'s conversation, or unmutes it: new mail in it arrives
+  /// read and makes no notice. It stays in the inbox.
+  Future<void> setThreadMuted(MailRow row, bool muted) async {}
+
+  /// Saves [data] in Downloads as [name], or a name like it no other file
+  /// there has, as [saveText] does; returns the saved file's path.
+  Future<String> saveFile(String name, Uint8List data) =>
+      Future.error(UnsupportedError('no files'));
 
   /// Whether a sender's new mail goes straight to Trash.
   Future<bool> isBlocked(String email);
@@ -2736,6 +2943,98 @@ abstract class MailSource {
   /// The account's spam folder, by its server name, once a sync found
   /// one; null when it has none, and Report spam isn't offered.
   String? junkMailbox(int accountId) => null;
+
+  /// The account's Trash, by its server name, once a sync found it.
+  String? trashMailbox(int accountId) => null;
+
+  /// Whether Delete in [mailbox] deletes for good, with no Undo: in Trash
+  /// and in spam, where moving to Trash would only put it back.
+  bool deletesForGood(int accountId, String mailbox) =>
+      mailbox == trashMailbox(accountId) || mailbox == junkMailbox(accountId);
+
+  /// Deletes emails for good: they leave the lists at once and their
+  /// servers delete them (at the next sync when offline). No Undo: the
+  /// app asks first.
+  Future<void> deleteForever(List<MailRow> rows) async {}
+
+  /// Stars emails, or takes their stars off: at once here, then on their
+  /// servers.
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {}
+
+  /// Copies emails to one of their account's folders; they stay where
+  /// they are.
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {}
+
+  /// How many emails a folder holds: what its server says, or what is
+  /// here when it can't be reached.
+  Future<int> folderTotal(int accountId, String mailbox) async => 0;
+
+  /// Empty Trash, Empty spam: every email of the folder goes for good.
+  /// Returns how many.
+  Future<int> emptyFolder(int accountId, String mailbox) async => 0;
+
+  /// Renames one of the account's own folders.
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {}
+
+  /// What deleting a folder takes with it: its emails and its
+  /// subfolders' (they go to Trash), and how many subfolders. [protected]
+  /// names the inbox or a folder with a job inside it: then it isn't
+  /// deleted.
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) => (emails: 0, subfolders: 0, protected: null);
+
+  /// Deletes one of the account's own folders with its subfolders; their
+  /// emails go to Trash first.
+  Future<void> deleteFolder(int accountId, String mailbox) async {}
+
+  /// Shows one of the account's own folders in the lists, or hides it.
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {}
+
+  /// Which folder does each job for an account.
+  List<SpecialFolder> specialFolders(int accountId) => const [];
+
+  /// Every folder of the account's server, to give one a job: its server
+  /// name and its whole path as people read it.
+  List<({String mailbox, String name})> serverFolders(int accountId) =>
+      const [];
+
+  /// The folders that may do [role]'s job: never the inbox, nor one doing
+  /// another job when either job is Trash or spam.
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in serverFolders(accountId))
+      if (f.mailbox.toUpperCase() != 'INBOX') f,
+  ];
+
+  /// Gives a job to a folder of the person's choice; null goes back to
+  /// the one the server marks or names.
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {}
+
+  /// How the lists look: their order, conversations or single emails,
+  /// and what each swipe does.
+  ValueListenable<ListPrefs> get listPrefs => _defaultListPrefs;
+  static final _defaultListPrefs = ValueNotifier(const ListPrefs());
+
+  Future<void> setListPrefs(ListPrefs prefs) async {}
+
+  /// How full the account's mailbox was when its server last said; null
+  /// when it never said.
+  MailQuota? quota(int accountId) => null;
+
+  /// Asks the server how full the mailbox is.
+  Future<MailQuota?> refreshQuota(int accountId) async => quota(accountId);
 
   /// Snoozes messages until [until]: they leave the lists at once, wait
   /// in their account's Snoozed folder and come back to the inbox, unread.
@@ -2983,8 +3282,21 @@ abstract class MailSource {
   /// Mail waiting to go, oldest first: one account's, or every account's.
   Future<List<OutboxItem>> outbox(int? accountId);
 
-  /// Takes a message back out of the outbox, to edit it.
+  /// Takes a message back out of the outbox, to edit it. Never a
+  /// Redirect ([OutboxItem.redirect]), which has nothing to edit: that
+  /// throws and the Redirect stays.
   Future<Draft> reopenOutgoing(int id);
+
+  /// Deletes a message from the outbox without sending it: Undo of a
+  /// Redirect, or Cancel in the Outbox. Throws when it is on its way.
+  Future<void> cancelOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
+
+  /// Sends a message of the outbox again now (waiting, refused, or maybe
+  /// sent, when the person says so); [deliver] then says what became of
+  /// it. Throws when it is on its way or gone.
+  Future<void> retryOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
 
   /// How many drafts every account keeps.
   Future<int> draftCount();

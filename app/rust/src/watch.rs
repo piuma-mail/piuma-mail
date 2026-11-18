@@ -36,6 +36,9 @@ pub struct WatchRow {
     pub received_at: i64,
     pub seen: bool,
     pub messages: u32,
+    /// How many more people Reply all reaches than Reply; 0 hides Reply
+    /// all on the watch.
+    pub others: u32,
 }
 
 /// The summary as JSON: `{"at","accounts":[…],"rows":[…],"templates":[…]}`.
@@ -61,7 +64,7 @@ pub fn summary_json(
         .iter()
         .map(|r| {
             format!(
-                r#"{{"payload":{},"account":{},"sender":{},"subject":{},"preview":{},"at":{},"seen":{},"messages":{}}}"#,
+                r#"{{"payload":{},"account":{},"sender":{},"subject":{},"preview":{},"at":{},"seen":{},"messages":{},"others":{}}}"#,
                 quote(&r.payload),
                 r.account_id,
                 quote(&r.sender),
@@ -69,7 +72,8 @@ pub fn summary_json(
                 quote(&r.preview),
                 r.received_at,
                 r.seen,
-                r.messages
+                r.messages,
+                r.others
             )
         })
         .collect();
@@ -84,6 +88,23 @@ pub fn summary_json(
         rows.join(","),
         templates.join(",")
     )
+}
+
+/// How many more people Reply all reaches than Reply, from the headers
+/// kept with the message: 0 when they aren't known yet.
+pub(crate) fn others(account_id: i64, mailbox: &str, uid: u32) -> u32 {
+    let Ok(store) = engine::reader() else {
+        return 0;
+    };
+    let account = piuma_core::AccountId(account_id);
+    let Ok(Some(envelope)) = store.envelope(account, mailbox, uid) else {
+        return 0;
+    };
+    // Counted as the app does; 0 for a blind copy (answering everyone
+    // would tell them) and for a Reply all to be seen in compose first.
+    crate::api::reply::describe(&store, account, mailbox, uid, &envelope)
+        .map(|e| crate::api::reply::others(&e))
+        .unwrap_or(0)
 }
 
 /// The inbox as the watch shows it, newest first; "" when the engine
@@ -120,6 +141,7 @@ pub fn summary() -> Result<String, EngineError> {
     )?
     .into_iter()
     .map(|r| WatchRow {
+        others: others(r.account_id, &r.mailbox, r.uid),
         payload: format!("{}\n{}\n{}", r.account_id, r.mailbox, r.uid),
         account_id: r.account_id,
         sender: if r.from_name.is_empty() {
@@ -243,6 +265,7 @@ mod tests {
                 received_at: 1_792_399_000,
                 seen: false,
                 messages: 1,
+                others: 2,
             }],
             &[("On my way".into(), "I'm on my way".into())],
         );
@@ -251,7 +274,7 @@ mod tests {
         ));
         assert!(json.contains(r#""payload":"2\nINBOX\n41","account":2,"sender":"Giulia Romano""#));
         assert!(json.contains(
-            r#""preview":"I booked\nOsteria","at":1792399000,"seen":false,"messages":1"#
+            r#""preview":"I booked\nOsteria","at":1792399000,"seen":false,"messages":1,"others":2"#
         ));
         assert!(json.ends_with(r#""templates":[{"name":"On my way","body":"I'm on my way"}]}"#));
         assert_eq!(

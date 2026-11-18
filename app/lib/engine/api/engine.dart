@@ -8,7 +8,7 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `certificate_error`, `checked_list`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
@@ -574,7 +574,8 @@ Future<List<OutboxItem>> outbox({PlatformInt64? accountId}) =>
     RustLib.instance.api.crateApiEngineOutbox(accountId: accountId);
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 Future<OutgoingMessage> reopenOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineReopenOutgoing(id: id);
 
@@ -587,6 +588,13 @@ Future<void> sendOutboxNow() =>
 /// being sent.
 Future<void> deleteOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineDeleteOutgoing(id: id);
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+Future<void> retryOutgoing({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiEngineRetryOutgoing(id: id);
 
 /// Keeps what is being written in its account's Drafts folder, in place of
 /// its earlier copy (`message.draft`), even one in another account.
@@ -1038,6 +1046,9 @@ class AccountFolderInfo {
   /// How many emails it holds on the server.
   final int total;
 
+  /// Subscribed: shown in the lists; the others show on demand.
+  final bool subscribed;
+
   const AccountFolderInfo({
     required this.mailbox,
     required this.name,
@@ -1045,6 +1056,7 @@ class AccountFolderInfo {
     required this.selectable,
     required this.unread,
     required this.total,
+    required this.subscribed,
   });
 
   @override
@@ -1054,7 +1066,8 @@ class AccountFolderInfo {
       depth.hashCode ^
       selectable.hashCode ^
       unread.hashCode ^
-      total.hashCode;
+      total.hashCode ^
+      subscribed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1066,7 +1079,8 @@ class AccountFolderInfo {
           depth == other.depth &&
           selectable == other.selectable &&
           unread == other.unread &&
-          total == other.total;
+          total == other.total &&
+          subscribed == other.subscribed;
 }
 
 class AccountInfo {
@@ -2227,6 +2241,11 @@ class OutboxItem {
   /// Sent with Undo: [send_at] ends the Undo window.
   final bool undo;
 
+  /// A Redirect: the message as it came, with nothing of its own to
+  /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+  /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+  final bool redirect;
+
   const OutboxItem({
     required this.id,
     required this.accountId,
@@ -2238,6 +2257,7 @@ class OutboxItem {
     this.sendAt,
     required this.state,
     required this.undo,
+    required this.redirect,
   });
 
   @override
@@ -2251,7 +2271,8 @@ class OutboxItem {
       error.hashCode ^
       sendAt.hashCode ^
       state.hashCode ^
-      undo.hashCode;
+      undo.hashCode ^
+      redirect.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2267,7 +2288,8 @@ class OutboxItem {
           error == other.error &&
           sendAt == other.sendAt &&
           state == other.state &&
-          undo == other.undo;
+          undo == other.undo &&
+          redirect == other.redirect;
 }
 
 enum OutboxState {

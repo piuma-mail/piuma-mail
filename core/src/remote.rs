@@ -1,6 +1,7 @@
 //! One way to reach any account's server, IMAP or JMAP, so the app asks
 //! for the same things whatever the protocol.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::auth::Login;
@@ -71,6 +72,35 @@ pub(crate) fn resolve_historical_attachment(
             let _ = store.mark_attachment_unavailable(account, mailbox, uid, file.part);
             Err(ImapError::Gone.into())
         }
+    }
+}
+
+/// What a folder held when it was counted, for Empty to keep to: the
+/// next UID then (IMAP), or the ids (JMAP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Snapshot {
+    Imap {
+        uid_next: Option<u32>,
+    },
+    Jmap {
+        ids: Vec<String>,
+    },
+    /// The server couldn't be counted: only these messages that are here
+    /// (their uids here), never more.
+    Here {
+        uids: Vec<u32>,
+    },
+}
+
+impl Snapshot {
+    /// What Empty keeps to when the server couldn't say what it holds:
+    /// the messages shown here with nothing waiting for them.
+    pub fn here(store: &Mutex<Store>, account: AccountId, mailbox: &str) -> Result<Self> {
+        let uids = store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .erasable_uids(account, mailbox)?;
+        Ok(Snapshot::Here { uids })
     }
 }
 
@@ -399,11 +429,105 @@ impl Remote {
         })
     }
 
+    /// Reads which folders the person gave a job to (Sent, Drafts,
+    /// Trash, spam, Archive), so this connection uses theirs.
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.learn_roles(store, account)?,
+            Remote::Jmap(c) => c.learn_roles(store, account)?,
+        }
+        Ok(())
+    }
+
+    /// Deletes the messages of a folder for good (Empty Trash, Empty
+    /// spam), keeping to `upto`: what was there when [`Self::count`] gave
+    /// it, so mail that came after stays, or, when the server couldn't be
+    /// counted, only the messages that are here. Never one with a change
+    /// still waiting. Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        upto: &Snapshot,
+    ) -> Result<usize> {
+        // A snapshot of the other protocol says nothing about this
+        // server: keep to what is here.
+        let fallback;
+        let upto = match (&*self, upto) {
+            (Remote::Imap(_), Snapshot::Jmap { .. }) | (Remote::Jmap(_), Snapshot::Imap { .. }) => {
+                fallback = Snapshot::here(store, account, mailbox)?;
+                &fallback
+            }
+            _ => upto,
+        };
+        Ok(match self {
+            Remote::Imap(c) => {
+                let limit = match upto {
+                    Snapshot::Imap { uid_next } => imap::EmptyLimit::Below(*uid_next),
+                    Snapshot::Here { uids } => {
+                        imap::EmptyLimit::Only(uids.iter().copied().collect())
+                    }
+                    Snapshot::Jmap { .. } => unreachable!("replaced above"),
+                };
+                c.empty(store, account, mailbox, &limit).await?
+            }
+            Remote::Jmap(c) => {
+                let only: HashSet<String> = match upto {
+                    Snapshot::Jmap { ids } => ids.iter().cloned().collect(),
+                    Snapshot::Here { uids } => {
+                        let st = store.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut ids = HashSet::new();
+                        for uid in uids {
+                            ids.extend(st.jmap_id(account, mailbox, *uid)?);
+                        }
+                        ids
+                    }
+                    Snapshot::Imap { .. } => unreachable!("replaced above"),
+                };
+                c.empty(store, account, mailbox, &only).await?
+            }
+        })
+    }
+
+    /// How many messages a folder holds on the server, with what Empty
+    /// keeps to.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Snapshot)> {
+        Ok(match self {
+            Remote::Imap(c) => {
+                let (n, uid_next) = c.count(mailbox).await?;
+                (n, Snapshot::Imap { uid_next })
+            }
+            Remote::Jmap(c) => {
+                let (n, ids) = c.count(mailbox).await?;
+                (n, Snapshot::Jmap { ids })
+            }
+        })
+    }
+
+    /// How full the mailbox is, in bytes used and allowed, when the
+    /// server says.
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        Ok(match self {
+            Remote::Imap(c) => c.quota().await?,
+            Remote::Jmap(c) => c.quota().await?,
+        })
+    }
+
     pub async fn append_draft(&mut self, raw: &[u8]) -> Result<String> {
         Ok(match self {
             Remote::Imap(c) => c.append_draft(raw).await?,
             Remote::Jmap(c) => c.append_draft(raw).await?,
         })
+    }
+
+    /// Puts a whole message in `folder`, as read (an imported email file).
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.append_to(folder, raw).await?,
+            Remote::Jmap(c) => c.append_to(folder, raw).await?,
+        }
+        Ok(())
     }
 }
 
@@ -477,13 +601,15 @@ impl Courier for AccountCourier<'_> {
                 },
                 e => jmap_send_error(e),
             })?;
+            // From the address it was written from, an alias's identity
+            // when the server has one (the account's otherwise).
+            let from = if ready.from.trim().is_empty() {
+                &self.account.email
+            } else {
+                &ready.from
+            };
             client
-                .send(
-                    &ready.raw,
-                    &self.account.email,
-                    &ready.recipients,
-                    &ready.message_id,
-                )
+                .send(&ready.raw, from, &ready.recipients, &ready.message_id)
                 .await
                 .map_err(jmap_send_error)?;
             return Ok(());

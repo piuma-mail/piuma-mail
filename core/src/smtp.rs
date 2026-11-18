@@ -226,8 +226,17 @@ pub fn ready(draft: &Draft) -> Result<Ready> {
 
 /// The message with its Date header set to `at` (Unix seconds): mail
 /// sent later is dated when it actually goes. The rest stays byte for
-/// byte, Message-ID included.
+/// byte, Message-ID included. A redirected message (Resent-* headers on
+/// top) keeps its own Date: its Resent-Date is the one set.
 pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
+    let resent = raw
+        .get(..7)
+        .is_some_and(|h| h.eq_ignore_ascii_case(b"resent-"));
+    let (field, name): (&[u8], &str) = if resent {
+        (b"resent-date:", "Resent-Date")
+    } else {
+        (b"date:", "Date")
+    };
     let mut headers = lettre::message::header::Headers::new();
     headers.set(lettre::message::header::Date::new(
         std::time::UNIX_EPOCH + Duration::from_secs(at.max(0) as u64),
@@ -246,8 +255,8 @@ pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
             .position(|w| w == b"\r\n")
             .map_or(end, |i| start + i + 2);
         if raw[start..line_end]
-            .get(..5)
-            .is_some_and(|h| h.eq_ignore_ascii_case(b"date:"))
+            .get(..field.len())
+            .is_some_and(|h| h.eq_ignore_ascii_case(field))
         {
             // Folded lines belong to the header.
             let mut stop = line_end;
@@ -259,7 +268,7 @@ pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
             }
             let mut out = Vec::with_capacity(raw.len() + 8);
             out.extend_from_slice(&raw[..start]);
-            out.extend_from_slice(format!("Date: {date}\r\n").as_bytes());
+            out.extend_from_slice(format!("{name}: {date}\r\n").as_bytes());
             out.extend_from_slice(&raw[stop..]);
             return out;
         }
@@ -390,13 +399,35 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
         for file in &draft.files {
             let kind = ContentType::parse(&file.mime)
                 .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-            mixed = mixed.singlepart(
-                Attachment::new(crate::imap::file_name(&file.name)).body(file.data.clone(), kind),
-            );
+            let name = crate::imap::file_name(&file.name);
+            mixed = mixed.singlepart(if file.mime.eq_ignore_ascii_case("message/rfc822") {
+                Attachment::new(name).body(message_body(&file.data), kind)
+            } else {
+                Attachment::new(name).body(file.data.clone(), kind)
+            });
         }
         b.multipart(mixed)
     };
     built.map_err(|e| SendError::Build(e.to_string()))
+}
+
+/// A message attached whole (Forward as attachment). RFC 2046 wants it
+/// in 7bit or 8bit so mail apps open it as an email: 7bit when it is plain
+/// ASCII, as most mail is once encoded. One with 8-bit text goes as
+/// base64, which every server takes (8bit needs the server's 8BITMIME,
+/// and lettre refuses it without) and mail apps still open.
+fn message_body(data: &[u8]) -> Body {
+    let seven_bit = data.is_ascii()
+        && !data.contains(&0)
+        && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
+    if seven_bit {
+        Body::dangerous_pre_encoded(
+            crate::envelope::to_crlf(data),
+            ContentTransferEncoding::SevenBit,
+        )
+    } else {
+        Body::new(data.to_vec())
+    }
 }
 
 enum Content {
@@ -1254,6 +1285,36 @@ mod tests {
     }
 
     #[test]
+    fn a_message_attached_whole_goes_as_7bit_when_it_can() {
+        let original = "From: Anna <anna@x.it>\r\nTo: me@x.it\r\nSubject: Plan\r\n\
+                        Content-Type: text/plain; charset=utf-8\r\n\
+                        Content-Transfer-Encoding: quoted-printable\r\n\r\nCaff=C3=A8 after.\r\n";
+        let mut d = draft();
+        d.files = vec![OutgoingFile {
+            name: "Plan.eml".into(),
+            mime: "message/rfc822".into(),
+            data: original.as_bytes().to_vec(),
+        }];
+        let raw = build(&d).unwrap().formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("Content-Type: message/rfc822"), "{text}");
+        assert!(text.contains("Content-Transfer-Encoding: 7bit"), "{text}");
+        assert!(text.contains("Caff=C3=A8 after."), "{text}");
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Plan"));
+        assert_eq!(inner.body_text(0).unwrap().trim_end(), "Caffè after.");
+
+        // 8-bit text inside: base64, which needs nothing of the server.
+        d.files[0].data = "Subject: Caffè\r\n\r\nè pronto\r\n".as_bytes().to_vec();
+        let raw = build(&d).unwrap().formatted();
+        assert!(raw.is_ascii());
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Caffè"));
+    }
+
+    #[test]
     fn a_signature_adds_an_html_version() {
         let mut d = draft();
         d.body = "Thanks!\n\nOn Oct 12, Luca wrote:\n> Here they are\n>\n> Luca".into();
@@ -1370,6 +1431,18 @@ mod tests {
         d.date = Some(1_700_000_000);
         let built = ready(&d).unwrap();
         let later = redate(&built.raw, 1_800_000_000);
+        // A redirected message keeps its Date; its Resent-Date moves.
+        let resent =
+            crate::envelope::resend(&built.raw, "me@x.it", &["b@x.it".into()], 0, "<r@x.it>");
+        let moved = String::from_utf8(redate(&resent, 1_800_000_000)).unwrap();
+        assert!(!moved.contains("Resent-Date: Thu, 1 Jan 1970"), "{moved}");
+        assert!(moved.contains("Resent-Date: "), "{moved}");
+        let date = |t: &str| {
+            t.lines()
+                .find(|l| l.starts_with("Date: "))
+                .map(str::to_owned)
+        };
+        assert_eq!(date(&moved), date(&String::from_utf8_lossy(&built.raw)));
         let parsed = mail_parser::MessageParser::default().parse(&later).unwrap();
         assert_eq!(parsed.date().unwrap().to_timestamp(), 1_800_000_000);
         let text = String::from_utf8(later.clone()).unwrap();

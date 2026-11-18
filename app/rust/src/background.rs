@@ -322,10 +322,16 @@ pub fn send_outbox_once() -> Result<(), engine::EngineError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeAction {
     Archive,
+    /// To the Trash, as Delete in the app.
+    Delete,
+    /// Only read: every action marks the message read first.
+    Read,
     /// Until this time, in Unix seconds.
     Snooze(i64),
     /// A short reply typed on the notice, sent from the message's account.
     Reply(String),
+    /// The same, to everyone the message went to (from the watch).
+    ReplyAll(String),
 }
 
 pub(crate) fn message_of(payload: &str) -> Option<engine::MessageRef> {
@@ -361,17 +367,23 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
         .runtime
         .block_on(engine::push_messages_seen(vec![message.clone()], true))
         .ok();
+    let all = matches!(action, NoticeAction::ReplyAll(_));
     match action {
+        NoticeAction::Read => Ok(()),
         NoticeAction::Archive => engine.runtime.block_on(engine::apply_message_action(
             vec![message],
             engine::MessageAction::Archive,
+        )),
+        NoticeAction::Delete => engine.runtime.block_on(engine::apply_message_action(
+            vec![message],
+            engine::MessageAction::Delete,
         )),
         NoticeAction::Snooze(until) => {
             engine
                 .runtime
                 .block_on(engine::snooze_messages(vec![message], until, false))
         }
-        NoticeAction::Reply(text) => {
+        NoticeAction::Reply(text) | NoticeAction::ReplyAll(text) => {
             let (row, signature) = {
                 let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
                 let account = AccountId(message.account_id);
@@ -385,10 +397,37 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .map(|s| s.id);
                 (row, signature)
             };
-            let to = if row.reply.reply_to.is_empty() {
+            let sender = if row.reply.reply_to.is_empty() {
                 row.from_email.clone()
             } else {
                 row.reply.reply_to.clone()
+            };
+            // Every Reply-To, and for Reply all everyone else: from the
+            // headers, read again when the message is older than them.
+            let envelope = engine
+                .runtime
+                .block_on(crate::api::reply::message_envelope(
+                    message.account_id,
+                    message.mailbox.clone(),
+                    message.uid,
+                ))
+                .ok();
+            // Reply all from a watch or a notice goes at once: never for a
+            // blind copy, nor to people only a Mail-Followup-To names.
+            if all
+                && envelope
+                    .as_ref()
+                    .is_none_or(|e| crate::api::reply::others(e) == 0)
+            {
+                return Err(engine::EngineError::new(
+                    engine::ErrorKind::Other,
+                    "Reply all needs the app for this email",
+                ));
+            }
+            let (to, cc) = match envelope {
+                Some(e) if all && !e.reply_all_to.is_empty() => (e.reply_all_to, e.reply_all_cc),
+                Some(e) if !e.reply_to.is_empty() => (e.reply_to, Vec::new()),
+                _ => (vec![sender], Vec::new()),
             };
             let mut references: Vec<String> = row
                 .reply
@@ -412,8 +451,8 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .ok()
                     .flatten(),
                     files: Vec::new(),
-                    to: vec![to],
-                    cc: Vec::new(),
+                    to,
+                    cc,
                     bcc: Vec::new(),
                     subject: reply_subject(&row.subject),
                     body: text,
@@ -471,8 +510,20 @@ pub fn to_json(notices: &[MailNotice]) -> String {
             let no_reply = n.no_reply.as_ref().map_or(String::new(), |r| {
                 format!(r#","noReply":{{"sentDaysAgo":{}}}"#, r.sent_days_ago)
             });
+            // How many more people Reply all reaches, for its button on a
+            // watch; left out when none (or the headers aren't known yet).
+            let others = if n.count == 1 && n.away.is_none() && n.reminder.is_none() {
+                crate::watch::others(n.account_id, &n.mailbox, n.uid)
+            } else {
+                0
+            };
+            let others = if others > 0 {
+                format!(r#","others":{others}"#)
+            } else {
+                String::new()
+            };
             format!(
-                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}}}"#,
+                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}{}}}"#,
                 notice_id(n),
                 quote(&n.sender),
                 n.count,
@@ -487,7 +538,8 @@ pub fn to_json(notices: &[MailNotice]) -> String {
                 n.silent,
                 vault,
                 away,
-                no_reply
+                no_reply,
+                others
             )
         })
         .collect();

@@ -337,6 +337,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     assert!(outbox::send(
@@ -401,6 +402,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
 
@@ -463,6 +465,7 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
             saved: None,
             send_at: Some(send_at),
             undo: false,
+            redirect: false,
         };
         store.lock().unwrap().queue_outgoing(&out, now).unwrap()
     };
@@ -701,6 +704,7 @@ async fn a_broken_reply_after_the_message_is_may_have_been_sent_not_resent() {
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     for _ in 0..3 {
@@ -740,6 +744,7 @@ async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     for _ in 0..2 {
@@ -831,4 +836,110 @@ async fn the_size_goes_with_mail_from_and_a_message_too_big_is_never_uploaded() 
         "{err:?}"
     );
     assert!(inbox.lock().unwrap().is_empty());
+}
+
+/// What the original of a redirect or a forward looks like on the wire.
+const ORIGINAL: &str = "Delivered-To: me@example.org\r\nReturn-Path: <anna@x.it>\r\n\
+From: Anna <anna@x.it>\r\nTo: me@example.org\r\nCc: Bo <bo@x.it>\r\n\
+Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
+Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n\
+See you at 20:30, caff=C3=A8 after.\r\n";
+
+#[tokio::test]
+async fn redirect_resends_the_message_unchanged_with_resent_headers() {
+    use piuma_core::envelope;
+    let (port, inbox) = smtp_sink(false).await;
+    let own = vec!["me@example.org".to_owned(), "studio@example.org".to_owned()];
+    // From an alias of the account, to a name with a comma.
+    let (_, message) = envelope::redirect(
+        ORIGINAL.as_bytes(),
+        "Plan for Friday",
+        Some("Studio@Example.org"),
+        &own,
+        &["Rossi, Mario <carla@example.org>".to_owned()],
+        1_790_000_000,
+    )
+    .unwrap();
+    let id = message.message_id.clone();
+    send(&smtp(port, "test"), &message).await.unwrap();
+    // Not one of the account's: it goes from the account.
+    let (_, other) = envelope::redirect(
+        ORIGINAL.as_bytes(),
+        "Plan for Friday",
+        Some("boss@elsewhere.example"),
+        &own,
+        &["carla@example.org".to_owned()],
+        1_790_000_000,
+    )
+    .unwrap();
+    send(&smtp(port, "test"), &other).await.unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 2);
+    assert!(
+        got[0].mail.contains("<Studio@Example.org>"),
+        "{}",
+        got[0].mail
+    );
+    assert!(got[1].mail.contains("<me@example.org>"), "{}", got[1].mail);
+    // Only the new recipient: neither the original To nor its Cc hear of it.
+    assert_eq!(got[0].rcpt, ["<carla@example.org>"]);
+    let data = &got[0].data;
+    assert!(
+        data.starts_with("Resent-From: Studio@Example.org\n"),
+        "{data}"
+    );
+    // Bare addresses only: no name, comma or raw UTF-8 in Resent-To.
+    assert!(data.contains("Resent-To: carla@example.org\n"), "{data}");
+    assert!(
+        data.contains(&format!("Resent-Message-ID: {id}\n")),
+        "{data}"
+    );
+    assert!(data.contains("Resent-Date: "), "{data}");
+    // The message itself is as it came, From and Message-ID included.
+    assert!(
+        data.contains("From: Anna <anna@x.it>\nTo: me@example.org\n"),
+        "{data}"
+    );
+    assert!(data.contains("Message-ID: <plan@x.it>\n"), "{data}");
+    assert!(
+        data.contains("\n\nSee you at 20:30, caff=C3=A8 after.\n"),
+        "{data}"
+    );
+    // Not the person's own delivery headers, which would look like a loop.
+    assert!(!data.contains("Delivered-To"), "{data}");
+    assert!(!data.contains("Return-Path"), "{data}");
+}
+
+#[tokio::test]
+async fn forward_as_attachment_sends_the_original_as_message_rfc822() {
+    let (port, inbox) = smtp_sink(false).await;
+    let mut d = draft();
+    d.bcc.clear();
+    d.subject = "Fwd: Plan for Friday".into();
+    d.body = String::new();
+    d.files = vec![piuma_core::smtp::OutgoingFile {
+        name: "Plan for Friday.eml".into(),
+        mime: piuma_core::files::mime_for("Plan for Friday.eml").into(),
+        data: ORIGINAL.as_bytes().to_vec(),
+    }];
+    send(&smtp(port, "test"), &ready(&d).unwrap())
+        .await
+        .unwrap();
+
+    let got = inbox.lock().unwrap();
+    let data = &got[0].data;
+    assert!(data.contains("Content-Type: message/rfc822"), "{data}");
+    assert!(data.contains("Content-Transfer-Encoding: 7bit"), "{data}");
+    let raw = data.replace('\n', "\r\n");
+    let m = mail_parser::MessageParser::default()
+        .parse(raw.as_bytes())
+        .unwrap();
+    let inner = m.attachments().next().unwrap().nested().unwrap();
+    assert_eq!(inner.subject(), Some("Plan for Friday"));
+    assert_eq!(inner.message_id(), Some("plan@x.it"));
+    assert_eq!(
+        inner.body_text(0).unwrap().trim_end(),
+        "See you at 20:30, caffè after."
+    );
 }

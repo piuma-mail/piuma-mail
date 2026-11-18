@@ -324,11 +324,15 @@ impl From<InboxTab> for Section {
 }
 
 /// What a list keeps: [tab], and with [unread] only the conversations
-/// with something unread.
-fn filter(tab: Option<InboxTab>, unread: bool) -> ListFilter {
+/// with something unread; sorted, and grouped in conversations or not, as
+/// the person set the lists (see [`crate::api::mailbox::list_settings`]).
+pub(crate) fn filter(store: &Store, tab: Option<InboxTab>, unread: bool) -> ListFilter {
+    let view = store.list_settings().unwrap_or_default();
     ListFilter {
         section: tab.map_or(Section::All, Section::from),
         unread,
+        order: view.order,
+        flat: !view.threads,
     }
 }
 
@@ -906,10 +910,11 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.conversation_count(
+    let store = store()?;
+    Ok(store.conversation_count(
         folder.into(),
         within(account, group, address),
-        filter(tab, unread),
+        filter(&store, tab, unread),
     )?)
 }
 
@@ -944,14 +949,9 @@ pub fn folder_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     let scope = within(account, group, address);
+    let view = filter(&store, tab, unread);
     store
-        .conversations_page(
-            folder.into(),
-            scope.clone(),
-            filter(tab, unread),
-            offset,
-            limit,
-        )?
+        .conversations_page(folder.into(), scope.clone(), view, offset, limit)?
         .into_iter()
         .map(|mut c| {
             let copies = store.combined_copies(&c.latest, folder.into(), &scope)?;
@@ -983,6 +983,10 @@ pub fn folder_page(
             );
             if !copies.is_empty() {
                 row.seen = seen;
+            }
+            if view.flat {
+                row.thread.clear();
+                row.messages = 1;
             }
             row.copies = refs;
             Ok(row)
@@ -1301,7 +1305,7 @@ pub fn folder_counts_between(
 ) -> Result<Vec<u32>, EngineError> {
     let store = store()?;
     let within = within(account, group, address);
-    let section = filter(tab, unread);
+    let section = filter(&store, tab, unread);
     edges
         .windows(2)
         .map(|w| {
@@ -1361,6 +1365,17 @@ fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub(crate) fn secrets_changed(id: AccountId) {
     emit(SyncEvent::new(SyncEventKind::SecretsChanged, id.0));
+}
+
+/// Changes a server kept refusing were given up while sent from the app:
+/// the app tells the person, as when the watcher gave them up.
+pub(crate) fn changes_dropped(id: AccountId, changes: usize) {
+    if changes > 0 {
+        emit(SyncEvent {
+            removed: changes as u32,
+            ..SyncEvent::new(SyncEventKind::ChangesDropped, id.0)
+        });
+    }
 }
 
 fn emit(event: SyncEvent) {
@@ -2012,13 +2027,16 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
     }
     let store = store.lock().unwrap_or_else(|e| e.into_inner());
     let settings = notify::Settings::load(&store).unwrap_or_default();
-    // Groups with notices off stay quiet.
+    // Groups with notices off stay quiet, and so do muted conversations.
     let mut arrived: Vec<notify::Arrival> = arrived
         .iter()
         .filter(|a| {
             store
                 .notifies(a.summary.account, &a.summary.reply.recipients)
                 .unwrap_or(true)
+                && !store
+                    .thread_muted(a.summary.account, &a.summary.mailbox, a.summary.uid)
+                    .unwrap_or(false)
         })
         .cloned()
         .collect();
@@ -2334,7 +2352,7 @@ impl From<files::FileRisk> for FileRisk {
 }
 
 /// Why a file deserves a word before it opens, from its name.
-fn file_risk(name: &str) -> Option<FileRisk> {
+pub(crate) fn file_risk(name: &str) -> Option<FileRisk> {
     files::file_risk(name).map(Into::into)
 }
 
@@ -3065,7 +3083,7 @@ pub async fn save_attachment(
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn body_block(b: reading::Block) -> BodyBlock {
+pub(crate) fn body_block(b: reading::Block) -> BodyBlock {
     BodyBlock {
         kind: match b.kind {
             reading::BlockKind::Paragraph => BlockKind::Paragraph,
@@ -3563,7 +3581,7 @@ pub fn schedule_message(message: OutgoingMessage, send_at: i64) -> Result<i64, E
 
 /// Sends an account's outbox at `send_at`, on time while the app runs;
 /// the watchers also wait for it.
-fn send_outbox_at(id: AccountId, send_at: i64) -> Result<(), EngineError> {
+pub(crate) fn send_outbox_at(id: AccountId, send_at: i64) -> Result<(), EngineError> {
     engine()?.runtime.spawn(async move {
         let wait = (send_at - now_secs()).max(0) as u64;
         tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
@@ -3619,6 +3637,7 @@ fn queue_draft(
         saved,
         send_at,
         undo,
+        redirect: false,
     };
     let id = store()?.queue_outgoing(&out, now_secs())?;
     Ok(Queued {
@@ -3846,6 +3865,10 @@ pub struct OutboxItem {
     pub state: OutboxState,
     /// Sent with Undo: [send_at] ends the Undo window.
     pub undo: bool,
+    /// A Redirect: the message as it came, with nothing of its own to
+    /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+    /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+    pub redirect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3881,6 +3904,7 @@ pub fn outbox(account_id: Option<i64>) -> Result<Vec<OutboxItem>, EngineError> {
                 outbox::State::Unknown => OutboxState::MaybeSent,
             },
             undo: w.undo,
+            redirect: w.redirect,
         })
         .collect())
 }
@@ -3902,8 +3926,12 @@ fn take_outgoing(id: i64) -> Result<Outgoing, EngineError> {
 }
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
+    if store()?.outgoing(id)?.is_some_and(|o| o.redirect) {
+        return Err(EngineError::new(ErrorKind::Other, "a redirect"));
+    }
     let out = take_outgoing(id)?;
     let d = out.draft;
     Ok(OutgoingMessage {
@@ -3954,6 +3982,22 @@ pub fn send_outbox_now() -> Result<(), EngineError> {
 /// being sent.
 pub fn delete_outgoing(id: i64) -> Result<(), EngineError> {
     take_outgoing(id).map(|_| ())
+}
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+pub fn retry_outgoing(id: i64) -> Result<(), EngineError> {
+    let store = store()?;
+    let Some(out) = store.outgoing(id)? else {
+        return Err(EngineError::new(ErrorKind::Other, "already sent"));
+    };
+    if !store.retry_outgoing(id)? {
+        return Err(EngineError::new(ErrorKind::Other, "being sent"));
+    }
+    drop(store);
+    send_outbox_at(out.account, now_secs())
 }
 
 /// Accounts whose outbox is being sent by this process: one batch at a
@@ -4118,6 +4162,7 @@ pub async fn save_draft(message: OutgoingMessage) -> Result<MessageRef, EngineEr
         .runtime
         .spawn(async move {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let folder = conn.append_draft(&to_append).await?;
             if let Some(e) = &earlier_here {
                 conn.erase(&shared, id, &e.mailbox, &[e.uid]).await?;
@@ -4227,6 +4272,7 @@ fn save_waiting_drafts(account: Account, password: Login) {
         let mut elsewhere = Vec::new();
         let saved = async {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let mut folder = None;
             for d in &waiting {
                 let into = conn.append_draft(&d.raw).await?;
@@ -4540,6 +4586,17 @@ pub async fn apply_message_action(
             on_server.push(m);
         }
     }
+    // Delete in Trash or spam is for good, and only ever after the person
+    // confirmed it, through `delete_forever`: here such messages are left
+    // where they are and shown again, never deleted silently.
+    if action == MessageAction::Delete {
+        let kept;
+        (kept, on_server) = crate::api::mailbox::split_for_good(on_server)?;
+        let store = store()?;
+        for m in &kept {
+            store.set_hidden(AccountId(m.account_id), &m.mailbox, m.uid, false)?;
+        }
+    }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();
     for m in on_server {
         by_account
@@ -4649,6 +4706,8 @@ pub struct AccountFolderInfo {
     pub unread: u32,
     /// How many emails it holds on the server.
     pub total: u32,
+    /// Subscribed: shown in the lists; the others show on demand.
+    pub subscribed: bool,
 }
 
 /// An account's own folders (not Inbox, Sent, Archive, Drafts, Trash or
@@ -4664,6 +4723,7 @@ pub fn account_folders(account_id: i64) -> Result<Vec<AccountFolderInfo>, Engine
             selectable: f.selectable,
             unread: f.unread,
             total: f.total,
+            subscribed: f.subscribed,
         })
         .collect())
 }
@@ -4703,7 +4763,9 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
 
 /// How many conversations one of an account's folders lists here.
 pub fn mailbox_count(account_id: i64, mailbox: String) -> Result<u32, EngineError> {
-    Ok(store()?.mailbox_count(AccountId(account_id), &mailbox)?)
+    let store = store()?;
+    let view = filter(&store, None, false);
+    Ok(store.mailbox_count(AccountId(account_id), &mailbox, view)?)
 }
 
 /// Rows `offset..offset+limit` of one of an account's folders, newest
@@ -4716,7 +4778,13 @@ pub fn mailbox_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     Ok(store
-        .mailbox_page(AccountId(account_id), &mailbox, offset, limit)?
+        .mailbox_page(
+            AccountId(account_id),
+            &mailbox,
+            filter(&store, None, false),
+            offset,
+            limit,
+        )?
         .into_iter()
         .map(|c| {
             with_files(
@@ -4742,7 +4810,15 @@ pub fn mailbox_counts_between(
     let account = AccountId(account_id);
     edges
         .windows(2)
-        .map(|w| Ok(store.mailbox_count_between(account, &mailbox, w[1], w[0])?))
+        .map(|w| {
+            Ok(store.mailbox_count_between(
+                account,
+                &mailbox,
+                filter(&store, None, false),
+                w[1],
+                w[0],
+            )?)
+        })
         .collect()
 }
 

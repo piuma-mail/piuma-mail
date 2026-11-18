@@ -79,4 +79,18 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get undo => 'Annuler';
+
+  @override
+  String get replyAll => 'Répondre à tous';
+
+  @override
+  String replyToAll(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count autres personnes',
+      one: '1 autre personne',
+    );
+    return 'Répondre à $name et $_temp0';
+  }
 }

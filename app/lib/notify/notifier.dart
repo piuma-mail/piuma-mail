@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
 import 'notice_seal.dart';
+import 'unread_badge.dart';
 
 export 'notice_seal.dart' show NoticeSeal, noticeSeal;
 
@@ -34,19 +35,22 @@ class SystemNotice {
   /// Shown without a sound (quiet hours).
   final bool silent;
 
-  /// Reply, Archive and Snooze, as on `Notifications`: for one email.
+  /// Reply, Archive and Snooze, as on `Notifications`, then Delete and
+  /// Mark read: for one email.
   final bool buttons;
 }
 
 /// The words on a notice's buttons, and what to do when one is pressed:
-/// [onAction] gets the notice's payload, the button ("reply", "archive"
-/// or "snooze") and, for Reply, the text typed into the notice, when the
-/// system has a field for it.
+/// [onAction] gets the notice's payload, the button ("reply", "archive",
+/// "snooze", "delete" or "read") and, for Reply, the text typed into the
+/// notice, when the system has a field for it.
 class NoticeButtons {
   const NoticeButtons({
     required this.reply,
     required this.archive,
     required this.snooze,
+    required this.delete,
+    required this.markRead,
     required this.send,
     required this.replyHint,
     required this.onAction,
@@ -55,13 +59,15 @@ class NoticeButtons {
   final String reply;
   final String archive;
   final String snooze;
+  final String delete;
+  final String markRead;
   final String send;
   final String replyHint;
   final void Function(String payload, String action, String? text) onAction;
 }
 
 /// The buttons, as the system hands them back.
-const noticeActions = ['reply', 'archive', 'snooze'];
+const noticeActions = ['reply', 'archive', 'snooze', 'delete', 'read'];
 
 /// Splits a system response into payload, button and typed text. Windows
 /// hands back the button's own arguments in place of the payload, so
@@ -176,6 +182,12 @@ class SystemNotifier implements Notifier {
               ),
               DarwinNotificationAction.plain('archive', buttons.archive),
               DarwinNotificationAction.plain('snooze', buttons.snooze),
+              DarwinNotificationAction.plain('read', buttons.markRead),
+              DarwinNotificationAction.plain(
+                'delete',
+                buttons.delete,
+                options: {DarwinNotificationActionOption.destructive},
+              ),
             ],
           ),
       ],
@@ -256,6 +268,8 @@ class SystemNotifier implements Notifier {
             _channel,
             silent: n.silent,
             category: AndroidNotificationCategory.email,
+            // Launchers that show a count on the icon read it here.
+            number: UnreadBadge.count > 0 ? UnreadBadge.count : null,
           ),
           linux: LinuxNotificationDetails(
             suppressSound: n.silent,
@@ -266,6 +280,8 @@ class SystemNotifier implements Notifier {
                 LinuxNotificationAction(key: 'reply', label: buttons.reply),
                 LinuxNotificationAction(key: 'archive', label: buttons.archive),
                 LinuxNotificationAction(key: 'snooze', label: buttons.snooze),
+                LinuxNotificationAction(key: 'read', label: buttons.markRead),
+                LinuxNotificationAction(key: 'delete', label: buttons.delete),
               ],
             ],
           ),
@@ -293,6 +309,16 @@ class SystemNotifier implements Notifier {
                 WindowsAction(
                   content: buttons.snooze,
                   arguments: 'snooze\t${n.payload}',
+                ),
+                // Windows shows five buttons at most: Send, Archive, Snooze,
+                // Mark read and Delete.
+                WindowsAction(
+                  content: buttons.markRead,
+                  arguments: 'read\t${n.payload}',
+                ),
+                WindowsAction(
+                  content: buttons.delete,
+                  arguments: 'delete\t${n.payload}',
                 ),
               ],
             ],

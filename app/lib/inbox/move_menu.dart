@@ -18,6 +18,7 @@ Future<AccountFolder?> showMoveTo(
   required String from,
   Rect? anchor,
   bool phone = false,
+  bool copy = false,
 }) async {
   final l = AppLocalizations.of(context);
   final own = await source.folders(account.id);
@@ -27,16 +28,18 @@ Future<AccountFolder?> showMoveTo(
     for (final f in own)
       if (f.mailbox != from) f,
   ];
+  // "Copy to…" is the same list under its own name.
+  final title = copy ? l.copyTo : l.moveTo;
   final menu = MoveMenu(
     account: account,
     targets: targets,
-    hint: l.moveToIn(account.name),
+    hint: copy ? l.copyToIn(account.name) : l.moveToIn(account.name),
     phone: phone,
   );
   if (phone) {
     return showPiumaSheet<AccountFolder>(
       context,
-      label: l.moveTo,
+      label: title,
       builder: (_) => menu,
     );
   }
@@ -44,14 +47,14 @@ Future<AccountFolder?> showMoveTo(
     // From the keyboard there is no button to hang it from.
     return showPiumaDialog<AccountFolder>(
       context,
-      label: l.moveTo,
+      label: title,
       width: 340,
       builder: (_) => menu,
     );
   }
   return showPiumaPopover<AccountFolder>(
     context,
-    label: l.moveTo,
+    label: title,
     anchor: anchor,
     builder: (_) => menu,
   );

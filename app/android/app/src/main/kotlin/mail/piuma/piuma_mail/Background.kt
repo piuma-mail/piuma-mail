@@ -318,7 +318,9 @@ object Background {
             // One email: Reply, Archive and Snooze, as on `Notifications`.
             // A notice for several leaves them out, since each would only
             // touch the newest. A Vault notice is about a card, so it has none.
-            if (count == 1 && vault == null && away == null && noReply == null) NoticeActions.add(context, builder, id, n.getString("payload"), sender)
+            if (count == 1 && vault == null && away == null && noReply == null) {
+                NoticeActions.add(context, builder, id, n.getString("payload"), sender, n.optInt("others", 0))
+            }
             builder
                 .setSmallIcon(R.drawable.ic_notification)
                 .setColor(context.getColor(R.color.ic_launcher_background))

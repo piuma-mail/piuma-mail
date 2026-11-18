@@ -10,6 +10,10 @@
     <string name="notice_reply_hint">Rispondi a %s</string>
     <string name="notice_archive">Archivia</string>
     <string name="notice_snooze">Posticipa</string>
+    <string name="notice_delete">Elimina</string>
+    <string name="notice_read">Segna come letta</string>
+    <string name="notice_reply_all">Rispondi a tutti</string>
+    <string name="notice_reply_all_hint">Rispondi a %1$s e ad altri %2$d</string>
     <string name="notice_failed">Non è stato possibile farlo dalla notifica. Apri Piuma Mail per riprovare.</string>
     <string name="notice_sign_in_title">%1$s non riesce ad accedere</string>
     <string name="notice_sign_in_body">Il server ha rifiutato la password. È cambiata?</string>
@@ -45,4 +49,6 @@
         <item quantity="one">inviata %d giorno fa</item>
         <item quantity="other">inviata %d giorni fa</item>
     </plurals>
+    <!-- Keep in step with compose. -->
+    <string name="shortcut_compose">Scrivi</string>
 </resources>

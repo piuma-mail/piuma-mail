@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Piuma Mail
+Comment=Mail, made light
+Exec=piuma_mail %U
+Icon=piuma-mail
+Categories=Network;Email;
+MimeType=x-scheme-handler/mailto;message/rfc822;
+StartupWMClass=mail.piuma.piuma_mail

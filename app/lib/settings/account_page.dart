@@ -17,6 +17,7 @@ import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
+import 'quota_card.dart';
 
 /// An account's details, as on `FeaturesToApprove` (section 2): its name,
 /// color, From name and default signature, how its connection is going,
@@ -563,6 +564,7 @@ class _AccountPageState extends State<AccountPage> {
         details,
         const SizedBox(height: 14),
         connection,
+        QuotaCard(source: widget.source, accountId: _account.id),
         if (awayCard != null) ...[const SizedBox(height: 14), awayCard],
         const SizedBox(height: 14),
         alert,

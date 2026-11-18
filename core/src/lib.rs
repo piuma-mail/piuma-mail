@@ -12,6 +12,8 @@ pub mod brief;
 pub mod calendar;
 pub mod cert;
 pub mod dates;
+pub mod eml;
+pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
@@ -59,8 +61,8 @@ mod watchdog;
 
 pub use auth::Login;
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;

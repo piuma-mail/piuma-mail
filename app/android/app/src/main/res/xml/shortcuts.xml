@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press on the app icon: Compose, as in the desktop tray's menu.
+     It goes the way of any mailto: link (Shared.kt), with nothing in it. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="compose"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_compose">
+        <intent
+            android:action="android.intent.action.SENDTO"
+            android:data="mailto:"
+            android:targetPackage="mail.piuma.piuma_mail"
+            android:targetClass="mail.piuma.piuma_mail.MainActivity" />
+    </shortcut>
+</shortcuts>
