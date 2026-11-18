@@ -320,11 +320,18 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
 
 /// A message attached whole (Forward as attachment): RFC 2046 wants it in
 /// 7bit or 8bit, never base64, so mail apps open it as an email. Base64
-/// stays only for a message with lines too long for either.
+/// stays only for a message with NUL bytes or lines too long for either.
 fn message_body(data: &[u8]) -> Body {
-    Body::new_with_encoding(data.to_vec(), ContentTransferEncoding::SevenBit)
-        .or_else(|data| Body::new_with_encoding(data, ContentTransferEncoding::EightBit))
-        .unwrap_or_else(Body::new)
+    let fits = !data.contains(&0) && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
+    if !fits {
+        return Body::new(data.to_vec());
+    }
+    let encoding = if data.is_ascii() {
+        ContentTransferEncoding::SevenBit
+    } else {
+        ContentTransferEncoding::EightBit
+    };
+    Body::dangerous_pre_encoded(crate::envelope::to_crlf(data), encoding)
 }
 
 enum Content {

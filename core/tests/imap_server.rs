@@ -612,6 +612,132 @@ async fn sync_keeps_what_a_reply_needs() {
     assert_eq!(rows[1].reply.message_id, "");
 }
 
+const TO_MANY: &str = "From: Julia Reed <julia@example.org>
+Reply-To: desk@example.org, Bo <bo@example.org>
+Mail-Followup-To: dev@lists.example.org
+To: me@example.org, Carla <carla@example.org>
+Cc: Dan <dan@example.org>, me@example.org
+List-Id: Dev <dev.lists.example.org>
+List-Post: <mailto:dev@lists.example.org>
+Subject: Plan for Friday
+Message-ID: <plan@example.org>
+Date: Fri, 16 Oct 2026 09:00:00 +0200
+Content-Type: text/plain; charset=utf-8
+
+See you at 20:30.
+";
+
+#[tokio::test]
+async fn sync_keeps_every_recipient_for_reply_all() {
+    use piuma_core::envelope::{reply_recipients, Address, ReplyMode};
+    let Some(cfg) = config("envelope") else { return };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(TO_MANY, "16-Oct-2026 09:00:00 +0200").await;
+
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
+    let uid = rows[0].uid;
+    let e = store
+        .lock()
+        .unwrap()
+        .envelope(account, "INBOX", uid)
+        .unwrap()
+        .unwrap();
+    let emails = |l: &[Address]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    assert_eq!(emails(&e.reply_to), ["desk@example.org", "bo@example.org"]);
+    assert_eq!(emails(&e.to), ["me@example.org", "carla@example.org"]);
+    assert_eq!(emails(&e.cc), ["dan@example.org", "me@example.org"]);
+    assert_eq!(emails(&e.followup_to), ["dev@lists.example.org"]);
+    assert_eq!(e.list_post, "dev@lists.example.org");
+    assert!(e.list);
+    let own = store.lock().unwrap().own_addresses(account).unwrap();
+    let from = Address::new("Julia Reed", "julia@example.org");
+    let all = reply_recipients(&e, &from, &own, ReplyMode::All);
+    assert_eq!(emails(&all.to), ["dev@lists.example.org"]);
+
+    // The raw message, for View source and Redirect, as it was delivered.
+    let raw = conn.raw("INBOX", uid).await.unwrap();
+    let text = String::from_utf8_lossy(&raw);
+    assert!(text.contains("Mail-Followup-To: dev@lists.example.org"));
+    let lines = piuma_core::envelope::header_lines(&raw);
+    assert!(lines.iter().any(|h| h.name == "Subject" && h.value == "Plan for Friday"));
+}
+
+#[tokio::test]
+async fn new_mail_in_a_muted_conversation_arrives_read_on_the_server_too() {
+    let Some(cfg) = config("muted") else { return };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(TO_MANY, "16-Oct-2026 09:00:00 +0200").await;
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let first = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap()[0].uid;
+    store
+        .lock()
+        .unwrap()
+        .set_thread_muted(account, "INBOX", first, true)
+        .unwrap();
+
+    let reply = "From: Carla <carla@example.org>
+To: julia@example.org
+Cc: me@example.org
+Subject: Re: Plan for Friday
+Message-ID: <plan-2@example.org>
+In-Reply-To: <plan@example.org>
+References: <plan@example.org>
+Date: Fri, 16 Oct 2026 10:00:00 +0200
+Content-Type: text/plain; charset=utf-8
+
+Count me in.
+";
+    outside.deliver(reply, "16-Oct-2026 10:00:00 +0200").await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(report.arrived.len(), 1);
+    let rows = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap();
+    let new = rows.iter().find(|r| r.subject == "Re: Plan for Friday").unwrap();
+    assert!(new.flags.seen, "muted mail arrives read");
+    let uid = new.uid;
+    // It stays in the inbox, and the server is told it is read before the
+    // watcher looks at the flags again.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(watch(
+        cfg.clone(),
+        store.clone(),
+        account,
+        "INBOX".into(),
+        move |e| {
+            tx.send(e).ok();
+        },
+    ));
+    next_sync(&mut rx).await;
+    task.abort();
+    let rows = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap();
+    assert!(rows.iter().find(|r| r.uid == uid).unwrap().flags.seen);
+    let mut flags: Vec<_> = outside
+        .0
+        .uid_fetch(uid.to_string(), "FLAGS")
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let f = flags.pop().unwrap();
+    assert!(f.flags().any(|f| matches!(f, async_imap::types::Flag::Seen)));
+}
+
 async fn folder_count(outside: &mut Outside, folder: &str) -> u32 {
     let mailbox = outside.0.examine(folder).await.unwrap();
     outside.0.select("INBOX").await.unwrap();

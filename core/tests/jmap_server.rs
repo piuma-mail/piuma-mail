@@ -110,6 +110,7 @@ impl Server {
             "keywords": e.keywords.iter().map(|k| (k.clone(), json!(true))).collect::<serde_json::Map<_, _>>(),
             "from": addr(m.from()),
             "to": addr(m.to()),
+            "cc": addr(m.cc()),
             "replyTo": addr(m.reply_to()),
             "subject": m.subject(),
             "preview": m.body_preview(100),
@@ -140,6 +141,16 @@ impl Server {
             let value = match p.as_str() {
                 "size" => json!(e.raw.len()),
                 "attachments" => json!(attachments),
+                header if header.starts_with("header:") && header.ends_with(":asAddresses") => {
+                    let name = &header["header:".len()..header.len() - ":asAddresses".len()];
+                    match m.headers().get(name) {
+                        Some(h) if self.headers => {
+                            let parsed = h.parse_as(mail_parser::HeaderForm::Addresses);
+                            addr(parsed.value().as_address())
+                        }
+                        _ => Value::Null,
+                    }
+                }
                 header if header.starts_with("header:") && self.headers => m
                     .headers()
                     .get(&header["header:".len()..])
@@ -739,6 +750,86 @@ async fn keeps_drafts_and_sends() {
     assert_eq!(rcpt, &["julia@example.org".to_owned()]);
     assert_eq!(s.emails[email].mailboxes, ["mb-sent".to_owned()].into());
     assert!(!s.emails[email].keywords.contains("$draft"));
+}
+
+#[tokio::test]
+async fn keeps_every_recipient_and_redirects() {
+    use piuma_core::envelope::{self, reply_recipients, Address, ReplyMode};
+    let (server, cfg) = start().await;
+    let (store, account) = store_with_account(&cfg);
+    let id = {
+        let mut s = server.lock().unwrap();
+        s.headers = true;
+        s.add_raw(
+            "mb-in",
+            &format!(
+                "From: Anna <anna@x.it>\r\nReply-To: desk@x.it, Bo <bo@x.it>\r\n\
+                 To: Matteo <{USER}>, Carla <carla@x.it>\r\nCc: dan@x.it\r\n\
+                 Mail-Followup-To: team@x.it, Carla <carla@x.it>\r\n\
+                 Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
+                 Content-Type: text/plain\r\n\r\nSee you at 20:30.\r\n"
+            ),
+            9,
+        )
+    };
+    let mut client = Client::open(&cfg).await.unwrap();
+    client
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let row = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 50)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.subject == "Plan for Friday")
+        .unwrap();
+    let e = store
+        .lock()
+        .unwrap()
+        .envelope(account, &row.mailbox, row.uid)
+        .unwrap()
+        .unwrap();
+    let emails = |l: &[Address]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    assert_eq!(emails(&e.reply_to), ["desk@x.it", "bo@x.it"]);
+    assert_eq!(emails(&e.to), [USER, "carla@x.it"]);
+    assert_eq!(emails(&e.cc), ["dan@x.it"]);
+    assert_eq!(emails(&e.followup_to), ["team@x.it", "carla@x.it"]);
+    let own = store.lock().unwrap().own_addresses(account).unwrap();
+    let from = Address::new("Anna", "anna@x.it");
+    let one = reply_recipients(&e, &from, &own, ReplyMode::Sender);
+    assert_eq!(emails(&one.to), ["desk@x.it", "bo@x.it"]);
+    let all = reply_recipients(&e, &from, &own, ReplyMode::All);
+    assert_eq!(emails(&all.to), ["team@x.it", "carla@x.it"]);
+
+    // Redirect: the raw message from the server, resent unchanged.
+    let mut remote = Remote::Jmap(client);
+    let raw = remote
+        .raw(&store, account, &row.mailbox, row.uid)
+        .await
+        .unwrap();
+    assert_eq!(raw, server.lock().unwrap().emails[&id].raw);
+    let to = vec!["eve@x.it".to_owned()];
+    let message_id = envelope::new_message_id(USER);
+    let ready = piuma_core::smtp::Ready {
+        message_id: message_id.clone(),
+        from: USER.into(),
+        recipients: to.clone(),
+        raw: envelope::resend(&raw, USER, &to, 1_790_000_000, &message_id),
+    };
+    let account = store.lock().unwrap().account(account).unwrap().unwrap();
+    piuma_core::remote::send_ready(&account, PASSWORD, &ready)
+        .await
+        .unwrap();
+    let s = server.lock().unwrap();
+    let (email, rcpt) = s.sent.last().unwrap();
+    assert_eq!(rcpt, &to);
+    let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+    assert!(sent.starts_with(&format!("Resent-From: {USER}\r\n")), "{sent}");
+    assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
+    assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
+    assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");
 }
 
 #[tokio::test]

@@ -377,3 +377,72 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
     let sent_at = mail_parser::DateTime::parse_rfc822(&date).unwrap();
     assert_eq!(sent_at.to_timestamp(), now - 5);
 }
+
+/// What the original of a redirect or a forward looks like on the wire.
+const ORIGINAL: &str = "Delivered-To: me@example.org\r\nReturn-Path: <anna@x.it>\r\n\
+From: Anna <anna@x.it>\r\nTo: me@example.org\r\nCc: Bo <bo@x.it>\r\n\
+Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\r\nSee you at 20:30, caffè after.\r\n";
+
+#[tokio::test]
+async fn redirect_resends_the_message_unchanged_with_resent_headers() {
+    use piuma_core::envelope;
+    let (port, inbox) = smtp_sink(false).await;
+    let id = envelope::new_message_id("me@example.org");
+    let to = vec!["carla@example.org".to_owned()];
+    let message = piuma_core::smtp::Ready {
+        message_id: id.clone(),
+        from: "me@example.org".into(),
+        recipients: to.clone(),
+        raw: envelope::resend(ORIGINAL.as_bytes(), "me@example.org", &to, 1_790_000_000, &id),
+    };
+    send(&smtp(port, "test"), &message).await.unwrap();
+
+    let got = inbox.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    // Only the new recipient: neither the original To nor its Cc hear of it.
+    assert_eq!(got[0].rcpt, ["<carla@example.org>"]);
+    let data = &got[0].data;
+    assert!(data.starts_with("Resent-From: me@example.org\n"), "{data}");
+    assert!(data.contains("Resent-To: carla@example.org\n"), "{data}");
+    assert!(data.contains(&format!("Resent-Message-ID: {id}\n")), "{data}");
+    assert!(data.contains("Resent-Date: "), "{data}");
+    // The message itself is as it came, From and Message-ID included.
+    assert!(data.contains("From: Anna <anna@x.it>\nTo: me@example.org\n"), "{data}");
+    assert!(data.contains("Message-ID: <plan@x.it>\n"), "{data}");
+    assert!(data.contains("\n\nSee you at 20:30, caffè after.\n"), "{data}");
+    // Not the person's own delivery headers, which would look like a loop.
+    assert!(!data.contains("Delivered-To"), "{data}");
+    assert!(!data.contains("Return-Path"), "{data}");
+}
+
+#[tokio::test]
+async fn forward_as_attachment_sends_the_original_as_message_rfc822() {
+    let (port, inbox) = smtp_sink(false).await;
+    let mut d = draft();
+    d.bcc.clear();
+    d.subject = "Fwd: Plan for Friday".into();
+    d.body = String::new();
+    d.files = vec![piuma_core::smtp::OutgoingFile {
+        name: "Plan for Friday.eml".into(),
+        mime: piuma_core::files::mime_for("Plan for Friday.eml").into(),
+        data: ORIGINAL.as_bytes().to_vec(),
+    }];
+    send(&smtp(port, "test"), &ready(&d).unwrap()).await.unwrap();
+
+    let got = inbox.lock().unwrap();
+    let data = &got[0].data;
+    assert!(data.contains("Content-Type: message/rfc822"), "{data}");
+    assert!(data.contains("Content-Transfer-Encoding: 8bit"), "{data}");
+    let raw = data.replace('\n', "\r\n");
+    let m = mail_parser::MessageParser::default()
+        .parse(raw.as_bytes())
+        .unwrap();
+    let inner = m.attachments().next().unwrap().nested().unwrap();
+    assert_eq!(inner.subject(), Some("Plan for Friday"));
+    assert_eq!(inner.message_id(), Some("plan@x.it"));
+    assert_eq!(
+        inner.body_text(0).unwrap().trim_end(),
+        "See you at 20:30, caffè after."
+    );
+}

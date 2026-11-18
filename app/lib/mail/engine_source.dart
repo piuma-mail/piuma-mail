@@ -3,6 +3,7 @@ import 'dart:async';
 import '../notify/android_background.dart';
 import 'android_passwords.dart';
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show AppLifecycleState;
 
@@ -21,6 +22,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/reply.dart' as rep;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
@@ -1676,7 +1678,11 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  Future<String> saveText(String name, String text) async {
+  Future<String> saveText(String name, String text) =>
+      saveFile(name, Uint8List.fromList(utf8.encode(text)));
+
+  @override
+  Future<String> saveFile(String name, Uint8List data) async {
     Future<String> saveIn(Directory folder) async {
       final dot = name.lastIndexOf('.');
       final stem = dot < 0 ? name : name.substring(0, dot);
@@ -1685,7 +1691,7 @@ class EngineMailSource extends MailSource {
       for (var n = 2; await file.exists(); n++) {
         file = File('${folder.path}/$stem ($n)$ext');
       }
-      await file.writeAsString(text, flush: true);
+      await file.writeAsBytes(data, flush: true);
       return file.path;
     }
 
@@ -1743,6 +1749,73 @@ class EngineMailSource extends MailSource {
   @override
   Future<void> setMuted(String email, bool muted) =>
       engine.setSenderMuted(email: email, muted: muted);
+
+  @override
+  Future<MailEnvelope?> envelope(MailRow row) async {
+    try {
+      final e = await rep.messageEnvelope(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+      );
+      return MailEnvelope(
+        to: [for (final a in e.to) MailPerson(a.name, a.email)],
+        cc: [for (final a in e.cc) MailPerson(a.name, a.email)],
+        bccYou: e.bccYou,
+        replyTo: e.replyTo,
+        replyAllTo: e.replyAllTo,
+        replyAllCc: e.replyAllCc,
+        listPost: e.listPost,
+        muted: e.muted,
+      );
+    } catch (_) {
+      // Mail kept before its headers were read, with the server out of
+      // reach: Reply goes to the sender, as before.
+      return null;
+    }
+  }
+
+  @override
+  Future<Uint8List> rawMessage(MailRow row) => rep.messageSource(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+  );
+
+  @override
+  List<MailHeader> headersOf(Uint8List raw) => [
+    for (final h in rep.messageHeaders(raw: raw)) MailHeader(h.name, h.value),
+  ];
+
+  @override
+  Future<void> redirect(MailRow row, List<String> to) async {
+    try {
+      await rep.redirectMessage(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+        fromEmail: replyFrom(row),
+        to: to,
+      );
+    } on engine.EngineError catch (e) {
+      throw SendException(switch (e.kind) {
+        engine.ErrorKind.badAddress => SendError.badAddress,
+        engine.ErrorKind.noRecipients => SendError.noRecipients,
+        engine.ErrorKind.wrongPassword => SendError.wrongPassword,
+        engine.ErrorKind.unreachable => SendError.unreachable,
+        engine.ErrorKind.rejected => SendError.rejected,
+        _ => SendError.other,
+      }, e.detail);
+    }
+  }
+
+  @override
+  Future<void> setThreadMuted(MailRow row, bool muted) => rep.setThreadMuted(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+    muted: muted,
+  );
 
   @override
   Future<bool> isBlocked(String email) async =>

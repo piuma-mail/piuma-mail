@@ -3,11 +3,13 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
 
 import 'calendars.dart';
+import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
 
 export 'calendars.dart';
+export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
 
@@ -2230,6 +2232,33 @@ abstract class MailSource {
 
   /// Mute a sender's notifications, or let them come again.
   Future<void> setMuted(String email, bool muted);
+
+  /// Who [row] went to, and who Reply, Reply all and Reply to list write
+  /// to. Null when it can't be known (mail kept before its headers were
+  /// read, with the server out of reach): Reply then goes to the sender.
+  Future<MailEnvelope?> envelope(MailRow row) async => null;
+
+  /// [row] as it came from the server, byte for byte: View source, Save
+  /// as .eml, Forward as attachment and Redirect start from it.
+  Future<Uint8List> rawMessage(MailRow row) =>
+      Future.error(UnsupportedError('no raw message'));
+
+  /// The headers of a raw message, in order, encoded words decoded.
+  List<MailHeader> headersOf(Uint8List raw) => const [];
+
+  /// Redirect: sends [row] unchanged to [to], from the account (or the
+  /// alias it was written to), with Resent-* headers on top.
+  Future<void> redirect(MailRow row, List<String> to) =>
+      Future.error(UnsupportedError('no redirect'));
+
+  /// Mutes [row]'s conversation, or unmutes it: new mail in it arrives
+  /// read and makes no notice. It stays in the inbox.
+  Future<void> setThreadMuted(MailRow row, bool muted) async {}
+
+  /// Saves [data] in Downloads as [name], or a name like it no other file
+  /// there has, as [saveText] does; returns the saved file's path.
+  Future<String> saveFile(String name, Uint8List data) =>
+      Future.error(UnsupportedError('no files'));
 
   /// Whether a sender's new mail goes straight to Trash.
   Future<bool> isBlocked(String email);

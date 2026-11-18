@@ -404,7 +404,7 @@ pub fn new_message_id(from: &str) -> String {
 }
 
 /// Every lone LF becomes CRLF.
-fn to_crlf(raw: &[u8]) -> Vec<u8> {
+pub(crate) fn to_crlf(raw: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len() + raw.len() / 40);
     let mut last = 0u8;
     for &b in raw {
