@@ -9135,6 +9135,408 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
+
+  /// No description provided for @star.
+  ///
+  /// In en, this message translates to:
+  /// **'Star'**
+  String get star;
+
+  /// No description provided for @unstar.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove star'**
+  String get unstar;
+
+  /// No description provided for @folderStarred.
+  ///
+  /// In en, this message translates to:
+  /// **'Starred'**
+  String get folderStarred;
+
+  /// No description provided for @messageStarred.
+  ///
+  /// In en, this message translates to:
+  /// **'Starred'**
+  String get messageStarred;
+
+  /// No description provided for @starredMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Starred} other{{count} conversations starred}}'**
+  String starredMany(int count);
+
+  /// No description provided for @unstarredMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Star removed} other{Stars removed from {count} conversations}}'**
+  String unstarredMany(int count);
+
+  /// No description provided for @starFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t change the star. Try again in a moment.'**
+  String get starFailed;
+
+  /// No description provided for @trashFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Trash'**
+  String get trashFolder;
+
+  /// No description provided for @deleteForever.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for good'**
+  String get deleteForever;
+
+  /// No description provided for @deleteForeverTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Delete this email for good?} other{Delete {count} emails for good?}}'**
+  String deleteForeverTitle(int count);
+
+  /// No description provided for @deleteForeverNote.
+  ///
+  /// In en, this message translates to:
+  /// **'They can’t be brought back, here or on the server.'**
+  String get deleteForeverNote;
+
+  /// No description provided for @deletedForeverMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Deleted for good} other{{count} emails deleted for good}}'**
+  String deletedForeverMany(int count);
+
+  /// No description provided for @emptyTrash.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty Trash'**
+  String get emptyTrash;
+
+  /// No description provided for @emptySpam.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty spam'**
+  String get emptySpam;
+
+  /// No description provided for @emptyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{{folder} is empty} =1{Delete the email in {folder} for good?} other{Delete all {count} emails in {folder} for good?}}'**
+  String emptyTitle(int count, String folder);
+
+  /// No description provided for @emptyConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty'**
+  String get emptyConfirm;
+
+  /// No description provided for @emptyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t empty it. Try again when you’re online.'**
+  String get emptyFailed;
+
+  /// No description provided for @copyTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy to…'**
+  String get copyTo;
+
+  /// No description provided for @copyToIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy to folder in {name}'**
+  String copyToIn(String name);
+
+  /// No description provided for @copiedMany.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Copied to {folder}} other{{count} conversations copied to {folder}}}'**
+  String copiedMany(int count, String folder);
+
+  /// No description provided for @folderActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More for “{name}”'**
+  String folderActions(String name);
+
+  /// No description provided for @folderRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get folderRename;
+
+  /// No description provided for @folderRenameTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename “{name}”'**
+  String folderRenameTitle(String name);
+
+  /// No description provided for @folderNewName.
+  ///
+  /// In en, this message translates to:
+  /// **'New name'**
+  String get folderNewName;
+
+  /// No description provided for @folderHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide from lists'**
+  String get folderHide;
+
+  /// No description provided for @folderShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in lists'**
+  String get folderShow;
+
+  /// No description provided for @folderHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Hidden'**
+  String get folderHidden;
+
+  /// No description provided for @folderDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete folder'**
+  String get folderDelete;
+
+  /// No description provided for @folderDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}”?'**
+  String folderDeleteTitle(String name);
+
+  /// No description provided for @folderDeleteEmails.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{It holds no emails.} =1{Its email goes to Trash.} other{Its {count} emails go to Trash.}}'**
+  String folderDeleteEmails(int count);
+
+  /// No description provided for @folderDeleteSubfolders.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Its subfolder goes with it.} other{Its {count} subfolders go with it.}}'**
+  String folderDeleteSubfolders(int count);
+
+  /// No description provided for @folderDeleteEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'The folder can’t be brought back; its emails can, from Trash.'**
+  String get folderDeleteEnd;
+
+  /// No description provided for @folderChangeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t change the folder.'**
+  String get folderChangeFailed;
+
+  /// No description provided for @hiddenFoldersShow.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Show 1 hidden folder} other{Show {count} hidden folders}}'**
+  String hiddenFoldersShow(int count);
+
+  /// No description provided for @hiddenFoldersHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide hidden folders'**
+  String get hiddenFoldersHide;
+
+  /// No description provided for @folderExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the folders in {name}'**
+  String folderExpand(String name);
+
+  /// No description provided for @folderCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide the folders in {name}'**
+  String folderCollapse(String name);
+
+  /// No description provided for @specialFolders.
+  ///
+  /// In en, this message translates to:
+  /// **'Special folders'**
+  String get specialFolders;
+
+  /// No description provided for @specialFoldersNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma finds them from your server’s marks and their names. If one is wrong, pick the right folder.'**
+  String get specialFoldersNote;
+
+  /// No description provided for @specialFoldersOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Special folders of {name}'**
+  String specialFoldersOf(String name);
+
+  /// No description provided for @specialAutomatic.
+  ///
+  /// In en, this message translates to:
+  /// **'As the server says'**
+  String get specialAutomatic;
+
+  /// No description provided for @specialNone.
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get specialNone;
+
+  /// No description provided for @specialChosen.
+  ///
+  /// In en, this message translates to:
+  /// **'Chosen by you'**
+  String get specialChosen;
+
+  /// No description provided for @listsHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'Lists'**
+  String get listsHeading;
+
+  /// No description provided for @listOrder.
+  ///
+  /// In en, this message translates to:
+  /// **'Sort'**
+  String get listOrder;
+
+  /// No description provided for @orderNewest.
+  ///
+  /// In en, this message translates to:
+  /// **'Newest first'**
+  String get orderNewest;
+
+  /// No description provided for @orderOldest.
+  ///
+  /// In en, this message translates to:
+  /// **'Oldest first'**
+  String get orderOldest;
+
+  /// No description provided for @orderSender.
+  ///
+  /// In en, this message translates to:
+  /// **'By sender'**
+  String get orderSender;
+
+  /// No description provided for @listThreads.
+  ///
+  /// In en, this message translates to:
+  /// **'Group into conversations'**
+  String get listThreads;
+
+  /// No description provided for @listThreadsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, every email is a row of its own.'**
+  String get listThreadsNote;
+
+  /// No description provided for @swipeRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe right'**
+  String get swipeRight;
+
+  /// No description provided for @swipeLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe left'**
+  String get swipeLeft;
+
+  /// No description provided for @swipeRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read or unread'**
+  String get swipeRead;
+
+  /// No description provided for @swipeStar.
+  ///
+  /// In en, this message translates to:
+  /// **'Star'**
+  String get swipeStar;
+
+  /// No description provided for @swipeMove.
+  ///
+  /// In en, this message translates to:
+  /// **'Move to…'**
+  String get swipeMove;
+
+  /// No description provided for @swipeNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing'**
+  String get swipeNothing;
+
+  /// No description provided for @quotaLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get quotaLabel;
+
+  /// No description provided for @quotaUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'{used} of {limit}'**
+  String quotaUsed(String used, String limit);
+
+  /// No description provided for @quotaNearlyFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearly full. Delete or archive some mail, or new mail may not arrive.'**
+  String get quotaNearlyFull;
+
+  /// No description provided for @draggedEmails.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 email} other{{count} emails}}'**
+  String draggedEmails(int count);
+
+  /// No description provided for @shortcutStar.
+  ///
+  /// In en, this message translates to:
+  /// **'Star or remove the star'**
+  String get shortcutStar;
+
+  /// No description provided for @badgeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Piuma Mail} other{Piuma Mail ({count})}}'**
+  String badgeTitle(int count);
+
+  /// No description provided for @badgeUnread.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 unread email} other{{count} unread emails}}'**
+  String badgeUnread(int count);
+
+  /// No description provided for @moreShort.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get moreShort;
+
+  /// No description provided for @swipeNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.'**
+  String get swipeNote;
+
+  /// No description provided for @folderDeleteProtected.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” can’t be deleted: {inside} is inside it, and would go with it.'**
+  String folderDeleteProtected(String name, String inside);
+
+  /// No description provided for @specialRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.'**
+  String get specialRefused;
 }
 
 class _AppLocalizationsDelegate

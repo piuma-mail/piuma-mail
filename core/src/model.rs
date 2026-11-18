@@ -122,18 +122,63 @@ pub enum Section {
 }
 
 /// What a list keeps: one [`Section`] of it, and with `unread` only the
-/// conversations with something unread (`FiltersToApprove`, variant 2).
+/// conversations with something unread (`FiltersToApprove`, variant 2);
+/// in which [`ListOrder`], and with `flat` one row per message instead
+/// of one per conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ListFilter {
     pub section: Section,
     pub unread: bool,
+    pub order: ListOrder,
+    pub flat: bool,
 }
 
 impl From<Section> for ListFilter {
     fn from(section: Section) -> Self {
         ListFilter {
             section,
-            unread: false,
+            ..ListFilter::default()
+        }
+    }
+}
+
+/// How a list is sorted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListOrder {
+    /// Newest first, the app's way.
+    #[default]
+    Newest,
+    Oldest,
+    /// By who sent it, A to Z, newest first for each.
+    Sender,
+}
+
+impl ListOrder {
+    pub fn tag(self) -> &'static str {
+        match self {
+            ListOrder::Newest => "newest",
+            ListOrder::Oldest => "oldest",
+            ListOrder::Sender => "sender",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Self {
+        match tag {
+            "oldest" => ListOrder::Oldest,
+            "sender" => ListOrder::Sender,
+            _ => ListOrder::Newest,
+        }
+    }
+
+    /// The SQL that sorts a list of messages `m`.
+    pub(crate) fn sql(self) -> &'static str {
+        match self {
+            ListOrder::Newest => "m.received_at DESC, m.account, m.uid DESC",
+            ListOrder::Oldest => "m.received_at ASC, m.account, m.uid ASC",
+            ListOrder::Sender => {
+                "lower(CASE WHEN m.from_name <> '' THEN m.from_name ELSE m.from_email END),
+                 m.received_at DESC, m.account, m.uid DESC"
+            }
         }
     }
 }
