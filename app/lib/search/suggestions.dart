@@ -148,9 +148,10 @@ List<SearchSuggestion> searchSuggestions(
       for (final days in [7, 30, 365])
         (day.format(now.subtract(Duration(days: days))), ''),
     ],
-    'from' || 'to' || 'cc' || 'bcc' => [
-      for (final p in data.people) (p.email, p.name),
-    ],
+    'from' ||
+    'to' ||
+    'cc' ||
+    'bcc' => [for (final p in data.people) (p.email, p.name)],
     _ => const [],
   };
   bool fits((String, String) v) {

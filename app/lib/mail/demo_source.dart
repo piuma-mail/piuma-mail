@@ -3586,7 +3586,8 @@ class DemoMailSource extends MailSource {
   @override
   Future<ServerResults> searchServer(String query, {int limit = 50}) async {
     final round = ++_serverRound;
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    // A real server takes a moment; tests and screenshots needn't wait.
+    await Future<void>.value();
     if (round != _serverRound) throw StateError('server search cancelled');
     final words = searchWords(query);
     if (words.isEmpty) return const ServerResults(asked: false);
@@ -3594,7 +3595,8 @@ class DemoMailSource extends MailSource {
     final found = [
       for (final r in _onServer)
         if (words.every(
-          (w) => has('${r.subject} ${r.fromName} ${r.fromEmail} ${r.preview}', w),
+          (w) =>
+              has('${r.subject} ${r.fromName} ${r.fromEmail} ${r.preview}', w),
         ))
           r,
     ];

@@ -184,7 +184,8 @@ class _SearchPanelState extends State<SearchPanel> {
     try {
       final source = widget.source;
       final folders = <String>[
-        for (final a in source.accounts) ...folderPaths(await source.folders(a.id)),
+        for (final a in source.accounts)
+          ...folderPaths(await source.folders(a.id)),
       ];
       final labels = [for (final l in await source.labels()) l.name];
       final start = _start ?? await source.searchStart();
@@ -1046,7 +1047,12 @@ class _SearchPanelState extends State<SearchPanel> {
                 child: Row(
                   children: [
                     for (final s in _suggestions)
-                      _Operator(s.insert, s.label, (_) => _accept(s), tall: true),
+                      _Operator(
+                        s.insert,
+                        s.label,
+                        (_) => _accept(s),
+                        tall: true,
+                      ),
                   ],
                 ),
               ),
@@ -1093,11 +1099,7 @@ class _SearchPanelState extends State<SearchPanel> {
         saved: _saved,
         onSaved: (s) => _again(s.query),
         onEditSaved: (s) async {
-          await showSavedSearchEditor(
-            context,
-            source: widget.source,
-            saved: s,
-          );
+          await showSavedSearchEditor(context, source: widget.source, saved: s);
           await _loadStart();
         },
       );
@@ -1117,33 +1119,35 @@ class _SearchPanelState extends State<SearchPanel> {
         padding: EdgeInsets.fromLTRB(side, phone ? 72 : 40, side, 18),
         children: [
           Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _anyFilter ? l.searchNoResultsFilters : l.searchNoResults,
-              style: PiumaType.body.copyWith(
-                fontWeight: FontWeight.w600,
-                color: c.fg,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _anyFilter ? l.searchNoResultsFilters : l.searchNoResults,
+                style: PiumaType.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: c.fg,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _anyFilter ? l.searchNoResultsFiltersHint : l.searchNoResultsHint,
-              style: PiumaType.body.copyWith(color: c.muted),
-            ),
-            if (_anyFilter) ...[
-              const SizedBox(height: 14),
-              PiumaButton(
-                label: l.clearFilters,
-                kind: PiumaButtonKind.secondary,
-                size: PiumaButtonSize.compact,
-                onPressed: _clearFilters,
+              const SizedBox(height: 6),
+              Text(
+                _anyFilter
+                    ? l.searchNoResultsFiltersHint
+                    : l.searchNoResultsHint,
+                style: PiumaType.body.copyWith(color: c.muted),
               ),
+              if (_anyFilter) ...[
+                const SizedBox(height: 14),
+                PiumaButton(
+                  label: l.clearFilters,
+                  kind: PiumaButtonKind.secondary,
+                  size: PiumaButtonSize.compact,
+                  onPressed: _clearFilters,
+                ),
+              ],
+              const SizedBox(height: 22),
+              ..._serverStatus(context),
             ],
-            const SizedBox(height: 22),
-            ..._serverStatus(context),
-          ],
-        ),
+          ),
         ],
       );
     }
@@ -1306,7 +1310,12 @@ class _SearchPanelState extends State<SearchPanel> {
     return [
       if (hits.isNotEmpty) ...[
         Padding(
-          padding: EdgeInsets.fromLTRB(side, phone ? 16 : 14, side, phone ? 4 : 6),
+          padding: EdgeInsets.fromLTRB(
+            side,
+            phone ? 16 : 14,
+            side,
+            phone ? 4 : 6,
+          ),
           child: Semantics(
             header: true,
             child: Row(
