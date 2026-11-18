@@ -100,6 +100,15 @@ Finder _field(String label) => find.descendant(
   matching: find.byType(TextField),
 );
 
+/// Taps what shows [text], scrolled into view first.
+Future<void> _tap(WidgetTester tester, String text, {bool last = false}) async {
+  final f = last ? find.text(text).last : find.text(text).first;
+  await tester.ensureVisible(f);
+  await tester.pumpAndSettle();
+  await tester.tap(f);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _manual(WidgetTester tester, String email) async {
   await tester.enterText(find.byType(TextField).first, email);
   await tester.pump();
@@ -211,8 +220,7 @@ void main() {
     expect(find.text('CN=mail.studio.it, O=Studio'), findsOneWidget);
     expect(find.text('2027-01-31'), findsOneWidget);
     // Nothing is trusted until the person says so.
-    await tester.tap(find.text('Trust this certificate'));
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Trust this certificate');
     expect(source.adds, 2);
     expect(source.gotTrusted.single.host, 'mail.studio.it');
     expect(source.gotTrusted.single.fingerprint, _selfSigned.fingerprint);
@@ -281,8 +289,7 @@ void main() {
     expect(find.text('Password'), findsNothing);
     await tester.enterText(_field('Email address'), 'anna@outlook.com');
     await tester.pump();
-    await tester.tap(find.text('Sign in with Microsoft').last);
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Sign in with Microsoft', last: true);
     expect(source.oauthProvider, 'microsoft');
     expect(source.oauthClient, isNull);
     expect(find.text('Account connected'), findsOneWidget);
@@ -298,17 +305,14 @@ void main() {
     expect(find.textContaining('no Microsoft sign-in set up'), findsOneWidget);
     await tester.enterText(_field('Email address'), 'anna@outlook.com');
     await tester.pump();
-    await tester.tap(find.text('Sign in with Microsoft').last);
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Sign in with Microsoft', last: true);
     expect(source.adds, 0, reason: 'no client: nothing to sign in with');
 
-    await tester.tap(find.text('Advanced: your own client ID'));
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Advanced: your own client ID');
     await tester.enterText(_field('Client ID'), ' my-client ');
     await tester.enterText(_field('Tenant (optional)'), 'organizations');
     await tester.pump();
-    await tester.tap(find.text('Sign in with Microsoft').last);
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Sign in with Microsoft', last: true);
     expect(source.oauthClient?.clientId, 'my-client');
     expect(source.oauthClient?.tenant, 'organizations');
     expect(source.oauthClient?.clientSecret, isNull);
@@ -362,8 +366,7 @@ void main() {
     await tester.tap(find.text('Gmail'));
     await tester.pumpAndSettle();
     expect(find.text('Sign in with Google'), findsWidgets);
-    await tester.tap(find.text('Use an app password instead'));
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Use an app password instead');
     expect(find.text('Gmail needs an app password'), findsOneWidget);
   });
 
@@ -385,8 +388,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(_field('Email address'), 'anna@outlook.com');
     await tester.pump();
-    await tester.tap(find.text('Sign in with Microsoft').last);
-    await tester.pumpAndSettle();
+    await _tap(tester, 'Sign in with Microsoft', last: true);
     expect(
       find.textContaining('was closed before it finished'),
       findsOneWidget,
