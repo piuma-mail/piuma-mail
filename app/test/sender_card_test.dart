@@ -19,18 +19,19 @@ Future<DemoMailSource> _pump(
   WidgetTester tester, {
   bool dark = false,
   bool phone = false,
+  DemoMailSource? source,
 }) async {
   tester.view.physicalSize = phone
       ? const Size(390, 844)
       : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now);
+  source ??= DemoMailSource(now: _now);
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
       home: (_, _) =>
-          InboxScreen(source: source, onAddAccount: () {}, now: () => _now),
+          InboxScreen(source: source!, onAddAccount: () {}, now: () => _now),
     ),
   );
   await tester.pump(const Duration(seconds: 2));
@@ -225,6 +226,39 @@ void main() {
     expect(_inCard(find.text('Move to Newsletters')), findsOneWidget);
   });
 
+  testWidgets(
+    'clearing a newsletter leaves what is in spam and counts the rest',
+    (tester) async {
+      final source = await _pump(
+        tester,
+        phone: true,
+        source: _AlsoInSpam(now: _now),
+      );
+      await _openForma(tester);
+      await tester.tap(_inCard(find.text('Unsubscribe')));
+      await tester.pumpAndSettle();
+      await tester.tap(_inCard(find.text('Yes, clear')));
+      await tester.pumpAndSettle();
+      final trashed = [
+        for (final (r, a) in source.applied)
+          if (a == MessageAction.delete) r,
+      ];
+      expect(trashed, isNotEmpty);
+      expect(trashed.where((r) => r.mailbox == 'Junk'), isEmpty);
+      final n = trashed.length;
+      expect(
+        _inCard(
+          find.text(
+            n == 1
+                ? 'Unsubscribed · 1 email moved to Trash'
+                : 'Unsubscribed · $n emails moved to Trash',
+          ),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('the desktop card has no Block', (tester) async {
     await _pump(tester);
     await _openCard(tester);
@@ -383,4 +417,25 @@ void main() {
       );
     });
   }, tags: ['golden']);
+}
+
+/// The demo, with one of the newsletter's emails also found in spam:
+/// Delete there would be for good, so clearing leaves it.
+class _AlsoInSpam extends DemoMailSource {
+  _AlsoInSpam({super.now});
+
+  @override
+  Future<SearchResults> search(String query, {int limit = 50}) async {
+    final found = await super.search(query, limit: limit);
+    if (found.hits.isEmpty) return found;
+    final spam = found.hits.first.row.copyWith(mailbox: 'Junk', uid: 99999);
+    return SearchResults(
+      total: found.total + 1,
+      hits: [...found.hits, SearchHit(spam)],
+      people: found.people,
+      files: found.files,
+      searched: found.searched,
+      elapsed: found.elapsed,
+    );
+  }
 }

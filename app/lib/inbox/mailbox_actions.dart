@@ -391,7 +391,7 @@ Future<void> showSpecialFolders(
   final title = l.specialFoldersOf(account.name);
   Widget panel(BuildContext context) => Padding(
     padding: EdgeInsets.symmetric(horizontal: phone ? 20 : 0),
-    child: SpecialFolders(source: source, account: account),
+    child: SpecialFolders(source: source, account: account, phone: phone),
   );
   return phone
       ? showPiumaSheet<void>(context, label: title, builder: panel)
@@ -409,10 +409,14 @@ class SpecialFolders extends StatefulWidget {
     super.key,
     required this.source,
     required this.account,
+    this.phone = false,
   });
 
   final MailSource source;
   final MailAccount account;
+
+  /// On the phone, what can't be done is said in a sheet.
+  final bool phone;
 
   @override
   State<SpecialFolders> createState() => _SpecialFoldersState();
@@ -511,6 +515,7 @@ class _SpecialFoldersState extends State<SpecialFolders> {
           context,
           title: _roleName(l, role.role),
           note: l.specialRefused,
+          phone: widget.phone,
         );
       }
     }

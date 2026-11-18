@@ -119,12 +119,14 @@ void main() {
     ValueChanged<MailRow>? onReply,
     VoidCallback? onDone,
     bool dark = false,
+    String? mailbox,
   }) async {
     tester.view.physicalSize = const Size(800, 600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final source = DemoMailSource(now: _now);
-    final row = await _row(source, 'Dinner on Friday?');
+    var row = await _row(source, 'Dinner on Friday?');
+    if (mailbox != null) row = row.copyWith(mailbox: mailbox);
     await tester.pumpWidget(
       PiumaApp(
         initialDark: dark,
@@ -165,6 +167,36 @@ void main() {
     await tester.pumpAndSettle();
     expect((changed, done), (1, 1));
     expect(source.applied.single.$2, MessageAction.archive);
+  });
+
+  testWidgets('Delete in spam asks first, as everywhere, then goes for good', (
+    tester,
+  ) async {
+    var changed = 0;
+    var done = 0;
+    final source = await window(
+      tester,
+      mailbox: 'Junk',
+      onChanged: () => changed++,
+      onDone: () => done++,
+    );
+    await tester.tap(find.bySemanticsLabel('Delete').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this email for good?'), findsOneWidget);
+    // Cancelled: the window stays, nothing goes.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect((changed, done), (0, 0));
+    expect(source.erased, isEmpty);
+    expect(source.applied, isEmpty);
+
+    await tester.tap(find.bySemanticsLabel('Delete').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete for good'));
+    await tester.pumpAndSettle();
+    expect(source.erased.single.subject, 'Dinner on Friday?');
+    expect(source.applied, isEmpty);
+    expect((changed, done), (1, 1));
   });
 
   for (final dark in [false, true]) {

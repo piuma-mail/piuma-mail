@@ -213,15 +213,19 @@ class _SenderCardState extends State<SenderCard> {
     }
   }
 
-  /// Moves what the newsletter sent before to Trash.
+  /// Moves what the newsletter sent before to Trash. What is already in
+  /// Trash or spam stays where it is, and isn't counted.
   Future<void> _clear() async {
-    final found = await widget.source.search('from:$_email', limit: 1000);
+    final source = widget.source;
+    final found = await source.search('from:$_email', limit: 1000);
     final rows = [
       for (final h in found.hits)
-        if (h.row.fromEmail.toLowerCase() == _email.toLowerCase()) h.row,
+        if (h.row.fromEmail.toLowerCase() == _email.toLowerCase() &&
+            !source.deletesForGood(h.row.accountId, h.row.mailbox))
+          h.row,
     ];
     if (rows.isNotEmpty) {
-      await widget.source.apply(rows, MessageAction.delete);
+      await source.apply(rows, MessageAction.delete);
     }
     if (!mounted) return;
     setState(() {

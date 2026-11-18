@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/mailbox_actions.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
+import 'package:piuma_mail/inbox/phone_parts.dart';
 import 'package:piuma_mail/inbox/swipe.dart';
 import 'package:piuma_mail/l10n/app_localizations.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
@@ -657,6 +658,137 @@ void main() {
     expect(find.text('Junk'), findsOneWidget);
   });
 
+  group('the new questions on the phone, as sheets', () {
+    const phone = Size(390, 844);
+
+    /// A sheet rises from the bottom edge; a dialog sits in the middle.
+    Finder inSheet(Finder text) => find.ancestor(
+      of: text,
+      matching: find.byWidgetPredicate(
+        (w) => w is Align && w.alignment == Alignment.bottomCenter,
+      ),
+    );
+
+    testWidgets('a mixed selection deletes for good only what it confirmed', (
+      tester,
+    ) async {
+      final source = _OneForGood(now: _now);
+      await _pump(tester, size: phone, source: source);
+      final rows = _rows(tester).toList();
+      expect(rows.first.mailbox, 'Junk');
+      Finder tile(MailRow r) => find.descendant(
+        of: find.byType(InboxRowTile),
+        matching: find.text(r.subject),
+      );
+      await tester.longPress(tile(rows[0]));
+      await tester.pumpAndSettle();
+      await tester.tap(tile(rows[1]));
+      await tester.pumpAndSettle();
+      Future<void> delete() async {
+        await tester.tap(
+          find.descendant(
+            of: find.byType(PhoneSelectBar),
+            matching: find.bySemanticsLabel('Delete'),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await delete();
+      final title = find.text('Delete this email for good?');
+      expect(inSheet(title), findsOneWidget);
+      // Cancelled: nothing at all goes.
+      await tester.tap(
+        find.descendant(of: inSheet(title), matching: find.text('Cancel')),
+      );
+      await tester.pumpAndSettle();
+      expect(source.erased, isEmpty);
+      await tester.pump(const Duration(seconds: 11));
+      expect(source.applied, isEmpty);
+      // Confirmed: one for good, the other to Trash with Undo.
+      await delete();
+      await tester.tap(find.text('Delete for good'));
+      await tester.pumpAndSettle();
+      expect(source.erased.map((r) => r.key), [rows[0].key]);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      final trashed = source.applied
+          .where((a) => a.$2 == MessageAction.delete)
+          .map((a) => a.$1.key)
+          .toSet();
+      expect(trashed, {rows[1].key});
+    });
+
+    testWidgets('a folder holding Trash says it can’t be deleted', (
+      tester,
+    ) async {
+      final source = DemoMailSource(now: _now, mailbox: true);
+      final work = source.accounts.firstWhere((a) => a.name == 'Work');
+      await source.setSpecialFolder(work.id, SpecialRole.trash, 'Clients/Acme');
+      tester.view.physicalSize = phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final folders = {
+        for (final a in source.accounts) a.id: await source.folders(a.id),
+      };
+      await tester.pumpWidget(
+        PiumaApp(
+          home: (_, _) => Scaffold(
+            body: SingleChildScrollView(
+              child: FoldersAndLabels(
+                source: source,
+                folders: folders,
+                labels: const [],
+                onChanged: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.bySemanticsLabel('More for “Clients”'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('More for “Clients”'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete folder'));
+      await tester.pumpAndSettle();
+      final note = find.text(
+        '“Clients” can’t be deleted: Clients/Acme is inside it, '
+        'and would go with it.',
+      );
+      expect(inSheet(note), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('Clients'), findsOneWidget);
+    });
+
+    testWidgets('a refused special folder is said in a sheet', (tester) async {
+      final source = _RefusesSpecial(now: _now);
+      final work = source.accounts.firstWhere((a) => a.name == 'Work');
+      tester.view.physicalSize = phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        PiumaApp(
+          home: (_, _) => Scaffold(
+            body: SpecialFolders(source: source, account: work, phone: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Trash: Trash'));
+      await tester.pumpAndSettle();
+      expect(find.text('INBOX'), findsNothing);
+      await tester.tap(find.text('Invoices').last);
+      await tester.pumpAndSettle();
+      final l = await AppLocalizations.delegate.load(const Locale('en'));
+      expect(inSheet(find.text(l.specialRefused)), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text(l.specialRefused), findsNothing);
+    });
+  });
+
   test('hidden folders and closed parents leave the sidebar', () {
     const list = [
       AccountFolder(mailbox: 'A', name: 'A'),
@@ -716,4 +848,16 @@ class _OneForGood extends DemoMailSource {
             : r,
     ];
   }
+}
+
+/// The demo, with a server that won't take a folder for a job.
+class _RefusesSpecial extends DemoMailSource {
+  _RefusesSpecial({super.now}) : super(mailbox: true);
+
+  @override
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async => throw StateError('refused');
 }
