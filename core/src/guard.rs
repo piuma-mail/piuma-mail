@@ -191,6 +191,22 @@ mod tests {
     }
 
     #[test]
+    fn an_unquoted_secret_in_a_panic_stays_out_of_the_log() {
+        // Both hooks, as in the app: feedback's keeps the message for the
+        // crash file only, the guard's notes the place.
+        crate::feedback::install_panic_hook(false);
+        install();
+        shielded(
+            "login",
+            || (),
+            || panic!("server said: password Tr0ub4dor rejected for anna"),
+        );
+        let log = crate::feedback::recent_log();
+        assert!(log.contains("panic in login"));
+        assert!(!log.contains("Tr0ub4dor"), "{log}");
+    }
+
+    #[test]
     fn a_release_build_prints_the_place_only() {
         assert_eq!(
             place_only(Some(("core/src/reading.rs", 902))),

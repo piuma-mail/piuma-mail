@@ -124,6 +124,29 @@ One exception: **Google on Android** takes only the client the build was made wi
 
 The sign-in answer is accepted only with this sign-in's `state` (compared in constant time); answers with another `state` are ignored and the app keeps waiting until the five minutes run out. When the provider names itself in the answer (`iss`, RFC 9207; Google does), it must be the `issuer` in `oauth_providers.json`.
 
+## Reports in a fork
+
+In-app reports go to the project's report relay ([`relay/`](relay/README.md)), which files them in
+the project's private feedback repository; the privacy notice ([PRIVACY.md](PRIVACY.md)) names who
+handles them. A fork that ships its own build points these at itself with environment variables
+read when the Rust engine is built (`flutter build`, `flutter run` and `cargo build` all pass them
+through; nothing is read at run time):
+
+| Variable | What | Project default |
+| --- | --- | --- |
+| `PIUMA_REPORT_RELAY` | The relay's address; empty turns the relay off, leaving "Send by email instead" | `https://piuma-report-relay.matte-maraffio.workers.dev` |
+| `PIUMA_FEEDBACK_ADDRESS` | Where "Send by email instead" writes; empty hides it | `piuma@matteomaraffio.com` |
+| `PIUMA_PRIVACY_CONTROLLER` | Who handles reports, as the privacy notice in the app says | `Matteo Maraffio, maintainer of Piuma Mail` |
+| `PIUMA_PRIVACY_CONTACT` | Where to ask about or erase a report | the feedback address |
+| `PIUMA_PRIVACY_URL` | The full privacy notice | this repository's `PRIVACY.md` |
+| `PIUMA_REPORT_FILES_DAYS` | Days the relay keeps attachments, as the notice says | `90` |
+
+For example `PIUMA_REPORT_RELAY=https://reports.example.org flutter build apk`. Run your own relay
+from `relay/` (its README has the setup, including the R2 bucket and its lifecycle rule), set
+`REPO` to your feedback repository, and adapt `PRIVACY.md`. Moving the project's own relay from
+`workers.dev` to a project domain is a maintainer step (DNS, a Workers route, then a build with the
+new address): see the relay's README, "A project domain".
+
 ## License and DCO sign-off
 
 - Every contribution is released under GPL-3.0-or-later plus the additional app store permission described in [`LICENSE-APPSTORE.md`](LICENSE-APPSTORE.md).

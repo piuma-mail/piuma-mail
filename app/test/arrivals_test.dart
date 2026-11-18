@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/outside/arrivals.dart';
+import 'package:piuma_mail/outside/shell.dart';
 import 'package:piuma_mail/outside/arrive.dart';
 import 'package:piuma_mail/outside/mailto.dart';
 
@@ -334,6 +335,51 @@ void main() {
       stop();
       arrivals.compose();
       expect(got, hasLength(4));
+    });
+
+    test('every way out ends the session: the tray asks before it quits, '
+        'and Quit from the app ends it first', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(channel, null);
+        Shell.reset();
+      });
+      var ended = 0;
+      await Shell.watchSession(
+        marker: '/data/feedback/running',
+        onQuitting: () => ended++,
+      );
+      expect(calls.single.method, 'session');
+      expect(calls.single.arguments, {'marker': '/data/feedback/running'});
+
+      final arrivals = Arrivals.test();
+      await arrivals.start();
+      // The tray's Quit on Linux: the shell waits for this answer.
+      await fromPlatform('quitting');
+      expect(ended, 1);
+
+      calls.clear();
+      await Shell.quit();
+      expect(ended, 2);
+      expect(calls.map((c) => c.method), ['quit']);
+    });
+
+    test('no marker yet (the engine did not open): nothing is sent', () async {
+      final calls = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(channel, null);
+        Shell.reset();
+      });
+      await Shell.watchSession(marker: '', onQuitting: () {});
+      expect(calls, isEmpty);
     });
 
     test('never an endless queue before the inbox listens', () {

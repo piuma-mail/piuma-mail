@@ -2585,6 +2585,33 @@ class ReportPreview {
 
 /// A report written as an email, for "Send by email instead".
 @immutable
+/// Who handles reports, as this build names them, for the privacy notice
+/// ("Reports and privacy").
+class ReportPrivacy {
+  const ReportPrivacy({
+    required this.controller,
+    required this.contact,
+    required this.url,
+    required this.relayHost,
+    required this.filesDays,
+  });
+
+  /// Who decides what happens to reports.
+  final String controller;
+
+  /// Where to ask what is kept, or to have it erased.
+  final String contact;
+
+  /// The full notice; empty for none.
+  final String url;
+
+  /// The relay's host; empty when reports go only by email.
+  final String relayHost;
+
+  /// Days the relay keeps attachments.
+  final int filesDays;
+}
+
 class ReportEmail {
   const ReportEmail({
     required this.to,
@@ -3693,6 +3720,23 @@ abstract class MailSource with ComposeExtras {
 
   /// The email went: the report stops waiting.
   Future<void> reportEmailed(String id);
+
+  /// Who handles reports, for the privacy notice.
+  ReportPrivacy get reportPrivacy => const ReportPrivacy(
+    controller: 'The maintainers of Piuma Mail',
+    contact: 'piuma@example.org',
+    url: 'https://github.com/piuma-mail/piuma-mail/blob/main/PRIVACY.md',
+    relayHost: 'reports.example.org',
+    filesDays: 90,
+  );
+
+  /// "Also ask to erase it", for a report already sent: an email to the
+  /// privacy contact asking for the issue to be erased.
+  Future<ReportEmail> erasureEmail(String id) async => ReportEmail(
+    to: reportPrivacy.contact,
+    subject: 'Erase my Piuma report',
+    body: 'Please erase the report I sent from the app ($id).',
+  );
 
   /// Whether the app crashed last time and the person hasn't answered the
   /// line offering a report yet.

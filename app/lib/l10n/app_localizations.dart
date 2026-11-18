@@ -8383,7 +8383,7 @@ abstract class AppLocalizations {
   /// No description provided for @reportLogHint.
   ///
   /// In en, this message translates to:
-  /// **'No addresses or subjects'**
+  /// **'Addresses and names removed. Check before sending'**
   String get reportLogHint;
 
   /// No description provided for @reportDevice.
@@ -8596,6 +8596,90 @@ abstract class AppLocalizations {
   /// **'Delete'**
   String get reportDelete;
 
+  /// No description provided for @reportPrivacyLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Becomes a private issue on GitHub for the maintainers.'**
+  String get reportPrivacyLine;
+
+  /// No description provided for @reportPrivacyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'How reports are handled'**
+  String get reportPrivacyLink;
+
+  /// No description provided for @reportPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports and privacy'**
+  String get reportPrivacyTitle;
+
+  /// No description provided for @reportPrivacyWhat.
+  ///
+  /// In en, this message translates to:
+  /// **'What is sent: only what “See what\'s sent” shows. Your words, device and app details, and the screenshot, log and files you leave on. The log is scrubbed of addresses, names and subjects, but scrubbing can miss something: check it before sending.'**
+  String get reportPrivacyWhat;
+
+  /// No description provided for @reportPrivacyWhere.
+  ///
+  /// In en, this message translates to:
+  /// **'Where it goes: through the project\'s relay on Cloudflare ({relay}) to a private issue on GitHub, in the United States. Attachments stay in Cloudflare storage in the EU and are deleted after {days, plural, =1{1 day} other{{days} days}}.'**
+  String reportPrivacyWhere(String relay, int days);
+
+  /// No description provided for @reportPrivacyWhereEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Where it goes: by email from your own account to {contact}.'**
+  String reportPrivacyWhereEmail(String contact);
+
+  /// No description provided for @reportPrivacyWho.
+  ///
+  /// In en, this message translates to:
+  /// **'Who sees it: {controller}, the people who help maintain Piuma Mail, and the tools they use to sort reports, AI assistants included. Reports are never sold or used for advertising.'**
+  String reportPrivacyWho(String controller);
+
+  /// No description provided for @reportPrivacyKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'How long: the issue is kept while it helps fix the problem. Deleting a report in Your reports removes only the copy on this device.'**
+  String get reportPrivacyKeep;
+
+  /// No description provided for @reportPrivacyErase.
+  ///
+  /// In en, this message translates to:
+  /// **'To see what is kept or have it erased, write to {contact} with the report number.'**
+  String reportPrivacyErase(String contact);
+
+  /// No description provided for @reportPrivacyFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Full privacy notice'**
+  String get reportPrivacyFull;
+
+  /// No description provided for @reportDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this report?'**
+  String get reportDeleteTitle;
+
+  /// No description provided for @reportDeleteSent.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes it from this device. The report you sent (#{number}) stays with the maintainers: you can ask them to erase it too.'**
+  String reportDeleteSent(int number);
+
+  /// No description provided for @reportDeleteHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete from this device'**
+  String get reportDeleteHere;
+
+  /// No description provided for @reportDeleteAndErase.
+  ///
+  /// In en, this message translates to:
+  /// **'Also ask to erase it'**
+  String get reportDeleteAndErase;
+
   /// No description provided for @reportOptions.
   ///
   /// In en, this message translates to:
@@ -8605,7 +8689,7 @@ abstract class AppLocalizations {
   /// No description provided for @crashLine.
   ///
   /// In en, this message translates to:
-  /// **'Piuma closed unexpectedly. Send a report?'**
+  /// **'Piuma ran into a problem last time. Send a report?'**
   String get crashLine;
 
   /// No description provided for @crashReport.

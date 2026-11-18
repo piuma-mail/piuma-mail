@@ -5753,7 +5753,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get reportLog => 'App-Protokoll';
 
   @override
-  String get reportLogHint => 'Keine Adressen oder Betreffzeilen';
+  String get reportLogHint => 'Ohne Adressen und Namen. Vor dem Senden prüfen';
 
   @override
   String get reportDevice => 'Geräte- und App-Infos';
@@ -5874,10 +5874,72 @@ class AppLocalizationsDe extends AppLocalizations {
   String get reportDelete => 'Löschen';
 
   @override
+  String get reportPrivacyLine =>
+      'Wird ein privates Issue auf GitHub für die Maintainer.';
+
+  @override
+  String get reportPrivacyLink => 'Wie Meldungen behandelt werden';
+
+  @override
+  String get reportPrivacyTitle => 'Meldungen und Datenschutz';
+
+  @override
+  String get reportPrivacyWhat =>
+      'Was gesendet wird: nur, was „Sehen, was gesendet wird“ zeigt. Deine Worte, Angaben zu Gerät und App sowie Screenshot, Protokoll und Dateien, die du eingeschaltet lässt. Aus dem Protokoll werden Adressen, Namen und Betreffzeilen entfernt, aber dabei kann etwas übersehen werden: prüfe es vor dem Senden.';
+
+  @override
+  String reportPrivacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days Tagen',
+      one: '1 Tag',
+    );
+    return 'Wohin es geht: über das Relay des Projekts bei Cloudflare ($relay) in ein privates Issue auf GitHub, in den USA. Anhänge liegen im Cloudflare-Speicher in der EU und werden nach $_temp0 gelöscht.';
+  }
+
+  @override
+  String reportPrivacyWhereEmail(String contact) {
+    return 'Wohin es geht: per E-Mail von deinem eigenen Konto an $contact.';
+  }
+
+  @override
+  String reportPrivacyWho(String controller) {
+    return 'Wer es sieht: $controller, die Menschen, die Piuma Mail mitpflegen, und die Werkzeuge, mit denen sie Meldungen sortieren, KI-Assistenten eingeschlossen. Meldungen werden nie verkauft oder für Werbung genutzt.';
+  }
+
+  @override
+  String get reportPrivacyKeep =>
+      'Wie lange: Das Issue bleibt, solange es bei der Lösung hilft. Eine Meldung in „Deine Meldungen“ zu löschen, entfernt nur die Kopie auf diesem Gerät.';
+
+  @override
+  String reportPrivacyErase(String contact) {
+    return 'Um zu erfahren, was gespeichert ist, oder es löschen zu lassen, schreib an $contact mit der Nummer der Meldung.';
+  }
+
+  @override
+  String get reportPrivacyFull => 'Vollständige Datenschutzerklärung';
+
+  @override
+  String get reportDeleteTitle => 'Diese Meldung löschen?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'Das entfernt sie von diesem Gerät. Die gesendete Meldung (#$number) bleibt bei den Maintainern: Du kannst sie bitten, auch diese zu löschen.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Von diesem Gerät löschen';
+
+  @override
+  String get reportDeleteAndErase => 'Auch um Löschung bitten';
+
+  @override
   String get reportOptions => 'Optionen der Meldung';
 
   @override
-  String get crashLine => 'Piuma wurde unerwartet beendet. Meldung senden?';
+  String get crashLine =>
+      'Piuma hatte beim letzten Mal ein Problem. Meldung senden?';
 
   @override
   String get crashReport => 'Melden';

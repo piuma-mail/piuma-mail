@@ -1,6 +1,10 @@
 # Piuma Mail report relay. Deployed by tools/deploy-relay.sh (or .github/workflows/report-relay.yml),
-# which also sets the secrets (GITHUB_TOKEN, TICKET_SECRET); nothing secret lives here. REPO is the
-# default target: the deploy overrides it with FEEDBACK_REPO when that is set.
+# which also sets the secrets (GITHUB_TOKEN, and TICKET_SECRET and FILES_SECRET the first time);
+# nothing secret lives here. REPO is the default target: the deploy overrides it with FEEDBACK_REPO
+# when that is set.
+#
+# Before the first deploy of this version, the R2 bucket below must exist with its lifecycle rule
+# (relay/README.md, "Setup"): a binding to a missing bucket makes the deploy fail.
 name = "piuma-report-relay"
 main = "src/worker.js"
 compatibility_date = "2026-09-01"
@@ -8,11 +12,36 @@ workers_dev = true
 
 [vars]
 REPO = "piuma-mail/piuma-mail-feedback"
-DAILY_LIMIT = "30"
-# About a second on a phone, milliseconds on a PC: a speed bump, not a wall.
+# Reports a day for everyone: a last resort, the per-network caps below come first.
+DAILY_LIMIT = "200"
+# Reports a day per installation and per network (IPv4 address, IPv6 /48).
+NETWORK_DAILY_LIMIT = "6"
+# Reports a day per autonomous system (a provider): one hosting company can't use up the day.
+# Installations established for ESTABLISHED_HOURS skip it, except on the cloud providers below.
+ASN_DAILY_LIMIT = "40"
+# Cloud and hosting providers (ASNs, comma-separated): rented machines, not people's devices. They
+# get CLOUD_ASN_DAILY_LIMIT, for every installation. Unset: the list in src/worker.js
+# (DEFAULT_CLOUD_ASNS); empty: none.
+# CLOUD_ASNS = "16509,14618,15169,396982,8075,14061,24940,16276,63949,20473"
+CLOUD_ASN_DAILY_LIMIT = "5"
+# An installation whose first report with a solved proof of work is this old is established: it may
+# use the reserve below and isn't held by its provider's cap (outside the cloud providers). New ones
+# get DAILY_LIMIT minus it.
+ESTABLISHED_HOURS = "24"
+ESTABLISHED_RESERVE = "50"
+# New installations a network (IPv4 address, IPv6 /48) may register a day for the lane above.
+NETWORK_DAILY_INSTALLS = "3"
+# Attachment bytes a day, overall and per network; past them reports arrive without files.
+DAILY_BYTES = "524288000"
+NETWORK_DAILY_BYTES = "104857600"
+# Days the bucket keeps attachments: must match the lifecycle rule; the issue says it.
+RETENTION_DAYS = "90"
+# About a second on a phone, milliseconds on a PC: a speed bump, not a wall. At most 24.
 POW_BITS = "16"
+# Where attachment links point; the Worker's own address when unset (set it with a custom domain).
+# PUBLIC_URL = "https://reports.example.org"
 
-# Used tickets, report counters and the daily total, in one SQLite-backed Durable Object.
+# Used tickets, report counters, daily totals, report → issue, health, in one SQLite-backed Durable Object.
 [[durable_objects.bindings]]
 name = "METER"
 class_name = "Meter"
@@ -21,8 +50,33 @@ class_name = "Meter"
 tag = "v1"
 new_sqlite_classes = ["Meter"]
 
-# Per-network rate limit on /challenge and /report (the key is an HMAC of the client IP).
+# Attachments, kept in the EU and deleted after RETENTION_DAYS by the bucket's lifecycle rule.
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "piuma-report-attachments"
+jurisdiction = "eu"
+
+# Per-network rate limit on /challenge, /report and /health/deep (the key is an HMAC of the client
+# IP). namespace_id is a number unique within the Cloudflare account: the maintainer's Final(ish)
+# and Inkadra relays use 1001 on the same account, so this one is 2001. Check before reusing it.
 [[ratelimits]]
 name = "RATE_LIMITER"
-namespace_id = "1001"
+namespace_id = "2001"
 simple = { limit = 10, period = 60 }
+
+# Which version is deployed: /health/deep checks again after each deploy or secret change.
+[version_metadata]
+binding = "VERSION"
+
+# The deep health check and the maintainer alerts, every six hours.
+[triggers]
+crons = ["17 */6 * * *"]
+
+# Workers Logs for the relay's own lines (events and statuses only, never report text). Invocation
+# logs stay off: they would record each request's headers and the caller's address.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = false

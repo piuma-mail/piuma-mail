@@ -8367,6 +8367,29 @@ impl Store {
             .collect())
     }
 
+    /// The names and addresses of the people in the mail on this device,
+    /// those who wrote most first, up to `limit`: what a problem report's
+    /// log must never carry ([`crate::feedback::set_known_people`]).
+    pub fn known_people(&self, limit: u32) -> Result<(Vec<String>, Vec<String>)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT MAX(from_name), lower(from_email) FROM message
+             WHERE from_email IS NOT NULL AND from_email != ''
+             GROUP BY lower(from_email) ORDER BY COUNT(*) DESC LIMIT ?1",
+        )?;
+        let mut names = Vec::new();
+        let mut addresses = Vec::new();
+        for row in stmt.query_map(params![limit], |r| {
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?))
+        })? {
+            let (name, email) = row?;
+            if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+                names.push(name);
+            }
+            addresses.push(email);
+        }
+        Ok((names, addresses))
+    }
+
     /// The people to suggest while an address is typed, as on
     /// `ComposeSuggest`: whose name or address starts with `typed` (any word
     /// of the name), first those written to, then those who wrote, the most
@@ -13765,6 +13788,17 @@ From: <help@bank.example>\r\n\r\nHi";
             store.search_people(&Query::parse("from:sara"), 5).unwrap(),
             []
         );
+    }
+
+    #[test]
+    fn known_people_names_whoever_wrote() {
+        let (store, _, _) = search_store();
+        let (names, addresses) = store.known_people(100).unwrap();
+        assert!(names.contains(&"Sara Conti".to_string()), "{names:?}");
+        assert!(addresses.contains(&"sara@tipografialume.it".to_string()));
+        // Most messages first, and no more than asked.
+        assert_eq!(addresses[0], "sara@tipografialume.it");
+        assert_eq!(store.known_people(1).unwrap().1.len(), 1);
     }
 
     #[test]
