@@ -1,5 +1,6 @@
-# cargo-deny: known vulnerabilities and where crates come from.
-# `cargo deny check advisories sources`, run by .github/workflows/dependencies.yml.
+# cargo-deny: known vulnerabilities, licenses, banned crates and where crates
+# come from. `cargo deny check`, run on every pull request and every Monday by
+# .github/workflows/dependencies.yml (a required check).
 
 [graph]
 all-features = false
@@ -44,3 +45,50 @@ ignore = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# Piuma Mail is GPL-3.0-or-later, plus the app store permission in
+# LICENSE-APPSTORE.md. Every crate that ships must be under a license that
+# can be combined with GPL-3.0 and allows that permission: the permissive
+# ones below, and MPL-2.0 (GPL-compatible through its section 3.3). Not
+# allowed: GPL-2.0-only, the OpenSSL/SSLeay license, SSPL, BUSL, "non
+# commercial" licenses and anything unknown; a new license needs a pull
+# request that changes this list and says why it is compatible.
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    # webpki-roots: Mozilla's list of certificate authorities, as data.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# Our own crates carry the project's license. Only they may: a third-party
+# GPL-3.0 crate could not take the app store permission.
+exceptions = [
+    { crate = "piuma-core", allow = ["GPL-3.0-or-later"] },
+    { crate = "piuma_bridge", allow = ["GPL-3.0-or-later"] },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    # TLS goes through rustls everywhere (core/src/tls.rs). OpenSSL before
+    # 3.0 is under a license GPL-3.0 cannot be combined with, and a second
+    # TLS stack is more to patch.
+    { crate = "openssl-sys", reason = "rustls only; OpenSSL's license and a second TLS stack" },
+    { crate = "openssl", reason = "rustls only; OpenSSL's license and a second TLS stack" },
+    { crate = "native-tls", reason = "rustls only" },
+]

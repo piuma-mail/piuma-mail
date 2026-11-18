@@ -8,26 +8,75 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `err`, `manager`, `notes_file`, `release`, `save_notes`, `saved_notes`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `err`, `follows_prereleases`, `format_prefs`, `heal`, `leave_marker`, `manager`, `marker_file`, `notes_file`, `parse_prefs`, `prefs_file`, `release`, `save_notes`, `saved_notes`, `velopack_channel`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The first thing the app runs, before the engine opens. On the
 /// installer's hooks it does its part and ends the process; with an
 /// update downloaded earlier it applies it and restarts into it.
-/// `support_dir` is the app's support folder, where notes wait.
-UpdateStartup updatesStartup({required String supportDir}) =>
-    RustLib.instance.api.crateApiUpdatesUpdatesStartup(supportDir: supportDir);
+/// `support_dir` is the app's support folder, where notes wait; `feed`
+/// and `channel` are the build's (`PIUMA_UPDATE_URL`,
+/// `PIUMA_UPDATE_CHANNEL`).
+///
+/// When the previous launch never reached its first frame (see
+/// `updates_launched`) and automatic checks are on, an installed
+/// Windows app looks for a newer release right here and restarts into
+/// it, so a release that crashes at launch is replaced by the next one.
+UpdateStartup updatesStartup({
+  required String supportDir,
+  required String feed,
+  required String channel,
+}) => RustLib.instance.api.crateApiUpdatesUpdatesStartup(
+  supportDir: supportDir,
+  feed: feed,
+  channel: channel,
+);
+
+/// The first frame is on screen: this launch worked, so the next one
+/// need not look for a fix first.
+void updatesLaunched() => RustLib.instance.api.crateApiUpdatesUpdatesLaunched();
+
+/// The user's choices in Settings › Help & feedback › Updates; the defaults until they
+/// change one.
+UpdatePrefs updatesPrefs() =>
+    RustLib.instance.api.crateApiUpdatesUpdatesPrefs();
+
+/// Keeps the user's choices in Settings › Help & feedback › Updates.
+void updatesSetPrefs({required UpdatePrefs prefs}) =>
+    RustLib.instance.api.crateApiUpdatesUpdatesSetPrefs(prefs: prefs);
 
 /// Asks the feed for a newer release; `None` when there is none, or
 /// this build cannot update.
-Future<UpdateRelease?> updatesCheck({required String feed}) =>
-    RustLib.instance.api.crateApiUpdatesUpdatesCheck(feed: feed);
+Future<UpdateRelease?> updatesCheck({
+  required String feed,
+  required String channel,
+}) => RustLib.instance.api.crateApiUpdatesUpdatesCheck(
+  feed: feed,
+  channel: channel,
+);
+
+/// Where the app cannot install updates (Android, macOS, Linux): a
+/// release newer than `build` on `feed`, for a notice with a link to its
+/// page. `None` when there is none, on Windows and iOS, and for a feed
+/// that is not a GitHub repository.
+Future<UpdateNotice?> updatesNotice({
+  required String feed,
+  required String channel,
+  required int build,
+}) => RustLib.instance.api.crateApiUpdatesUpdatesNotice(
+  feed: feed,
+  channel: channel,
+  build: build,
+);
 
 /// Downloads the newest release, reporting progress from 0 to 100; the
 /// stream ends once it is ready for the restart (`updates_ready`), or
 /// at once when the feed has nothing newer by now.
-Stream<int> updatesDownload({required String feed}) =>
-    RustLib.instance.api.crateApiUpdatesUpdatesDownload(feed: feed);
+Stream<int> updatesDownload({required String feed, required String channel}) =>
+    RustLib.instance.api.crateApiUpdatesUpdatesDownload(
+      feed: feed,
+      channel: channel,
+    );
 
 /// A release downloaded and waiting for the restart, if any.
 UpdateRelease? updatesReady() =>
@@ -37,6 +86,54 @@ UpdateRelease? updatesReady() =>
 /// and drafts are in the database, so nothing is lost.
 Future<void> updatesRestart() =>
     RustLib.instance.api.crateApiUpdatesUpdatesRestart();
+
+/// A newer release where the app cannot install it (Android, macOS,
+/// Linux): the notice links to its page.
+class UpdateNotice {
+  final UpdateRelease release;
+
+  /// The release's page on the feed.
+  final String url;
+
+  const UpdateNotice({required this.release, required this.url});
+
+  @override
+  int get hashCode => release.hashCode ^ url.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UpdateNotice &&
+          runtimeType == other.runtimeType &&
+          release == other.release &&
+          url == other.url;
+}
+
+/// The user's choices in Settings › Help & feedback › Updates.
+class UpdatePrefs {
+  /// Look for new versions on its own (on by default). Off, nothing
+  /// is asked of the feed until "Check for updates".
+  final bool automatic;
+
+  /// Follow early (canary) releases too (off by default).
+  final bool early;
+
+  const UpdatePrefs({required this.automatic, required this.early});
+
+  static Future<UpdatePrefs> default_() =>
+      RustLib.instance.api.crateApiUpdatesUpdatePrefsDefault();
+
+  @override
+  int get hashCode => automatic.hashCode ^ early.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UpdatePrefs &&
+          runtimeType == other.runtimeType &&
+          automatic == other.automatic &&
+          early == other.early;
+}
 
 /// A release offered by the feed, or downloaded and waiting.
 class UpdateRelease {
@@ -77,13 +174,21 @@ class UpdateStartup {
   /// one-time "Updated to …" toast.
   final UpdateRelease? updatedTo;
 
-  const UpdateStartup({required this.installed, this.updatedTo});
+  /// The previous launch never drew its first frame.
+  final bool previousLaunchFailed;
+
+  const UpdateStartup({
+    required this.installed,
+    this.updatedTo,
+    required this.previousLaunchFailed,
+  });
 
   static Future<UpdateStartup> default_() =>
       RustLib.instance.api.crateApiUpdatesUpdateStartupDefault();
 
   @override
-  int get hashCode => installed.hashCode ^ updatedTo.hashCode;
+  int get hashCode =>
+      installed.hashCode ^ updatedTo.hashCode ^ previousLaunchFailed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -91,5 +196,6 @@ class UpdateStartup {
       other is UpdateStartup &&
           runtimeType == other.runtimeType &&
           installed == other.installed &&
-          updatedTo == other.updatedTo;
+          updatedTo == other.updatedTo &&
+          previousLaunchFailed == other.previousLaunchFailed;
 }

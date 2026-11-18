@@ -6050,6 +6050,38 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String updateAvailableTitle(String version) {
+    return 'Disponível · $version';
+  }
+
+  @override
+  String get updateAvailableHint => 'Baixe-a na página da versão';
+
+  @override
+  String get updateDownload => 'Baixar';
+
+  @override
+  String updateAvailableLine(String version) {
+    return 'Nova versão · $version';
+  }
+
+  @override
+  String get updatesAutomatic => 'Procurar novas versões';
+
+  @override
+  String get updatesAutomaticHint => 'Pergunta ao GitHub a cada poucas horas';
+
+  @override
+  String get updatesOnlyWhenAsked => 'O Piuma só procura quando você pede';
+
+  @override
+  String get updatesEarly => 'Versões antecipadas';
+
+  @override
+  String get updatesEarlyHint =>
+      'As novas versões alguns dias antes, com mais bugs';
+
+  @override
   String get swipeHintArchiveSnooze =>
       'Deslize para a direita para arquivar, para a esquerda para adiar';
 

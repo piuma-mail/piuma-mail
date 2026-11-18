@@ -1,32 +1,80 @@
 name: Release
 
-# Manual release: publishes v0.1.0-beta.N as a GitHub prerelease with the
-# Windows installer and update packages (Velopack; installed apps update from
-# them) and the Android beta APK (for Obtainium or a manual install).
+# Manual release of one commit of main: v0.1.0-beta.N, a GitHub prerelease
+# with the Windows installer and update packages (Velopack; installed apps
+# update from them, x64 and ARM64), the Android phone and Wear OS APKs
+# (Obtainium or a manual install), a Linux AppImage and, once Apple
+# credentials exist, a signed and notarised macOS app. "canary" makes an
+# early release instead (canary-v0.1.0-beta.N), which installed apps
+# follow only when the user turns on Settings > Help & feedback > Updates > Early releases.
 #
-# Repository secrets, used only by the Android build step:
-#   PIUMA_KEYSTORE_B64       the beta keystore, base64
-#   PIUMA_KEYSTORE_PASSWORD  its password
-#   (the key alias is the default, "piuma")
+# How a compromised dependency or a leaked token is kept from users:
+# - Every job that compiles (build.rs scripts, cargokit, Gradle, native
+#   pub hooks) has a read-only token and no signing secret.
+# - Packages are signed in jobs that compile nothing: Windows (vpk pack)
+#   and Android (apksigner re-signs APKs built with a throwaway key).
+# - The only job with write access uploads files to a DRAFT release and
+#   runs nothing from the repository; it waits in the "release"
+#   environment. A last job, also in that environment, checks every
+#   platform is there and un-drafts it. Apps never see a draft.
+# - Each file gets a build provenance attestation:
+#   gh attestation verify <file> --repo <owner>/<repo>
+# - The commit must have passed CI on main, and the installed Windows app
+#   must start (--smoke-test) before anything is published.
 #
-# Every action is pinned by commit (the tag in the comment): these jobs can
-# write releases, which installed apps update from, and hold the APK key.
+# Settings it reads (Settings > Secrets and variables > Actions); forks
+# set their own, see "Building your own fork" in CONTRIBUTING.md:
+#   secrets PIUMA_KEYSTORE_B64, PIUMA_KEYSTORE_PASSWORD   Android key (alias
+#           in variable PIUMA_KEY_ALIAS, "piuma" when unset)
+#   secrets WINDOWS_SIGN_PFX_B64, WINDOWS_SIGN_PFX_PASSWORD   Authenticode
+#           certificate (.pfx), or for Azure Trusted Signing: secrets
+#           AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET and
+#           variables AZURE_SIGN_ENDPOINT, AZURE_SIGN_ACCOUNT, AZURE_SIGN_PROFILE
+#   secrets APPLE_CERT_P12_B64, APPLE_CERT_PASSWORD, APPLE_API_KEY_P8_B64,
+#           APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_TEAM_ID   macOS
+#   variable PIUMA_UPDATE_URL        the feed apps check (this repository
+#           when unset)
+#   variable PIUMA_REQUIRE_SIGNED    e.g. "android,windows": fail instead of
+#           shipping that platform unsigned (Windows) or leaving it out
+#           (Android) when its key is missing
+#   variable PIUMA_ANDROID_CERT_SHA256   the key's certificate fingerprint;
+#           when set, the signed APKs must match it
+#   environment "release"   required reviewers and a main-only deployment
+#           rule. Until it is created GitHub makes an empty one on the
+#           first run: the publish jobs then run without waiting for anyone.
+#
+# Every action is pinned by commit (the tag in the comment).
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "beta (everyone) or canary (early releases, opt-in)"
+        type: choice
+        options: [beta, canary]
+        default: beta
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  windows:
-    name: Windows desktop release
+  gate:
+    name: Commit ready for release
     # From main only: the release tag goes on the commit that was built.
     if: github.ref == 'refs/heads/main'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build: ${{ steps.version.outputs.build }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      feed: ${{ steps.version.outputs.feed }}
+      apple: ${{ steps.secrets.outputs.apple }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,102 +82,593 @@ jobs:
           persist-credentials: false
 
       # N in v0.1.0-beta.N counts the commits on main (+700, see
-      # tools/windows-release.ps1). It must grow, or installed apps never see
-      # the release as newer: a rewritten history would make it go back.
-      - name: Version newer than the last beta
-        shell: bash
+      # tools/windows-release.ps1). It must grow within its channel, or
+      # installed apps never see the release as newer: a rewritten history
+      # would make it go back.
+      - name: Version newer than the last release of the channel
+        id: version
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          FEED: ${{ vars.PIUMA_UPDATE_URL || format('https://github.com/{0}', github.repository) }}
         run: |
           next=$(( $(git rev-list --count HEAD) + 700 ))
-          last=$(git tag --list 'v0.1.0-beta.*' | sed 's/^v0\.1\.0-beta\.//' | grep -E '^[0-9]+$' | sort -n | tail -1)
-          echo "Next: v0.1.0-beta.$next, last: v0.1.0-beta.${last:-none}"
+          prefix=v; [ "$CHANNEL" = canary ] && prefix=canary-v
+          last=$(git tag --list "${prefix}0.1.0-beta.*" | sed "s/^${prefix}0\.1\.0-beta\.//" | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
+          echo "Next: ${prefix}0.1.0-beta.$next, last: ${prefix}0.1.0-beta.${last:-none}"
           if [ -n "$last" ] && [ "$next" -le "$last" ]; then
-            echo "::error::v0.1.0-beta.$next is not newer than v0.1.0-beta.$last: was main's history rewritten?"
+            echo "::error::${prefix}0.1.0-beta.$next is not newer than ${prefix}0.1.0-beta.$last: was main's history rewritten?"
             exit 1
           fi
+          {
+            echo "build=$next"
+            echo "version=0.1.0-beta.$next"
+            echo "tag=${prefix}0.1.0-beta.$next"
+            echo "feed=$FEED"
+          } >> "$GITHUB_OUTPUT"
 
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+      # The commit must have passed the whole CI workflow on main (the
+      # push run, with the builds), not just be on main.
+      - name: CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          ok=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&status=success&per_page=1" --jq '.total_count')
+          if [ "${ok:-0}" -lt 1 ]; then
+            echo "::error::CI has not passed on main for $SHA. Wait for it (or re-run it), then release again."
+            exit 1
+          fi
+          echo "CI passed for $SHA."
+
+      - name: Release notes
+        run: |
+          since=$(git tag --list 'v*' --merged HEAD --sort=-creatordate | head -1)
+          range="${since:+$since..}HEAD"
+          [ -n "$since" ] || range="HEAD~20..HEAD"
+          git log --first-parent --merges --grep='^Merge pull request' --format=%H "$range" |
+            while read -r c; do
+              title=$(git log -1 --format=%b "$c" | grep -m1 '[^[:space:]]' || true)
+              [ -n "$title" ] && echo "- $title"
+            done > "$RUNNER_TEMP/notes.md"
+          [ -s "$RUNNER_TEMP/notes.md" ] || echo "- Small fixes and improvements." > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes.md
+          retention-days: 7
+
+      # Only whether they exist: the secrets themselves stay in the jobs
+      # that sign.
+      - name: Signing credentials present
+        id: secrets
+        env:
+          APPLE_CERT: ${{ secrets.APPLE_CERT_P12_B64 }}
+          APPLE_KEY: ${{ secrets.APPLE_API_KEY_P8_B64 }}
+        run: |
+          if [ -n "$APPLE_CERT" ] && [ -n "$APPLE_KEY" ]; then
+            echo "apple=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No Apple Developer ID credentials: this release has no macOS app (see CONTRIBUTING.md)."
+            echo "apple=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows-build:
+    name: Windows ${{ matrix.arch }} build
+    needs: gate
+    strategy:
+      matrix:
+        include:
+          - { arch: x64, os: windows-latest }
+          # Flutter builds for Windows on ARM only on an ARM64 machine.
+          - { arch: arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: matrix.arch == 'x64'
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.7
           cache: true
-
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+      - if: matrix.arch == 'x64'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
         with:
           toolchain: stable
-
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install Velopack CLI
-        run: dotnet tool install -g vpk --version 1.2.161
-
-      - name: Build and publish Windows release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: powershell -File tools/windows-release.ps1
-
-  # Native build for Windows on ARM (Snapdragon PCs). Flutter builds it only
-  # on an ARM64 machine. It waits for the x64 job, which creates the
-  # release, then adds its own files to it (vpk upload --merge) in
-  # Velopack's "win-arm64" channel, which ARM64 installs follow.
-  windows-arm64:
-    name: Windows ARM64 desktop release
-    needs: windows
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: ./.github/actions/windows-arm64-tools
+      - if: matrix.arch == 'arm64'
+        uses: ./.github/actions/windows-arm64-tools
         with:
           flutter-version: 3.47.7
-
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install Velopack CLI
-        run: dotnet tool install -g vpk --version 1.2.161
-
-      - name: Build and add to the Windows release
+      - name: Build
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: powershell -File tools/windows-release.ps1 -Arch arm64
+          PIUMA_UPDATE_URL: ${{ needs.gate.outputs.feed }}
+          BUILD: ${{ needs.gate.outputs.build }}
+          ARCH: ${{ matrix.arch }}
+        run: powershell -File tools/windows-release.ps1 -Arch $env:ARCH -Stage build -Build $env:BUILD
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-${{ matrix.arch }}-build
+          path: app/build/windows/${{ matrix.arch }}/runner/Release/
+          if-no-files-found: error
+          retention-days: 3
 
-  android:
-    name: Android beta APK
-    needs: windows
-    runs-on: ubuntu-latest
+  # Packs and signs: no compiler runs here, and the signing secrets are
+  # given only to these steps.
+  windows-pack:
+    name: Windows ${{ matrix.arch }} package
+    needs: [gate, windows-build]
+    strategy:
+      matrix:
+        include:
+          - { arch: x64, os: windows-latest }
+          - { arch: arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows-${{ matrix.arch }}-build
+          path: app/build/windows/${{ matrix.arch }}/runner/Release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install Velopack CLI
+        run: dotnet tool install -g vpk --version 1.2.161
 
+      - name: Signing certificate
+        id: sign
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_B64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_SIGN_ENDPOINT: ${{ vars.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ vars.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ vars.AZURE_SIGN_PROFILE }}
+          REQUIRE: ${{ vars.PIUMA_REQUIRE_SIGNED }}
+        run: |
+          if ($env:PFX_B64) {
+            # Into the user's store, so no password goes on a command line.
+            $pfx = "$env:RUNNER_TEMP\sign.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+            $pw = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+            Remove-Item $pfx
+            $params = "/fd sha256 /td sha256 /tr http://timestamp.digicert.com /sha1 $($cert.Thumbprint)"
+            "PIUMA_SIGN_PARAMS=$params" >> $env:GITHUB_ENV
+            Write-Host "Signing as $($cert.Subject)"
+          } elseif ($env:AZURE_CLIENT_ID -and $env:AZURE_SIGN_ENDPOINT) {
+            $meta = @{ Endpoint = $env:AZURE_SIGN_ENDPOINT; CodeSigningAccountName = $env:AZURE_SIGN_ACCOUNT; CertificateProfileName = $env:AZURE_SIGN_PROFILE }
+            $file = "$env:RUNNER_TEMP\azure-sign.json"
+            $meta | ConvertTo-Json | Set-Content -Encoding utf8 $file
+            "PIUMA_AZURE_SIGN_FILE=$file" >> $env:GITHUB_ENV
+            Write-Host "Signing with Azure Trusted Signing ($env:AZURE_SIGN_ACCOUNT)"
+          } elseif ($env:REQUIRE -split ',' -contains 'windows') {
+            Write-Host "::error::PIUMA_REQUIRE_SIGNED includes windows, but no certificate is set (WINDOWS_SIGN_PFX_B64 or Azure Trusted Signing)."
+            exit 1
+          } else {
+            Write-Host "::warning::No Windows signing certificate: this release's Windows packages are UNSIGNED (SmartScreen will warn). See CONTRIBUTING.md."
+          }
+
+      - name: Package
+        env:
+          PIUMA_UPDATE_URL: ${{ needs.gate.outputs.feed }}
+          GITHUB_TOKEN: ${{ github.token }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          BUILD: ${{ needs.gate.outputs.build }}
+          ARCH: ${{ matrix.arch }}
+          CHANNEL: ${{ inputs.channel }}
+        run: powershell -File tools/windows-release.ps1 -Arch $env:ARCH -Stage pack -Channel $env:CHANNEL -Build $env:BUILD -Notes "$env:RUNNER_TEMP\notes\notes.md"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: app/build/releases/publish/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The installer must install, and the installed app must open its engine,
+  # before anything is published.
+  windows-smoke:
+    name: Windows ${{ matrix.arch }} smoke test
+    needs: windows-pack
+    strategy:
+      matrix:
+        include:
+          - { arch: x64, os: windows-latest }
+          - { arch: arm64, os: windows-11-arm }
+    runs-on: ${{ matrix.os }}
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: release
+      - name: Install and start
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem release -Filter '*-Setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'No installer in the release.' }
+          $p = Start-Process $setup.FullName -ArgumentList '--silent' -Wait -PassThru
+          if ($p.ExitCode) { throw "The installer failed ($($p.ExitCode))." }
+          # The installer starts the app once; this test runs its own copy.
+          Start-Sleep -Seconds 5
+          Get-Process piuma_mail -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = "$env:LOCALAPPDATA\PiumaMail\current\piuma_mail.exe"
+          if (-not (Test-Path $exe)) { throw "Not installed where expected: $exe" }
+          $app = Start-Process $exe -ArgumentList '--smoke-test' -PassThru
+          if (-not $app.WaitForExit(180000)) { $app | Stop-Process -Force; throw 'The app did not finish its smoke test in 3 minutes.' }
+          if ($app.ExitCode) { throw "The installed app failed its smoke test ($($app.ExitCode))." }
+          Write-Host 'Installed and started.'
+
+  android:
+    name: Android build
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           flutter-version: 3.47.7
           cache: true
-
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 17
+      # Built with a one-off key; android-sign re-signs with the real one.
+      - uses: ./.github/actions/android-throwaway-key
+      - name: Phone APK
+        working-directory: app
+        env:
+          BUILD: ${{ needs.gate.outputs.build }}
+          FEED: ${{ needs.gate.outputs.feed }}
+        run: |
+          flutter build apk --release --target-platform android-arm64 \
+            --build-name 0.1.0 --build-number "$BUILD" \
+            --dart-define=PIUMA_BUILD="$BUILD" --dart-define=PIUMA_UPDATE_URL="$FEED" \
+            --dart-define=PIUMA_UPDATE_CHANNEL=beta
+          mkdir -p "$RUNNER_TEMP/apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/apk/PiumaMail-android-arm64.apk"
+      # The watch talks only to a phone app signed with the same key: it
+      # ships in the same release. Watches may be 32-bit: every ABI.
+      - name: Wear OS APK
+        working-directory: wear
+        env:
+          BUILD: ${{ needs.gate.outputs.build }}
+        run: |
+          flutter build apk --release --build-name 0.1.0 --build-number "$BUILD"
+          cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/apk/PiumaMail-wear.apk"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-unsigned
+          path: ${{ runner.temp }}/apk/
+          if-no-files-found: error
+          retention-days: 3
 
-      - name: Build the signed APK
+  # Signs with the project's key; compiles nothing.
+  android-sign:
+    name: Android signing
+    needs: android
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: android-unsigned
+          path: unsigned
+      - name: Sign with the project's key
         env:
           PIUMA_KEYSTORE_B64: ${{ secrets.PIUMA_KEYSTORE_B64 }}
           PIUMA_KEYSTORE_PASSWORD: ${{ secrets.PIUMA_KEYSTORE_PASSWORD }}
-        run: sh tools/android-beta.sh "$RUNNER_TEMP/PiumaMail-android-arm64.apk"
-
-      # Same commit, same count: the tag the Windows job just published.
-      - name: Attach it to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALIAS: ${{ vars.PIUMA_KEY_ALIAS || 'piuma' }}
+          EXPECTED: ${{ vars.PIUMA_ANDROID_CERT_SHA256 }}
+          REQUIRE: ${{ vars.PIUMA_REQUIRE_SIGNED }}
         run: |
-          tag="v0.1.0-beta.$(( $(git rev-list --count HEAD) + 700 ))"
-          gh release upload "$tag" "$RUNNER_TEMP/PiumaMail-android-arm64.apk"
+          mkdir -p signed
+          if [ -z "$PIUMA_KEYSTORE_B64" ] || [ -z "$PIUMA_KEYSTORE_PASSWORD" ]; then
+            case ",$REQUIRE," in
+              *,android,*) echo "::error::PIUMA_REQUIRE_SIGNED includes android, but PIUMA_KEYSTORE_B64 / PIUMA_KEYSTORE_PASSWORD are not set."; exit 1 ;;
+            esac
+            echo "::warning::No Android key: this release has no APKs. See CONTRIBUTING.md."
+            exit 0
+          fi
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          ks="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$ks"' EXIT
+          printf '%s' "$PIUMA_KEYSTORE_B64" | base64 -d > "$ks"
+          for apk in unsigned/*.apk; do
+            out="signed/$(basename "$apk")"
+            "$tools/apksigner" sign --ks "$ks" --ks-key-alias "$ALIAS" \
+              --ks-pass env:PIUMA_KEYSTORE_PASSWORD --key-pass env:PIUMA_KEYSTORE_PASSWORD \
+              --out "$out" "$apk"
+            rm -f "$out.idsig"
+            "$tools/apksigner" verify --print-certs "$out" | tee "$RUNNER_TEMP/certs.txt"
+            sha=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt")
+            echo "$(basename "$out"): $sha"
+            echo "$sha" >> "$RUNNER_TEMP/shas.txt"
+            if [ -n "$EXPECTED" ] && [ "$sha" != "$(echo "$EXPECTED" | tr -d ': ' | tr 'A-F' 'a-f')" ]; then
+              echo "::error::$(basename "$out") is signed by $sha, not PIUMA_ANDROID_CERT_SHA256."
+              exit 1
+            fi
+          done
+          # Phone and watch must share the key, or they never pair.
+          if [ "$(sort -u "$RUNNER_TEMP/shas.txt" | wc -l)" != 1 ]; then
+            echo "::error::The phone and watch APKs are signed with different keys."
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android
+          path: signed/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  linux:
+    name: Linux AppImage
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev libdbus-1-dev
+      - name: Build
+        working-directory: app
+        env:
+          BUILD: ${{ needs.gate.outputs.build }}
+          FEED: ${{ needs.gate.outputs.feed }}
+        run: |
+          flutter build linux --release --build-name 0.1.0 --build-number "$BUILD" \
+            --dart-define=PIUMA_BUILD="$BUILD" --dart-define=PIUMA_UPDATE_URL="$FEED" \
+            --dart-define=PIUMA_UPDATE_CHANNEL=beta
+      - name: AppImage
+        run: sh tools/linux-appimage.sh "$RUNNER_TEMP/linux/PiumaMail-linux-x86_64.AppImage"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux
+          path: ${{ runner.temp }}/linux/
+          if-no-files-found: error
+          retention-days: 7
+
+  # A Developer ID-signed, notarised app; only when the Apple credentials
+  # exist (macOS minutes cost ten times as much). See CONTRIBUTING.md.
+  macos:
+    name: macOS app
+    needs: gate
+    if: needs.gate.outputs.apple == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.47.7
+          cache: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build
+        working-directory: app
+        env:
+          BUILD: ${{ needs.gate.outputs.build }}
+          FEED: ${{ needs.gate.outputs.feed }}
+        run: |
+          flutter build macos --release --build-name 0.1.0 --build-number "$BUILD" \
+            --dart-define=PIUMA_BUILD="$BUILD" --dart-define=PIUMA_UPDATE_URL="$FEED" \
+            --dart-define=PIUMA_UPDATE_CHANNEL=beta
+          ditto build/macos/Build/Products/Release/piuma_mail.app "$RUNNER_TEMP/Piuma Mail.app"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-unsigned
+          path: ${{ runner.temp }}/Piuma Mail.app
+          if-no-files-found: error
+          retention-days: 3
+
+  macos-sign:
+    name: macOS signing and notarisation
+    needs: macos
+    runs-on: macos-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: app/macos/Runner/Release.entitlements
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-unsigned
+          path: Piuma Mail.app
+      - name: Sign, notarise, staple
+        env:
+          CERT_P12_B64: ${{ secrets.APPLE_CERT_P12_B64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          API_KEY_P8_B64: ${{ secrets.APPLE_API_KEY_P8_B64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -eu
+          kc="$RUNNER_TEMP/sign.keychain-db"
+          kcpass=$(openssl rand -hex 24)
+          echo "::add-mask::$kcpass"
+          key="$RUNNER_TEMP/AuthKey.p8"
+          trap 'security delete-keychain "$kc" 2>/dev/null || true; rm -f "$key" "$RUNNER_TEMP/cert.p12"' EXIT
+          printf '%s' "$CERT_P12_B64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          identity="Developer ID Application"
+          app="Piuma Mail.app"
+          # Inside out: frameworks and helpers first, then the app, with the
+          # hardened runtime notarisation requires.
+          find "$app/Contents/Frameworks" -depth \( -name '*.framework' -o -name '*.dylib' \) -print0 |
+            xargs -0 -I{} codesign --force --timestamp --options runtime --keychain "$kc" --sign "$identity" {}
+          codesign --force --timestamp --options runtime --keychain "$kc" \
+            --entitlements app/macos/Runner/Release.entitlements --sign "$identity" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          printf '%s' "$API_KEY_P8_B64" | base64 -d > "$key"
+          ditto -c -k --keepParent "$app" notarise.zip
+          xcrun notarytool submit notarise.zip --key "$key" --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID" --team-id "$TEAM_ID" --wait
+          xcrun stapler staple "$app"
+          spctl --assess --type execute --verbose "$app"
+          mkdir -p out
+          ditto -c -k --keepParent "$app" out/PiumaMail-macos-universal.zip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Build provenance for every file the release carries:
+  #   gh attestation verify <file> --repo <owner>/<repo>
+  attest:
+    name: Attest
+    needs: [windows-smoke, android-sign, linux, macos-sign]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/**/*
+
+  # The only job that can write: it uploads to a draft release and runs
+  # nothing from the repository. It waits in the "release" environment.
+  publish:
+    name: Upload to a draft release
+    needs: [gate, attest]
+    if: ${{ !failure() && !cancelled() && needs.attest.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: notes
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -eu
+          files=$(find dist -type f | sort)
+          # Each platform's files have names of their own; two of a name
+          # would overwrite each other.
+          dupes=$(for f in $files; do basename "$f"; done | sort | uniq -d)
+          if [ -n "$dupes" ]; then echo "::error::Two files named: $dupes"; exit 1; fi
+          title="Piuma Mail $VERSION"
+          if [ "$CHANNEL" = canary ]; then
+            title="$title (early release)"
+            # Early releases are reached from the app's setting, never
+            # installed from scratch.
+            files=$(printf '%s\n' $files | grep -v -e '-Setup\.exe$' -e '-Portable\.zip$')
+          fi
+          gh release create "$TAG" --repo "$REPO" --draft --prerelease --latest=false \
+            --target "$SHA" --title "$title" --notes-file notes/notes.md
+          # shellcheck disable=SC2086 # one word per file
+          gh release upload "$TAG" --repo "$REPO" $files
+          echo "Draft: $(gh release view "$TAG" --repo "$REPO" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Goes live only once every platform is in the draft. A second approval
+  # in the "release" environment: time to try the draft's files first.
+  finalize:
+    name: Publish
+    needs: [gate, publish, windows-smoke, android-sign, linux, macos-sign]
+    if: ${{ !failure() && !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Every platform uploaded, then un-draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.gate.outputs.tag }}
+          CHANNEL: ${{ inputs.channel }}
+          ANDROID: ${{ needs.android-sign.result }}
+          MACOS: ${{ needs.macos-sign.result }}
+        run: |
+          set -eu
+          names=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+          need() {
+            printf '%s\n' "$names" | grep -Eq "$1" || { echo "::error::The draft has no $2."; exit 1; }
+          }
+          suffix=""; [ "$CHANNEL" = canary ] && suffix="-canary"
+          need "^releases\.win${suffix}\.json$" "Windows x64 feed"
+          need "^releases\.win-arm64${suffix}\.json$" "Windows ARM64 feed"
+          need '\.nupkg$' "Windows package"
+          need '\.AppImage$' "Linux AppImage"
+          if [ "$CHANNEL" != canary ]; then
+            need '^PiumaMail-win-Setup\.exe$' "Windows x64 installer"
+            need '^PiumaMail-win-arm64-Setup\.exe$' "Windows ARM64 installer"
+          fi
+          if [ "$ANDROID" = success ] && printf '%s\n' "$names" | grep -q '\.apk$'; then
+            need '^PiumaMail-android-arm64\.apk$' "phone APK"
+            need '^PiumaMail-wear\.apk$' "Wear OS APK"
+          fi
+          [ "$MACOS" = success ] && need '^PiumaMail-macos-universal\.zip$' "macOS app"
+          gh release edit "$TAG" --repo "$REPO" --draft=false
+          echo "Published: $(gh release view "$TAG" --repo "$REPO" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"

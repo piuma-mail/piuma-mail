@@ -1,7 +1,13 @@
 # Weekly update proposals for every dependency set in the repository.
-# Security updates are proposed as soon as an advisory is published; version
-# updates wait two weeks after a release (cooldown), so a hijacked release
-# has time to be noticed before it reaches a pull request.
+# Version updates wait two weeks after a release (cooldown), so a hijacked
+# release has time to be noticed before it reaches a pull request.
+# Security updates are a separate repository setting (Settings > Code
+# security > Dependabot security updates, on since 2026-11-18): they open a
+# pull request as soon as an advisory has a fixed version, without the
+# cooldown, and follow the groups and limits below.
+# Not covered: the patched copy in third_party/fxtranslate, a path
+# dependency; .github/workflows/upstream-watch.yml watches it (and
+# velopack's stable releases, which deny.toml's zip ignores wait for).
 version: 2
 updates:
   - package-ecosystem: cargo

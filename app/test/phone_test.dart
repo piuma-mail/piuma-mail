@@ -638,6 +638,19 @@ void main() {
     expect(_row('Dinner on Friday?'), findsOneWidget);
   });
 
+  testWidgets('About opens the licenses, the Rust crates among them', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await _openSettings(tester);
+    await settle(tester);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+    await settle(tester);
+    await tester.tap(find.text('Open source · GPL-3.0'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LicensePage), findsOneWidget);
+  });
+
   testWidgets('Settings opens from the sheet, each section full screen', (
     tester,
   ) async {

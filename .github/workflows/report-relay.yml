@@ -19,9 +19,9 @@ on:
   push:
     branches: [main]
     paths: ["relay/**", ".github/workflows/report-relay.yml"]
-  # Pull requests run the tests only: the deploy steps below are skipped.
+  # Every pull request runs the tests (a required check, and cheap); the
+  # deploy steps below are skipped.
   pull_request:
-    paths: ["relay/**", ".github/workflows/report-relay.yml"]
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,7 @@ concurrency:
 
 jobs:
   deploy:
+    name: Report relay
     runs-on: ubuntu-latest
     defaults:
       run:

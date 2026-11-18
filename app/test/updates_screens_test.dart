@@ -7,6 +7,8 @@ import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
 import 'package:piuma_mail/updates/updates.dart';
 import 'package:piuma_mail/updates/whats_new.dart';
+import 'package:piuma_mail/widgets/links.dart';
+import 'package:piuma_mail/widgets/switch.dart';
 
 import 'support/settle.dart';
 
@@ -149,6 +151,70 @@ void main() {
     await tester.tap(find.text("See what's new"));
     await tester.pumpAndSettle();
     expect(find.text('Restart now'), findsOneWidget);
+  });
+
+  testWidgets('where the app cannot install, it says a release is out', (
+    tester,
+  ) async {
+    const page =
+        'https://github.com/piuma-mail/piuma-mail/releases/tag/v0.1.1-beta.618';
+    final u = Updates.fake(
+      notifyOnly: true,
+      state: UpdateNotice(_release('0.1.1-beta.618'), page),
+    );
+    _use(u);
+    final opened = <Uri>[];
+    final open = openExternalLink;
+    openExternalLink = (uri) async => opened.add(uri);
+    addTearDown(() => openExternalLink = open);
+    await _inbox(tester);
+    await tester.tap(find.text('New version · 0.1.1 (618)'));
+    await tester.pumpAndSettle();
+    expect(opened.map((u) => '$u'), [page]);
+    await _help(tester);
+    expect(find.text('Available · 0.1.1 (618)'), findsOneWidget);
+    expect(find.text('Download it from its release page'), findsOneWidget);
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    expect(opened.map((u) => '$u'), [page, page]);
+    // Nothing to restart: the notes come without "Restart now".
+    await tester.tap(find.text("See what's new"));
+    await tester.pumpAndSettle();
+    expect(find.text('Restart now'), findsNothing);
+  });
+
+  testWidgets('automatic checks can be turned off, early releases on', (
+    tester,
+  ) async {
+    final u = Updates.fake(state: const UpdateIdle());
+    _use(u);
+    await _help(tester);
+    expect(
+      find.text('Piuma looks for new versions on its own'),
+      findsOneWidget,
+    );
+    expect(find.text('Look for new versions'), findsOneWidget);
+    expect(find.text('Early releases'), findsOneWidget);
+    final switches = find.byType(PiumaSwitch);
+    expect(switches, findsNWidgets(2));
+    await tester.tap(switches.first);
+    await tester.pumpAndSettle();
+    expect(u.prefs.value.automatic, isFalse);
+    expect(find.text('Piuma looks only when you ask'), findsOneWidget);
+    await tester.tap(switches.last);
+    await tester.pumpAndSettle();
+    expect(u.prefs.value.early, isTrue);
+    expect(u.prefs.value.automatic, isFalse);
+  });
+
+  testWidgets('the version line opens the licenses on desktop', (
+    tester,
+  ) async {
+    _use(Updates.fake(available: false));
+    await _help(tester);
+    await tester.tap(find.text('Piuma Mail 0.1.0 · GPL-3.0'));
+    await tester.pumpAndSettle();
+    expect(find.byType(LicensePage), findsOneWidget);
   });
 
   for (final dark in [false, true]) {
