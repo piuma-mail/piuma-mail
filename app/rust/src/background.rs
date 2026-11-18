@@ -13,7 +13,6 @@ use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
 use crate::api::engine::{self, MailNotice};
-use crate::credentials;
 
 /// Whether the service shows the notices.
 static ON: AtomicBool = AtomicBool::new(false);
@@ -394,7 +393,7 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
 fn remember(passwords: &[(i64, String)]) {
     #[cfg(target_os = "android")]
     for (id, password) in passwords {
-        credentials::remember(AccountId(*id), password);
+        crate::credentials::remember(AccountId(*id), password);
     }
     #[cfg(not(target_os = "android"))]
     let _ = passwords;

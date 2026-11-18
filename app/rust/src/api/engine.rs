@@ -660,6 +660,9 @@ pub struct FoundSettings {
     /// The JMAP session, when the domain serves JMAP: the account then
     /// uses it in place of IMAP and SMTP.
     pub jmap_url: Option<String>,
+    /// The provider (`microsoft`, `google`) whose own sign-in page these
+    /// servers want, in place of a password.
+    pub oauth: Option<String>,
 }
 
 /// Looks for the server settings of an address. None means the person
@@ -690,6 +693,7 @@ pub async fn discover_settings(email: String) -> Result<Option<FoundSettings>, E
                     },
                     username: email.clone(),
                     source: Source::Published,
+                    oauth: None,
                 })
             });
             (found, jmap_url)
@@ -705,6 +709,7 @@ pub async fn discover_settings(email: String) -> Result<Option<FoundSettings>, E
         smtp_port: s.smtp.port,
         smtp_security: s.smtp.security.into(),
         username: s.username,
+        oauth: s.oauth,
         source: match s.source {
             Source::Known => SettingsSource::Known,
             Source::Published => SettingsSource::Published,
@@ -1501,7 +1506,7 @@ mod credential_recovery_tests {
                         "temporarily locked",
                     )))
                 } else {
-                    Ok("test credential".into())
+                    Ok("test credential".to_owned())
                 }
             },
             |kind| reports.push(kind),
