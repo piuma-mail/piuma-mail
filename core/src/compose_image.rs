@@ -109,6 +109,15 @@ fn limits() -> image::Limits {
     limits
 }
 
+/// A picture of `width` × `height` pixels may be worked on: neither side
+/// past [MAX_DECODED_EDGE], and its pixels (four bytes each, as RGBA)
+/// within [MAX_DECODED_BYTES], as [prepare] reads files. Making it smaller
+/// takes as much again.
+fn readable_size(width: u32, height: u32) -> bool {
+    width.max(height) <= MAX_DECODED_EDGE
+        && u64::from(width) * u64::from(height) * 4 <= MAX_DECODED_BYTES
+}
+
 fn decode_error(e: image::ImageError) -> PrepareError {
     match e {
         image::ImageError::Limits(_) => PrepareError::TooBig,
@@ -121,7 +130,7 @@ fn decode_error(e: image::ImageError) -> PrepareError {
 /// has transparency, JPEG otherwise.
 pub fn prepare_picture(picture: DynamicImage) -> Result<Prepared, PrepareError> {
     let (width, height) = (picture.width(), picture.height());
-    if width.max(height) > MAX_DECODED_EDGE {
+    if !readable_size(width, height) {
         return Err(PrepareError::TooBig);
     }
     let alpha = picture.color().has_alpha();
@@ -272,6 +281,11 @@ mod tests {
         assert!(prepare(&png).is_err());
         let wide = from_rgba(13_000, 1, vec![0; 13_000 * 4]).unwrap();
         assert_eq!(prepare_picture(wide), Err(PrepareError::TooBig));
+        // Within the longest side, too many pixels all the same.
+        assert!(readable_size(MAX_DECODED_EDGE, 1));
+        assert!(readable_size(8_000, 8_000));
+        assert!(!readable_size(MAX_DECODED_EDGE, MAX_DECODED_EDGE));
+        assert!(!readable_size(9_000, 8_000));
         let small = from_rgba(2, 2, vec![255; 16]).unwrap();
         assert_eq!(prepare_picture(small).unwrap().mime, "image/png");
     }

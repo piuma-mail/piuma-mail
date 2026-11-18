@@ -35,8 +35,10 @@ mixin EngineCompose on MailSource {
   @override
   Future<DraftImage?> clipboardImage() async {
     if (defaultTargetPlatform == TargetPlatform.android) {
-      final data = await _clipboard.invokeMethod<Uint8List>('picture');
-      return data == null ? null : prepareImage('image', data);
+      return androidClipboardPicture(
+        await _clipboard.invokeMapMethod<String, Object?>('picture'),
+        prepareImage,
+      );
     }
     try {
       final p = await cmp.clipboardImage();

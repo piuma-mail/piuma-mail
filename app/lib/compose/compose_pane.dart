@@ -1710,20 +1710,15 @@ class _RecipientsFieldState extends State<_RecipientsField> {
 
   /// Moves whatever is typed into the list.
   void commit() {
-    final parts = _text.text
-        .split(RegExp(r'[,;\n]'))
-        .map((p) => p.trim())
-        .where((p) => p.isNotEmpty)
-        .toList();
+    final parts = typedRecipients(_text.text, widget.expand);
     if (parts.isEmpty) return;
     setState(() {
       for (final part in parts) {
         // A contact group's name brings all its addresses.
-        final group = widget.expand?.call(part);
-        if (group != null) {
+        if (part.group case final group?) {
           _addAll(group);
         } else {
-          widget.addresses.add(part);
+          widget.addresses.add(part.text);
         }
       }
       _text.clear();
@@ -1742,7 +1737,14 @@ class _RecipientsFieldState extends State<_RecipientsField> {
   }
 
   void _onChanged(String value) {
-    if (value.contains(RegExp(r'[,;]'))) {
+    // A comma ends what was typed once it is an address or a group: a
+    // group's name with a comma in it, or a name before its address,
+    // goes on being typed.
+    if (value.contains(RegExp(r'[,;]')) &&
+        typedRecipients(
+          value,
+          widget.expand,
+        ).every((p) => p.group != null || p.text.contains('@'))) {
       _hide();
       commit();
       return;

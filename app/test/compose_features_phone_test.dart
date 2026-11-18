@@ -49,6 +49,17 @@ class _Placeholders extends DemoMailSource {
   Future<Readable> readable(MailRow row) async => throw StateError('no blocks');
 }
 
+/// Android's clipboard holds a HEIC photo, which the engine can't draw.
+class _HeicClipboard extends DemoMailSource {
+  _HeicClipboard() : super(now: _now);
+
+  @override
+  Future<DraftImage?> clipboardImage() => androidClipboardPicture({
+    'data': Uint8List.fromList(List.filled(64, 1)),
+    'mime': 'image/heic',
+  }, prepareImage);
+}
+
 Future<DemoMailSource> _pump(
   WidgetTester tester, {
   DemoMailSource? demo,
@@ -357,5 +368,44 @@ void main() {
       findsOneWidget,
     );
     expect((await demo.outbox(null)).single.subject, 'Read: Dinner on Friday?');
+  });
+
+  testWidgets('a HEIC photo pasted on the phone is attached', (tester) async {
+    final source = await _pump(tester, demo: _HeicClipboard());
+    await _write(tester);
+    await _option(tester, 'Paste picture');
+    expect(find.byType(InlinePicture), findsNothing);
+    expect(find.text('image.heic'), findsOneWidget);
+    await _send(tester);
+    await _past(tester);
+    expect(source.sent.single.files.single.name, 'image.heic');
+  });
+
+  testWidgets('a group with a comma in its name, typed on the phone', (
+    tester,
+  ) async {
+    final demo = DemoMailSource(now: _now);
+    await demo.saveContactGroup(
+      const ContactGroup(
+        name: 'Smith, family',
+        addresses: ['ann@smith.it', 'bo@smith.it'],
+      ),
+    );
+    await _pump(tester, demo: demo);
+    await tester.enterText(_field(0), 'Smith,');
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(_field(0)).controller!.text, 'Smith,');
+    await tester.enterText(_field(0), 'Smith, family,');
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(_field(0)).controller!.text, isEmpty);
+    for (final a in ['ann@smith.it', 'bo@smith.it']) {
+      expect(
+        find.descendant(
+          of: find.byType(ComposePane),
+          matching: find.textContaining(a),
+        ),
+        findsWidgets,
+      );
+    }
   });
 }

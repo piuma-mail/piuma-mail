@@ -175,29 +175,24 @@ extension _ComposeFeatures on _ComposePaneState {
 
   /// Pictures put inside the text, each made ready by the engine first.
   /// In plain text they are attached instead.
-  Future<void> _addPictures(List<(String, Uint8List)> pictures) async {
+  ///
+  /// [problem] is what went wrong already with others dropped with them:
+  /// it stays said unless something worse happens.
+  Future<void> _addPictures(
+    List<(String, Uint8List)> pictures, {
+    String? problem,
+  }) async {
     final source = _source;
     if (pictures.isEmpty) return;
     final l = AppLocalizations.of(context);
     if (_extras.plainText || source == null) {
-      final size = _draft(commit: false).filesSize;
-      final more = pictures.fold(0, (sum, p) => sum + p.$2.length);
-      if (size + more > maxDraftFilesSize) {
-        _update(() => _localError = _limitText(l));
-        return;
-      }
-      _update(() {
-        _files.addAll([
-          for (final (name, data) in pictures) DraftFile(name, data),
-        ]);
-        _localError = null;
-      });
-      _edited();
+      _attachAsIs([
+        for (final (name, data) in pictures) DraftFile(name, data),
+      ], problem);
       return;
     }
     final ready = <DraftImage>[];
     final asFiles = <DraftFile>[];
-    String? problem;
     for (final (name, data) in pictures) {
       try {
         ready.add(await source.prepareImage(name, data));
@@ -225,6 +220,22 @@ extension _ComposeFeatures on _ComposePaneState {
       }
     }
     _addReadyPictures(ready, problem);
+  }
+
+  /// [files] attached as they are, within the size limit; [problem] is
+  /// said unless the limit is.
+  void _attachAsIs(List<DraftFile> files, String? problem) {
+    final size = _draft(commit: false).filesSize;
+    final more = files.fold(0, (sum, f) => sum + f.data.length);
+    if (size + more > maxDraftFilesSize) {
+      _update(() => _localError = _limitText(AppLocalizations.of(context)));
+      return;
+    }
+    _update(() {
+      _files.addAll(files);
+      _localError = problem;
+    });
+    _edited();
   }
 
   void _addReadyPictures(List<DraftImage> ready, String? problem) {
@@ -281,7 +292,7 @@ extension _ComposeFeatures on _ComposePaneState {
     }
     if (!mounted) return;
     if (problem != null) _update(() => _localError = problem);
-    await _addPictures(read);
+    await _addPictures(read, problem: problem);
   }
 
   /// Ctrl+V (⌘V) in the text, or Paste picture in the options: a
@@ -304,6 +315,11 @@ extension _ComposeFeatures on _ComposePaneState {
     } on ImageException catch (e) {
       if (!mounted) return;
       final l = AppLocalizations.of(context);
+      // A kind the engine can't draw (HEIC): attached as it is.
+      if (e.file case final file?) {
+        _attachAsIs([file], null);
+        return;
+      }
       _update(
         () => _localError = e.problem == ImageProblem.tooBig
             ? l.imageTooBig(l.pastedImage)

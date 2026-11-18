@@ -46,6 +46,28 @@ class _Placeholders extends _Clipboard {
   Future<Readable> readable(MailRow row) async => throw StateError('no blocks');
 }
 
+/// A 2 GB photo, dropped with others.
+class _HugePicture extends XFile {
+  _HugePicture() : super('/photos/panorama.png');
+
+  @override
+  Future<int> length() async => 2 * 1000 * 1000 * 1000;
+
+  @override
+  Future<Uint8List> readAsBytes() async => throw StateError('read');
+}
+
+/// The clipboard holds a HEIC photo, which the engine can't draw.
+class _HeicClipboard extends DemoMailSource {
+  _HeicClipboard() : super(now: _now);
+
+  @override
+  Future<DraftImage?> clipboardImage() => androidClipboardPicture({
+    'data': Uint8List.fromList(List.filled(64, 1)),
+    'mime': 'image/heic',
+  }, prepareImage);
+}
+
 /// A 2 GB video: its size is known, reading it is a failure.
 class _HugeFile extends XFile {
   _HugeFile() : super('/videos/holiday.mov');
@@ -350,6 +372,57 @@ void main() {
       }
     });
 
+    testWidgets('a group with a comma in its name stays one', (tester) async {
+      final demo = DemoMailSource(now: _now, contactGroups: true);
+      await demo.saveContactGroup(
+        const ContactGroup(
+          name: 'Smith, family',
+          addresses: ['ann@smith.it', 'bo@smith.it'],
+        ),
+      );
+      await _pump(tester, demo: demo);
+      // The comma after "Smith" doesn't end it: no such address or group.
+      await tester.enterText(_field(0), 'Smith,');
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(_field(0)).controller!.text, 'Smith,');
+      await tester.enterText(_field(0), 'Smith, family; book club,');
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(_field(0)).controller!.text, isEmpty);
+      for (final a in ['ann@smith.it', 'bo@smith.it', 'Sara Conti']) {
+        expect(
+          find.descendant(
+            of: find.byType(ComposePane),
+            matching: find.textContaining(a),
+          ),
+          findsWidgets,
+        );
+      }
+    });
+
+    test('what was typed, cut into recipients', () {
+      List<String>? expand(String t) => switch (t.toLowerCase()) {
+        'smith' => ['s@x.it'],
+        'smith, family' => ['a@x.it', 'b@x.it'],
+        _ => null,
+      };
+      String show(List<({String text, List<String>? group})> r) =>
+          r.map((p) => p.group == null ? p.text : '[${p.text}]').join(' | ');
+      expect(
+        show(typedRecipients('Smith, family, l@x.it', expand)),
+        '[Smith, family] | l@x.it',
+      );
+      expect(
+        show(typedRecipients('Smith; l@x.it', expand)),
+        '[Smith] | l@x.it',
+      );
+      expect(
+        show(typedRecipients('Rossi, Mario <m@x.it>, luca', expand)),
+        'Rossi, Mario <m@x.it> | luca',
+      );
+      expect(show(typedRecipients('luca,', null)), 'luca');
+      expect(typedRecipients(' , ;', expand), isEmpty);
+    });
+
     testWidgets('a group is suggested by its name', (tester) async {
       await _pump(tester, demo: DemoMailSource(now: _now, contactGroups: true));
       await tester.enterText(_field(0), 'boo');
@@ -446,6 +519,44 @@ void main() {
     await tester.tap(find.text('Send'));
     await _sendAndWait(tester);
     expect(demo.sent.single.plainText, isTrue);
+  });
+
+  testWidgets('a picture too big, dropped with others, still says so', (
+    tester,
+  ) async {
+    final before = pickPictures;
+    pickPictures = () async => [
+      _HugePicture(),
+      XFile.fromData(_png, path: '/photos/terrace.png', name: 'terrace.png'),
+    ];
+    addTearDown(() => pickPictures = before);
+    await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Insert picture'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InlinePicture), findsOneWidget);
+    expect(
+      find.text(
+        'Attachments can be up to 18 MB in all. Remove some and try again.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a HEIC photo pasted is attached as it is', (tester) async {
+    final source = await _pump(tester, demo: _HeicClipboard());
+    await _write(tester);
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste picture'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InlinePicture), findsNothing);
+    expect(find.text('image.heic'), findsOneWidget);
+    await tester.tap(find.text('Send'));
+    await _sendAndWait(tester);
+    expect(source.sent.single.files.single.name, 'image.heic');
   });
 
   testWidgets('Insert picture in the options puts one in the text', (
@@ -624,6 +735,41 @@ void main() {
     await tester.tap(find.text('Ask for a read receipt'));
     await tester.pumpAndSettle();
     expect(find.text('High priority · Read receipt asked for'), findsOneWidget);
+  });
+
+  group('Android clipboard', () {
+    Future<DraftImage> prepare(String name, Uint8List data) =>
+        DemoMailSource(now: _now).prepareImage(name, data);
+
+    test('a picture, none, one too big, one the engine can\'t draw', () async {
+      expect(await androidClipboardPicture(null, prepare), isNull);
+      final png = await androidClipboardPicture({
+        'data': _png,
+        'mime': 'image/png',
+      }, prepare);
+      expect(png!.name, 'image.png');
+      await expectLater(
+        androidClipboardPicture({'tooBig': true}, prepare),
+        throwsA(
+          isA<ImageException>()
+              .having((e) => e.problem, 'problem', ImageProblem.tooBig)
+              .having((e) => e.file, 'file', isNull),
+        ),
+      );
+      await expectLater(
+        androidClipboardPicture({
+          'data': Uint8List.fromList([1, 2, 3]),
+          'mime': 'image/heic',
+        }, prepare),
+        throwsA(
+          isA<ImageException>().having(
+            (e) => e.file?.name,
+            'file',
+            'image.heic',
+          ),
+        ),
+      );
+    });
   });
 
   group('read receipt results', () {
