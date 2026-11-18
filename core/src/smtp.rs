@@ -572,8 +572,44 @@ fn crlf_line_endings(raw: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// while a connection lost after it, before the server's answer, leaves
 /// the server holding it or not ([SendError::Uncertain]).
 pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
+    send_within(cfg, ready, Limits::default()).await
+}
+
+/// How long a send may wait on the server.
+#[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
+pub struct Limits {
+    /// One step: connecting and securing the connection, EHLO, AUTH,
+    /// MAIL, each RCPT, DATA, and the server's answer to the message.
+    pub step: Duration,
+    /// The slowest upload still taken for moving: the message transfer
+    /// may take `step` plus its size at this rate, so a large message on
+    /// a slow uplink is not cut.
+    pub bytes_per_second: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            step: SMTP_TIMEOUT,
+            // About 128 kbit/s: a poor mobile uplink.
+            bytes_per_second: 16 * 1024,
+        }
+    }
+}
+
+impl Limits {
+    /// How long the message transfer and the server's answer may take.
+    pub fn transfer(&self, bytes: usize) -> Duration {
+        self.step + Duration::from_secs(bytes as u64 / self.bytes_per_second.max(1))
+    }
+}
+
+/// [send], with its own limits (tests use short ones).
+#[doc(hidden)]
+pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Result<()> {
     use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
-    use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
+    use lettre::transport::smtp::commands::{Data, Ehlo, Mail, Rcpt};
     use lettre::transport::smtp::extension::{
         ClientId, Extension, MailBodyParameter, MailParameter,
     };
@@ -588,8 +624,23 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
         .map(|r| address(r))
         .collect::<Result<Vec<_>>>()?;
     let from = address(&ready.from)?;
+    let body = crlf_line_endings(&ready.raw);
     crate::tls::use_one_crypto_provider();
     let host = cfg.host.as_str();
+    // A step the server never answers fails like a dropped connection:
+    // before the message text it is safe to try again later; once the
+    // text is on its way, the server may have the message.
+    let stalled = |step: Step| {
+        let detail = format!("no answer within {} s", limits.step.as_secs());
+        if step == Step::Message {
+            SendError::Uncertain(detail)
+        } else {
+            SendError::Connect {
+                host: host.to_owned(),
+                detail,
+            }
+        }
+    };
     let tls = match cfg.security {
         Security::None => None,
         Security::Tls | Security::StartTls => Some(
@@ -598,52 +649,90 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
     };
     let hello = ClientId::default();
     let wrapper = tls.clone().filter(|_| cfg.security == Security::Tls);
-    let mut conn = AsyncSmtpConnection::connect_tokio1(
-        (host, cfg.port),
-        Some(SMTP_TIMEOUT),
-        &hello,
-        wrapper,
-        None,
+    let mut conn = tokio::time::timeout(
+        limits.step,
+        AsyncSmtpConnection::connect_tokio1(
+            (host, cfg.port),
+            Some(limits.step),
+            &hello,
+            wrapper,
+            None,
+        ),
     )
     .await
+    .map_err(|_| stalled(Step::Connect))?
     .map_err(|e| classify(host, Step::Connect, e))?;
     if let (Security::StartTls, Some(tls)) = (cfg.security, tls) {
-        conn.starttls(tls, &hello)
+        tokio::time::timeout(limits.step, conn.starttls(tls, &hello))
             .await
+            .map_err(|_| stalled(Step::Connect))?
             .map_err(|e| classify(host, Step::Connect, e))?;
     }
+    // What the server takes at most (RFC 1870), from its EHLO: lettre
+    // keeps the extensions it uses, not this one.
+    let ehlo = tokio::time::timeout(limits.step, conn.command(Ehlo::new(hello.clone())))
+        .await
+        .map_err(|_| stalled(Step::Connect))?
+        .map_err(|e| classify(host, Step::Connect, e))?;
+    let size = advertised_size(ehlo.message());
+    if let Some(Some(most)) = size {
+        if body.len() > most {
+            abort(&mut conn, limits.step).await;
+            return Err(SendError::Rejected(format!(
+                "the message is {} and the server takes at most {}",
+                megabytes(body.len()),
+                megabytes(most)
+            )));
+        }
+    }
     let credentials = Credentials::new(cfg.username.clone(), cfg.password.clone());
-    conn.auth(
-        lettre::transport::smtp::authentication::DEFAULT_MECHANISMS,
-        &credentials,
+    tokio::time::timeout(
+        limits.step,
+        conn.auth(
+            lettre::transport::smtp::authentication::DEFAULT_MECHANISMS,
+            &credentials,
+        ),
     )
     .await
+    .map_err(|_| stalled(Step::Auth))?
     .map_err(|e| classify(host, Step::Auth, e))?;
     let mut options = Vec::new();
     let wide = !ready.from.is_ascii() || ready.recipients.iter().any(|r| !r.is_ascii());
     if wide && conn.server_info().supports_feature(Extension::SmtpUtfEight) {
         options.push(MailParameter::SmtpUtfEight);
     }
-    if !ready.raw.is_ascii() && conn.server_info().supports_feature(Extension::EightBitMime) {
+    if !body.is_ascii() && conn.server_info().supports_feature(Extension::EightBitMime) {
         options.push(MailParameter::Body(MailBodyParameter::EightBitMime));
     }
+    if size.is_some() {
+        options.push(MailParameter::Size(body.len()));
+    }
     let before = async {
-        conn.command(Mail::new(Some(from), options)).await?;
+        tokio::time::timeout(limits.step, conn.command(Mail::new(Some(from), options)))
+            .await
+            .map_err(|_| stalled(Step::Envelope))?
+            .map_err(|e| classify(host, Step::Envelope, e))?;
         for to in recipients {
-            conn.command(Rcpt::new(to, Vec::new())).await?;
+            tokio::time::timeout(limits.step, conn.command(Rcpt::new(to, Vec::new())))
+                .await
+                .map_err(|_| stalled(Step::Envelope))?
+                .map_err(|e| classify(host, Step::Envelope, e))?;
         }
-        conn.command(Data).await
+        tokio::time::timeout(limits.step, conn.command(Data))
+            .await
+            .map_err(|_| stalled(Step::Envelope))?
+            .map_err(|e| classify(host, Step::Envelope, e))
     }
     .await;
     match before {
         Err(e) => {
-            conn.abort().await;
-            return Err(classify(host, Step::Envelope, e));
+            abort(&mut conn, limits.step).await;
+            return Err(e);
         }
         // Anything but "go on" (354) to DATA breaks the exchange: the text
         // would be read as commands. Nothing was handed over yet.
         Ok(answer) if !answer.has_code(354) => {
-            conn.abort().await;
+            abort(&mut conn, limits.step).await;
             return Err(SendError::Protocol(format!(
                 "DATA answered with {} instead of 354",
                 answer.code()
@@ -652,17 +741,42 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
         Ok(_) => {}
     }
     // From here on the server may have the message.
-    let answer = conn.message(&crlf_line_endings(&ready.raw)).await;
+    let answer = tokio::time::timeout(limits.transfer(body.len()), conn.message(&body)).await;
     match answer {
-        Ok(_) => {
-            conn.quit().await.ok();
+        Ok(Ok(_)) => {
+            tokio::time::timeout(limits.step, conn.quit()).await.ok();
             Ok(())
         }
-        Err(e) => {
-            conn.abort().await;
+        Ok(Err(e)) => {
+            abort(&mut conn, limits.step).await;
             Err(classify(host, Step::Message, e))
         }
+        Err(_) => Err(stalled(Step::Message)),
     }
+}
+
+/// Ends a connection that went wrong, without waiting on a server that
+/// may not answer any more.
+async fn abort(conn: &mut lettre::transport::smtp::client::AsyncSmtpConnection, step: Duration) {
+    tokio::time::timeout(step, conn.abort()).await.ok();
+}
+
+/// The SIZE an EHLO answer advertises: None when it doesn't, Some(None)
+/// when it gives no limit (or 0, "no fixed limit"), Some(Some(bytes)).
+fn advertised_size<'a>(lines: impl Iterator<Item = &'a str>) -> Option<Option<usize>> {
+    lines
+        .filter_map(|l| {
+            let mut words = l.split_whitespace();
+            words
+                .next()
+                .filter(|w| w.eq_ignore_ascii_case("SIZE"))
+                .map(|_| words.next().and_then(|n| n.parse().ok()).filter(|&n| n > 0))
+        })
+        .next()
+}
+
+fn megabytes(bytes: usize) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
 /// How long one step of a conversation with the SMTP server may take.
@@ -1015,6 +1129,23 @@ mod tests {
         let text = String::from_utf8(later.clone()).unwrap();
         assert_eq!(text.matches("Date:").count(), 1, "{text}");
         assert!(text.contains(&built.message_id));
+    }
+
+    #[test]
+    fn the_advertised_size_is_read_from_ehlo() {
+        let read = |lines: &[&str]| advertised_size(lines.iter().copied());
+        assert_eq!(read(&["8BITMIME", "SIZE 35882577", "AUTH PLAIN"]), Some(Some(35_882_577)));
+        assert_eq!(read(&["size 0"]), Some(None));
+        assert_eq!(read(&["SIZE"]), Some(None));
+        assert_eq!(read(&["8BITMIME", "AUTH PLAIN"]), None);
+    }
+
+    #[test]
+    fn a_large_message_gets_time_to_upload() {
+        let limits = Limits::default();
+        assert_eq!(limits.transfer(0), Duration::from_secs(60));
+        // 25 MB at the slowest rate still taken for moving.
+        assert!(limits.transfer(25_000_000) > Duration::from_secs(25 * 60));
     }
 
     #[test]

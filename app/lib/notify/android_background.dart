@@ -60,6 +60,19 @@ class AndroidBackground {
     }
   }
 
+  /// Message [id] left the outbox (Undo, deleted): Android no longer
+  /// needs to send it.
+  static Future<void> cancelOutbox(int id) async {
+    if (!on) return;
+    try {
+      await _background.invokeMethod<void>('cancelOutbox', {'id': id});
+    } on PlatformException {
+      // Its job finds nothing to send.
+    } on MissingPluginException {
+      // The same.
+    }
+  }
+
   /// Asks Android to leave the service out of battery saving.
   static Future<void> askBattery() async {
     if (on) await _background.invokeMethod<void>('askBattery');

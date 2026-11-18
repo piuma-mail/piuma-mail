@@ -2795,6 +2795,8 @@ class EngineMailSource extends MailSource {
   Future<Draft> reopenOutgoing(int id) async {
     try {
       final m = await engine.reopenOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
       final copy = m.draft;
       return Draft(
         accountId: m.accountId,

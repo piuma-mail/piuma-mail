@@ -119,10 +119,9 @@ object Background {
     const val INSTANT = "instant"
     const val PERIODIC = "periodic"
     private const val JOB = 1
-    // One outbox job per message (by its id), so a later one doesn't
-    // replace an earlier one's.
-    private const val OUTBOX_JOB = 1000
-    private const val OUTBOX_JOBS = 1000L
+    // One outbox job per message: its id after this offset, so no two
+    // waiting messages share a job (a later one would replace the other).
+    private const val OUTBOX_JOB = 1000L
     private const val MAIL_CHANNEL = "mail"
     // Quiet hours: shown in the shade, without a sound.
     private const val QUIET_CHANNEL = "mail_quiet"
@@ -159,22 +158,31 @@ object Background {
         }
     }
 
+    /** The job of outbox message [id]; null past what a job id can hold. */
+    private fun outboxJob(id: Long): Int? =
+        (OUTBOX_JOB + id).takeIf { id >= 0 && it <= Int.MAX_VALUE }?.toInt()
+
     /**
      * Sends outbox message [id] at [atSeconds] (Unix seconds), once the
      * phone is online, whether or not the app is still open.
      */
     fun outboxAt(context: Context, id: Long, atSeconds: Long) {
+        // Beyond two billion messages it goes at the app's next start.
+        val jobId = outboxJob(id) ?: return
         val jobs = context.getSystemService(JobScheduler::class.java)
         val wait = (atSeconds * 1000L - System.currentTimeMillis()).coerceAtLeast(0L)
-        val job = JobInfo.Builder(
-            OUTBOX_JOB + (id % OUTBOX_JOBS).toInt(),
-            ComponentName(context, OutboxJob::class.java),
-        )
+        val job = JobInfo.Builder(jobId, ComponentName(context, OutboxJob::class.java))
             .setMinimumLatency(wait)
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setPersisted(true)
             .build()
         jobs.schedule(job)
+    }
+
+    /** Message [id] left the outbox (taken back with Undo, deleted): its job goes. */
+    fun cancelOutbox(context: Context, id: Long) {
+        val jobId = outboxJob(id) ?: return
+        context.getSystemService(JobScheduler::class.java).cancel(jobId)
     }
 
     /** Opens the engine with every password; how many accounts it has. */

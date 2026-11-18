@@ -11,7 +11,9 @@ use piuma_core::imap::ImapConfig;
 use piuma_core::outbox::{self, Outgoing};
 use piuma_core::remote;
 use piuma_core::remote::AccountCourier;
-use piuma_core::smtp::{ready, send, send_and_file, Draft, Filing, Ready, SendError, SmtpConfig};
+use piuma_core::smtp::{
+    ready, send, send_and_file, send_within, Draft, Filing, Limits, Ready, SendError, SmtpConfig,
+};
 use piuma_core::{Account, AccountId, AccountKind, Security, Server, Store};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedReadHalf;
@@ -20,6 +22,8 @@ use tokio::net::{TcpListener, TcpStream};
 /// What the fake server received.
 #[derive(Default, Debug)]
 struct Received {
+    /// The MAIL FROM line, as sent.
+    mail: String,
     rcpt: Vec<String>,
     /// The message, dot-stuffing undone, one "\n" after each line.
     data: String,
@@ -42,6 +46,10 @@ struct Sink {
     /// Answers the message itself with this instead of 250, having taken
     /// it: a reply that breaks the exchange after the message went.
     end_reply: Option<&'static str>,
+    /// Goes silent, connection open, at this point: "GREETING", or the
+    /// start of a command ("EHLO", "AUTH", "MAIL FROM", "RCPT TO",
+    /// "DATA"), or "END" once it has the whole message.
+    stall: Option<&'static str>,
 }
 
 impl Default for Sink {
@@ -51,6 +59,7 @@ impl Default for Sink {
             ehlo: "250-sink\r\n250 AUTH PLAIN LOGIN\r\n",
             data_reply: None,
             end_reply: None,
+            stall: None,
         }
     }
 }
@@ -98,11 +107,20 @@ fn text(line: &[u8]) -> String {
 async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
     let (r, mut w) = tcp.into_split();
     let mut r = BufReader::new(r);
+    if sink.stall == Some("GREETING") {
+        return std::future::pending().await;
+    }
     w.write_all(b"220 sink ESMTP\r\n").await.unwrap();
     let mut current = Received::default();
     while let Some(raw) = read_line(&mut r).await {
         let line = text(&raw);
         let upper = line.to_ascii_uppercase();
+        if sink
+            .stall
+            .is_some_and(|at| at != "END" && upper.starts_with(at))
+        {
+            return std::future::pending().await;
+        }
         if let Some(last) = seen.lock().unwrap().last_mut() {
             last.after.push(line.clone());
         }
@@ -116,7 +134,10 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
                 b"535 5.7.8 bad credentials\r\n"
             }
         } else if upper.starts_with("MAIL FROM") {
-            current = Received::default();
+            current = Received {
+                mail: line.clone(),
+                ..Received::default()
+            };
             b"250 ok\r\n"
         } else if upper.starts_with("RCPT TO") {
             current.rcpt.push(line[8..].trim().to_owned());
@@ -142,6 +163,9 @@ async fn serve(tcp: TcpStream, seen: Arc<Mutex<Vec<Received>>>, sink: Sink) {
                 b"451 4.3.2 try again later\r\n"
             } else {
                 seen.lock().unwrap().push(std::mem::take(&mut current));
+                if sink.stall == Some("END") {
+                    return std::future::pending().await;
+                }
                 if let Some(reply) = sink.end_reply {
                     w.write_all(reply.as_bytes()).await.ok();
                     continue;
@@ -738,4 +762,70 @@ async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
         "{:?}",
         listed[0].error
     );
+}
+
+#[tokio::test]
+async fn a_server_that_stops_answering_never_leaves_a_send_hanging() {
+    let limits = Limits {
+        step: std::time::Duration::from_millis(300),
+        ..Limits::default()
+    };
+    // Silent before the message text: nothing went, so it is like a
+    // dropped connection, and the outbox tries again later.
+    for at in ["GREETING", "EHLO", "AUTH", "MAIL FROM", "RCPT TO", "DATA"] {
+        let (port, inbox) = smtp_sink_with(Sink {
+            stall: Some(at),
+            ..Sink::default()
+        })
+        .await;
+        let started = std::time::Instant::now();
+        let err = send_within(&smtp(port, "test"), &ready(&draft()).unwrap(), limits)
+            .await
+            .unwrap_err();
+        assert!(err.is_offline(), "{at}: {err:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{at}");
+        assert!(inbox.lock().unwrap().is_empty(), "{at}");
+    }
+    // Silent once it has the message: it may have it.
+    let (port, inbox) = smtp_sink_with(Sink {
+        stall: Some("END"),
+        ..Sink::default()
+    })
+    .await;
+    let err = send_within(&smtp(port, "test"), &ready(&draft()).unwrap(), limits)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SendError::Uncertain(_)), "{err:?}");
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_size_goes_with_mail_from_and_a_message_too_big_is_never_uploaded() {
+    let (port, inbox) = smtp_sink_with(Sink {
+        ehlo: "250-sink\r\n250-SIZE 1000000\r\n250 AUTH PLAIN LOGIN\r\n",
+        ..Sink::default()
+    })
+    .await;
+    let message = ready(&draft()).unwrap();
+    send(&smtp(port, "test"), &message).await.unwrap();
+    let got = inbox.lock().unwrap();
+    assert!(
+        got[0].mail.ends_with(&format!("SIZE={}", message.raw.len())),
+        "{}",
+        got[0].mail
+    );
+    drop(got);
+
+    // A server that takes 100 bytes at most: refused here, before upload.
+    let (port, inbox) = smtp_sink_with(Sink {
+        ehlo: "250-sink\r\n250-SIZE 100\r\n250 AUTH PLAIN LOGIN\r\n",
+        ..Sink::default()
+    })
+    .await;
+    let err = send(&smtp(port, "test"), &message).await.unwrap_err();
+    assert!(
+        matches!(&err, SendError::Rejected(why) if why.contains("at most")),
+        "{err:?}"
+    );
+    assert!(inbox.lock().unwrap().is_empty());
 }
