@@ -26,6 +26,7 @@ class _Recording extends DemoMailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) {
     jmapUrl = sessionUrl;
     this.apiToken = apiToken;
@@ -64,6 +65,7 @@ class _Connecting extends DemoMailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     status.value = const SyncStatus(
       SyncPhase.downloading,
@@ -91,6 +93,7 @@ class _Refusing extends DemoMailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.wrongPassword);
 }
 

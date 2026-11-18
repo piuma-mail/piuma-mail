@@ -12,6 +12,7 @@ import '../updates/updates.dart';
 import '../updates/whats_new.dart';
 import '../widgets/dialog.dart';
 import 'labels.dart';
+import 'mailbox_actions.dart';
 import 'sidebar_groups.dart';
 
 /// Left column of the desktop layout: Compose, folders and accounts.
@@ -53,6 +54,8 @@ class Sidebar extends StatefulWidget {
     this.savedSearches = const [],
     this.onSavedSearch,
     this.onEditSavedSearch,
+    this.starred,
+    this.onDropRows,
   });
 
   /// Searches kept under a name, under the labels; the section shows once
@@ -60,6 +63,14 @@ class Sidebar extends StatefulWidget {
   final List<SavedSearch> savedSearches;
   final ValueChanged<SavedSearch>? onSavedSearch;
   final ValueChanged<SavedSearch>? onEditSavedSearch;
+
+  /// Starred emails; null hides Starred, while there are none.
+  final int? starred;
+
+  /// Emails dragged from the list and let go on one of an account's
+  /// folders; null: folders take no drops.
+  final void Function(int account, String mailbox, List<MailRow> rows)?
+  onDropRows;
 
   /// The labels, under the groups (`LabelsToApprove`); the section shows
   /// once there is one.
@@ -140,6 +151,8 @@ class Sidebar extends StatefulWidget {
       (MailFolder.drafts, PiumaIcon.pen, l.folderDrafts),
     (MailFolder.sent, PiumaIcon.send, l.folderSent),
     (MailFolder.archive, PiumaIcon.archive, l.folderArchive),
+    if (starred != null || folder == MailFolder.starred)
+      (MailFolder.starred, PiumaIcon.star, l.folderStarred),
   ];
 
   /// The special zones, in their own group under the folders.
@@ -163,6 +176,12 @@ class Sidebar extends StatefulWidget {
 class _SidebarState extends State<Sidebar> {
   /// Accounts whose folders are open under them.
   final _open = <int>{};
+
+  /// Folders whose subfolders are closed, by account.
+  final _closed = <int, Set<String>>{};
+
+  /// Accounts whose hidden (unsubscribed) folders show.
+  final _hidden = <int>{};
 
   @override
   void didUpdateWidget(Sidebar oldWidget) {
@@ -365,13 +384,56 @@ class _SidebarState extends State<Sidebar> {
       if (g.separateInbox && g.addresses.isNotEmpty) g,
   ];
 
-  /// An account, and its folders when they are open.
+  /// An account, and its folders when they are open: a tree whose
+  /// folders open and close, hidden folders on demand.
   List<Widget> _account(MailAccount a) {
-    final folders = widget.folders[a.id] ?? const <AccountFolder>[];
-    final open = folders.isNotEmpty && _open.contains(a.id);
+    final all = widget.folders[a.id] ?? const <AccountFolder>[];
     final onAccount = widget.onAccount;
     final onMailbox = widget.onMailbox;
+    final onDrop = widget.onDropRows;
     final account = widget.account;
+    final closed = _closed[a.id] ?? const <String>{};
+    final folders = shownFolders(
+      all,
+      hidden: _hidden.contains(a.id),
+      closed: closed,
+      keep: account == a.id ? widget.mailbox : null,
+    );
+    final hidden = all.where((f) => !f.subscribed).length;
+    final open = all.isNotEmpty && _open.contains(a.id);
+    final l = AppLocalizations.of(context);
+    Widget item(AccountFolder f) {
+      final i = all.indexOf(f);
+      Widget line(bool over) => _FolderItem(
+        folder: f,
+        current: account == a.id && widget.mailbox == f.mailbox,
+        over: over,
+        hiddenTag: !f.subscribed ? l.folderHidden : null,
+        chevron: hasSubfolders(all, i)
+            ? FolderChevron(
+                open: !closed.contains(f.mailbox),
+                name: f.name,
+                onTap: () => setState(() {
+                  final set = _closed.putIfAbsent(a.id, () => <String>{});
+                  set.contains(f.mailbox)
+                      ? set.remove(f.mailbox)
+                      : set.add(f.mailbox);
+                }),
+              )
+            : null,
+        onTap: onMailbox == null || !f.selectable
+            ? null
+            : () => onMailbox(a.id, f.mailbox),
+      );
+      if (onDrop == null || !f.selectable) return line(false);
+      return FolderDropTarget(
+        account: a.id,
+        mailbox: f.mailbox,
+        onDrop: (rows) => onDrop(a.id, f.mailbox, rows),
+        builder: (_, over) => line(over),
+      );
+    }
+
     return [
       _AccountItem(
         account: a,
@@ -379,7 +441,7 @@ class _SidebarState extends State<Sidebar> {
         onTap: onAccount == null
             ? null
             : () => onAccount(account == a.id ? null : a.id),
-        open: folders.isEmpty ? null : open,
+        open: all.isEmpty ? null : open,
         onOpen: () => setState(
           () => _open.contains(a.id) ? _open.remove(a.id) : _open.add(a.id),
         ),
@@ -394,12 +456,17 @@ class _SidebarState extends State<Sidebar> {
                 for (final f in folders)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 2),
-                    child: _FolderItem(
-                      folder: f,
-                      current: account == a.id && widget.mailbox == f.mailbox,
-                      onTap: onMailbox == null || !f.selectable
-                          ? null
-                          : () => onMailbox(a.id, f.mailbox),
+                    child: item(f),
+                  ),
+                if (hidden > 0)
+                  _HiddenToggle(
+                    label: _hidden.contains(a.id)
+                        ? l.hiddenFoldersHide
+                        : l.hiddenFoldersShow(hidden),
+                    onTap: () => setState(
+                      () => _hidden.contains(a.id)
+                          ? _hidden.remove(a.id)
+                          : _hidden.add(a.id),
                     ),
                   ),
               ],
@@ -424,7 +491,10 @@ class _SidebarState extends State<Sidebar> {
       width: 240,
       builder: (_) => _RailFolders(
         account: a,
-        folders: folders,
+        folders: shownFolders(
+          folders,
+          keep: widget.account == a.id ? widget.mailbox : null,
+        ),
         mailbox: widget.account == a.id ? widget.mailbox : null,
         onMailbox: onMailbox == null ? null : (m) => onMailbox(a.id, m),
       ),
@@ -859,6 +929,9 @@ class _FolderItem extends StatelessWidget {
     this.current = false,
     this.onTap,
     this.indent = 30,
+    this.chevron,
+    this.over = false,
+    this.hiddenTag,
   });
   final AccountFolder folder;
 
@@ -867,21 +940,36 @@ class _FolderItem extends StatelessWidget {
   final bool current;
   final VoidCallback? onTap;
 
+  /// Opens or closes its subfolders, in the room before its icon.
+  final Widget? chevron;
+
+  /// Emails dragged over it that it would take: it lights up.
+  final bool over;
+
+  /// "Hidden", for a folder not subscribed to, shown on demand.
+  final String? hiddenTag;
+
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final instant = reduceMotion(context);
+    final left = indent + folder.depth * 18;
     final item = AnimatedContainer(
       duration: instant ? Duration.zero : PiumaMotion.press,
       curve: PiumaMotion.curve,
       height: 34,
-      padding: EdgeInsets.only(left: indent + folder.depth * 18, right: 10),
+      padding: EdgeInsets.only(
+        left: chevron == null ? left : (left - 24).clamp(0, left),
+        right: 10,
+      ),
       decoration: BoxDecoration(
-        color: current ? c.sel : null,
+        color: current || over ? c.sel : null,
         borderRadius: BorderRadius.circular(9),
+        border: over ? Border.all(color: c.accent) : null,
       ),
       child: Row(
         children: [
+          ?chevron,
           PiumaIconView(PiumaIcon.folder, size: 16, color: c.muted),
           const SizedBox(width: 10),
           Expanded(
@@ -896,7 +984,12 @@ class _FolderItem extends StatelessWidget {
               ),
             ),
           ),
-          if (folder.unread > 0)
+          if (hiddenTag case final tag?)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(tag, style: TextStyle(fontSize: 12, color: c.muted)),
+            )
+          else if (folder.unread > 0)
             Text(
               '${folder.unread}',
               style: TextStyle(fontSize: 12, color: c.muted),
@@ -909,6 +1002,35 @@ class _FolderItem extends StatelessWidget {
       selected: current,
       button: true,
       child: PiumaPressable(onTap: onTap, child: item),
+    );
+  }
+}
+
+/// "Show 2 hidden folders" under an account's folders, or "Hide hidden
+/// folders" while they show.
+class _HiddenToggle extends StatelessWidget {
+  const _HiddenToggle({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    return PiumaPressable(
+      onTap: onTap,
+      semanticLabel: label,
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 30),
+          padding: const EdgeInsets.only(left: 56, right: 10),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 13, color: c.accentText),
+          ),
+        ),
+      ),
     );
   }
 }

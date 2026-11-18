@@ -62,6 +62,10 @@ class PhoneLink extends ChangeNotifier {
   Future<void> reply(String payload, String text) =>
       _act(payload, 'reply', text: text);
 
+  /// Answers [payload] with [text], to everyone it went to.
+  Future<void> replyAll(String payload, String text) =>
+      _act(payload, 'replyAll', text: text);
+
   /// The system's input (voice, keyboard, handwriting); null when the
   /// person went back.
   Future<String?> speak(String label) => _call<String>('speak', label);
@@ -72,7 +76,7 @@ class PhoneLink extends ChangeNotifier {
     DateTime? until,
     String text = '',
   }) async {
-    if (action != 'reply') {
+    if (action != 'reply' && action != 'replyAll') {
       _summary = _summary?.without(payload);
       notifyListeners();
     }

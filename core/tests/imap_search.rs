@@ -209,7 +209,7 @@ fn store_with(port: u16) -> (Arc<Mutex<Store>>, Account) {
 }
 
 async fn search(store: &Arc<Mutex<Store>>, a: &Account, q: &str) -> ServerFound {
-    let mut remote = Remote::open(a, "secret").await.unwrap();
+    let mut remote = Remote::open(a, &"secret".into()).await.unwrap();
     let found = remote
         .search_server(store, a, &Query::parse(q), 100)
         .await
@@ -391,7 +391,7 @@ async fn a_search_dropped_midway_stops_and_keeps_nothing() {
     let searched = mock.searched.notified();
     let (s, acc) = (store.clone(), a.clone());
     let task = tokio::spawn(async move {
-        let mut remote = Remote::open(&acc, "secret").await.unwrap();
+        let mut remote = Remote::open(&acc, &"secret".into()).await.unwrap();
         remote
             .search_server(&s, &acc, &Query::parse("order"), 100)
             .await

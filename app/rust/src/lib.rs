@@ -6,4 +6,5 @@ pub mod api;
 pub mod background;
 mod credentials;
 mod frb_generated;
+mod login;
 pub mod watch;

@@ -23,6 +23,10 @@ pub enum CalendarError {
     NotFound(String),
     #[error("can't reach {url}: {detail}")]
     Connect { url: String, detail: String },
+    /// The server's certificate was refused. For a mail account's
+    /// calendar, the certificates trusted for the account count.
+    #[error("{0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server answered {status} for {url}")]
     Status { url: String, status: u16 },
     #[error("unexpected answer: {0}")]
@@ -55,6 +59,7 @@ pub struct Found {
 pub struct CalDav {
     http: reqwest::Client,
     authorization: String,
+    refused: crate::tls::Refusals,
 }
 
 /// Where to start looking for an address: a URL as it is, the servers
@@ -98,8 +103,15 @@ pub fn offers_calendar(email: &str) -> bool {
 
 impl CalDav {
     pub fn new(username: &str, password: &str) -> Result<Self> {
+        Self::with_pins(username, password, &[])
+    }
+
+    /// As [`Self::new`], also trusting the certificates in `pins`: those
+    /// of the mail account whose calendar this is.
+    pub fn with_pins(username: &str, password: &str, pins: &[crate::tls::Pin]) -> Result<Self> {
         use base64::Engine;
-        let http = crate::tls::http_client()
+        let (http, refused) = crate::tls::http_client_pinned(pins);
+        let http = http
             .timeout(Duration::from_secs(30))
             // Redirects are followed here, keeping PROPFIND a PROPFIND.
             .redirect(reqwest::redirect::Policy::none())
@@ -108,11 +120,20 @@ impl CalDav {
         let pair = format!("{username}:{password}");
         Ok(Self {
             http,
+            refused,
             authorization: format!(
                 "Basic {}",
                 base64::engine::general_purpose::STANDARD.encode(pair)
             ),
         })
+    }
+
+    /// A request that failed: a refused certificate, or no answer.
+    fn failed(&self, url: &str, e: reqwest::Error) -> CalendarError {
+        match self.refused.take() {
+            Some(r) => CalendarError::Certificate(Box::new(r)),
+            None => connect(url, e),
+        }
     }
 
     /// Finds the calendars of an address: an email address or a server.
@@ -263,7 +284,7 @@ impl CalDav {
             .body(ics.to_owned())
             .send()
             .await
-            .map_err(|e| connect(&url, e))?;
+            .map_err(|e| self.failed(&url, e))?;
         match response.status() {
             s if s.is_success() => Ok(()),
             // Already there: the organizer's server may have put it.
@@ -305,7 +326,7 @@ impl CalDav {
             if send_authorization {
                 request = request.header(reqwest::header::AUTHORIZATION, &self.authorization);
             }
-            let response = request.send().await.map_err(|e| connect(&url, e))?;
+            let response = request.send().await.map_err(|e| self.failed(&url, e))?;
             let status = response.status();
             if status.is_redirection() {
                 let Some(next) = response
@@ -327,7 +348,7 @@ impl CalDav {
             }
             return match status {
                 StatusCode::MULTI_STATUS | StatusCode::OK => {
-                    let text = response.text().await.map_err(|e| connect(&url, e))?;
+                    let text = response.text().await.map_err(|e| self.failed(&url, e))?;
                     Ok((url, text))
                 }
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {

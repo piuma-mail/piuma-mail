@@ -9,6 +9,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'design/look.dart';
 import 'design/theme.dart';
 import 'design/tokens.g.dart';
+import 'data_problem.dart';
 import 'dev_copy.dart';
 import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
@@ -22,14 +23,18 @@ import 'notify/android_background.dart';
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
+import 'outside/arrivals.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
+import 'widgets/links.dart';
 
 Future<void> main(List<String> args) async {
   // A message opened in a window of its own: [window id, its argument].
   if (args.firstOrNull == 'multi_window') {
     return _readerWindow(args.elementAtOrNull(2) ?? '');
   }
+  // First, so whatever goes wrong from here on is kept for a report.
+  _keepCrashes();
   WidgetsFlutterBinding.ensureInitialized();
   registerFontLicenses();
   await RustLib.init();
@@ -38,10 +43,45 @@ Future<void> main(List<String> args) async {
   // First: the installer's hooks end here, and a downloaded update
   // restarts into itself before the engine opens.
   Updates.start(dir.path);
-  engine.openEngine(dbPath: '${dir.path}/piuma.db');
-  _keepCrashes();
+  // What this launch was asked to open (a mailto: link, an email file,
+  // files to send): it waits for the inbox. Later launches come through
+  // the platform (Arrivals.start).
+  Arrivals.instance.addArgs(args);
+  await _start(dir.path);
+}
+
+/// Opens the engine and shows the inbox; when the data can't be opened (a
+/// failed update of the database, a locked or damaged file, data from a
+/// newer Piuma), says so with Try again and Report instead of a blank
+/// window or a crash at every start.
+Future<void> _start(String dir) async {
+  try {
+    engine.openEngine(dbPath: '$dir/piuma.db');
+  } catch (e, stack) {
+    // Kept for the report offered at the next start that works.
+    try {
+      feedback.feedbackRecordCrash(text: '$e\n$stack');
+    } catch (_) {}
+    runApp(
+      PiumaApp(
+        appearance: _loadAppearance(),
+        home: (_, _) => DataProblem(
+          detail: '$e',
+          newer: '$e'.contains('newer version of Piuma'),
+          reportAddress: _feedbackAddress(),
+          onRetry: () => _start(dir).ignore(),
+        ),
+      ),
+    );
+    return;
+  }
+  // A password the system can no longer read leaves its account asking
+  // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();
+  // mailto: links in emails write here, in Piuma's own compose.
+  openMailtoLink = (uri) async => Arrivals.instance.mailto(uri);
+  Arrivals.instance.start().ignore();
   // The background service or the 15-minute look, as picked.
   AndroidBackground.apply().ignore();
   final replies = StreamController<MailRow>.broadcast();
@@ -62,9 +102,18 @@ Future<void> main(List<String> args) async {
         source: source,
         onOpenWindow: canOpenWindows ? openReaderWindow : null,
         replies: replies.stream,
+        arrivals: Arrivals.instance,
       ),
     ),
   );
+}
+
+String _feedbackAddress() {
+  try {
+    return feedback.feedbackAddress();
+  } catch (_) {
+    return '';
+  }
 }
 
 /// Keeps what went wrong for the next start, where the inbox offers to

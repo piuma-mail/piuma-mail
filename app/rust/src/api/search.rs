@@ -11,7 +11,6 @@ use piuma_core::{AccountId, Query};
 use crate::api::engine::{
     engine, in_conversation, inbox_row, reader, store, EngineError, ErrorKind, SearchHit,
 };
-use crate::credentials;
 
 /// What the servers found.
 pub struct ServerSearchResult {
@@ -70,9 +69,11 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
         for account in accounts {
             let (store, query) = (shared.clone(), parsed.clone());
             each.spawn(async move {
-                let password = credentials::load(account.id).ok()?;
+                // The account's own sign-in: OAuth tokens or a password,
+                // with the certificates trusted for its servers.
+                let login = crate::login::load(account.id).ok()?;
                 let search = async {
-                    let mut remote = Remote::open(&account, &password).await?;
+                    let mut remote = Remote::open(&account, &login).await?;
                     let found = remote.search_server(&store, &account, &query, limit).await;
                     remote.close().await;
                     found

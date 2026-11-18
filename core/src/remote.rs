@@ -4,9 +4,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::auth::Login;
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
 use crate::model::{Account, AccountId, AccountKind, Folder};
+use crate::outbox::Courier;
 use crate::search::{folder_key, InFolder, Query, Scope, ServerAsk};
 use crate::smtp::{self, Draft, Ready, SendError, SendReport, SmtpConfig};
 use crate::store::{Body, Store, StoreError};
@@ -27,6 +29,15 @@ impl RemoteError {
         matches!(
             self,
             RemoteError::Imap(ImapError::Auth) | RemoteError::Jmap(JmapError::Auth)
+        )
+    }
+
+    /// The server's certificate was refused: the person has to look at it.
+    pub fn is_certificate(&self) -> bool {
+        matches!(
+            self,
+            RemoteError::Imap(ImapError::Certificate(_))
+                | RemoteError::Jmap(JmapError::Certificate(_))
         )
     }
 
@@ -89,6 +100,35 @@ pub(crate) fn resolve_historical_attachment(
     }
 }
 
+/// What a folder held when it was counted, for Empty to keep to: the
+/// next UID then (IMAP), or the ids (JMAP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Snapshot {
+    Imap {
+        uid_next: Option<u32>,
+    },
+    Jmap {
+        ids: Vec<String>,
+    },
+    /// The server couldn't be counted: only these messages that are here
+    /// (their uids here), never more.
+    Here {
+        uids: Vec<u32>,
+    },
+}
+
+impl Snapshot {
+    /// What Empty keeps to when the server couldn't say what it holds:
+    /// the messages shown here with nothing waiting for them.
+    pub fn here(store: &Mutex<Store>, account: AccountId, mailbox: &str) -> Result<Self> {
+        let uids = store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .erasable_uids(account, mailbox)?;
+        Ok(Snapshot::Here { uids })
+    }
+}
+
 /// A logged-in connection to an account's server.
 pub enum Remote {
     Imap(imap::Connection),
@@ -96,14 +136,14 @@ pub enum Remote {
 }
 
 impl Remote {
-    pub async fn open(account: &Account, password: &str) -> Result<Self> {
+    pub async fn open(account: &Account, login: &Login) -> Result<Self> {
         Ok(match &account.kind {
             AccountKind::Imap { .. } => {
-                let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+                let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
                 Remote::Imap(imap::Connection::open(&cfg).await?)
             }
             AccountKind::Jmap { .. } => {
-                let cfg = JmapConfig::for_account(account, password).expect("JMAP account");
+                let cfg = JmapConfig::for_account(account, login).expect("JMAP account");
                 Remote::Jmap(jmap::Client::open(&cfg).await?)
             }
         })
@@ -566,69 +606,233 @@ impl Remote {
         })
     }
 
+    /// Reads which folders the person gave a job to (Sent, Drafts,
+    /// Trash, spam, Archive), so this connection uses theirs.
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.learn_roles(store, account)?,
+            Remote::Jmap(c) => c.learn_roles(store, account)?,
+        }
+        Ok(())
+    }
+
+    /// Deletes the messages of a folder for good (Empty Trash, Empty
+    /// spam), keeping to `upto`: what was there when [`Self::count`] gave
+    /// it, so mail that came after stays, or, when the server couldn't be
+    /// counted, only the messages that are here. Never one with a change
+    /// still waiting. Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        upto: &Snapshot,
+    ) -> Result<usize> {
+        // A snapshot of the other protocol says nothing about this
+        // server: keep to what is here.
+        let fallback;
+        let upto = match (&*self, upto) {
+            (Remote::Imap(_), Snapshot::Jmap { .. }) | (Remote::Jmap(_), Snapshot::Imap { .. }) => {
+                fallback = Snapshot::here(store, account, mailbox)?;
+                &fallback
+            }
+            _ => upto,
+        };
+        Ok(match self {
+            Remote::Imap(c) => {
+                let limit = match upto {
+                    Snapshot::Imap { uid_next } => imap::EmptyLimit::Below(*uid_next),
+                    Snapshot::Here { uids } => {
+                        imap::EmptyLimit::Only(uids.iter().copied().collect())
+                    }
+                    Snapshot::Jmap { .. } => unreachable!("replaced above"),
+                };
+                c.empty(store, account, mailbox, &limit).await?
+            }
+            Remote::Jmap(c) => {
+                let only: HashSet<String> = match upto {
+                    Snapshot::Jmap { ids } => ids.iter().cloned().collect(),
+                    Snapshot::Here { uids } => {
+                        let st = store.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut ids = HashSet::new();
+                        for uid in uids {
+                            ids.extend(st.jmap_id(account, mailbox, *uid)?);
+                        }
+                        ids
+                    }
+                    Snapshot::Imap { .. } => unreachable!("replaced above"),
+                };
+                c.empty(store, account, mailbox, &only).await?
+            }
+        })
+    }
+
+    /// How many messages a folder holds on the server, with what Empty
+    /// keeps to.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Snapshot)> {
+        Ok(match self {
+            Remote::Imap(c) => {
+                let (n, uid_next) = c.count(mailbox).await?;
+                (n, Snapshot::Imap { uid_next })
+            }
+            Remote::Jmap(c) => {
+                let (n, ids) = c.count(mailbox).await?;
+                (n, Snapshot::Jmap { ids })
+            }
+        })
+    }
+
+    /// How full the mailbox is, in bytes used and allowed, when the
+    /// server says.
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        Ok(match self {
+            Remote::Imap(c) => c.quota().await?,
+            Remote::Jmap(c) => c.quota().await?,
+        })
+    }
+
     pub async fn append_draft(&mut self, raw: &[u8]) -> Result<String> {
         Ok(match self {
             Remote::Imap(c) => c.append_draft(raw).await?,
             Remote::Jmap(c) => c.append_draft(raw).await?,
         })
     }
+
+    /// Puts a whole message in `folder`, as read (an imported email file).
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.append_to(folder, raw).await?,
+            Remote::Jmap(c) => c.append_to(folder, raw).await?,
+        }
+        Ok(())
+    }
 }
 
 /// Checks that an account's settings work.
-pub async fn check_login(account: &Account, password: &str) -> Result<()> {
-    Remote::open(account, password).await?.close().await;
+pub async fn check_login(account: &Account, login: &Login) -> Result<()> {
+    Remote::open(account, login).await?.close().await;
     Ok(())
 }
 
-/// Sends a draft and files a copy in Sent (see [`send_ready`]).
-pub async fn send(account: &Account, password: &str, draft: &Draft) -> smtp::Result<SendReport> {
-    send_ready(account, password, &smtp::ready(draft)?).await
+/// Sends a draft and files a copy in Sent, straight away, without the
+/// outbox: for checks and tests. The app sends through [crate::outbox].
+pub async fn send(account: &Account, login: &Login, draft: &Draft) -> smtp::Result<SendReport> {
+    let ready = smtp::ready(draft)?;
+    let mut courier = AccountCourier::new(account, login);
+    courier.send(&ready).await?;
+    Ok(SendReport {
+        message_id: ready.message_id.clone(),
+        filed: courier.file(&ready, false).await,
+    })
 }
 
-/// Sends a message already built and files a copy in Sent: over SMTP
-/// for IMAP accounts, through the server itself for JMAP ones.
-pub async fn send_ready(
-    account: &Account,
-    password: &str,
-    ready: &Ready,
-) -> smtp::Result<SendReport> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
-        let sent = async {
-            let mut client = jmap::Client::open(&cfg).await?;
-            client
-                .send(&ready.raw, &account.email, &ready.recipients)
-                .await
-        }
-        .await
-        .map_err(|e| match e {
-            JmapError::Auth => SendError::Auth,
-            JmapError::Connect { url, source } => SendError::Connect {
-                host: url,
-                detail: source.to_string(),
-            },
-            e => SendError::Rejected(e.to_string()),
-        })?;
-        return Ok(SendReport {
-            message_id: ready.message_id.clone(),
-            filed_in: Some(sent),
-        });
+/// Hands outbox mail to an account's servers: over SMTP with a copy
+/// filed in Sent over IMAP, or through the JMAP server, which files it.
+pub struct AccountCourier<'a> {
+    account: &'a Account,
+    login: &'a Login,
+}
+
+impl<'a> AccountCourier<'a> {
+    pub fn new(account: &'a Account, login: &'a Login) -> Self {
+        AccountCourier { account, login }
     }
-    let smtp = SmtpConfig::for_account(account, password).expect("IMAP account");
-    let imap = ImapConfig::for_account(account, password).expect("IMAP account");
-    smtp::send_and_file(&smtp, &imap, ready).await
+
+    fn jmap(&self) -> Option<JmapConfig> {
+        JmapConfig::for_account(self.account, self.login)
+    }
+}
+
+/// A JMAP failure, as a send failure.
+fn jmap_send_error(e: JmapError) -> SendError {
+    match e {
+        JmapError::Auth => SendError::Auth,
+        JmapError::Certificate(r) => SendError::Certificate(r),
+        JmapError::Uncertain(detail) => SendError::Uncertain(detail),
+        // The server would take the password only unencrypted: as a
+        // certificate error, shown, never waited on.
+        JmapError::Insecure => SendError::Tls {
+            host: String::new(),
+            detail: JmapError::Insecure.to_string(),
+        },
+        JmapError::Connect { url, source } if smtp::tls_failure(&source) => SendError::Tls {
+            host: url,
+            detail: source.to_string(),
+        },
+        JmapError::Connect { url, source } => SendError::Connect {
+            host: url,
+            detail: source.to_string(),
+        },
+        e => SendError::Rejected(e.to_string()),
+    }
+}
+
+impl Courier for AccountCourier<'_> {
+    async fn send(&mut self, ready: &Ready) -> smtp::Result<()> {
+        if let Some(cfg) = self.jmap() {
+            let mut client = jmap::Client::open(&cfg).await.map_err(|e| match e {
+                // Nothing asked yet: safe to try again.
+                JmapError::Uncertain(detail) => SendError::Connect {
+                    host: cfg.session_url.clone(),
+                    detail,
+                },
+                e => jmap_send_error(e),
+            })?;
+            // From the address it was written from, an alias's identity
+            // when the server has one (the account's otherwise).
+            let from = if ready.from.trim().is_empty() {
+                &self.account.email
+            } else {
+                &ready.from
+            };
+            client
+                .send(&ready.raw, from, &ready.recipients, &ready.message_id)
+                .await
+                .map_err(jmap_send_error)?;
+            return Ok(());
+        }
+        let smtp = SmtpConfig::for_account(self.account, self.login).expect("IMAP account");
+        smtp::send(&smtp, ready).await
+    }
+
+    async fn file(&mut self, ready: &Ready, retry: bool) -> smtp::Filing {
+        if self.jmap().is_some() {
+            return smtp::Filing::Server;
+        }
+        let smtp = SmtpConfig::for_account(self.account, self.login).expect("IMAP account");
+        let imap = ImapConfig::for_account(self.account, self.login).expect("IMAP account");
+        smtp::file_sent(&smtp, &imap, ready, retry).await
+    }
+
+    async fn was_sent(&mut self, ready: &Ready) -> Option<bool> {
+        if let Some(cfg) = self.jmap() {
+            let mut client = jmap::Client::open(&cfg).await.ok()?;
+            return match client.sent_state(&ready.message_id).await.ok()? {
+                Some(state) => Some(state.submitted),
+                None => Some(false),
+            };
+        }
+        // In Sent, it went. Missing proves nothing on servers that don't
+        // file sent mail themselves, nor on one that is slow to.
+        let imap = ImapConfig::for_account(self.account, self.login)?;
+        let mut conn = imap::Connection::open(&imap).await.ok()?;
+        let found = conn.sent_has(&ready.message_id).await.ok()?;
+        conn.logout().await.ok();
+        found.map(|_| true)
+    }
 }
 
 /// Keeps an account's inbox in sync forever (see `imap::watch` and
 /// `jmap::watch`). Wrong credentials end it.
 pub async fn watch(
     account: &Account,
-    password: &str,
+    login: &Login,
     store: Arc<Mutex<Store>>,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
+    if let Some(cfg) = JmapConfig::for_account(account, login) {
         return Ok(jmap::watch(cfg, store, account.id, events).await?);
     }
-    let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+    let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
     Ok(imap::watch(cfg, store, account.id, "INBOX".to_owned(), events).await?)
 }

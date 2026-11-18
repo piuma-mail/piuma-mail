@@ -3,13 +3,17 @@
 //! All the hard work lives here: protocols (IMAP, SMTP, JMAP), offline-first
 //! sync, local database and search. The Flutter app only draws.
 
+pub mod auth;
 pub mod autoconfig;
 pub mod automation;
 pub mod away;
 pub mod backoff;
 pub mod brief;
 pub mod calendar;
+pub mod cert;
 pub mod dates;
+pub mod eml;
+pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
@@ -28,6 +32,7 @@ pub mod model;
 pub mod network;
 pub mod newsletter;
 pub mod notify;
+pub mod oauth;
 pub mod original;
 pub mod outbox;
 pub mod pair_qr;
@@ -43,6 +48,7 @@ pub mod search;
 pub mod sender_auth;
 pub mod sieve;
 pub mod signature;
+pub mod smime;
 pub mod smtp;
 pub mod space;
 pub mod space_sync;
@@ -53,9 +59,10 @@ pub mod translate;
 pub mod vault;
 mod watchdog;
 
+pub use auth::Login;
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;

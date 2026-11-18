@@ -11,6 +11,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../mail/translator.dart';
 import '../widgets/segments.dart';
+import 'list_options.dart';
 import 'settings_screen.dart' show HelperSwitches, SettingsHeader;
 
 /// Settings › Appearance, as on the `Settings` board: the theme as three
@@ -177,6 +178,8 @@ class ReadingPage extends StatelessWidget {
             ],
           ),
           _Example(source: source, phone: phone, now: now),
+          const SizedBox(height: PiumaSpace.s32),
+          ListOptions(source: source, phone: phone),
           const SizedBox(height: PiumaSpace.s32),
           HelperSwitches(source: source),
           // Translate turned off just above: only the languages

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/design/motion.dart' show PiumaPressable;
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/message_list.dart' show OutboxTile;
 import 'package:piuma_mail/inbox/phone_parts.dart' show ComposeFab;
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
@@ -482,7 +483,13 @@ void main() {
     await tester.tap(find.text('Send'));
     await tester.pump();
     expect(find.byType(ComposePane), findsNothing);
-    expect(find.text('Sending…'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Sending…'),
+      ),
+      findsOneWidget,
+    );
     await tester.pump(const Duration(seconds: 9));
     expect(source.sent, isEmpty);
     await tester.pump(const Duration(seconds: 2));
@@ -520,7 +527,24 @@ void main() {
     expect(source.sent, isEmpty);
   });
 
-  testWidgets('a failed send reopens the message with the reason', (
+  testWidgets('a refused send reopens the message with the reason', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    source.failNextSend = const SendException(SendError.rejected, '550 no');
+    await _write(tester);
+    await tester.tap(find.text('Send'));
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+    expect(find.textContaining('refused the message'), findsOne);
+    expect(find.text('Mockups approved'), findsOneWidget);
+    // Back in compose, out of the outbox: nothing goes on its own.
+    expect(await source.outbox(null), isEmpty);
+    expect(source.sent, isEmpty);
+  });
+
+  testWidgets('a send that can\'t reach the server waits in the Outbox', (
     tester,
   ) async {
     final source = await _pump(tester);
@@ -529,9 +553,104 @@ void main() {
     await tester.tap(find.text('Send'));
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsNothing);
+    expect(
+      find.text('In the Outbox · it goes once you’re back online'),
+      findsOneWidget,
+    );
+    final waiting = await source.outbox(null);
+    expect(waiting.single.subject, 'Mockups approved');
+    expect(waiting.single.state, OutboxState.waiting);
+    source.goOnline();
+    await tester.pumpAndSettle();
+    expect(source.sent.single.subject, 'Mockups approved');
+  });
+
+  /// Writes another message, from compose closed.
+  Future<void> writeAnother(WidgetTester tester, String subject) async {
+    await tester.tap(find.text('Compose'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field(0), 'sara@studio.it,');
+    await tester.enterText(_field(1), subject);
+    await tester.enterText(_field(2), 'Another one.');
+    await tester.pump();
+  }
+
+  testWidgets('two sends inside the Undo window both go out', (tester) async {
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    await writeAnother(tester, 'Second thoughts');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    // Both wait out their windows, on disk, each with its own row.
+    final waiting = await source.outbox(null);
+    expect(waiting.map((o) => o.subject), [
+      'Mockups approved',
+      'Second thoughts',
+    ]);
+    expect(waiting.every((o) => o.undo), isTrue);
+    expect(source.sent, isEmpty);
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(source.sent.map((d) => d.subject), [
+      'Mockups approved',
+      'Second thoughts',
+    ]);
+    expect(await source.outbox(null), isEmpty);
+  });
+
+  testWidgets('each message in its Undo window can be taken back', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    await writeAnother(tester, 'Second thoughts');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+
+    // The toast's Undo takes back the second.
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
     expect(find.byType(ComposePane), findsOneWidget);
-    expect(find.textContaining("Couldn't reach the outgoing server"), findsOne);
-    expect(find.text('Mockups approved'), findsOneWidget);
+    expect(find.text('Second thoughts'), findsWidgets);
+    await tester.tap(find.byTooltip('Discard draft'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+
+    // The first, its toast gone, from its row in the Outbox.
+    expect(find.byType(OutboxTile), findsOneWidget);
+    await tester.tap(find.byType(OutboxTile));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    expect(find.byType(ComposePane), findsOneWidget);
+    expect(find.text('Mockups approved'), findsWidgets);
+
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(source.sent, isEmpty);
+    expect(await source.outbox(null), isEmpty);
+  });
+
+  testWidgets('closing the window in the Undo window loses nothing', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    await writeAnother(tester, 'Second thoughts');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    // The inbox goes away inside the window.
+    await tester.pumpWidget(const SizedBox());
+    expect((await source.outbox(null)).length, 2, reason: 'kept, on disk');
+    await tester.pump(const Duration(seconds: 11));
+    expect(source.sent.map((d) => d.subject), [
+      'Mockups approved',
+      'Second thoughts',
+    ]);
   });
 
   testWidgets('closing a written message keeps it in Drafts', (tester) async {
