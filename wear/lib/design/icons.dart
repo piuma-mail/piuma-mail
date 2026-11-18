@@ -11,6 +11,9 @@ enum PiumaIcon {
     'M10 12h4',
   ]),
   reply(['M9 14 4 9l5-5', 'M4 9h11a5 5 0 0 1 5 5v6']),
+
+  /// Reply's arrow with a second chevron behind it: Reply all.
+  replyAll(['M7 14 2 9l5-5', 'M12 14 7 9l5-5', 'M7 9h8a5 5 0 0 1 5 5v6']),
   clock(['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0z', 'M12 7v5l3 2']),
 
   /// Speak or type a reply.
