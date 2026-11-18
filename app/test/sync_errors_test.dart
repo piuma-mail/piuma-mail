@@ -151,9 +151,7 @@ Future<void> _pump(WidgetTester tester, DemoMailSource source) async {
 
 /// Subjects of the inbox rows built, on screen or just around it.
 List<String> _built(WidgetTester tester) => tester
-    .widgetList<InboxRowTile>(
-      find.byType(InboxRowTile, skipOffstage: false),
-    )
+    .widgetList<InboxRowTile>(find.byType(InboxRowTile, skipOffstage: false))
     .map((t) => t.row.subject)
     .toList();
 
