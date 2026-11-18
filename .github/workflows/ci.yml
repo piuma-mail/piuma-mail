@@ -67,14 +67,18 @@ jobs:
 
   # The engine against a real IMAP server: the tests in core/tests/ that
   # need PIUMA_TEST_IMAP (sync, IDLE, Sent copies, the sync space) and
-  # pass without doing anything elsewhere. Dovecot 2.3 from its official
-  # image, pinned by digest, configured by the same
-  # tools/test-imap-server.sh contributors run (Ubuntu 24.04's package is
-  # 2.4, whose configuration syntax differs). Started after the checkout,
-  # with the script mounted: a service container would start before it.
+  # pass without doing anything elsewhere. The server is started by
+  # tools/test-imap-server.sh, as contributors run it, on both Dovecot
+  # versions it supports: the runner's own package (2.4) and the official
+  # 2.3 image, pinned by digest. Started after the checkout, so the script
+  # is there: a service container would start before it.
   core-imap:
-    name: Rust engine with an IMAP server
+    name: Rust engine with Dovecot ${{ matrix.dovecot }}
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    strategy:
+      fail-fast: false
+      matrix:
+        dovecot: ["2.4", "2.3"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,19 +93,30 @@ jobs:
       - name: Install system dependencies
         uses: ./.github/actions/apt-install
         with:
-          packages: libdbus-1-dev
-      - name: Start Dovecot
+          packages: ${{ matrix.dovecot == '2.4' && 'libdbus-1-dev dovecot-imapd' || 'libdbus-1-dev' }}
+      - name: Start Dovecot ${{ matrix.dovecot }}
+        env:
+          DOVECOT: ${{ matrix.dovecot }}
         run: |
-          # Host network: the script listens on 127.0.0.1.
-          docker run -d --name dovecot --network host -v "$PWD/tools:/tools:ro" \
-            --entrypoint sh \
-            dovecot/dovecot@sha256:547d28f9a893c93a1d2f6dc164880cd7bfa74009106dfa46b36a6a2ee636d921 \
-            /tools/test-imap-server.sh
+          if [ "$DOVECOT" = 2.3 ]; then
+            # Host network: the script listens on 127.0.0.1.
+            docker run -d --name dovecot --network host -v "$PWD/tools:/tools:ro" \
+              --entrypoint sh \
+              dovecot/dovecot@sha256:547d28f9a893c93a1d2f6dc164880cd7bfa74009106dfa46b36a6a2ee636d921 \
+              /tools/test-imap-server.sh
+          else
+            # The package's own server is not needed.
+            sudo systemctl stop dovecot || true
+            PATH="$PATH:/usr/sbin" nohup sh tools/test-imap-server.sh > "$RUNNER_TEMP/dovecot.out" 2>&1 &
+          fi
           for _ in $(seq 60); do
-            if (exec 3<>/dev/tcp/127.0.0.1/31143) 2>/dev/null; then echo "Dovecot is up."; exit 0; fi
+            if (exec 3<>/dev/tcp/127.0.0.1/31143) 2>/dev/null; then
+              { docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out"; } | head -1
+              exit 0
+            fi
             sleep 1
           done
-          docker logs dovecot
+          docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out"
           exit 1
       - name: Tests against the server
         env:
@@ -109,7 +124,7 @@ jobs:
         run: cargo test -p piuma-core --tests
       - name: Server log
         if: failure()
-        run: docker logs dovecot || true
+        run: docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out" || true
 
   app:
     name: Flutter app

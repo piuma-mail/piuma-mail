@@ -21,7 +21,7 @@ APP = ROOT / "app"
 RES = APP / "android" / "app" / "src" / "main" / "res"
 # The Wear OS app (`wear/`) wears the same icon; the watch crops it round.
 WEAR_RES = ROOT / "wear" / "android" / "app" / "src" / "main" / "res"
-ACCENT = json.loads((ROOT / "design" / "tokens.json").read_text())["color"]["light"]["accent"]
+ACCENT = json.loads((ROOT / "design" / "tokens.json").read_text(encoding="utf-8"))["color"]["light"]["accent"]
 WHITE = "#FFFFFF"
 
 OUTLINE = (
@@ -171,7 +171,7 @@ def vector(viewport: int, size: str, color: str, place: str, stroke: float) -> s
 
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def main() -> None:
