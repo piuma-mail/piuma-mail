@@ -14,7 +14,9 @@ import 'api/feedback.dart';
 import 'api/groups.dart';
 import 'api/labels.dart';
 import 'api/mailbox.dart';
+import 'api/outside.dart';
 import 'api/preview.dart';
+import 'api/reply.dart';
 import 'api/sync.dart';
 import 'api/templates.dart';
 import 'api/updates.dart';
@@ -117,6 +119,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_box_autoadd_bool(dynamic raw);
+
+  @protected
+  DesktopSettings dco_decode_box_autoadd_desktop_settings(dynamic raw);
 
   @protected
   FeatureSettings dco_decode_box_autoadd_feature_settings(dynamic raw);
@@ -246,6 +251,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeliveryKind dco_decode_delivery_kind(dynamic raw);
+
+  @protected
+  DesktopSettings dco_decode_desktop_settings(dynamic raw);
+
+  @protected
+  EmlFile dco_decode_eml_file(dynamic raw);
 
   @protected
   EngineError dco_decode_engine_error(dynamic raw);
@@ -419,6 +430,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<LabelInfo> dco_decode_list_label_info(dynamic raw);
 
   @protected
+  List<MailAddress> dco_decode_list_mail_address(dynamic raw);
+
+  @protected
   List<MailGroup> dco_decode_list_mail_group(dynamic raw);
 
   @protected
@@ -429,6 +443,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<MailTemplate> dco_decode_list_mail_template(dynamic raw);
+
+  @protected
+  List<MessageHeader> dco_decode_list_message_header(dynamic raw);
 
   @protected
   List<MessageRef> dco_decode_list_message_ref(dynamic raw);
@@ -518,6 +535,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<WaitingRow> dco_decode_list_waiting_row(dynamic raw);
 
   @protected
+  MailAddress dco_decode_mail_address(dynamic raw);
+
+  @protected
   MailFolder dco_decode_mail_folder(dynamic raw);
 
   @protected
@@ -534,6 +554,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageAction dco_decode_message_action(dynamic raw);
+
+  @protected
+  MessageEnvelope dco_decode_message_envelope(dynamic raw);
+
+  @protected
+  MessageHeader dco_decode_message_header(dynamic raw);
 
   @protected
   MessageRef dco_decode_message_ref(dynamic raw);
@@ -942,6 +968,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
+  DesktopSettings sse_decode_box_autoadd_desktop_settings(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   FeatureSettings sse_decode_box_autoadd_feature_settings(
     SseDeserializer deserializer,
   );
@@ -1113,6 +1144,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   DeliveryKind sse_decode_delivery_kind(SseDeserializer deserializer);
+
+  @protected
+  DesktopSettings sse_decode_desktop_settings(SseDeserializer deserializer);
+
+  @protected
+  EmlFile sse_decode_eml_file(SseDeserializer deserializer);
 
   @protected
   EngineError sse_decode_engine_error(SseDeserializer deserializer);
@@ -1312,6 +1349,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<LabelInfo> sse_decode_list_label_info(SseDeserializer deserializer);
 
   @protected
+  List<MailAddress> sse_decode_list_mail_address(SseDeserializer deserializer);
+
+  @protected
   List<MailGroup> sse_decode_list_mail_group(SseDeserializer deserializer);
 
   @protected
@@ -1324,6 +1364,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<MailTemplate> sse_decode_list_mail_template(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<MessageHeader> sse_decode_list_message_header(
     SseDeserializer deserializer,
   );
 
@@ -1437,6 +1482,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<WaitingRow> sse_decode_list_waiting_row(SseDeserializer deserializer);
 
   @protected
+  MailAddress sse_decode_mail_address(SseDeserializer deserializer);
+
+  @protected
   MailFolder sse_decode_mail_folder(SseDeserializer deserializer);
 
   @protected
@@ -1453,6 +1501,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageAction sse_decode_message_action(SseDeserializer deserializer);
+
+  @protected
+  MessageEnvelope sse_decode_message_envelope(SseDeserializer deserializer);
+
+  @protected
+  MessageHeader sse_decode_message_header(SseDeserializer deserializer);
 
   @protected
   MessageRef sse_decode_message_ref(SseDeserializer deserializer);
@@ -1935,6 +1989,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_desktop_settings(
+    DesktopSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_feature_settings(
     FeatureSettings self,
     SseSerializer serializer,
@@ -2164,6 +2224,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_delivery_kind(DeliveryKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_desktop_settings(
+    DesktopSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_eml_file(EmlFile self, SseSerializer serializer);
 
   @protected
   void sse_encode_engine_error(EngineError self, SseSerializer serializer);
@@ -2412,6 +2481,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_mail_address(
+    List<MailAddress> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_mail_group(
     List<MailGroup> self,
     SseSerializer serializer,
@@ -2432,6 +2507,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_mail_template(
     List<MailTemplate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_message_header(
+    List<MessageHeader> self,
     SseSerializer serializer,
   );
 
@@ -2592,6 +2673,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_mail_address(MailAddress self, SseSerializer serializer);
+
+  @protected
   void sse_encode_mail_folder(MailFolder self, SseSerializer serializer);
 
   @protected
@@ -2611,6 +2695,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_message_action(MessageAction self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_message_envelope(
+    MessageEnvelope self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_message_header(MessageHeader self, SseSerializer serializer);
 
   @protected
   void sse_encode_message_ref(MessageRef self, SseSerializer serializer);

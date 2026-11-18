@@ -70,6 +70,7 @@ fn queue(store: &Mutex<Store>, id: AccountId, subject: &str, send_at: Option<i64
         saved: None,
         send_at,
         undo: false,
+        redirect: false,
     };
     store.lock().unwrap().queue_outgoing(&out, now()).unwrap()
 }

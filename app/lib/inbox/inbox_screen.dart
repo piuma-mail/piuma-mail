@@ -1,12 +1,16 @@
 import 'dart:async';
 
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' show NumberFormat;
 
 import '../compose/compose_pane.dart';
 import '../compose/remind_me.dart';
+import '../compose/reply_builder.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
 import '../l10n/app_localizations.dart';
@@ -15,6 +19,10 @@ import '../mail/senders.dart';
 import '../notify/android_background.dart';
 import '../notify/background_sheet.dart';
 import '../notify/notifier.dart';
+import '../outside/arrivals.dart';
+import '../outside/arrive.dart';
+import '../outside/eml_reader.dart';
+import '../outside/shell.dart';
 import '../notify/unread_badge.dart';
 import '../design/icons.dart';
 import '../feedback/crash_line.dart';
@@ -38,6 +46,8 @@ import 'labels.dart';
 import 'mailbox_actions.dart';
 import 'pictures.dart';
 import 'mail_pager.dart';
+import 'message_actions.dart';
+import 'text_size.dart';
 import 'message_list.dart';
 import 'move_menu.dart';
 import 'newsletters.dart';
@@ -65,10 +75,16 @@ class InboxScreen extends StatefulWidget {
     this.initialSelection,
     this.onOpenWindow,
     this.replies,
+    this.arrivals,
   });
 
   final MailSource source;
   final VoidCallback onAddAccount;
+
+  /// What other apps and the system ask for (`mailto:` links, email
+  /// files, shares, files dropped on the window); null in tests that
+  /// don't need it.
+  final Arrivals? arrivals;
   final DateTime Function() now;
 
   /// Opens this row at start (used by screenshots).
@@ -279,6 +295,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void initState() {
     super.initState();
+    _stopArrivals = widget.arrivals?.listen(_arrive);
     _refreshUnread();
     _loadSignatures();
     _shake = ShakeWatch(
@@ -405,6 +422,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _applyShell();
     if (_notifierStarted) return;
     _notifierStarted = true;
     final l = AppLocalizations.of(context);
@@ -416,6 +434,8 @@ class _InboxScreenState extends State<InboxScreen> {
         reply: l.actionReply,
         archive: l.archive,
         snooze: l.actionSnooze,
+        delete: l.actionDelete,
+        markRead: l.markRead,
         send: l.actionSend,
         replyHint: l.noticeReplyHint,
         onAction: _noticeAction,
@@ -572,6 +592,11 @@ class _InboxScreenState extends State<InboxScreen> {
     await widget.source.setSeen([row], true).catchError((Object _) {});
     if (!mounted) return;
     switch (action) {
+      case 'read':
+        // Read already, as for every button.
+        break;
+      case 'delete':
+        await _act([row], MessageAction.delete, reopen: false);
       case 'archive':
         await _act([row], MessageAction.archive, reopen: false);
       case 'snooze':
@@ -585,7 +610,7 @@ class _InboxScreenState extends State<InboxScreen> {
         if (!mounted) return;
         if (text != null) {
           // As on Android, a reply from a notice doesn't quote.
-          _quickReply(row, body, text, quote: false);
+          await _quickReply(row, body, text, quote: false);
         } else {
           await _openNotice(payload);
           if (mounted) _reply(row, body);
@@ -596,6 +621,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void dispose() {
     _shake.dispose();
+    _stopArrivals?.call();
     _changes?.cancel();
     _notices?.cancel();
     _dropped?.cancel();
@@ -611,6 +637,114 @@ class _InboxScreenState extends State<InboxScreen> {
       run(rows).ignore();
     }
     super.dispose();
+  }
+
+  // From outside the app (lib/outside/): links, files, shares.
+
+  VoidCallback? _stopArrivals;
+
+  /// Messages asked for while another was being written: each opens
+  /// when the one before is closed, so nothing written is replaced.
+  final _arrived = <ComposeArrival>[];
+  static const _maxArrived = 16;
+
+  bool _shellSet = false;
+
+  /// Keeping running with the window closed, as set, with the tray's
+  /// words in the person's language.
+  void _applyShell() {
+    if (widget.arrivals == null || !Shell.canKeepRunning) return;
+    final l = AppLocalizations.of(context);
+    final d = widget.source.desktopSettings;
+    Shell.keepRunning(
+      d.keepRunning,
+      open: l.trayOpen,
+      compose: l.compose,
+      quit: l.trayQuit,
+    ).ignore();
+    if (!_shellSet) {
+      _shellSet = true;
+      // What sign-in starts follows the setting, wherever the app moved.
+      if (d.startAtLogin) Shell.startAtLogin(true).ignore();
+    }
+  }
+
+  void _arrive(Arrival arrival) {
+    if (!mounted) return;
+    switch (arrival) {
+      case EmlArrival(:final path):
+        _openEml(path).ignore();
+      case NetworkFileArrival():
+        _toast(AppLocalizations.of(context).arrivalNetworkFile);
+      case final ComposeArrival a:
+        if (_composing != null) {
+          // Kept like the arrivals before the inbox: never unbounded. One
+          // past the limit is dropped, so nothing says it waits.
+          if (_arrived.length >= _maxArrived) return;
+          _arrived.add(a);
+          _toast(AppLocalizations.of(context).arrivalWaits);
+          return;
+        }
+        _write(a).ignore();
+    }
+  }
+
+  Future<void> _write(ComposeArrival a) async {
+    final l = AppLocalizations.of(context);
+    if (widget.source.accounts.isEmpty) return;
+    final account = await pickAccount(
+      context,
+      widget.source.accounts,
+      title: l.arrivalWhichAccount,
+    );
+    if (account == null || !mounted) return;
+    final (draft, left) = await draftFor(a, account);
+    if (!mounted) return;
+    if (_composing != null) {
+      if (_arrived.length < _maxArrived) _arrived.add(a);
+      return;
+    }
+    _openCompose(draft);
+    if (left > 0) _toast(l.arrivalFilesLeft(left));
+  }
+
+  Future<void> _openEml(String path) async {
+    final l = AppLocalizations.of(context);
+    final EmlMessage message;
+    try {
+      message = await widget.source.openEml(path);
+    } on EmlException catch (e) {
+      if (mounted) {
+        _toast(e.problem == EmlProblem.tooLarge ? l.emlTooLarge : l.emlNotMail);
+      }
+      return;
+    } catch (_) {
+      if (mounted) _toast(l.emlNotMail);
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (route) => EmlReader(
+          source: widget.source,
+          message: message,
+          onClose: () => Navigator.of(route).pop(),
+        ),
+      ),
+    );
+  }
+
+  /// Files dropped on the window, while nothing is being written (compose
+  /// takes its own): an email file opens, others go in a new message.
+  Widget _dropFiles(Widget child) {
+    final arrivals = widget.arrivals;
+    if (arrivals == null || touchDevice) return child;
+    return DropTarget(
+      enable: _composing == null,
+      onDragDone: (detail) =>
+          arrivals.addArgs([for (final f in detail.files) f.path]),
+      child: child,
+    );
   }
 
   void _openCompose([Draft? draft, String? error]) {
@@ -1129,9 +1263,70 @@ class _InboxScreenState extends State<InboxScreen> {
     if (_picked.isNotEmpty) setState(_picked.clear);
   }
 
+  /// J and K, ↓ and ↑: the email after [row] in the list, or the one
+  /// before, as a swipe does on the phone.
+  void _step(MailRow row, int step) {
+    final next = _list.currentState?.near(row, step);
+    if (next != null) _open(next);
+  }
+
+  /// The open email's text size, from Ctrl/⌘ + and − (and 0 for the
+  /// size the app sets) and from Text size in More, on the phone too;
+  /// kept while the app runs.
+  double _zoom = 1;
+
+  void _zoomBy(int step) => _zoomTo(textSizeStep(_zoom, step));
+
+  /// [toast] says the new size; Text size shows it itself.
+  void _zoomTo(double zoom, {bool toast = true}) {
+    if (_selected == null || _zoom == zoom) return;
+    setState(() => _zoom = zoom);
+    if (toast) {
+      _toast(AppLocalizations.of(context).zoomLevel((zoom * 100).round()));
+    }
+  }
+
+  /// More's Text size: smaller, larger, actual size.
+  void _textSize() => showTextSize(
+    context,
+    size: () => _zoom,
+    onSize: (z) => _zoomTo(z, toast: false),
+    phone: MediaQuery.sizeOf(context).width < phoneWidth,
+  );
+
+  /// Ctrl + and − (⌘ on Apple), with or without Shift for "+", on the main
+  /// keys and the keypad; Ctrl 0 for the size the app sets.
+  Map<ShortcutActivator, VoidCallback> get _zoomKeys => {
+    for (final apple in [true, false]) ...{
+      for (final shift in [true, false]) ...{
+        for (final key in [
+          LogicalKeyboardKey.equal,
+          LogicalKeyboardKey.add,
+          LogicalKeyboardKey.numpadAdd,
+        ])
+          SingleActivator(
+            key,
+            meta: apple,
+            control: !apple,
+            shift: shift,
+          ): () =>
+              _zoomBy(1),
+      },
+      for (final key in [
+        LogicalKeyboardKey.minus,
+        LogicalKeyboardKey.numpadSubtract,
+      ])
+        SingleActivator(key, meta: apple, control: !apple): () => _zoomBy(-1),
+      for (final key in [LogicalKeyboardKey.digit0, LogicalKeyboardKey.numpad0])
+        SingleActivator(key, meta: apple, control: !apple): () => _zoomTo(1),
+    },
+  };
+
   /// Single keys, as listed in Settings › Shortcuts: C writes a new
   /// email; Delete, E, H, M and R work on the picked rows or the open message
-  /// (R, and F for Forward, on the open message only); Shift+U and Esc on the picked rows.
+  /// (R, A for Reply all and F for Forward, on the open message only);
+  /// J and ↓ open the next email in the list, K and ↑ the one before;
+  /// Shift+U and Esc on the picked rows.
   /// A text field keeps them for itself, and compose or search stops
   /// them.
   KeyEventResult _pickedKeys(FocusNode node, KeyEvent event) {
@@ -1180,6 +1375,17 @@ class _InboxScreenState extends State<InboxScreen> {
               .body(open)
               .catchError((_) => '')
               .then((body) => mounted ? _reply(open, body) : null);
+        case LogicalKeyboardKey.keyA when !shift && open != null && !_inSent:
+          widget.source
+              .body(open)
+              .catchError((_) => '')
+              .then((body) => mounted ? _replyAll(open, body) : null);
+        case LogicalKeyboardKey.keyJ || LogicalKeyboardKey.arrowDown
+            when !shift && open != null:
+          _step(open, 1);
+        case LogicalKeyboardKey.keyK || LogicalKeyboardKey.arrowUp
+            when !shift && open != null:
+          _step(open, -1);
         default:
           return KeyEventResult.ignored;
       }
@@ -1217,8 +1423,44 @@ class _InboxScreenState extends State<InboxScreen> {
     _picked.updateAll((_, r) => r.withSeen(seen));
   });
 
+  // Reply, Reply all, Forward and the rest of the reader's More build
+  // their drafts in `reply_builder.dart` and `message_actions.dart`; what
+  // is here only picks them and hands the draft to compose or to [_send].
+
   void _reply(MailRow row, String body, [String text = '']) =>
-      _openCompose(_replyDraft(row, body, text: text));
+      _answer(row, body, ReplyMode.sender, text);
+
+  void _replyAll(MailRow row, String body, [String text = '']) =>
+      _answer(row, body, ReplyMode.all, text);
+
+  void _replyList(MailRow row, String body, [String text = '']) =>
+      _answer(row, body, ReplyMode.list, text);
+
+  /// Compose, answering [row] as [mode] says, once the engine has said
+  /// who that is (every Reply-To, everyone else on To and Cc).
+  Future<void> _answer(
+    MailRow row,
+    String body,
+    ReplyMode mode, [
+    String text = '',
+  ]) async {
+    final envelope = await widget.source
+        .envelope(row)
+        .catchError((Object _) => null);
+    if (!mounted) return;
+    _openCompose(
+      _replyDraft(row, body, text: text, envelope: envelope, mode: mode),
+    );
+  }
+
+  /// The reader's other ways to send a message on, and its source.
+  MessageActions get _actions => MessageActions(
+    context: context,
+    source: widget.source,
+    openCompose: _openCompose,
+    toast: _toast,
+    phone: MediaQuery.sizeOf(context).width < phoneWidth,
+  );
 
   /// Drafts stay drafts: anything else can be forwarded.
   bool _canForward(MailRow? row) =>
@@ -1227,80 +1469,45 @@ class _InboxScreenState extends State<InboxScreen> {
       _folder != MailFolder.drafts &&
       _folder != MailFolder.waiting;
 
-  /// Forward, as on `ForwardToApprove` (option A): the message being
-  /// read, its text under a "Forwarded message" block and its files as
-  /// chips. A file that can't be fetched is left out.
-  Future<void> _forward(MailRow row) async {
-    final source = widget.source;
-    final body = await source.body(row).catchError((Object _) => '');
-    var files = const <MailAttachment>[];
-    try {
-      files = (await source.readable(row)).attachments;
-    } catch (_) {
-      // Without its files list it goes as text.
-    }
-    final data = await Future.wait([
-      for (final f in files)
-        source
-            .attachmentData(AttachedFile(row, f))
-            .catchError((Object _) => null),
-    ]);
+  /// Forward, as on `ForwardToApprove` (option A): the message being read
+  /// with its formatting, under a "Forwarded message" block, and its
+  /// files, fetched in sight; any that can't be are named, with Try again.
+  Future<void> _forward(MailRow row) => _actions.forward(row);
+
+  /// A few words from the quick reply box, sent as a reply with the
+  /// account's reply signature and the usual Undo; to everyone with
+  /// [all] (the box's Reply all).
+  ///
+  /// [envelope] is the one the reader has already; without it, it is
+  /// asked for. A Reply all that follows an unverified Mail-Followup-To
+  /// (`MailEnvelope.replyAllReview`) opens compose instead, to be seen
+  /// before it goes.
+  Future<void> _quickReply(
+    MailRow row,
+    String body,
+    String text, {
+    bool quote = true,
+    bool all = false,
+    MailEnvelope? envelope,
+  }) async {
+    envelope ??= await widget.source
+        .envelope(row)
+        .catchError((Object _) => null);
     if (!mounted) return;
-    _openCompose(
-      _forwardDraft(row, body, [
-        for (final (i, f) in files.indexed)
-          if (data[i] case final d?) DraftFile(f.name, d),
-      ]),
+    final draft = _replyDraft(
+      row,
+      body,
+      text: text,
+      signatureId: _replySignature(row),
+      quote: quote,
+      envelope: envelope,
+      mode: all ? ReplyMode.all : ReplyMode.sender,
     );
-  }
-
-  Draft _forwardDraft(MailRow row, String body, List<DraftFile> files) {
-    final l = AppLocalizations.of(context);
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final date = l.forwardDate(
-      DateFormat.yMMMMEEEEd(locale).format(row.receivedAt),
-      DateFormat.Hm(locale).format(row.receivedAt),
-    );
-    final from = row.fromName.isNotEmpty
-        ? '${row.fromName} <${row.fromEmail}>'
-        : row.fromEmail;
-    final subject =
-        RegExp(r'^\s*fwd?:', caseSensitive: false).hasMatch(row.subject)
-        ? row.subject
-        : 'Fwd: ${row.subject}';
-    final text = body.replaceAll('\r\n', '\n').trimRight();
-    // Mail kept before its recipients were read went to the account.
-    final mine = widget.source.replyFrom(row);
-    final to = row.to.isNotEmpty
-        ? row.to
-        : mine ??
-              widget.source.accounts
-                  .where((a) => a.id == row.accountId)
-                  .firstOrNull
-                  ?.email ??
-              '';
-    return Draft(
-      accountId: row.accountId,
-      fromEmail: mine,
-      subject: subject,
-      body: '\n\n${l.forwardBlock(from, date, to, row.subject)}\n\n$text',
-      files: files,
-      forward: true,
-    );
-  }
-
-  /// A few words from the quick reply box, sent as a reply with
-  /// the account's reply signature and the usual Undo.
-  void _quickReply(MailRow row, String body, String text, {bool quote = true}) {
-    _send(
-      _replyDraft(
-        row,
-        body,
-        text: text,
-        signatureId: _replySignature(row),
-        quote: quote,
-      ),
-    );
+    if (all && (envelope?.replyAllReview ?? false)) {
+      _openCompose(draft);
+      return;
+    }
+    _send(draft);
   }
 
   /// The signature a reply to [row] takes: its group's, else the
@@ -1337,41 +1544,23 @@ class _InboxScreenState extends State<InboxScreen> {
     int? signatureId,
     List<String>? to,
     bool quote = true,
-  }) {
-    final l = AppLocalizations.of(context);
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final when = DateFormat.yMMMd(locale).add_Hm().format(row.receivedAt);
-    final quoted = body
-        .replaceAll('\r\n', '\n')
-        .trimRight()
-        .split('\n')
-        .map((line) => line.isEmpty ? '>' : '> $line')
-        .join('\n');
-    final sender = row.replyTo.isNotEmpty
-        ? row.replyTo
-        : row.fromName.isNotEmpty
-        ? '${row.fromName} <${row.fromEmail}>'
-        : row.fromEmail;
-    final subject =
-        RegExp(r'^\s*re:', caseSensitive: false).hasMatch(row.subject)
-        ? row.subject
-        : 'Re: ${row.subject}';
-    return Draft(
-      accountId: row.accountId,
-      fromEmail: widget.source.replyFrom(row),
-      to: to ?? [sender],
-      subject: subject,
-      body: quote
-          ? '$text\n\n${l.quoteHeader(when, row.sender)}\n$quoted'
-          : text,
-      inReplyTo: row.messageId.isEmpty ? '' : row.messageId,
-      references: [
-        ...row.references.split(' ').where((r) => r.isNotEmpty),
-        if (row.messageId.isNotEmpty) row.messageId,
-      ],
-      signatureId: signatureId,
-    );
-  }
+    MailEnvelope? envelope,
+    ReplyMode mode = ReplyMode.sender,
+  }) =>
+      ReplyBuilder(
+        AppLocalizations.of(context),
+        Localizations.localeOf(context).toLanguageTag(),
+      ).reply(
+        row,
+        body,
+        envelope: envelope,
+        mode: mode,
+        text: text,
+        fromEmail: widget.source.replyFrom(row),
+        signatureId: signatureId,
+        to: to,
+        quote: quote,
+      );
 
   /// Send later: compose closes, the message waits in the Outbox for its
   /// time, and Undo opens it again.
@@ -1391,6 +1580,11 @@ class _InboxScreenState extends State<InboxScreen> {
       if (mounted) _openCompose(draft, l.actionFailed);
     }
   }
+
+  /// A row of the Outbox, tapped: a message opens in compose again; a
+  /// Redirect, which has nothing to edit, offers Cancel or Try again.
+  void _openOutgoing(OutboxItem item) =>
+      item.redirect ? _actions.outboxRedirect(item) : _reopenOutgoing(item.id);
 
   /// A message in the Outbox opens in compose again, and stops waiting.
   /// Undo of a send is this too.
@@ -1625,7 +1819,9 @@ class _InboxScreenState extends State<InboxScreen> {
           PiumaIcon.forward,
           l.actionForward,
           _fromPalette(() => _forward(_selected!)),
+          meta: 'F',
         ),
+      ..._readerCommands(l),
       go(PiumaIcon.inbox, l.unifiedInbox, MailFolder.inbox),
       if (_waiting.all > 0)
         go(PiumaIcon.hourglass, l.folderWaiting, MailFolder.waiting),
@@ -1658,6 +1854,91 @@ class _InboxScreenState extends State<InboxScreen> {
         keywords: 'report feedback',
         meta: l.paletteHelp,
       ),
+    ];
+  }
+
+  /// ⌘K's commands for the open email: Reply all and the rest of the
+  /// reader's More, the next and previous email, and the text size.
+  List<PaletteCommand> _readerCommands(AppLocalizations l) {
+    final open = _selected;
+    if (_picked.isNotEmpty || open == null) return const [];
+    final apple =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    final mod = apple ? '⌘' : 'Ctrl ';
+    void withBody(void Function(MailRow, String, [String]) answer) => widget
+        .source
+        .body(open)
+        .catchError((Object _) => '')
+        .then((body) => mounted ? answer(open, body) : null);
+    return [
+      if (!_inSent)
+        PaletteCommand(
+          PiumaIcon.reply,
+          l.actionReplyAll,
+          _fromPalette(() => withBody(_replyAll)),
+          meta: 'A',
+        ),
+      if (_canForward(open)) ...[
+        PaletteCommand(
+          PiumaIcon.paperclip,
+          l.actionForwardAttachment,
+          _fromPalette(() => _actions.forwardAsAttachment(open)),
+        ),
+        PaletteCommand(
+          PiumaIcon.arrowRight,
+          l.actionRedirect,
+          _fromPalette(() => _actions.redirect(open)),
+        ),
+        PaletteCommand(
+          PiumaIcon.pen,
+          l.actionEditAsNew,
+          _fromPalette(() => _actions.editAsNew(open)),
+        ),
+      ],
+      PaletteCommand(
+        PiumaIcon.document,
+        l.actionViewSource,
+        _fromPalette(() => _actions.viewSource(open)),
+        keywords: 'headers raw',
+      ),
+      PaletteCommand(
+        PiumaIcon.download,
+        l.actionSaveEml,
+        _fromPalette(() => _actions.saveEml(open)),
+        keywords: 'export',
+      ),
+      PaletteCommand(
+        PiumaIcon.arrowRight,
+        l.shortcutNextEmail,
+        _fromPalette(() => _step(open, 1)),
+        meta: 'J',
+      ),
+      PaletteCommand(
+        PiumaIcon.chevronLeft,
+        l.shortcutPreviousEmail,
+        _fromPalette(() => _step(open, -1)),
+        meta: 'K',
+      ),
+      PaletteCommand(
+        PiumaIcon.plus,
+        l.zoomIn,
+        _fromPalette(() => _zoomBy(1)),
+        meta: '$mod+',
+      ),
+      PaletteCommand(
+        PiumaIcon.search,
+        l.zoomOut,
+        _fromPalette(() => _zoomBy(-1)),
+        meta: '$mod−',
+      ),
+      PaletteCommand(
+        PiumaIcon.search,
+        l.zoomReset,
+        _fromPalette(() => _zoomTo(1)),
+        meta: '${mod}0',
+      ),
+      PaletteCommand(PiumaIcon.sliders, l.textSize, _fromPalette(_textSize)),
     ];
   }
 
@@ -2003,6 +2284,7 @@ class _InboxScreenState extends State<InboxScreen> {
         }
         _files = files;
         _unread = n;
+        _shellUnread(n);
         _drafts = drafts;
         _snoozed = snoozed;
         _starred = starred;
@@ -2027,6 +2309,11 @@ class _InboxScreenState extends State<InboxScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A message asked for from outside while another was being written.
+    if (_composing == null && _arrived.isNotEmpty) {
+      final next = _arrived.removeAt(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _arrive(next));
+    }
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
@@ -2040,13 +2327,17 @@ class _InboxScreenState extends State<InboxScreen> {
         const SingleActivator(LogicalKeyboardKey.keyA, meta: true): _pickAll,
         const SingleActivator(LogicalKeyboardKey.keyA, control: true): _pickAll,
         const SingleActivator(LogicalKeyboardKey.escape): _closeStacked,
+        ..._zoomKeys,
       },
       child: Focus(
         autofocus: true,
         onKeyEvent: _pickedKeys,
         child: PictureScope(
           pictures: widget.source.pictures,
-          child: LabelScope(labels: _labels, child: _layout(context)),
+          child: LabelScope(
+            labels: _labels,
+            child: _dropFiles(_layout(context)),
+          ),
         ),
       ),
     );
@@ -2108,6 +2399,15 @@ class _InboxScreenState extends State<InboxScreen> {
       // Still on: the line comes back with the next count.
     }
     _refreshUnread();
+  }
+
+  /// The unread count in the tray's tooltip and on the Linux launcher.
+  void _shellUnread(int n) {
+    if (widget.arrivals == null) return;
+    Shell.unread(
+      n,
+      tooltip: AppLocalizations.of(context).trayTooltip(n),
+    ).ignore();
   }
 
   /// Above the phone list, never folding: the offline strip, and the way
@@ -2324,14 +2624,29 @@ class _InboxScreenState extends State<InboxScreen> {
           ? (row, _) => _remindMe(row, phone: true)
           : null,
       onReply: _inSent ? null : _reply,
+      onReplyAll: _inSent ? null : _replyAll,
+      onReplyList: _inSent ? null : _replyList,
       onForward: _canForward(reading) ? _forward : null,
+      onForwardAttachment: _canForward(reading)
+          ? (row) => _actions.forwardAsAttachment(row)
+          : null,
+      onRedirect: _canForward(reading) ? (row) => _actions.redirect(row) : null,
+      onEditAsNew: _canForward(reading)
+          ? (row) => _actions.editAsNew(row)
+          : null,
+      onViewSource: (row) => _actions.viewSource(row),
+      onSaveEml: (row) => _actions.saveEml(row),
+      onMute: (row, muted, done) => _actions.setMuted(row, muted, done: done),
+      zoom: _zoom,
+      onTextSize: _textSize,
       onReportSpam: _canReportSpam(reading)
           ? (row) => _act([row], MessageAction.junk)
           : null,
       onNotSpam: _inJunk(reading)
           ? (row) => _act([row], MessageAction.notJunk)
           : null,
-      onQuickReply: _quickReply,
+      onQuickReply: (row, body, text, all, envelope) =>
+          _quickReply(row, body, text, all: all, envelope: envelope),
       replyFrom: _replyFromOf,
       moreMenu: showing ? _more : null,
       backLabel: switch (_folder) {
@@ -2453,7 +2768,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 now: widget.now,
                 selected: null,
                 onSelect: _open,
-                onOutbox: (o) => _reopenOutgoing(o.id),
+                onOutbox: _openOutgoing,
                 phone: true,
                 picked: _picked.keys.toSet(),
                 onPick: _pick,
@@ -2899,7 +3214,7 @@ class _InboxScreenState extends State<InboxScreen> {
             // Alone in the window, the list marks nothing as open.
             selected: _stacked ? null : _selected?.key,
             onSelect: _open,
-            onOutbox: (o) => _reopenOutgoing(o.id),
+            onOutbox: _openOutgoing,
             picked: _picked.keys.toSet(),
             onPick: _pick,
             onTotal: (n) {
@@ -3231,8 +3546,27 @@ class _InboxScreenState extends State<InboxScreen> {
           ? (row, at) => _remindMe(row, anchor: at)
           : null,
       onReply: _inSent ? null : _reply,
+      onReplyAll: _inSent ? null : _replyAll,
+      onReplyList: _inSent ? null : _replyList,
       onForward: _canForward(_selected) ? _forward : null,
-      onQuickReply: _inSent ? null : _quickReply,
+      onForwardAttachment: _canForward(_selected)
+          ? (row) => _actions.forwardAsAttachment(row)
+          : null,
+      onRedirect: _canForward(_selected)
+          ? (row) => _actions.redirect(row)
+          : null,
+      onEditAsNew: _canForward(_selected)
+          ? (row) => _actions.editAsNew(row)
+          : null,
+      onViewSource: (row) => _actions.viewSource(row),
+      onSaveEml: (row) => _actions.saveEml(row),
+      onMute: (row, muted, done) => _actions.setMuted(row, muted, done: done),
+      zoom: _zoom,
+      onTextSize: _textSize,
+      onQuickReply: _inSent
+          ? null
+          : (row, body, text, all, envelope) =>
+                _quickReply(row, body, text, all: all, envelope: envelope),
       replyFrom: _replyFromOf,
       onSender: (row, at) => _senderCard(row, anchor: at),
       onLabel: (row, at) => _label([row], anchor: at),

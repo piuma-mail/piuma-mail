@@ -1560,6 +1560,15 @@ impl Connection {
         expunge_only(session, uids, uidplus).await
     }
 
+    /// Puts a whole message in one of the account's folders, as read: an
+    /// email file imported by the person.
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        self.session()?
+            .append(folder, Some("(\\Seen)"), None, raw)
+            .await?;
+        Ok(())
+    }
+
     /// Files a sent message, already marked as read. Returns the folder.
     pub async fn append_sent(&mut self, raw: &[u8]) -> Result<String> {
         let folder = self.folder(FolderRole::Sent).await?;
@@ -2646,6 +2655,7 @@ fn reply_info(m: &mail_parser::Message, from_email: &str) -> ReplyInfo {
         references: references.join(" "),
         reply_to,
         recipients: groups::recipients(m),
+        envelope: Some(crate::envelope::Envelope::from_message(m)),
     }
 }
 
@@ -2834,7 +2844,8 @@ async fn fetch_heads(
 ) -> Result<(Vec<Fetch>, HashMap<u32, String>)> {
     let query = |bytes: usize| {
         format!(
-            "(UID FLAGS INTERNALDATE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO MIME-VERSION CONTENT-TYPE CONTENT-TRANSFER-ENCODING {} {} {} {} {})] BODY.PEEK[TEXT]<0.{bytes}>)",
+            "(UID FLAGS INTERNALDATE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM REPLY-TO SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO MIME-VERSION CONTENT-TYPE CONTENT-TRANSFER-ENCODING {} {} {} {} {} {})] BODY.PEEK[TEXT]<0.{bytes}>)",
+            crate::envelope::HEADER_FIELDS,
             notify::HEADER_FIELDS,
             crate::automation::HEADER_FIELDS,
             newsletter::HEADER_FIELDS,

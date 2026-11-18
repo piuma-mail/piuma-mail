@@ -510,6 +510,15 @@ impl Remote {
             Remote::Jmap(c) => c.append_draft(raw).await?,
         })
     }
+
+    /// Puts a whole message in `folder`, as read (an imported email file).
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.append_to(folder, raw).await?,
+            Remote::Jmap(c) => c.append_to(folder, raw).await?,
+        }
+        Ok(())
+    }
 }
 
 /// Checks that an account's settings work.
@@ -581,13 +590,15 @@ impl Courier for AccountCourier<'_> {
                 },
                 e => jmap_send_error(e),
             })?;
+            // From the address it was written from, an alias's identity
+            // when the server has one (the account's otherwise).
+            let from = if ready.from.trim().is_empty() {
+                &self.account.email
+            } else {
+                &ready.from
+            };
             client
-                .send(
-                    &ready.raw,
-                    &self.account.email,
-                    &ready.recipients,
-                    &ready.message_id,
-                )
+                .send(&ready.raw, from, &ready.recipients, &ready.message_id)
                 .await
                 .map_err(jmap_send_error)?;
             return Ok(());

@@ -23,8 +23,10 @@ import 'notify/android_background.dart';
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
+import 'outside/arrivals.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
+import 'widgets/links.dart';
 
 Future<void> main(List<String> args) async {
   // A message opened in a window of its own: [window id, its argument].
@@ -41,6 +43,10 @@ Future<void> main(List<String> args) async {
   // First: the installer's hooks end here, and a downloaded update
   // restarts into itself before the engine opens.
   Updates.start(dir.path);
+  // What this launch was asked to open (a mailto: link, an email file,
+  // files to send): it waits for the inbox. Later launches come through
+  // the platform (Arrivals.start).
+  Arrivals.instance.addArgs(args);
   await _start(dir.path);
 }
 
@@ -73,6 +79,9 @@ Future<void> _start(String dir) async {
   // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();
+  // mailto: links in emails write here, in Piuma's own compose.
+  openMailtoLink = (uri) async => Arrivals.instance.mailto(uri);
+  Arrivals.instance.start().ignore();
   // The background service or the 15-minute look, as picked.
   AndroidBackground.apply().ignore();
   final replies = StreamController<MailRow>.broadcast();
@@ -93,6 +102,7 @@ Future<void> _start(String dir) async {
         source: source,
         onOpenWindow: canOpenWindows ? openReaderWindow : null,
         replies: replies.stream,
+        arrivals: Arrivals.instance,
       ),
     ),
   );

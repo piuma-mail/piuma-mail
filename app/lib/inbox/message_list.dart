@@ -1354,6 +1354,9 @@ class OutboxTile extends StatelessWidget {
                       ? l.outboxRefused(item.error ?? '')
                       : maybe
                       ? l.outboxMaybeSentCheck
+                      // A Redirect has no text of its own: it says what it is.
+                      : item.redirect
+                      ? l.outboxRedirectLine
                       : item.body.trim().split('\n').first,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

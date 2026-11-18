@@ -1607,6 +1607,22 @@ class AppLocalizationsFr extends AppLocalizations {
       'La connexion a été coupée pendant l’envoi. Vérifiez dans Envoyés avant de le renvoyer.';
 
   @override
+  String get outboxRedirectTitle => 'Redirection en attente';
+
+  @override
+  String get outboxRedirectLine => 'Redirigé sans modification';
+
+  @override
+  String get outboxRedirectBody =>
+      'Une redirection part telle que l’e-mail est arrivé : il n’y a rien à modifier. Annulez-la ou réessayez de l’envoyer.';
+
+  @override
+  String get outboxCancelRedirect => 'Annuler la redirection';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirection annulée';
+
+  @override
   String get dataProblemTitle => 'Piuma n’a pas pu ouvrir ses données';
 
   @override
@@ -6430,6 +6446,346 @@ class AppLocalizationsFr extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get actionReplyAll => 'Répondre à tous';
+
+  @override
+  String get actionReplyList => 'Répondre à la liste';
+
+  @override
+  String get actionForwardAttachment => 'Transférer en pièce jointe';
+
+  @override
+  String get actionRedirect => 'Rediriger';
+
+  @override
+  String get actionEditAsNew => 'Modifier comme nouveau';
+
+  @override
+  String get actionViewSource => 'Afficher la source';
+
+  @override
+  String get actionSaveEml => 'Enregistrer en .eml';
+
+  @override
+  String get muteConversation => 'Mettre la conversation en sourdine';
+
+  @override
+  String get unmuteConversation => 'Réactiver la conversation';
+
+  @override
+  String get conversationMuted =>
+      'Conversation en sourdine : les nouveaux messages arrivent lus, sans notification';
+
+  @override
+  String get conversationUnmuted => 'Conversation réactivée';
+
+  @override
+  String get conversationMutedLine => 'En sourdine';
+
+  @override
+  String forwardFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'de $count fichiers',
+      one: 'du fichier',
+    );
+    return 'Récupération $_temp0';
+  }
+
+  @override
+  String forwardFilesDone(int done, int total) {
+    return '$done sur $total';
+  }
+
+  @override
+  String forwardFilesFailed(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ces fichiers n’ont pas pu être joints :',
+      one: 'Ce fichier n’a pas pu être joint :',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String forwardWithoutFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Continuer sans eux',
+      one: 'Continuer sans lui',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gettingEmail => 'Récupération de l’e-mail';
+
+  @override
+  String get messageFetchFailed =>
+      'Impossible de récupérer l’e-mail sur le serveur. Vérifiez la connexion et réessayez.';
+
+  @override
+  String get redirectTitle => 'Rediriger cet e-mail';
+
+  @override
+  String redirectBody(String sender) {
+    return 'Il part tel quel, comme il est arrivé de $sender : les réponses iront à $sender, pas à vous.';
+  }
+
+  @override
+  String get redirectTo => 'À';
+
+  @override
+  String get redirectHint => 'Adresses, séparées par des virgules';
+
+  @override
+  String redirectDone(String to) {
+    return 'Redirigé vers $to';
+  }
+
+  @override
+  String get redirectFailed =>
+      'Impossible de rediriger l’e-mail. Vérifiez les adresses et la connexion.';
+
+  @override
+  String get sourceTitle => 'Source de l’e-mail';
+
+  @override
+  String get sourceHeaders => 'En-têtes';
+
+  @override
+  String get sourceRaw => 'Brut';
+
+  @override
+  String get sourceCopy => 'Copier';
+
+  @override
+  String emlSaved(String name) {
+    return 'Enregistré sous $name';
+  }
+
+  @override
+  String get emlNotSaved => 'Impossible d’enregistrer l’e-mail';
+
+  @override
+  String recipientsMore(String names, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count autres',
+      one: '1 autre personne',
+    );
+    return '$names et $_temp0';
+  }
+
+  @override
+  String get recipientYou => 'vous';
+
+  @override
+  String get recipientsBcc => 'vous étiez en Cci';
+
+  @override
+  String get recipientsTo => 'À';
+
+  @override
+  String get recipientsCc => 'Cc';
+
+  @override
+  String get recipientsBccLabel => 'Cci';
+
+  @override
+  String get showRecipients => 'Afficher les destinataires';
+
+  @override
+  String get hideRecipients => 'Masquer les destinataires';
+
+  @override
+  String replyAllNames(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count autres',
+      one: '1 autre personne',
+    );
+    return '$name et $_temp0';
+  }
+
+  @override
+  String replyAllOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'et $count autres',
+      one: 'et 1 autre personne',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutNextEmail => 'E-mail suivant';
+
+  @override
+  String get shortcutPreviousEmail => 'E-mail précédent';
+
+  @override
+  String get zoomIn => 'Agrandir';
+
+  @override
+  String get zoomOut => 'Réduire';
+
+  @override
+  String get zoomReset => 'Taille réelle';
+
+  @override
+  String zoomLevel(int percent) {
+    return 'Taille du texte $percent %';
+  }
+
+  @override
+  String get textSize => 'Taille du texte';
+
+  @override
+  String sourceCut(int size) {
+    return 'Seuls les premiers $size Ko sont affichés. Enregistrez en .eml pour l’e-mail entier.';
+  }
+
+  @override
+  String get deviceHeading => 'Cet appareil';
+
+  @override
+  String get defaultMailTitle =>
+      'Faire de Piuma votre app de messagerie par défaut';
+
+  @override
+  String get defaultMailHint =>
+      'Les adresses e-mail sur lesquelles vous cliquez dans d’autres apps et sur les sites ouvrent un nouveau message ici.';
+
+  @override
+  String get defaultMailIsTitle =>
+      'Piuma est votre app de messagerie par défaut';
+
+  @override
+  String get defaultMailIs =>
+      'Les adresses e-mail sur lesquelles vous cliquez dans d’autres apps et sur les sites s’ouvrent ici.';
+
+  @override
+  String get defaultMailButton => 'Définir par défaut';
+
+  @override
+  String get defaultMailOtherAndroid =>
+      'Une autre app ouvre les adresses e-mail. Effacez ses valeurs par défaut dans ses Infos sur l’app ; la prochaine fois qu’Android demande, choisissez Piuma et Toujours.';
+
+  @override
+  String get defaultMailAskAndroid =>
+      'Android demande quelle app utiliser quand vous touchez une adresse e-mail : choisissez Piuma, puis Toujours.';
+
+  @override
+  String get defaultMailAppInfo => 'Ouvrir les infos';
+
+  @override
+  String get keepRunningTitle => 'Continuer en arrière-plan une fois fermé';
+
+  @override
+  String get keepRunningHint =>
+      'Les nouveaux messages vous sont toujours signalés. Piuma reste dans la zone de notification ; quittez-le depuis là.';
+
+  @override
+  String get startAtLoginTitle => 'Démarrer à l’ouverture de session';
+
+  @override
+  String get startAtLoginHint =>
+      'Piuma démarre dans la zone de notification, prêt pour les nouveaux messages.';
+
+  @override
+  String get trayOpen => 'Ouvrir Piuma Mail';
+
+  @override
+  String get trayQuit => 'Quitter Piuma Mail';
+
+  @override
+  String trayTooltip(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail : $count non lus',
+      one: 'Piuma Mail : 1 non lu',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get arrivalWhichAccount => 'Écrire depuis quel compte ?';
+
+  @override
+  String get arrivalWaits =>
+      'Le nouveau message s’ouvre quand vous fermez celui-ci.';
+
+  @override
+  String arrivalFilesLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count fichiers étaient trop volumineux pour être joints.',
+      one: '1 fichier était trop volumineux pour être joint.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emlFromFile => 'Ouvert depuis un fichier';
+
+  @override
+  String get emlImport => 'Importer dans un dossier';
+
+  @override
+  String get emlImportWhichAccount => 'Importer dans quel compte ?';
+
+  @override
+  String emlImportIn(String account) {
+    return 'Importer dans un dossier de $account';
+  }
+
+  @override
+  String emlImported(String folder) {
+    return 'Importé dans $folder';
+  }
+
+  @override
+  String get emlNotImported =>
+      'Impossible de l’importer. Vérifiez la connexion et réessayez.';
+
+  @override
+  String get emlNotMail =>
+      'Ce fichier n’est pas un e-mail que Piuma peut lire.';
+
+  @override
+  String get emlTooLarge =>
+      'Ce fichier d’e-mail est trop volumineux pour être ouvert.';
+
+  @override
+  String get arrivalNetworkFile =>
+      'Les fichiers des dossiers réseau ne s’ouvrent pas dans Piuma. Copiez-les d’abord sur cet appareil.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count images sont désactivées : personne ne voit quand vous ouvrez ce fichier.',
+      one: '1 image est désactivée : personne ne voit quand vous ouvrez ce fichier.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get newMailClosedLead => 'Quand Piuma est fermé';
 
   @override
   String get star => 'Suivre';
