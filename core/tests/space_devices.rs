@@ -293,6 +293,7 @@ async fn an_account_with_mail_waiting_to_go_is_not_removed_without_asking() {
                 draft,
                 saved: None,
                 send_at: None,
+                undo: false,
             },
             1_000,
         )

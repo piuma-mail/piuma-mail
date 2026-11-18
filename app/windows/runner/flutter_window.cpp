@@ -72,6 +72,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_COPYDATA: {
+      // A later launch handed over its command line (see main.cpp).
+      const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+      if (data != nullptr && data->dwData == kForwardedCommandLine &&
+          data->lpData != nullptr && data->cbData >= sizeof(wchar_t)) {
+        forwarded_.emplace_back(static_cast<const wchar_t*>(data->lpData),
+                                data->cbData / sizeof(wchar_t) - 1);
+        return TRUE;
+      }
+      break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

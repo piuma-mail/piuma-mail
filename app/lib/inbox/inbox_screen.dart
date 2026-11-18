@@ -228,9 +228,6 @@ class _InboxScreenState extends State<InboxScreen> {
   /// What the attachments board starts filtered by, from the palette.
   String _filesQuery = '';
 
-  /// A sent message waiting out the Undo window.
-  Timer? _pendingSend;
-
   /// Archive, Delete and Move waiting out the Undo window, one entry per
   /// action, with what tells the servers. For a conversation, every
   /// message of it in the list goes together.
@@ -600,19 +597,14 @@ class _InboxScreenState extends State<InboxScreen> {
     widget.source.status.removeListener(_signInNotice);
     widget.source.pairAsks.removeListener(_pairAsk);
     widget.source.features.removeListener(_refreshUnread);
-    // Closing the window inside the Undo window still sends.
-    if (_pendingSend?.isActive ?? false) {
-      _pendingSend!.cancel();
-      _flushOnDispose?.call();
-    }
+    // A message in its Undo window is in the outbox, on disk: it goes
+    // without this screen (see _send).
     for (final (timer, rows, run) in _pendingActions.values) {
       timer.cancel();
       run(rows).ignore();
     }
     super.dispose();
   }
-
-  VoidCallback? _flushOnDispose;
 
   void _openCompose([Draft? draft, String? error]) {
     final accounts = widget.source.accounts;
@@ -752,24 +744,79 @@ class _InboxScreenState extends State<InboxScreen> {
     }
   }
 
-  void _send(Draft draft) {
+  /// Send, with Undo: the message goes to the outbox on disk at once, to
+  /// leave when its Undo window ends. Nothing about it lives only here: a
+  /// second send keeps the first, and closing the window or the app in
+  /// the window still sends it (at the next start, if the app is gone).
+  Future<void> _send(Draft draft) async {
     final l = AppLocalizations.of(context);
     final source = widget.source;
     setState(() => _composing = null);
-    _pendingSend?.cancel();
-    _flushOnDispose = () => source.send(draft).ignore();
-    _pendingSend = Timer(undoSendWindow, () => _deliver(draft));
+    final int id;
+    try {
+      id = await source.sendWithUndo(draft, undoSendWindow);
+    } on SendException catch (e) {
+      if (mounted) _openCompose(draft, _sendProblem(l, e.error, e.detail));
+      return;
+    }
+    final delivery = source.deliver(id);
+    if (!mounted) return;
     _toast(
       l.sending,
       action: l.undo,
       duration: undoSendWindow,
-      onAction: () {
-        _pendingSend?.cancel();
-        _flushOnDispose = null;
-        _openCompose(draft);
-      },
+      onAction: () => _reopenOutgoing(id),
     );
+    final done = await delivery;
+    if (!mounted) return;
+    final now = AppLocalizations.of(context);
+    switch (done.outcome) {
+      case SendOutcome.sent:
+        _toast(now.sent);
+      case SendOutcome.waiting:
+        // Offline: it waits in the Outbox and goes by itself.
+        _toast(
+          now.inOutbox,
+          action: now.editAction,
+          onAction: () => _reopenOutgoing(id),
+        );
+      case SendOutcome.maybeSent:
+        // Kept in the Outbox, marked: never sent twice by itself.
+        _toast(now.outboxMaybeSentCheck);
+      case SendOutcome.wrongPassword:
+      case SendOutcome.refused:
+      case SendOutcome.insecure:
+        // As before the outbox: the message comes back with the reason.
+        final problem = _sendProblem(now, switch (done.outcome) {
+          SendOutcome.wrongPassword => SendError.wrongPassword,
+          SendOutcome.refused => SendError.rejected,
+          _ => SendError.other,
+        }, done.detail);
+        try {
+          final back = await source.reopenOutgoing(id);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).clearSnackBars();
+          _openCompose(
+            back,
+            done.outcome == SendOutcome.insecure ? now.errorInsecure : problem,
+          );
+        } catch (_) {
+          // Left in the Outbox, with its reason.
+        }
+      case SendOutcome.gone:
+        break;
+    }
   }
+
+  String _sendProblem(AppLocalizations l, SendError error, String detail) =>
+      switch (error) {
+        SendError.badAddress => l.sendBadAddress(detail),
+        SendError.noRecipients => l.sendNoRecipients,
+        SendError.wrongPassword => l.sendErrorPassword,
+        SendError.unreachable => l.sendErrorUnreachable,
+        SendError.rejected => l.sendErrorRejected,
+        SendError.other => l.sendErrorOther,
+      };
 
   /// Archive, Delete, Report spam or Not spam: the rows leave at once, their
   /// servers are told after the Undo window, all in one go. [reopen] puts
@@ -1292,42 +1339,6 @@ class _InboxScreenState extends State<InboxScreen> {
     );
   }
 
-  Future<void> _deliver(Draft draft) async {
-    _flushOnDispose = null;
-    // Past Undo: it says it is on its way until the server answers.
-    _toast(
-      AppLocalizations.of(context).sending,
-      duration: const Duration(minutes: 1),
-    );
-    try {
-      final waiting = await widget.source.send(draft);
-      if (!mounted) return;
-      final l = AppLocalizations.of(context);
-      if (waiting == null) {
-        _toast(l.sent);
-      } else {
-        // Offline: it waits in the Outbox and goes by itself.
-        _toast(
-          l.inOutbox,
-          action: l.editAction,
-          onAction: () => _reopenOutgoing(waiting),
-        );
-      }
-    } on SendException catch (e) {
-      if (!mounted) return;
-      final l = AppLocalizations.of(context);
-      ScaffoldMessenger.of(context).clearSnackBars();
-      _openCompose(draft, switch (e.error) {
-        SendError.badAddress => l.sendBadAddress(e.detail),
-        SendError.noRecipients => l.sendNoRecipients,
-        SendError.wrongPassword => l.sendErrorPassword,
-        SendError.unreachable => l.sendErrorUnreachable,
-        SendError.rejected => l.sendErrorRejected,
-        SendError.other => l.sendErrorOther,
-      });
-    }
-  }
-
   /// Send later: compose closes, the message waits in the Outbox for its
   /// time, and Undo opens it again.
   Future<void> _schedule(Draft draft, DateTime at) async {
@@ -1348,13 +1359,20 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   /// A message in the Outbox opens in compose again, and stops waiting.
+  /// Undo of a send is this too.
   Future<void> _reopenOutgoing(int id) async {
     try {
       final draft = await widget.source.reopenOutgoing(id);
       if (mounted) _openCompose(draft);
     } catch (_) {
-      // Already gone: it was sent meanwhile.
-      if (mounted) _toast(AppLocalizations.of(context).sent);
+      if (!mounted) return;
+      // On its way right now, or already gone: it was sent meanwhile.
+      final waiting = await widget.source
+          .outbox(null)
+          .catchError((_) => const <OutboxItem>[]);
+      if (!mounted) return;
+      final l = AppLocalizations.of(context);
+      _toast(waiting.any((o) => o.id == id) ? l.sending : l.sent);
     }
   }
 

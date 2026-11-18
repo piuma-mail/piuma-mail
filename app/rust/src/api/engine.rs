@@ -184,6 +184,9 @@ impl From<SendError> for EngineError {
             // user action is implied.
             SendError::Deferred(_) => EngineError::new(ErrorKind::Other, e.to_string()),
             SendError::Build(_) => EngineError::new(ErrorKind::Other, e.to_string()),
+            SendError::Uncertain(_) => EngineError::new(ErrorKind::Other, e.to_string()),
+            SendError::Tls { .. } => EngineError::new(ErrorKind::InsecureConnection, e.to_string()),
+            SendError::Protocol(_) => EngineError::new(ErrorKind::Other, e.to_string()),
         }
     }
 }
@@ -483,6 +486,8 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
     }
     piuma_core::tls::use_one_crypto_provider();
     piuma_core::guard::install();
+    // Before the database: a failure opening it is kept for a report.
+    super::feedback::opened(&db_path);
     let store = Store::open(&db_path)?;
     // Actions still inside their Undo window when the app quit never
     // happened: show those messages again.
@@ -3352,27 +3357,129 @@ pub struct OutgoingFile {
 #[derive(Debug, Clone)]
 pub struct SentMessage {
     pub message_id: String,
-    /// False when the copy could not be filed in Sent.
+    /// False when the copy is not in Sent yet (the outbox files it later).
     pub filed: bool,
-    /// The server could not be reached: it waits in the outbox and goes
-    /// once the connection is back.
+    /// It waits in the outbox: the server could not be reached, or it may
+    /// have gone and the person is to check.
     pub queued: bool,
 }
 
 /// Sends a message from one of the accounts and files a copy in Sent.
-/// When the server can't be reached, it waits in the outbox instead.
+/// It is kept in the outbox first, so it is never lost; when the server
+/// can't be reached it waits there instead.
 pub async fn send_message(message: OutgoingMessage) -> Result<SentMessage, EngineError> {
+    let queued = queue_message(message, None, false)?;
+    let delivery = deliver_outgoing(queued.id).await?;
+    match delivery.kind {
+        DeliveryKind::Sent => Ok(SentMessage {
+            message_id: queued.message_id,
+            filed: delivery.filed,
+            queued: false,
+        }),
+        DeliveryKind::WrongPassword => {
+            Err(EngineError::new(ErrorKind::WrongPassword, delivery.detail))
+        }
+        DeliveryKind::Waiting | DeliveryKind::MaybeSent | DeliveryKind::Gone => Ok(SentMessage {
+            message_id: queued.message_id,
+            filed: false,
+            queued: true,
+        }),
+        DeliveryKind::Refused => Err(EngineError::new(ErrorKind::Rejected, delivery.detail)),
+        DeliveryKind::Insecure => Err(EngineError::new(
+            ErrorKind::InsecureConnection,
+            delivery.detail,
+        )),
+    }
+}
+
+/// Keeps a message in the outbox to send once its Undo window
+/// (`undo_seconds`) has passed: from that moment it is on disk, and goes
+/// even if the app closes in the window (at the next start). Returns its
+/// outbox id, to take it back ([reopen_outgoing]) or to wait for it
+/// ([deliver_outgoing]).
+pub fn send_with_undo(message: OutgoingMessage, undo_seconds: u32) -> Result<i64, EngineError> {
+    let send_at = now_secs() + i64::from(undo_seconds);
+    let queued = queue_message(message, Some(send_at), true)?;
+    // The app waits for it with [deliver_outgoing]; this goes too, should
+    // the app not be there to (the claim keeps it from going twice).
+    send_outbox_at(queued.account, send_at)?;
+    Ok(queued.id)
+}
+
+/// Keeps a message to send at `send_at` (Unix seconds), from this
+/// device: it waits in the outbox and goes at that time, or as soon as
+/// the app runs again after it, dated when it goes. Returns its outbox id.
+pub fn schedule_message(message: OutgoingMessage, send_at: i64) -> Result<i64, EngineError> {
+    let queued = queue_message(message, Some(send_at), false)?;
+    send_outbox_at(queued.account, send_at)?;
+    Ok(queued.id)
+}
+
+/// Sends an account's outbox at `send_at`, on time while the app runs;
+/// the watchers also wait for it.
+fn send_outbox_at(id: AccountId, send_at: i64) -> Result<(), EngineError> {
+    engine()?.runtime.spawn(async move {
+        let wait = (send_at - now_secs()).max(0) as u64;
+        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        if let Ok((account, password)) = signed_in(id) {
+            send_outbox(account, password);
+        }
+    });
+    Ok(())
+}
+
+/// A message just kept in the outbox.
+struct Queued {
+    id: i64,
+    account: AccountId,
+    message_id: String,
+}
+
+/// Every way of sending starts here: the message is built and written to
+/// the outbox, and only then goes, from there.
+fn queue_message(
+    message: OutgoingMessage,
+    send_at: Option<i64>,
+    undo: bool,
+) -> Result<Queued, EngineError> {
     let id = AccountId(message.account_id);
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
     let saved = message.draft.clone();
     let remind_at = message.remind_at;
     let draft = core_draft(&account, message)?;
-    let sent = send_draft(account, password, draft, saved).await?;
-    remind_sent(id, &sent.message_id, remind_at)?;
-    Ok(sent)
+    let queued = queue_draft(id, draft, saved, send_at, undo)?;
+    remind_sent(id, &queued.message_id, remind_at)?;
+    Ok(queued)
+}
+
+fn queue_draft(
+    account: AccountId,
+    draft: Draft,
+    saved: Option<MessageRef>,
+    send_at: Option<i64>,
+    undo: bool,
+) -> Result<Queued, EngineError> {
+    let ready = smtp::ready(&draft)?;
+    let message_id = ready.message_id.clone();
+    // The copy waiting on this device goes; the server copy is erased
+    // once the message is sent.
+    let saved = settle_waiting(saved)?.map(|d| (d.mailbox, d.uid));
+    let out = Outgoing {
+        account,
+        draft,
+        ready,
+        saved,
+        send_at,
+        undo,
+    };
+    let id = store()?.queue_outgoing(&out, now_secs())?;
+    Ok(Queued {
+        id,
+        account,
+        message_id,
+    })
 }
 
 /// Keeps the reminder picked in compose, by the Message-ID the mail goes
@@ -3384,95 +3491,196 @@ fn remind_sent(account: AccountId, message_id: &str, at: Option<i64>) -> Result<
     Ok(())
 }
 
-/// Sends a draft of `account`, or keeps it in the outbox when the server
-/// can't be reached; its saved copy in Drafts goes once it is sent.
-async fn send_draft(
-    account: Account,
-    password: String,
-    draft: Draft,
-    saved: Option<MessageRef>,
-) -> Result<SentMessage, EngineError> {
-    let engine = engine()?;
-    let id = account.id;
-    let ready = smtp::ready(&draft)?;
-    let shared = engine.store.clone();
-    let (to_send, sending) = (ready.clone(), account.clone());
-    let sent = engine
-        .runtime
-        .spawn(async move {
-            let report = remote::send_ready(&sending, &password, &to_send).await?;
-            // Show it in Sent right away. A failure here changes nothing
-            // about the send: the next look at Sent picks it up.
-            if let Ok(mut conn) = Remote::open(&sending, &password).await {
-                conn.sync_folders(&shared, id).await.ok();
-                conn.close().await;
-            }
-            Ok::<_, SendError>(report)
-        })
-        .await
-        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
-    let report = match sent {
-        Err(e) if e.is_offline() => {
-            let out = Outgoing {
-                account: id,
-                draft,
-                saved: settle_waiting(saved)?.map(|d| (d.mailbox, d.uid)),
-                ready,
-                send_at: None,
-            };
-            let message_id = out.ready.message_id.clone();
-            store()?.queue_outgoing(&out, now_secs())?;
-            return Ok(SentMessage {
-                message_id,
-                filed: false,
-                queued: true,
-            });
-        }
-        other => other?,
-    };
-    // Sent: its draft goes. Left behind, it is only an extra draft.
-    if let Some(saved) = settle_waiting(saved)? {
-        erase_draft(saved).await.ok();
-    }
-    Ok(SentMessage {
-        message_id: report.message_id,
-        filed: report.filed_in.is_some(),
-        queued: false,
-    })
+/// What became of a message of the outbox ([deliver_outgoing]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryKind {
+    /// The server took it.
+    Sent,
+    /// It waits in the outbox: the server can't be reached, or deferred it.
+    Waiting,
+    /// It waits in the outbox: the server refused the password.
+    WrongPassword,
+    /// The server refused it; it stays in the outbox with the reason.
+    Refused,
+    /// The connection could not be made secure (a certificate that
+    /// doesn't check out); it stays in the outbox with the reason.
+    Insecure,
+    /// The server may have taken it; it stays in the outbox, marked so.
+    MaybeSent,
+    /// Not in the outbox: taken back or deleted meanwhile.
+    Gone,
 }
 
-/// Keeps a message to send at `send_at` (Unix seconds), from this
-/// device: it waits in the outbox, dated for then, and goes at that time,
-/// or as soon as the app runs again after it. Returns its outbox id.
-pub fn schedule_message(message: OutgoingMessage, send_at: i64) -> Result<i64, EngineError> {
-    let id = AccountId(message.account_id);
-    let account = store()?
-        .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let saved = message.draft.clone();
-    let remind_at = message.remind_at;
-    let mut draft = core_draft(&account, message)?;
-    draft.date = Some(send_at);
-    let ready = smtp::ready(&draft)?;
-    remind_sent(id, &ready.message_id, remind_at)?;
-    let out = Outgoing {
-        account: id,
-        draft,
-        saved: settle_waiting(saved)?.map(|d| (d.mailbox, d.uid)),
-        ready,
-        send_at: Some(send_at),
-    };
-    let queued = store()?.queue_outgoing(&out, now_secs())?;
-    // On time while the app runs; the watchers also wait for it.
-    let engine = engine()?;
-    engine.runtime.spawn(async move {
-        let wait = (send_at - now_secs()).max(0) as u64;
-        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
-        if let Ok((account, password)) = signed_in(id) {
-            send_outbox(account, password);
+#[derive(Debug, Clone)]
+pub struct Delivery {
+    pub kind: DeliveryKind,
+    /// With [DeliveryKind::Sent]: whether its copy is in Sent already.
+    pub filed: bool,
+    /// The server's words, for Refused, Insecure and MaybeSent.
+    pub detail: String,
+}
+
+impl Delivery {
+    fn of(kind: DeliveryKind) -> Self {
+        Delivery {
+            kind,
+            filed: false,
+            detail: String::new(),
         }
-    });
-    Ok(queued)
+    }
+}
+
+/// Outcomes of messages sent by this process, kept a moment for whoever
+/// waits for them ([deliver_outgoing]) while another task sent them.
+static OUTCOMES: Mutex<Vec<(i64, Delivery)>> = Mutex::new(Vec::new());
+static OUTCOME_NEWS: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn keep_outcome(id: i64, delivery: Delivery) {
+    let mut outcomes = OUTCOMES.lock().unwrap_or_else(|e| e.into_inner());
+    outcomes.retain(|(i, _)| *i != id);
+    outcomes.push((id, delivery));
+    let extra = outcomes.len().saturating_sub(64);
+    outcomes.drain(..extra);
+    drop(outcomes);
+    OUTCOME_NEWS.notify_waiters();
+}
+
+fn kept_outcome(id: i64) -> Option<Delivery> {
+    OUTCOMES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(i, _)| *i == id)
+        .map(|(_, d)| d.clone())
+}
+
+fn delivery_of(outcome: &outbox::Outcome) -> Delivery {
+    match outcome {
+        outbox::Outcome::Sent(s) => Delivery {
+            kind: DeliveryKind::Sent,
+            filed: s.filed.done(),
+            detail: String::new(),
+        },
+        outbox::Outcome::Waiting(e) => Delivery {
+            detail: e.to_string(),
+            ..Delivery::of(if matches!(e, SendError::Auth) {
+                DeliveryKind::WrongPassword
+            } else {
+                DeliveryKind::Waiting
+            })
+        },
+        outbox::Outcome::Refused(r) => Delivery {
+            detail: r.clone(),
+            ..Delivery::of(DeliveryKind::Refused)
+        },
+        outbox::Outcome::Insecure(r) => Delivery {
+            detail: r.clone(),
+            ..Delivery::of(DeliveryKind::Insecure)
+        },
+        outbox::Outcome::Unknown(d) => Delivery {
+            detail: d.clone(),
+            ..Delivery::of(DeliveryKind::MaybeSent)
+        },
+        outbox::Outcome::Busy => Delivery::of(DeliveryKind::Waiting),
+        outbox::Outcome::Gone => Delivery::of(DeliveryKind::Gone),
+    }
+}
+
+/// Sends one message of the outbox once its time has come (waiting for
+/// it: the end of an Undo window) and says what became of it. Taken back
+/// meanwhile, it doesn't go ([DeliveryKind::Gone]). Safe beside every
+/// other sender: whoever claims it first sends it, and the others learn
+/// what happened.
+pub async fn deliver_outgoing(id: i64) -> Result<Delivery, EngineError> {
+    let engine = engine()?;
+    engine
+        .runtime
+        .spawn(async move { deliver(id).await })
+        .await
+        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
+}
+
+async fn deliver(id: i64) -> Result<Delivery, EngineError> {
+    let engine = engine()?;
+    let Some(out) = store()?.outgoing(id)? else {
+        return Ok(kept_outcome(id).unwrap_or(Delivery::of(DeliveryKind::Gone)));
+    };
+    if let Some(at) = out.send_at {
+        let wait = (at - now_secs()).max(0) as u64;
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+    }
+    let (account, password) = signed_in(out.account)?;
+    let shared = engine.store.clone();
+    let mut courier = remote::AccountCourier::new(&account, &password);
+    let outcome = outbox::send_one(&shared, id, &mut courier, outbox_sender()).await?;
+    if let outbox::Outcome::Sent(sent) = &outcome {
+        let delivery = delivery_of(&outcome);
+        keep_outcome(id, delivery.clone());
+        after_sent(account.clone(), password.clone(), vec![sent.clone()]);
+        return Ok(delivery);
+    }
+    let busy = matches!(outcome, outbox::Outcome::Busy);
+    if !busy && !matches!(outcome, outbox::Outcome::Gone) {
+        // Its row changed (waiting, refused, may have gone): the list shows it.
+        emit(SyncEvent::new(SyncEventKind::Synced, account.id.0));
+        return Ok(delivery_of(&outcome));
+    }
+    // Another sender has it, or had it: wait for its word, a while.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        if let Some(d) = kept_outcome(id) {
+            return Ok(d);
+        }
+        match store()?.outgoing_state(id)?.as_deref() {
+            None | Some("unfiled") => {
+                // Sent by another process, or taken back.
+                return Ok(Delivery::of(if busy {
+                    DeliveryKind::Sent
+                } else {
+                    DeliveryKind::Gone
+                }));
+            }
+            // Settled by the other sender: its words are kept in the row.
+            Some("unknown") => {
+                return Ok(Delivery {
+                    detail: store()?.outgoing_error(id)?.unwrap_or_default(),
+                    ..Delivery::of(DeliveryKind::MaybeSent)
+                })
+            }
+            Some("refused") => {
+                let detail = store()?.outgoing_error(id)?.unwrap_or_default();
+                return Ok(Delivery {
+                    kind: if smtp::insecure_reason(&detail) {
+                        DeliveryKind::Insecure
+                    } else {
+                        DeliveryKind::Refused
+                    },
+                    filed: false,
+                    detail,
+                });
+            }
+            Some("queued") => return Ok(Delivery::of(DeliveryKind::Waiting)),
+            _ => {}
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(Delivery::of(DeliveryKind::Waiting));
+        }
+        let _ = tokio::time::timeout(Duration::from_millis(500), OUTCOME_NEWS.notified()).await;
+    }
+}
+
+/// This process's name as a sender of the outbox: rows it claims carry
+/// it, so another process (or this one after a crash) tells its claims
+/// from others'.
+pub(crate) fn outbox_sender() -> &'static str {
+    static ME: OnceLock<String> = OnceLock::new();
+    ME.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        format!("{}-{nanos:x}", std::process::id())
+    })
 }
 
 /// A message waiting in the outbox.
@@ -3484,10 +3692,26 @@ pub struct OutboxItem {
     pub subject: String,
     pub body: String,
     pub queued_at: i64,
-    /// Why the server refused it; None while it only waits.
+    /// Why the server refused it, or why it may have gone; None while it
+    /// only waits.
     pub error: Option<String>,
     /// When it goes, in Unix seconds, for mail sent later.
     pub send_at: Option<i64>,
+    pub state: OutboxState,
+    /// Sent with Undo: [send_at] ends the Undo window.
+    pub undo: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxState {
+    /// Waits for its time or for the server.
+    Waiting,
+    /// On its way now.
+    Sending,
+    /// The server refused it; [OutboxItem::error] says why.
+    Refused,
+    /// The server may have taken it: the person checks Sent.
+    MaybeSent,
 }
 
 /// The outbox, oldest first: one account's, or every account's.
@@ -3504,18 +3728,37 @@ pub fn outbox(account_id: Option<i64>) -> Result<Vec<OutboxItem>, EngineError> {
             queued_at: w.queued_at,
             error: w.error,
             send_at: w.send_at,
+            state: match w.state {
+                outbox::State::Waiting => OutboxState::Waiting,
+                outbox::State::Sending => OutboxState::Sending,
+                outbox::State::Refused => OutboxState::Refused,
+                outbox::State::Unknown => OutboxState::MaybeSent,
+            },
+            undo: w.undo,
         })
         .collect())
 }
 
-/// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own.
-pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
+/// Takes a message out of the outbox, if nobody is sending it: an error
+/// says "being sent" or "already sent".
+fn take_outgoing(id: i64) -> Result<Outgoing, EngineError> {
     let store = store()?;
-    let out = store
-        .outgoing(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "already sent"))?;
-    store.drop_outgoing(id)?;
+    if let Some(out) = store.take_outgoing(id)? {
+        return Ok(out);
+    }
+    Err(EngineError::new(
+        ErrorKind::Other,
+        match store.outgoing_state(id)?.as_deref() {
+            Some("sending") => "being sent",
+            _ => "already sent",
+        },
+    ))
+}
+
+/// Takes a message back out of the outbox to edit it: it no longer goes
+/// on its own. Not while it is being sent.
+pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
+    let out = take_outgoing(id)?;
     let d = out.draft;
     Ok(OutgoingMessage {
         account_id: out.account.0,
@@ -3559,44 +3802,71 @@ pub fn send_outbox_now() -> Result<(), EngineError> {
     Ok(())
 }
 
-/// Deletes a message from the outbox without sending it.
+/// Deletes a message from the outbox without sending it. Not while it is
+/// being sent.
 pub fn delete_outgoing(id: i64) -> Result<(), EngineError> {
-    Ok(store()?.drop_outgoing(id)?)
+    take_outgoing(id).map(|_| ())
 }
 
-/// Accounts whose outbox is being sent, so nothing goes twice.
+/// Accounts whose outbox is being sent by this process: one batch at a
+/// time each. Claims in the database keep every message from going twice,
+/// across tasks and processes; this only spares a second connection.
 static SENDING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 
-/// Sends an account's outbox, if it has anything waiting, and says so
-/// with [SyncEventKind::OutboxSent] when something went.
+/// Sends an account's outbox, if it has anything to do, in the
+/// background (see [deliver_outbox]).
 fn send_outbox(account: Account, password: String) {
     let Ok(engine) = engine() else { return };
+    engine.runtime.spawn(async move {
+        deliver_outbox(&account, &password).await;
+    });
+}
+
+/// Sends an account's outbox, and says so with
+/// [SyncEventKind::OutboxSent] when something went. The one way the
+/// outbox is sent, from the app and from the background service.
+pub(crate) async fn deliver_outbox(account: &Account, password: &str) {
+    let Ok(engine) = engine() else { return };
     let id = account.id;
-    let waiting = engine
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .outbox(Some(id))
-        .map(|w| w.iter().any(|w| w.error.is_none()))
-        .unwrap_or(false);
     {
         let mut sending = SENDING.lock().unwrap_or_else(|e| e.into_inner());
-        if !waiting || sending.contains(&id.0) {
+        if sending.contains(&id.0) {
             return;
         }
         sending.push(id.0);
     }
     let shared = engine.store.clone();
+    let mut courier = remote::AccountCourier::new(account, password);
+    let sent = outbox::send(&shared, account, &mut courier, outbox_sender()).await;
+    SENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|a| *a != id.0);
+    let sent = sent.unwrap_or_default();
+    for s in &sent {
+        keep_outcome(
+            s.id,
+            Delivery {
+                kind: DeliveryKind::Sent,
+                filed: s.filed.done(),
+                detail: String::new(),
+            },
+        );
+    }
+    if !sent.is_empty() {
+        after_sent(account.clone(), password.to_owned(), sent);
+    }
+}
+
+/// After the server took messages: their copies in Drafts go, Sent is
+/// looked at again, and the app hears of it. In the background; a failure
+/// changes nothing about the send (left behind, a draft is only an extra
+/// draft, and the next look at Sent picks the copy up).
+fn after_sent(account: Account, password: String, sent: Vec<outbox::Sent>) {
+    let Ok(engine) = engine() else { return };
+    let shared = engine.store.clone();
+    let id = account.id;
     engine.runtime.spawn(async move {
-        let sent = outbox::send(&shared, &account, &password).await;
-        SENDING
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|a| *a != id.0);
-        let sent = sent.unwrap_or_default();
-        if sent.is_empty() {
-            return;
-        }
         if let Ok(mut conn) = Remote::open(&account, &password).await {
             for s in &sent {
                 if let Some((mailbox, uid)) = &s.saved {
@@ -5797,7 +6067,7 @@ pub async fn answer_invite(
         ErrorKind::Other,
         "the invite has no organizer",
     ))?;
-    let (account, password) = signed_in(id)?;
+    let (account, _) = signed_in(id)?;
     let answer = match answer {
         InviteAnswer::Accepted => invite::Answer::Accepted,
         InviteAnswer::Tentative => invite::Answer::Tentative,
@@ -5843,7 +6113,24 @@ pub async fn answer_invite(
         ..Draft::default()
     };
     let email = account.email.clone();
-    let sent = send_draft(account, password, draft, None).await?;
+    let queued = queue_draft(id, draft, None, None, false)?;
+    let delivery = deliver_outgoing(queued.id).await?;
+    let sent = match delivery.kind {
+        DeliveryKind::Refused => {
+            return Err(EngineError::new(ErrorKind::Rejected, delivery.detail))
+        }
+        DeliveryKind::Insecure => {
+            return Err(EngineError::new(
+                ErrorKind::InsecureConnection,
+                delivery.detail,
+            ))
+        }
+        kind => SentMessage {
+            message_id: queued.message_id,
+            filed: delivery.filed,
+            queued: kind != DeliveryKind::Sent,
+        },
+    };
     store()?.set_invite_answer(
         id,
         &event.uid,
