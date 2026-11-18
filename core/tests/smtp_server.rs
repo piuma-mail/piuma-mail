@@ -783,7 +783,10 @@ async fn a_server_that_stops_answering_never_leaves_a_send_hanging() {
             .await
             .unwrap_err();
         assert!(err.is_offline(), "{at}: {err:?}");
-        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{at}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{at}"
+        );
         assert!(inbox.lock().unwrap().is_empty(), "{at}");
     }
     // Silent once it has the message: it may have it.

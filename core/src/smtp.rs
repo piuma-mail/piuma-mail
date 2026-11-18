@@ -1134,7 +1134,10 @@ mod tests {
     #[test]
     fn the_advertised_size_is_read_from_ehlo() {
         let read = |lines: &[&str]| advertised_size(lines.iter().copied());
-        assert_eq!(read(&["8BITMIME", "SIZE 35882577", "AUTH PLAIN"]), Some(Some(35_882_577)));
+        assert_eq!(
+            read(&["8BITMIME", "SIZE 35882577", "AUTH PLAIN"]),
+            Some(Some(35_882_577))
+        );
         assert_eq!(read(&["size 0"]), Some(None));
         assert_eq!(read(&["SIZE"]), Some(None));
         assert_eq!(read(&["8BITMIME", "AUTH PLAIN"]), None);
