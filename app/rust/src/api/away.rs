@@ -11,7 +11,6 @@ use piuma_core::away::{self, AwayError, AwayMessage, AwayServer, Due, Outcome, S
 use piuma_core::{Account, AccountId};
 
 use super::engine::{engine, reader, store, EngineError, ErrorKind};
-use crate::credentials;
 
 /// An account's away message, with its days as "2026-10-27".
 #[derive(Debug, Clone)]
@@ -115,7 +114,7 @@ pub async fn away_message(
     utc_offset_minutes: i32,
 ) -> Result<Option<AwayMessageInfo>, EngineError> {
     let a = account(account_id)?;
-    let server = AwayServer::for_account(&a, &credentials::load(a.id)?);
+    let server = AwayServer::for_account(&a, &crate::login::load(a.id)?);
     let zone = utc_offset_minutes;
     let Some(status) = on_runtime(async move { away::status(&server, zone).await }).await? else {
         return Ok(None);
@@ -157,7 +156,7 @@ pub async fn set_away_message(
 ) -> Result<AwaySaved, EngineError> {
     let a = account(account_id)?;
     let m = AwayMessage::from(message);
-    let saved = place(&a, &credentials::load(a.id)?, m, utc_offset_minutes).await?;
+    let saved = place(&a, &crate::login::load(a.id)?, m, utc_offset_minutes).await?;
     Ok(saved)
 }
 
@@ -171,13 +170,13 @@ pub async fn turn_off_away_message(account_id: i64) -> Result<(), EngineError> {
         on: false,
         ..s.message
     };
-    place(&a, &credentials::load(a.id)?, m, s.zone).await?;
+    place(&a, &crate::login::load(a.id)?, m, s.zone).await?;
     Ok(())
 }
 
 async fn place(
     a: &Account,
-    password: &str,
+    password: &piuma_core::Login,
     m: AwayMessage,
     zone: i32,
 ) -> Result<AwaySaved, EngineError> {
@@ -231,7 +230,7 @@ static BUSY: Mutex<Option<HashSet<i64>>> = Mutex::new(None);
 /// Keeps an away message to its days, each time the account is in touch
 /// with its server: it ends after its last day, and on a server that
 /// can't tell dates it starts on its first.
-pub(crate) fn keep_on_time(account: Account, password: String) {
+pub(crate) fn keep_on_time(account: Account, password: piuma_core::Login) {
     let Ok(Some(s)) = store().and_then(|s| Ok(s.away_message(account.id)?)) else {
         return;
     };

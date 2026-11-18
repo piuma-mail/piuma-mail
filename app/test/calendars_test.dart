@@ -224,6 +224,24 @@ void main() {
     expect(find.text('Subscribe to an .ics URL'), findsOneWidget);
   });
 
+  testWidgets('on the phone a CalDAV account connects from the sheet', (
+    tester,
+  ) async {
+    final source = await _pump(tester, phone: true);
+    await tester.tap(_inPage(find.text('Connect a calendar')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel(RegExp('^CalDAV')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'teo@fastmail.com');
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'app-password');
+    await tester.tap(find.text('Connect').last);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(source.connected.last, ('teo@fastmail.com', '', 'app-password'));
+  });
+
   for (final dark in [false, true]) {
     final name = dark ? 'dark' : 'light';
     testWidgets('calendars golden $name', (tester) async {

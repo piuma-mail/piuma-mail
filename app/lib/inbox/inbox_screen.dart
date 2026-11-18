@@ -402,7 +402,9 @@ class _InboxScreenState extends State<InboxScreen> {
         SystemNotice(
           id: Object.hash('sign-in', id) & 0x7fffffff,
           title: l.noticeSignInTitle(account.name),
-          subject: l.accountPasswordRefused,
+          subject: widget.source.accountHealth(id).certificate
+              ? l.accountCertificateRefused
+              : l.accountPasswordRefused,
           preview: '',
           payload: 'account\n$id',
           silent: false,

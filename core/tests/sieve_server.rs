@@ -42,7 +42,7 @@ async fn start(extensions: &str) -> (Arc<Mutex<Server>>, SieveConfig) {
         port,
         security: Security::None,
         username: USER.into(),
-        password: PASSWORD.into(),
+        login: PASSWORD.into(),
     };
     (state, cfg)
 }
@@ -226,7 +226,7 @@ async fn logs_in_and_lists_scripts() {
     c.logout().await;
 
     let wrong = SieveConfig {
-        password: "nope".into(),
+        login: "nope".into(),
         ..cfg
     };
     assert!(matches!(

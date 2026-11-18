@@ -17,6 +17,13 @@ class OutboxJob : JobService() {
                 MailNative.sendOutbox()
             } catch (e: Throwable) {
                 // The app sends it at its next start.
+            } finally {
+                // A sign-in renewed while sending, even if sending then
+                // failed: into the Keystore before the process goes.
+                try {
+                    Background.keepSecrets(applicationContext)
+                } catch (e: Throwable) {
+                }
             }
             jobFinished(params, false)
         }, "piuma-outbox").start()
