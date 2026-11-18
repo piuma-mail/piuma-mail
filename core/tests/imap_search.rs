@@ -276,12 +276,14 @@ async fn found_mail_is_fetched_as_headers_kept_and_marked() {
     assert!(!found.partial);
     assert_eq!(mock.commands("UID FETCH").len(), 1);
     // Now on this device: searchable and listed.
-    let s = store.lock().unwrap();
-    let local = s.search(&Query::parse("café order"), 10).unwrap();
+    let local = store
+        .lock()
+        .unwrap()
+        .search(&Query::parse("café order"), 10)
+        .unwrap();
     assert_eq!(local.total, 3);
     assert_eq!(local.hits[0].message.subject, "Café order 9");
     assert_eq!(local.hits[0].message.from_email, "sara@tipografialume.it");
-    drop(s);
 
     // A second search fetches only what isn't here yet.
     let mock2 = start(Behaviour {
