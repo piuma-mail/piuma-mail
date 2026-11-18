@@ -6370,6 +6370,113 @@ class AppLocalizationsFr extends AppLocalizations {
       '## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand';
 
   @override
+  String get saveSearch => 'Enregistrer la recherche';
+
+  @override
+  String get savedSearchEdit => 'Modifier la recherche enregistrée';
+
+  @override
+  String get savedSearchName => 'Nom';
+
+  @override
+  String get savedSearchSave => 'Enregistrer';
+
+  @override
+  String get savedSearchDelete => 'Supprimer la recherche';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Seule la recherche enregistrée disparaît : les e-mails restent où ils sont.';
+
+  @override
+  String get savedSearchNameTaken =>
+      'Une autre recherche enregistrée porte déjà ce nom.';
+
+  @override
+  String get savedSearchesSection => 'RECHERCHES ENREGISTRÉES';
+
+  @override
+  String get savedSearches => 'Recherches enregistrées';
+
+  @override
+  String get searchSuggestions => 'Suggestions';
+
+  @override
+  String get searchOnServer => 'Rechercher sur le serveur';
+
+  @override
+  String get searchOnServerHeading => 'Sur le serveur';
+
+  @override
+  String get searchingServers => 'Recherche sur le serveur…';
+
+  @override
+  String get searchServerError => 'Impossible de rechercher sur le serveur.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'Cette recherche ne peut porter que sur cet appareil.';
+
+  @override
+  String get searchServerNothing => 'Rien de plus sur le serveur.';
+
+  @override
+  String get searchFromServer => 'Trouvé sur le serveur';
+
+  @override
+  String get searchServerPartial =>
+      'Certains dossiers n’ont pas pu être fouillés entièrement.';
+
+  @override
+  String get searchServerMaybe =>
+      'Les e-mails plus anciens, et le texte que cet appareil n’a pas gardé, peuvent encore être sur le serveur.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Les serveurs de $count comptes ne cherchent que des lettres simples (A–Z) : ce texte ne leur a pas été demandé.',
+      one: 'Le serveur d’1 compte ne cherche que des lettres simples (A–Z) : ce texte ne lui a pas été demandé.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Recherche partielle : $accounts. Ce qui a été trouvé avant l’arrêt est ici.';
+  }
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count e-mails de plus trouvés sur le serveur, maintenant sur cet appareil.',
+      one: '1 e-mail de plus trouvé sur le serveur, maintenant sur cet appareil.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Les serveurs de $count comptes étaient injoignables.',
+      one: 'Le serveur d’1 compte était injoignable.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Renommer ou supprimer $name';
+  }
+
+  @override
   String get errorNoKeyring =>
       'Piuma garde les mots de passe dans le trousseau du système, et aucun n’est lancé. Installez-en un et démarrez-le, comme GNOME Keyring ou KWallet, puis réessayez. Les mots de passe ne sont jamais enregistrés dans un simple fichier.';
 

@@ -11,6 +11,7 @@ pub mod oauth;
 pub mod outside;
 pub mod preview;
 pub mod reply;
+pub mod search;
 pub mod storage;
 pub mod sync;
 pub mod templates;

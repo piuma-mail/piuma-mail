@@ -9352,6 +9352,150 @@ abstract class AppLocalizations {
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
 
+  /// No description provided for @saveSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Save search'**
+  String get saveSearch;
+
+  /// No description provided for @savedSearchEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit saved search'**
+  String get savedSearchEdit;
+
+  /// No description provided for @savedSearchName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get savedSearchName;
+
+  /// No description provided for @savedSearchSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get savedSearchSave;
+
+  /// No description provided for @savedSearchDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete search'**
+  String get savedSearchDelete;
+
+  /// No description provided for @savedSearchDeleteNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the saved search goes: the emails stay where they are.'**
+  String get savedSearchDeleteNote;
+
+  /// No description provided for @savedSearchNameTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'Another saved search has this name.'**
+  String get savedSearchNameTaken;
+
+  /// No description provided for @savedSearchesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'SAVED SEARCHES'**
+  String get savedSearchesSection;
+
+  /// No description provided for @savedSearches.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved searches'**
+  String get savedSearches;
+
+  /// No description provided for @searchSuggestions.
+  ///
+  /// In en, this message translates to:
+  /// **'Suggestions'**
+  String get searchSuggestions;
+
+  /// No description provided for @searchOnServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Search on server'**
+  String get searchOnServer;
+
+  /// No description provided for @searchOnServerHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'On the server'**
+  String get searchOnServerHeading;
+
+  /// No description provided for @searchingServers.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching on the server…'**
+  String get searchingServers;
+
+  /// No description provided for @searchServerError.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t search on the server.'**
+  String get searchServerError;
+
+  /// No description provided for @searchServerLocalOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'This search can only look at this device.'**
+  String get searchServerLocalOnly;
+
+  /// No description provided for @searchServerNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing more on the server.'**
+  String get searchServerNothing;
+
+  /// No description provided for @searchFromServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Found on the server'**
+  String get searchFromServer;
+
+  /// No description provided for @searchServerPartial.
+  ///
+  /// In en, this message translates to:
+  /// **'Some folders couldn’t be searched in full.'**
+  String get searchServerPartial;
+
+  /// No description provided for @searchServerMaybe.
+  ///
+  /// In en, this message translates to:
+  /// **'Older emails, and text this device hasn’t kept, may still be on the server.'**
+  String get searchServerMaybe;
+
+  /// No description provided for @searchServerTextRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 account’s server searches only plain letters (A–Z), so it wasn’t asked for this text.} other{{count} accounts’ servers search only plain letters (A–Z), so they weren’t asked for this text.}}'**
+  String searchServerTextRefused(int count);
+
+  /// No description provided for @searchServerPartialIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Searched only in part: {accounts}. What was found before stopping is here.'**
+  String searchServerPartialIn(String accounts);
+
+  /// No description provided for @searchServerFound.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 more email found on the server, now on this device.} other{{count} more emails found on the server, now on this device.}}'**
+  String searchServerFound(int count);
+
+  /// No description provided for @searchServerUnreachable.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 account’s server couldn’t be reached.} other{{count} accounts’ servers couldn’t be reached.}}'**
+  String searchServerUnreachable(int count);
+
+  /// No description provided for @savedSearchEditNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename or delete {name}'**
+  String savedSearchEditNamed(String name);
+
   /// No description provided for @errorNoKeyring.
   ///
   /// In en, this message translates to:

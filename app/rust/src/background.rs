@@ -195,6 +195,10 @@ fn forget_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNot
 /// details.
 pub fn sign_in_notices() -> String {
     let failed = std::mem::take(&mut *FAILED.lock().unwrap_or_else(|e| e.into_inner()));
+    sign_in_json(&failed)
+}
+
+fn sign_in_json(failed: &[SignInNotice]) -> String {
     let items: Vec<String> = failed
         .iter()
         .map(|n| {
@@ -757,10 +761,18 @@ mod tests {
             .unwrap();
         assert_eq!(told(&store, id), None);
 
-        FAILED.lock().unwrap().push(notice);
+        // Other tests' engines tell their own accounts' refusals into the
+        // same queue meanwhile: only this test's notices are taken.
+        let take = |ours: &[SignInNotice]| {
+            let mut failed = FAILED.lock().unwrap();
+            let (mine, rest): (Vec<_>, Vec<_>) = failed.drain(..).partition(|n| ours.contains(n));
+            *failed = rest;
+            sign_in_json(&mine)
+        };
+        FAILED.lock().unwrap().push(notice.clone());
         // Waiting wakes for it, with no mail.
         assert!(wait(Duration::from_secs(5)).is_empty());
-        let json = sign_in_notices();
+        let json = take(std::slice::from_ref(&notice));
         assert_eq!(
             json,
             format!(
@@ -770,13 +782,14 @@ mod tests {
             )
         );
         assert_ne!(sign_in_id(id.0), sign_in_id(id.0 + 1));
-        assert_eq!(sign_in_notices(), "[]");
-        FAILED.lock().unwrap().extend(delivered);
+        assert_eq!(take(std::slice::from_ref(&notice)), "[]");
+        FAILED.lock().unwrap().extend(delivered.clone());
         assert_eq!(
-            sign_in_notices(),
+            take(&delivered),
             format!(r#"[{{"id":{},"cancel":true}}]"#, sign_in_id(id.0))
         );
-        assert_eq!(sign_in_notices(), "[]");
+        assert_eq!(take(&delivered), "[]");
+        assert_eq!(sign_in_json(&[]), "[]");
     }
 
     #[test]
