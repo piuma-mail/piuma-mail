@@ -432,7 +432,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
-      _failedPages.clear();
+        _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
@@ -474,7 +474,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
-      _failedPages.clear();
+        _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);

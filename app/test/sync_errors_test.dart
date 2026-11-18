@@ -180,6 +180,12 @@ void main() {
       scrollable: list,
     );
     await tester.pumpAndSettle();
+    final shown = tester
+        .widgetList<InboxRowTile>(find.byType(InboxRowTile, skipOffstage: false))
+        .map((t) => t.row.subject)
+        .toList();
+    // ignore: avoid_print
+    print('SHOWN $shown');
     // In place of page 2 only: the rows above stay, and so does the place.
     expect(find.text('Row 99'), findsOneWidget);
     expect(find.text('Couldn’t show these emails.'), findsOneWidget);
