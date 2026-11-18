@@ -700,6 +700,17 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Eine Webseite';
+
+  @override
+  String get riskOpenWeb => 'Diese Webseite öffnen?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name ist eine Webseite: Sie öffnet sich im Browser. Gib dort nie ein Passwort ein: Eine per E-Mail geschickte Seite kann wie jede Anmeldung aussehen.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · von $email';
   }
@@ -6313,4 +6324,23 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get syncRecoveryChangedBody =>
       'Zwei Geräte wurden gleichzeitig getrennt, deshalb hat dein Bereich einen neuen Schlüssel und eine neue Wiederherstellungsphrase. Die aufgeschriebene funktioniert nicht mehr.';
+
+  @override
+  String get listFailed => 'Diese E-Mails konnten nicht angezeigt werden.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Dieser Ordner konnte nicht vom Server aktualisiert werden.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Der Server hat $count Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.',
+      one: 'Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.',
+    );
+    return '$_temp0';
+  }
 }

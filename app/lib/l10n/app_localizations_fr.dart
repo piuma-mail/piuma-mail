@@ -701,6 +701,17 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Une page web';
+
+  @override
+  String get riskOpenWeb => 'Ouvrir cette page web ?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name est une page web : elle s’ouvre dans votre navigateur. N’y tapez jamais de mot de passe : une page reçue par e-mail peut ressembler à n’importe quelle connexion.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · de $email';
   }
@@ -6314,4 +6325,23 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get syncRecoveryChangedBody =>
       'Deux appareils ont été dissociés en même temps : votre espace a une nouvelle clé et une nouvelle phrase de récupération. Celle que vous aviez notée ne fonctionne plus.';
+
+  @override
+  String get listFailed => 'Impossible d’afficher ces e-mails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Impossible d’actualiser ce dossier depuis le serveur.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Le serveur n’a pas accepté $count modifications que vous avez faites : ces e-mails sont revenus comme avant.',
+      one: 'Le serveur n’a pas accepté une modification que vous avez faite : cet e-mail est revenu comme avant.',
+    );
+    return '$_temp0';
+  }
 }

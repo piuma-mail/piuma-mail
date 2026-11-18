@@ -329,6 +329,27 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('on the desktop too, the device to confirm on goes by kind', (
+    tester,
+  ) async {
+    await _found(tester, phone: false, joining: _Nameless());
+    expect(
+      find.text(
+        'For security, confirm from a device that\'s already paired: '
+        'your computer, active 2 hours ago.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Show code'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.text('Open Piuma on your computer and enter the code.'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('desktop pair found golden', (tester) async {
     await _found(tester, phone: false);
     expect(find.text('We found your space'), findsOneWidget);
