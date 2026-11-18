@@ -713,7 +713,11 @@ impl Connection {
             return Ok((Vec::new(), true));
         }
         let local: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
-        let missing: Vec<u32> = uids.iter().filter(|u| !local.contains(u)).copied().collect();
+        let missing: Vec<u32> = uids
+            .iter()
+            .filter(|u| !local.contains(u))
+            .copied()
+            .collect();
         for batch in missing.chunks(BATCH) {
             let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
             let summaries: Vec<MessageSummary> = fetches
@@ -1654,7 +1658,9 @@ async fn uid_search(
     criteria: &str,
 ) -> Result<std::result::Result<Vec<u32>, String>> {
     use async_imap::imap_proto::{MailboxDatum, Response, Status};
-    let tag = session.run_command(format!("UID SEARCH {criteria}")).await?;
+    let tag = session
+        .run_command(format!("UID SEARCH {criteria}"))
+        .await?;
     let mut uids = Vec::new();
     loop {
         let response = session

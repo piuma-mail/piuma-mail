@@ -59,9 +59,9 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
         .accounts()?
         .into_iter()
         .filter(|a| {
-            parsed.account().is_none_or(|n| {
-                a.name.eq_ignore_ascii_case(n) || a.email.eq_ignore_ascii_case(n)
-            })
+            parsed
+                .account()
+                .is_none_or(|n| a.name.eq_ignore_ascii_case(n) || a.email.eq_ignore_ascii_case(n))
         })
         .collect();
     let shared = engine.store.clone();

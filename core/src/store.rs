@@ -2919,7 +2919,11 @@ impl Store {
     }
 
     /// Where a JMAP email is kept here, in one of its folders, if it is.
-    pub fn jmap_email_at(&self, account: AccountId, email_id: &str) -> Result<Option<(String, u32)>> {
+    pub fn jmap_email_at(
+        &self,
+        account: AccountId,
+        email_id: &str,
+    ) -> Result<Option<(String, u32)>> {
         Ok(self
             .conn
             .query_row(
@@ -6200,11 +6204,8 @@ impl Store {
         if query.is_empty() {
             return Ok(Found::default());
         }
-        let crate::search::Where {
-            sql,
-            mut args,
-            fts,
-        } = query.sql(" FROM message m", &self.search_folders(query)?);
+        let crate::search::Where { sql, mut args, fts } =
+            query.sql(" FROM message m", &self.search_folders(query)?);
         let total: u32 = self.conn.query_row(
             &format!("SELECT COUNT(*){sql}"),
             rusqlite::params_from_iter(&args),
@@ -9950,10 +9951,17 @@ From: <help@bank.example>\r\n\r\nHi";
         let (mut store, p, w) = search_store();
         // Recipients: To names, every address.
         store
-            .set_recipients(w, "INBOX", &[(1, "lume@tipografia.it w@example.org".into())])
+            .set_recipients(
+                w,
+                "INBOX",
+                &[(1, "lume@tipografia.it w@example.org".into())],
+            )
             .unwrap();
         assert_eq!(subjects(&store, "to:lume"), ["Autumn catalog print quote"]);
-        assert_eq!(subjects(&store, "cc:LUME@tipo"), ["Autumn catalog print quote"]);
+        assert_eq!(
+            subjects(&store, "cc:LUME@tipo"),
+            ["Autumn catalog print quote"]
+        );
         assert_eq!(subjects(&store, "to:matteo").len(), 5);
         assert!(subjects(&store, "cc:matteo").is_empty());
         assert!(subjects(&store, "to:100%_").is_empty());
@@ -9962,7 +9970,11 @@ From: <help@bank.example>\r\n\r\nHi";
         // Subject only, and words left out.
         assert_eq!(
             subjects(&store, "subject:quote"),
-            ["Re: Print quote", "Service quote", "Autumn catalog print quote"]
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
         );
         assert_eq!(
             subjects(&store, "quote -subject:print"),
@@ -9972,7 +9984,11 @@ From: <help@bank.example>\r\n\r\nHi";
         // OR, also across kinds of terms.
         assert_eq!(
             subjects(&store, "from:sara OR from:davide"),
-            ["Re: Print quote", "Service quote", "Autumn catalog print quote"]
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
         );
         assert_eq!(
             subjects(&store, "subject:dinner OR is:unread -print"),
@@ -10022,10 +10038,19 @@ From: <help@bank.example>\r\n\r\nHi";
                 )],
             )
             .unwrap();
-        assert_eq!(subjects(&store, "filename:pdf"), ["Autumn catalog print quote"]);
-        assert_eq!(subjects(&store, "filename:quote-2026"), ["Autumn catalog print quote"]);
+        assert_eq!(
+            subjects(&store, "filename:pdf"),
+            ["Autumn catalog print quote"]
+        );
+        assert_eq!(
+            subjects(&store, "filename:quote-2026"),
+            ["Autumn catalog print quote"]
+        );
         assert!(subjects(&store, "filename:%").is_empty());
-        assert_eq!(subjects(&store, "larger:2M"), ["Autumn catalog print quote"]);
+        assert_eq!(
+            subjects(&store, "larger:2M"),
+            ["Autumn catalog print quote"]
+        );
         assert!(subjects(&store, "larger:4M").is_empty());
         assert_eq!(subjects(&store, "smaller:1M").len(), 4);
         assert_eq!(subjects(&store, "has:attachment -filename:doc").len(), 1);

@@ -170,7 +170,12 @@ impl Remote {
                 let mut folders: Vec<String> = vec!["INBOX".into()];
                 {
                     let s = lock(store);
-                    for f in [Folder::Sent, Folder::Archive, Folder::Drafts, Folder::Snoozed] {
+                    for f in [
+                        Folder::Sent,
+                        Folder::Archive,
+                        Folder::Drafts,
+                        Folder::Snoozed,
+                    ] {
                         folders.extend(s.folder_mailbox(account.id, f)?);
                     }
                     folders.extend(

@@ -157,9 +157,7 @@ impl Query {
             terms += 1;
             match clauses.last_mut() {
                 Some(last) if join => last.any.push(literal),
-                _ => clauses.push(Clause {
-                    any: vec![literal],
-                }),
+                _ => clauses.push(Clause { any: vec![literal] }),
             }
             join = false;
         }
@@ -506,7 +504,11 @@ fn tokens(input: &str) -> Vec<Raw> {
             // Control characters can't be searched for.
             c if c.is_control() => {}
             c => {
-                if !quoted && c == '-' && current.text.is_empty() && !current.quoted && !current.dash
+                if !quoted
+                    && c == '-'
+                    && current.text.is_empty()
+                    && !current.quoted
+                    && !current.dash
                 {
                     current.dash = true;
                     continue;
@@ -800,7 +802,8 @@ fn server_key(term: &Term, scope: &Scope<'_>) -> Eval {
         Term::Larger(n) => key(Key::Larger(*n)),
         Term::Smaller(n) => key(Key::Smaller(*n)),
         Term::Account(a) => Eval::Known(
-            scope.account_name.eq_ignore_ascii_case(a) || scope.account_email.eq_ignore_ascii_case(a),
+            scope.account_name.eq_ignore_ascii_case(a)
+                || scope.account_email.eq_ignore_ascii_case(a),
         ),
         Term::Group(g) => match scope.groups.get(g) {
             Some(addresses) if !addresses.is_empty() => key(Key::Recipients(addresses.clone())),
@@ -865,7 +868,8 @@ impl ServerQuery {
                     Key::Bcc(s) => run(s).map(Key::Bcc),
                     Key::Subject(s) => run(s).map(Key::Subject),
                     Key::Recipients(list) => {
-                        let list: Vec<String> = list.iter().filter(|a| a.is_ascii()).cloned().collect();
+                        let list: Vec<String> =
+                            list.iter().filter(|a| a.is_ascii()).cloned().collect();
                         (!list.is_empty()).then_some(Key::Recipients(list))
                     }
                     k => Some(k.clone()),
@@ -1118,11 +1122,17 @@ mod tests {
     fn every_operator() {
         assert_eq!(one("from:sara"), Term::From("sara".into()));
         assert_eq!(one("FROM:People"), Term::People);
-        assert_eq!(one("to:luca@example.org"), Term::To("luca@example.org".into()));
+        assert_eq!(
+            one("to:luca@example.org"),
+            Term::To("luca@example.org".into())
+        );
         assert_eq!(one("cc:anna"), Term::Cc("anna".into()));
         assert_eq!(one("bcc:boss"), Term::Bcc("boss".into()));
         assert_eq!(one("subject:invoice"), Term::Subject("invoice".into()));
-        assert_eq!(one(r#"subject:"q3 report""#), Term::Subject("q3 report".into()));
+        assert_eq!(
+            one(r#"subject:"q3 report""#),
+            Term::Subject("q3 report".into())
+        );
         assert_eq!(one("account:Work"), Term::Account("Work".into()));
         assert_eq!(one("group:3"), Term::Group(3));
         assert_eq!(one(r#"label:"To read""#), Term::Label("To read".into()));
@@ -1186,7 +1196,10 @@ mod tests {
         assert_eq!(Query::parse(r#"a "OR" b"#).clauses.len(), 3);
         // Dashes: alone, doubled, inside words.
         assert!(Query::parse("-").is_empty());
-        assert_eq!(terms(&Query::parse("--x")), [(Term::Text("-x".into()), true)]);
+        assert_eq!(
+            terms(&Query::parse("--x")),
+            [(Term::Text("-x".into()), true)]
+        );
         assert_eq!(
             terms(&Query::parse("e-mail")),
             [(Term::Text("e-mail".into()), false)]
@@ -1198,12 +1211,18 @@ mod tests {
         let q = Query::parse(r#" "print quote"  from:"Sara Conti" — has:photos before:soon "#);
         assert_eq!(q.words(), ["print quote", "has:photos", "before:soon"]);
         assert_eq!(q.clauses[1].any[0].term, Term::From("Sara Conti".into()));
-        assert_eq!(fts(&Query::parse(r#"say "hi""#)).unwrap(), r#""say"* AND "hi"*"#);
+        assert_eq!(
+            fts(&Query::parse(r#"say "hi""#)).unwrap(),
+            r#""say"* AND "hi"*"#
+        );
         assert_eq!(Query::parse(r#"a"b"#).words(), ["ab"]);
         assert!(Query::parse("  — ! ").is_empty());
         assert_eq!(fts(&Query::parse("is:unread")), None);
         // Unbalanced quotes run to the end.
-        assert_eq!(Query::parse(r#"say "hello there"#).words(), ["say", "hello there"]);
+        assert_eq!(
+            Query::parse(r#"say "hello there"#).words(),
+            ["say", "hello there"]
+        );
         assert_eq!(
             terms(&Query::parse(r#"from:"Sara"#)),
             [(Term::From("Sara".into()), false)]
@@ -1212,7 +1231,14 @@ mod tests {
         assert!(Query::parse(r#""""""#).is_empty());
         // Empty values: left out, as being typed.
         for empty in [
-            "from:", "to:", "in:", "is:", "larger:", "label:", "subject:\"\"", "from: ",
+            "from:",
+            "to:",
+            "in:",
+            "is:",
+            "larger:",
+            "label:",
+            "subject:\"\"",
+            "from: ",
         ] {
             assert!(Query::parse(empty).is_empty(), "{empty}");
         }
@@ -1222,7 +1248,10 @@ mod tests {
         assert_eq!(Query::parse("is:important").words(), ["is:important"]);
         assert_eq!(Query::parse("larger:huge").words(), ["larger:huge"]);
         assert_eq!(Query::parse("larger:5X").words(), ["larger:5X"]);
-        assert_eq!(Query::parse("after:2026-13-01").words(), ["after:2026-13-01"]);
+        assert_eq!(
+            Query::parse("after:2026-13-01").words(),
+            ["after:2026-13-01"]
+        );
         assert_eq!(Query::parse("group:x").words(), ["group:x"]);
         assert_eq!(Query::parse("10:30").words(), ["10:30"]);
         assert_eq!(Query::parse("https://x.org").words(), ["https://x.org"]);
@@ -1230,7 +1259,10 @@ mod tests {
         // Unicode, in words and values.
         assert_eq!(Query::parse("città").words(), ["città"]);
         assert_eq!(one("from:Zoë"), Term::From("Zoë".into()));
-        assert_eq!(one("in:Ārchīvio/2026"), Term::Folder("Ārchīvio/2026".into()));
+        assert_eq!(
+            one("in:Ārchīvio/2026"),
+            Term::Folder("Ārchīvio/2026".into())
+        );
         assert_eq!(Query::parse("日本語 メール").words(), ["日本語", "メール"]);
         assert_eq!(one("subject:😀ok"), Term::Subject("😀ok".into()));
         assert!(Query::parse("😀 🎉").is_empty());
@@ -1395,7 +1427,8 @@ mod tests {
         let ascii = q.ascii().unwrap();
         assert!(!ascii.needs_utf8());
         assert_eq!(ascii.imap(true), r#"TEXT "caf" FROM "Zo""#);
-        let ServerAsk::Ask(q) = Query::parse("日本").for_server(&scope_with(&labels, &groups, &folder))
+        let ServerAsk::Ask(q) =
+            Query::parse("日本").for_server(&scope_with(&labels, &groups, &folder))
         else {
             panic!()
         };
@@ -1443,7 +1476,9 @@ mod tests {
             ]})
         );
         assert_eq!(
-            ask(r#"after:2026-09-14 larger:1k smaller:2k has:attachment label:"to read" in:newsletter"#),
+            ask(
+                r#"after:2026-09-14 larger:1k smaller:2k has:attachment label:"to read" in:newsletter"#
+            ),
             json!({ "operator": "AND", "conditions": [
                 { "after": "2026-09-14T00:00:00Z" },
                 { "minSize": 1025 },
@@ -1457,7 +1492,10 @@ mod tests {
             Query::parse("in:nowhere x").for_server(&scope),
             ServerAsk::Nothing
         );
-        assert_eq!(Query::parse("in:vault x").for_server(&scope), ServerAsk::Unsupported);
+        assert_eq!(
+            Query::parse("in:vault x").for_server(&scope),
+            ServerAsk::Unsupported
+        );
     }
 
     /// A tiny random generator, so the property test needs no crate.
@@ -1478,13 +1516,78 @@ mod tests {
 
     fn random_query(rng: &mut Rng) -> String {
         const PIECES: &[&str] = &[
-            "a", "quote", "\"", "\"", ":", "-", "--", " ", " ", "  ", "OR", "or", "from:", "to:",
-            "cc:", "bcc:", "subject:", "in:", "is:", "has:", "label:", "account:", "group:",
-            "after:", "before:", "larger:", "smaller:", "filename:", "unread", "read", "starred",
-            "attachment", "vault", "people", "inbox", "Clients/Acme", "2026-09-14", "2026/13/40",
-            "5M", "1.5k", "-1", "99999999999999999999999", "é", "città", "日本", "😀", "\u{0}",
-            "\r\n", "\t", "\\", "'", "%", "_", "*", "(", ")", "NEAR", "AND", "NOT", "^", "{",
-            "}", "+", "\u{2}", "\u{200b}", "ß", "İ", "ﬃ", "²", "Ⅻ", "\u{301}", "ǅ",
+            "a",
+            "quote",
+            "\"",
+            "\"",
+            ":",
+            "-",
+            "--",
+            " ",
+            " ",
+            "  ",
+            "OR",
+            "or",
+            "from:",
+            "to:",
+            "cc:",
+            "bcc:",
+            "subject:",
+            "in:",
+            "is:",
+            "has:",
+            "label:",
+            "account:",
+            "group:",
+            "after:",
+            "before:",
+            "larger:",
+            "smaller:",
+            "filename:",
+            "unread",
+            "read",
+            "starred",
+            "attachment",
+            "vault",
+            "people",
+            "inbox",
+            "Clients/Acme",
+            "2026-09-14",
+            "2026/13/40",
+            "5M",
+            "1.5k",
+            "-1",
+            "99999999999999999999999",
+            "é",
+            "città",
+            "日本",
+            "😀",
+            "\u{0}",
+            "\r\n",
+            "\t",
+            "\\",
+            "'",
+            "%",
+            "_",
+            "*",
+            "(",
+            ")",
+            "NEAR",
+            "AND",
+            "NOT",
+            "^",
+            "{",
+            "}",
+            "+",
+            "\u{2}",
+            "\u{200b}",
+            "ß",
+            "İ",
+            "ﬃ",
+            "²",
+            "Ⅻ",
+            "\u{301}",
+            "ǅ",
         ];
         let n = rng.next() % 24;
         (0..n).map(|_| rng.pick(PIECES)).collect()

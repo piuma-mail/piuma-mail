@@ -115,7 +115,11 @@ async fn start(behaviour: Behaviour) -> Mock {
                     let reply = if upper.starts_with("LOGIN") {
                         format!("{tag} OK logged in\r\n")
                     } else if upper.starts_with("CAPABILITY") {
-                        let plus = if behaviour.literal_plus { " LITERAL+" } else { "" };
+                        let plus = if behaviour.literal_plus {
+                            " LITERAL+"
+                        } else {
+                            ""
+                        };
                         format!("* CAPABILITY IMAP4rev1{plus}\r\n{tag} OK done\r\n")
                     } else if upper.starts_with("EXAMINE") || upper.starts_with("SELECT") {
                         format!(
@@ -223,7 +227,8 @@ async fn operators_reach_the_server_as_imap_criteria() {
     })
     .await;
     let (store, a) = store_with(mock.port);
-    let found = search(&store,
+    let found = search(
+        &store,
         &a,
         r#"from:sara -is:read subject:"q3 report" larger:1k before:2026-10-01 a OR b"#,
     )
@@ -232,7 +237,9 @@ async fn operators_reach_the_server_as_imap_criteria() {
     assert!(found.at.is_empty());
     assert_eq!(
         mock.commands("UID SEARCH"),
-        [r#"UID SEARCH FROM "sara" NOT (SEEN) SUBJECT "q3 report" LARGER 1024 BEFORE 1-Oct-2026 OR (TEXT "a") (TEXT "b")"#]
+        [
+            r#"UID SEARCH FROM "sara" NOT (SEEN) SUBJECT "q3 report" LARGER 1024 BEFORE 1-Oct-2026 OR (TEXT "a") (TEXT "b")"#
+        ]
     );
     // Folders are only opened to read, never selected.
     assert_eq!(mock.commands("EXAMINE"), [r#"EXAMINE "INBOX""#]);

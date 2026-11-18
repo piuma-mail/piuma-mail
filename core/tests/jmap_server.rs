@@ -1363,7 +1363,13 @@ async fn searches_on_the_server_and_keeps_what_it_finds() {
         s.mailboxes
             .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
         s.add("mb-misc", "Shop <orders@shop.it>", "Invoice March", 1, true);
-        s.add("mb-trash", "Shop <orders@shop.it>", "Invoice April", 1, true);
+        s.add(
+            "mb-trash",
+            "Shop <orders@shop.it>",
+            "Invoice April",
+            1,
+            true,
+        );
     }
     let account = store.lock().unwrap().account(id).unwrap().unwrap();
     let mut remote = Remote::open(&account, PASSWORD).await.unwrap();
@@ -1380,7 +1386,13 @@ async fn searches_on_the_server_and_keeps_what_it_finds() {
     }
 
     // Operators become a filter; the trash is left out unless named.
-    let found = ask(&mut remote, &store, &account, "invoice OR receipt -from:julia").await;
+    let found = ask(
+        &mut remote,
+        &store,
+        &account,
+        "invoice OR receipt -from:julia",
+    )
+    .await;
     assert!(found.asked);
     assert_eq!(found.at.len(), 1);
     assert_eq!(
@@ -1400,7 +1412,10 @@ async fn searches_on_the_server_and_keeps_what_it_finds() {
         let s = store.lock().unwrap();
         let hits = s.search(&Query::parse("invoice"), 10).unwrap();
         assert_eq!(hits.hits[0].message.subject, "Invoice March");
-        assert_eq!(s.jmap_email_at(id, "M7").unwrap(), Some((mailbox.clone(), uid)));
+        assert_eq!(
+            s.jmap_email_at(id, "M7").unwrap(),
+            Some((mailbox.clone(), uid))
+        );
     }
     let body = remote.full_body(&store, id, &mailbox, uid).await.unwrap();
     assert!(body.text.contains("Invoice March"));
@@ -1420,7 +1435,15 @@ async fn searches_on_the_server_and_keeps_what_it_finds() {
 
     // Terms only this device knows are never asked.
     let asked = server.lock().unwrap().searches.len();
-    assert!(!ask(&mut remote, &store, &account, "in:vault invoice").await.asked);
-    assert!(!ask(&mut remote, &store, &account, "in:nowhere invoice").await.asked);
+    assert!(
+        !ask(&mut remote, &store, &account, "in:vault invoice")
+            .await
+            .asked
+    );
+    assert!(
+        !ask(&mut remote, &store, &account, "in:nowhere invoice")
+            .await
+            .asked
+    );
     assert_eq!(server.lock().unwrap().searches.len(), asked);
 }
