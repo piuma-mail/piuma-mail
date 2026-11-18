@@ -6263,6 +6263,41 @@ class AppLocalizationsDe extends AppLocalizations {
   String get syncExposedDone => 'Verstanden';
 
   @override
+  String get syncConfirmTitle => 'Bestätige dieses Gerät';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma prüft jetzt, welche Geräte zu deinem Bereich gehören. Bis du dieses mit deiner Wiederherstellungsphrase oder einem Code von einem bereits aktualisierten Gerät bestätigst, wird hier nichts synchronisiert.';
+
+  @override
+  String get syncConfirm => 'Bestätigen';
+
+  @override
+  String get syncConflictTitle => 'Zwei Geräte haben sich gegenseitig entfernt';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names haben sich gegenseitig aus deinem Bereich entfernt, und eines davon gehört dir vielleicht nicht mehr. Die Synchronisierung auf diesem Gerät ist angehalten: Verbinde es erneut von einem Gerät, das du noch hast.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Erneut verbinden';
+
+  @override
+  String get syncExposedNowTitle => 'Ändere diese Passwörter jetzt';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name kennt diese Passwörter noch. Fang mit $email an: Bis dessen Passwort geändert ist, erreicht $name noch den Ordner mit deinem Bereich.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Ich habe sie geändert';
+
+  @override
+  String get syncExposedFirst => 'Zuerst: enthält deinen Bereich';
+
+  @override
   String get syncFailRollback =>
       'In diesem Postfach liegt nur eine ältere Kopie deines Bereichs. Nichts wurde geändert.';
 
@@ -6341,7 +6376,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Zwei Geräte wurden gleichzeitig getrennt, deshalb hat dein Bereich einen neuen Schlüssel und eine neue Wiederherstellungsphrase. Die aufgeschriebene funktioniert nicht mehr.';
+      'Dein Bereich hat einen neuen Schlüssel und eine neue Wiederherstellungsphrase, weil ein Gerät ausgetreten ist oder zwei gleichzeitig getrennt wurden. Die aufgeschriebene funktioniert nicht mehr.';
 
   @override
   String get listFailed => 'Diese E-Mails konnten nicht angezeigt werden.';

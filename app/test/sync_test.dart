@@ -523,6 +523,118 @@ void main() {
     expect(find.text('Change these passwords'), findsNothing);
     expect(source.syncState().devices, hasLength(2));
   });
+
+  _trustTests(phone: false);
+  _trustTests(phone: true);
+}
+
+/// Devices & sync on a device that must be confirmed (it synced with an
+/// older version), or that stopped because two devices removed each
+/// other. Linking it again with the phrase clears either.
+class _Trust extends DemoMailSource {
+  _Trust({required super.now, this.unverified = false, this.conflict = false})
+    : super(synced: true, spaceToFind: true);
+
+  bool unverified;
+  bool conflict;
+
+  @override
+  SyncState syncState() {
+    final s = super.syncState();
+    return SyncState(
+      home: s.home,
+      syncedAt: s.syncedAt,
+      devices: s.devices,
+      exposed: s.exposed,
+      exposedDevice: s.exposedDevice,
+      unverified: unverified,
+      conflict: conflict ? const ['Matteo’s MacBook', 'Old phone'] : const [],
+    );
+  }
+
+  @override
+  Future<void> recoverSpace(int accountId, String phrase) async {
+    await super.recoverSpace(accountId, phrase);
+    unverified = false;
+    conflict = false;
+  }
+}
+
+/// Confirms (or links again) with the phrase, from the card's button.
+Future<void> _linkWithPhrase(WidgetTester tester, String button) async {
+  await tester.ensureVisible(find.text(button));
+  await tester.tap(find.text(button));
+  await _settle(tester);
+  expect(find.text('We found your space'), findsOneWidget);
+  await tester.tap(find.text('Use recovery phrase'));
+  await _settle(tester);
+  await tester.enterText(find.byType(TextField), DemoMailSource.demoPhrase);
+  await tester.pump();
+  await tester.tap(find.text('Continue'));
+  await _settle(tester);
+  await tester.tap(find.text('Go to inbox'));
+  await _settle(tester);
+}
+
+void _trustTests({required bool phone}) {
+  final on = phone ? 'on the phone, ' : '';
+  testWidgets('${on}a device from an older version is confirmed first', (
+    tester,
+  ) async {
+    final source = _Trust(now: _now, unverified: true);
+    await _settings(tester, phone: phone, demo: source);
+    expect(find.text('Confirm this device'), findsOneWidget);
+    expect(
+      find.textContaining('Until you confirm this one with your recovery'),
+      findsOneWidget,
+    );
+    await _linkWithPhrase(tester, 'Confirm');
+    expect(find.byType(SyncPage), findsOneWidget);
+    expect(find.text('Confirm this device'), findsNothing);
+    expect(source.syncState().unverified, isFalse);
+  });
+
+  testWidgets('${on}two devices removing each other stop sync here', (
+    tester,
+  ) async {
+    final source = _Trust(now: _now, conflict: true);
+    await _settings(tester, phone: phone, demo: source);
+    expect(find.text('Two devices removed each other'), findsOneWidget);
+    expect(
+      find.textContaining('Matteo’s MacBook and Old phone each removed'),
+      findsOneWidget,
+    );
+    await _linkWithPhrase(tester, 'Link again');
+    expect(find.text('Two devices removed each other'), findsNothing);
+  });
+
+  testWidgets('${on}the passwords an unlinked device knew stay asked for', (
+    tester,
+  ) async {
+    final source = await _settings(tester, phone: phone, synced: true);
+    await tester.ensureVisible(find.bySemanticsLabel('Unlink iPad Air'));
+    await tester.tap(find.bySemanticsLabel('Unlink iPad Air'));
+    await _settle(tester);
+    await tester.tap(find.text('Unlink').last);
+    await _settle(tester);
+    await tester.tap(find.text('I wrote them down'));
+    await _settle(tester);
+    // The mailbox that holds the space comes first, and says why.
+    expect(find.text('First: it holds your space'), findsOneWidget);
+    await tester.tap(find.text('Got it'));
+    await _settle(tester);
+    // Until the person says they changed them, Devices & sync asks.
+    expect(find.text('Change these passwords now'), findsOneWidget);
+    expect(
+      find.textContaining('Start with matteo@posta.it: until its password'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('I changed them'));
+    await tester.tap(find.text('I changed them'));
+    await _settle(tester);
+    expect(find.text('Change these passwords now'), findsNothing);
+    expect(source.syncState().exposed, isEmpty);
+  });
 }
 
 /// A space where another device removed an account that still has mail

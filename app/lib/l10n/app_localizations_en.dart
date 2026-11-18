@@ -6211,6 +6211,41 @@ class AppLocalizationsEn extends AppLocalizations {
   String get syncExposedDone => 'Got it';
 
   @override
+  String get syncConfirmTitle => 'Confirm this device';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.';
+
+  @override
+  String get syncConfirm => 'Confirm';
+
+  @override
+  String get syncConflictTitle => 'Two devices removed each other';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names each removed the other from your space, and one of them may not be yours any more. Sync stopped on this device: link it again from a device you still have.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Link again';
+
+  @override
+  String get syncExposedNowTitle => 'Change these passwords now';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name still knows these passwords. Start with $email: until its password changes, $name can still reach the folder that holds your space.';
+  }
+
+  @override
+  String get syncExposedChanged => 'I changed them';
+
+  @override
+  String get syncExposedFirst => 'First: it holds your space';
+
+  @override
   String get syncFailRollback =>
       'Only an older copy of your space is in this mailbox. Nothing was changed.';
 
@@ -6288,7 +6323,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Two devices were unlinked at the same time, so your space got a new key and a new recovery phrase. The one you wrote down no longer works.';
+      'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.';
 
   @override
   String get listFailed => 'Couldn’t show these emails.';

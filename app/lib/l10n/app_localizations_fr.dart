@@ -6264,6 +6264,41 @@ class AppLocalizationsFr extends AppLocalizations {
   String get syncExposedDone => 'Compris';
 
   @override
+  String get syncConfirmTitle => 'Confirmez cet appareil';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma vérifie désormais quels appareils font partie de votre espace. Tant que vous ne confirmez pas celui-ci avec votre phrase de récupération, ou avec un code d’un appareil déjà mis à jour, rien n’est synchronisé ici.';
+
+  @override
+  String get syncConfirm => 'Confirmer';
+
+  @override
+  String get syncConflictTitle => 'Deux appareils se sont retirés l’un l’autre';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names se sont retirés l’un l’autre de votre espace, et l’un d’eux n’est peut-être plus à vous. La synchronisation s’est arrêtée sur cet appareil : associez-le à nouveau depuis un appareil que vous avez encore.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Associer à nouveau';
+
+  @override
+  String get syncExposedNowTitle => 'Changez ces mots de passe maintenant';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name connaît encore ces mots de passe. Commencez par $email : tant que son mot de passe n’a pas changé, $name peut encore atteindre le dossier qui contient votre espace.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Je les ai changés';
+
+  @override
+  String get syncExposedFirst => 'D’abord : il contient votre espace';
+
+  @override
   String get syncFailRollback =>
       'Cette boîte ne contient qu’une copie plus ancienne de votre espace. Rien n’a été modifié.';
 
@@ -6342,7 +6377,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Deux appareils ont été dissociés en même temps : votre espace a une nouvelle clé et une nouvelle phrase de récupération. Celle que vous aviez notée ne fonctionne plus.';
+      'Votre espace a une nouvelle clé et une nouvelle phrase de récupération, car un appareil est parti ou deux ont été dissociés en même temps. Celle que vous aviez notée ne fonctionne plus.';
 
   @override
   String get listFailed => 'Impossible d’afficher ces e-mails.';

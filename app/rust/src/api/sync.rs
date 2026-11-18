@@ -12,6 +12,7 @@ use piuma_core::remote::Remote;
 use piuma_core::space::{self, Device, Key, Pairing, SpaceError};
 use piuma_core::space_sync::{self, Folder, Me, Round, SyncError};
 use piuma_core::store::{Held, SecretIn};
+use piuma_core::StoreError;
 use piuma_core::{Account, AccountId, AccountKind};
 
 use super::accounts::remove_account;
@@ -58,9 +59,23 @@ pub struct SyncInfo {
     pub outdated: bool,
     /// Accounts removed on another device that wait for the person here.
     pub held: Vec<HeldAccount>,
-    /// Two devices were unlinked at once: the recovery phrase changed
-    /// again, and the person hasn't seen the new one yet.
+    /// The recovery phrase changed in a merge (two devices unlinked at
+    /// once, or a device turned sync off), and the person hasn't seen the
+    /// new one yet.
     pub recovery_changed: bool,
+    /// This device was syncing with an older version of Piuma: it takes
+    /// and sends nothing until the person confirms it with the recovery
+    /// phrase or a code from a linked device.
+    pub unverified: bool,
+    /// Two devices removed each other (their names): sync stopped here
+    /// until this device is linked again.
+    pub conflict: Vec<String>,
+    /// After unlinking a device: the mailboxes whose passwords it still
+    /// knows, until the person says they changed them. Urgent: until the
+    /// space's own mailbox password changes, it can still write there.
+    pub exposed: Vec<String>,
+    /// The unlinked device's name, for the same notice.
+    pub exposed_device: String,
 }
 
 /// An account another device removed, kept here until the person says:
@@ -138,6 +153,10 @@ pub struct SyncRound {
     pub rollback: bool,
     /// The space was written by a newer version of Piuma.
     pub outdated: bool,
+    /// This device must be confirmed first (see [SyncInfo::unverified]).
+    pub unverified: bool,
+    /// Two devices removed each other (see [SyncInfo::conflict]).
+    pub conflict: bool,
 }
 
 /// What "We found your space" shows before the space is open.
@@ -214,8 +233,6 @@ fn me() -> Result<Me, EngineError> {
             last_seen: 0,
             public: space::public_key(&secret),
             sign: space::sign_public(&secret),
-            by: String::new(),
-            vouch: Vec::new(),
         },
         secret,
     })
@@ -278,27 +295,50 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
         })
         .unwrap_or_default();
     let home = setting(HOME)?;
-    let (rollback, outdated, held, recovery_changed) = if home.is_some() {
-        let local = space_sync::state(&engine()?.store)?;
-        let held = held_here(&local)?;
-        (
-            local.refused > 0,
-            local.outdated,
-            held,
-            local.recovery_changed,
-        )
-    } else {
-        (false, false, Vec::new(), false)
-    };
-    Ok(SyncInfo {
-        home,
+    let mut info = SyncInfo {
+        home: home.clone(),
         synced_at: setting(SYNCED_AT)?.and_then(|s| s.parse().ok()),
         devices,
-        rollback,
-        outdated,
-        held,
-        recovery_changed,
-    })
+        rollback: false,
+        outdated: false,
+        held: Vec::new(),
+        recovery_changed: false,
+        unverified: false,
+        conflict: Vec::new(),
+        exposed: Vec::new(),
+        exposed_device: String::new(),
+    };
+    if home.is_none() {
+        return Ok(info);
+    }
+    let local = match space_sync::state(&engine()?.store) {
+        Ok(l) => l,
+        // What this device kept of the space doesn't read: it trusts
+        // nothing, and is confirmed again like an older version's.
+        Err(SyncError::Store(StoreError::SpaceState(_))) => {
+            info.unverified = true;
+            return Ok(info);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    info.held = held_here(&local)?;
+    info.rollback = local.refused > 0;
+    info.outdated = local.outdated;
+    info.recovery_changed = local.recovery_changed;
+    info.unverified = !local.trust.verified();
+    info.conflict = local
+        .conflict
+        .iter()
+        .map(|id| {
+            info.devices
+                .iter()
+                .find(|d| &d.id == id)
+                .map_or_else(|| id.clone(), |d| d.name.clone())
+        })
+        .collect();
+    info.exposed = local.exposed;
+    info.exposed_device = local.exposed_device;
+    Ok(info)
 }
 
 /// The accounts whose removal waits for the person.
@@ -532,6 +572,8 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
         held: Vec::new(),
         rollback: false,
         outdated: false,
+        unverified: false,
+        conflict: false,
     };
     if setting(HOME)?.is_none() {
         return Ok(round);
@@ -566,6 +608,11 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
                 // Only an older copy is there: nothing taken in or written.
                 round.rollback = true;
             }
+            // Nothing taken or sent: Devices & sync asks the person.
+            Ok(Round::Unverified) | Err(SyncError::Store(StoreError::SpaceState(_))) => {
+                round.unverified = true;
+                return Ok(round);
+            }
             Err(e) => return Err(e.into()),
             Ok(Round::Unlinked) => {
                 off()?;
@@ -579,6 +626,10 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
                 ))
             }
             Ok(Round::Newer) => round.outdated = true,
+            Ok(Round::Conflict(_)) => {
+                round.conflict = true;
+                return Ok(round);
+            }
             Ok(Round::Done(report)) => {
                 // Removed on another device and confirmed by the merged
                 // state, with nothing waiting to leave with it here.
@@ -683,6 +734,12 @@ pub async fn sync_unlink(device_id: String) -> Result<UnlinkResult, EngineError>
         })
     })
     .await
+}
+
+/// "I changed them": the passwords an unlinked device knew were changed,
+/// and Devices & sync stops asking.
+pub async fn sync_exposed_done() -> Result<(), EngineError> {
+    run(async move { Ok(space_sync::exposed_done(&engine()?.store)?) }).await
 }
 
 /// "Turn off sync on this device": leaves the space and stops syncing

@@ -6241,6 +6241,41 @@ class AppLocalizationsPt extends AppLocalizations {
   String get syncExposedDone => 'Entendi';
 
   @override
+  String get syncConfirmTitle => 'Confirme este dispositivo';
+
+  @override
+  String get syncConfirmBody =>
+      'O Piuma agora verifica quais dispositivos fazem parte do seu espaço. Até você confirmar este com sua frase de recuperação, ou com um código de um dispositivo já atualizado, nada é sincronizado aqui.';
+
+  @override
+  String get syncConfirm => 'Confirmar';
+
+  @override
+  String get syncConflictTitle => 'Dois dispositivos removeram um ao outro';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names removeram um ao outro do seu espaço, e um deles pode não ser mais seu. A sincronização parou neste dispositivo: vincule-o de novo a partir de um dispositivo que você ainda tem.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Vincular de novo';
+
+  @override
+  String get syncExposedNowTitle => 'Troque estas senhas agora';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name ainda conhece estas senhas. Comece por $email: até a senha dela mudar, $name ainda consegue chegar à pasta que guarda seu espaço.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Já troquei';
+
+  @override
+  String get syncExposedFirst => 'Primeiro: guarda seu espaço';
+
+  @override
   String get syncFailRollback =>
       'Esta caixa só tem uma cópia mais antiga do seu espaço. Nada foi alterado.';
 
@@ -6318,7 +6353,7 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Dois dispositivos foram desvinculados ao mesmo tempo, então seu espaço ganhou uma nova chave e uma nova frase de recuperação. A que você anotou não funciona mais.';
+      'Seu espaço ganhou uma nova chave e uma nova frase de recuperação, porque um dispositivo saiu ou dois foram desvinculados ao mesmo tempo. A que você anotou não funciona mais.';
 
   @override
   String get listFailed => 'Não foi possível mostrar estes e-mails.';

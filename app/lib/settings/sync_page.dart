@@ -8,8 +8,10 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../onboarding/pair_screen.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
+import '../widgets/route.dart';
 
 /// Settings › Devices & sync, as on `SyncToApprove` (sync off) and
 /// `Groups` (sync on): where the encrypted space lives, the devices that
@@ -155,6 +157,55 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
+  /// "Confirm" (a device that synced with an older version) or "Link
+  /// again" (two devices removed each other): the pairing screens a new
+  /// device sees, for the space's own mailbox, with a code from a linked
+  /// device or the recovery phrase.
+  Future<void> _linkAgain() async {
+    final account = _storedIn;
+    if (account == null || _busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final found = await widget.source.findSpace(account.id);
+      if (!mounted) return;
+      if (found == null) {
+        setState(() => _error = AppLocalizations.of(context).syncFailOther);
+        return;
+      }
+      await Navigator.of(context).push(
+        PiumaRoute.of<void>(
+          context,
+          (context) => PairScreen(
+            source: widget.source,
+            account: account,
+            found: found,
+            phone: widget.phone,
+            now: widget.now,
+            onDone: () => Navigator.of(context).pop(),
+            onSkip: () => Navigator.of(context).pop(),
+          ),
+        ),
+      );
+      _reload();
+    } catch (e) {
+      if (mounted) setState(() => _error = _failure(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _exposedChanged() async {
+    try {
+      await widget.source.exposedChanged();
+      _reload();
+    } catch (e) {
+      if (mounted) setState(() => _error = _failure(e));
+    }
+  }
+
   Future<void> _showPhrase() async {
     try {
       final phrase = await widget.source.recoveryPhrase();
@@ -230,6 +281,7 @@ class _SyncPageState extends State<SyncPage> {
           context,
           device: d.name,
           emails: done.exposed,
+          home: _state.home,
           phone: widget.phone,
         );
       }
@@ -394,6 +446,54 @@ class _SyncPageState extends State<SyncPage> {
           line: home == null ? l.syncOffNote : l.syncOnLine(home),
         ),
         if (home != null) ...[
+          if (s.conflict.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.warning,
+              urgent: true,
+              title: l.syncConflictTitle,
+              body: l.syncConflictBody(_namesIn(l, s.conflict)),
+              actions: [
+                PiumaButton(
+                  label: l.syncLinkAgain,
+                  onPressed: _busy ? null : _linkAgain,
+                ),
+              ],
+            ),
+          ] else if (s.unverified) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.shield,
+              title: l.syncConfirmTitle,
+              body: l.syncConfirmBody,
+              actions: [
+                PiumaButton(
+                  label: l.syncConfirm,
+                  onPressed: _busy ? null : _linkAgain,
+                ),
+              ],
+            ),
+          ],
+          if (s.exposed.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.lock,
+              urgent: true,
+              title: l.syncExposedNowTitle,
+              body: l.syncExposedNowBody(
+                s.exposedDevice,
+                _homeFirst(s.exposed, home).first,
+              ),
+              list: _homeFirst(s.exposed, home),
+              actions: [
+                PiumaButton(
+                  label: l.syncExposedChanged,
+                  kind: PiumaButtonKind.secondary,
+                  onPressed: _exposedChanged,
+                ),
+              ],
+            ),
+          ],
           for (final h in s.held) ...[
             const SizedBox(height: 14),
             _SyncWarning(
@@ -703,20 +803,43 @@ class _Note extends StatelessWidget {
   }
 }
 
+/// "A and B", "A, B and C".
+String _namesIn(AppLocalizations l, List<String> names) => switch (names) {
+  [] => '',
+  [final one] => one,
+  [...final rest, final last] => '${rest.join(', ')} ${l.listAnd} $last',
+};
+
+/// The mailbox that holds the space first: its password closes the
+/// folder to the device that knew it.
+List<String> _homeFirst(List<String> emails, String? home) => [
+  for (final e in emails)
+    if (e.toLowerCase() == home?.toLowerCase()) e,
+  for (final e in emails)
+    if (e.toLowerCase() != home?.toLowerCase()) e,
+];
+
 /// Something on Devices & sync that needs the person: an account another
 /// device removed, an old copy refused, a newer version's space. As the
-/// inbox's sign-in notice: the warning ground and line.
+/// inbox's sign-in notice: the warning ground and line. [urgent] ones (the
+/// space at risk) draw the line and the icon in the danger color.
 class _SyncWarning extends StatelessWidget {
   const _SyncWarning({
     required this.icon,
     required this.title,
     required this.body,
+    this.urgent = false,
+    this.list = const [],
     this.actions = const [],
   });
 
   final PiumaIcon icon;
   final String title;
   final String body;
+  final bool urgent;
+
+  /// Mailboxes the notice is about, one a line.
+  final List<String> list;
   final List<Widget> actions;
 
   @override
@@ -729,7 +852,7 @@ class _SyncWarning extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: c.warnSoft,
-          border: Border.all(color: c.warnLine),
+          border: Border.all(color: urgent ? c.danger : c.warnLine),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
@@ -746,7 +869,11 @@ class _SyncWarning extends StatelessWidget {
                     borderRadius: BorderRadius.circular(PiumaRadius.button),
                   ),
                   alignment: Alignment.center,
-                  child: PiumaIconView(icon, size: 18, color: c.warn),
+                  child: PiumaIconView(
+                    icon,
+                    size: 18,
+                    color: urgent ? c.danger : c.warn,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -769,6 +896,30 @@ class _SyncWarning extends StatelessWidget {
                           color: c.muted,
                         ),
                       ),
+                      for (final e in list) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            PiumaIconView(
+                              PiumaIcon.mail,
+                              size: 14,
+                              color: c.muted,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                e,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: PiumaType.body.copyWith(
+                                  fontSize: 13,
+                                  color: c.fg,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -796,9 +947,11 @@ Future<void> showExposedPasswords(
   BuildContext context, {
   required String device,
   required List<String> emails,
+  String? home,
   bool phone = false,
 }) {
   final l = AppLocalizations.of(context);
+  emails = _homeFirst(emails, home);
   Widget panel(BuildContext context) {
     final c = PiumaTheme.of(context);
     return Padding(
@@ -840,14 +993,28 @@ Future<void> showExposedPasswords(
                       PiumaIconView(PiumaIcon.mail, size: 18, color: c.muted),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Text(
-                          e,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: PiumaType.body.copyWith(
-                            fontSize: 14,
-                            color: c.fg,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              e,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: PiumaType.body.copyWith(
+                                fontSize: 14,
+                                color: c.fg,
+                              ),
+                            ),
+                            if (e.toLowerCase() == home?.toLowerCase())
+                              Text(
+                                l.syncExposedFirst,
+                                style: PiumaType.body.copyWith(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: c.danger,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ],

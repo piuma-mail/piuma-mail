@@ -173,6 +173,7 @@ class DemoMailSource extends MailSource {
 
   @override
   Future<Unlinked> unlinkDevice(String id) async {
+    final exposed = [for (final a in accounts) a.email];
     _sync = SyncState(
       home: _sync.home,
       syncedAt: _sync.syncedAt,
@@ -180,11 +181,25 @@ class DemoMailSource extends MailSource {
         for (final d in _sync.devices)
           if (d.id != id) d,
       ],
+      exposed: exposed,
+      exposedDevice: _sync.devices
+          .firstWhere((d) => d.id == id, orElse: () => _sync.devices.first)
+          .name,
     );
     return Unlinked(
       phrase: demoPhrase.split(' ').reversed.join(' '),
-      exposed: [for (final a in accounts) a.email],
+      exposed: exposed,
     );
+  }
+
+  @override
+  Future<void> exposedChanged() async {
+    _sync = SyncState(
+      home: _sync.home,
+      syncedAt: _sync.syncedAt,
+      devices: _sync.devices,
+    );
+    _changes.add(null);
   }
 
   @override

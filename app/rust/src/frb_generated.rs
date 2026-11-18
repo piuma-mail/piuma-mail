@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1731945466;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 272137249;
 
 // Section: executor
 
@@ -6181,6 +6181,41 @@ fn wire__crate__api__sync__sync_dirty_impl(
         },
     )
 }
+fn wire__crate__api__sync__sync_exposed_done_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_exposed_done",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, crate::api::engine::EngineError>(
+                    (move || async move {
+                        let output_ok = crate::api::sync::sync_exposed_done().await?;
+                        std::result::Result::Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__sync__sync_found_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -10832,6 +10867,10 @@ impl SseDecode for crate::api::sync::SyncInfo {
         let mut var_outdated = <bool>::sse_decode(deserializer);
         let mut var_held = <Vec<crate::api::sync::HeldAccount>>::sse_decode(deserializer);
         let mut var_recoveryChanged = <bool>::sse_decode(deserializer);
+        let mut var_unverified = <bool>::sse_decode(deserializer);
+        let mut var_conflict = <Vec<String>>::sse_decode(deserializer);
+        let mut var_exposed = <Vec<String>>::sse_decode(deserializer);
+        let mut var_exposedDevice = <String>::sse_decode(deserializer);
         return crate::api::sync::SyncInfo {
             home: var_home,
             synced_at: var_syncedAt,
@@ -10840,6 +10879,10 @@ impl SseDecode for crate::api::sync::SyncInfo {
             outdated: var_outdated,
             held: var_held,
             recovery_changed: var_recoveryChanged,
+            unverified: var_unverified,
+            conflict: var_conflict,
+            exposed: var_exposed,
+            exposed_device: var_exposedDevice,
         };
     }
 }
@@ -10869,6 +10912,8 @@ impl SseDecode for crate::api::sync::SyncRound {
         let mut var_held = <Vec<crate::api::sync::HeldAccount>>::sse_decode(deserializer);
         let mut var_rollback = <bool>::sse_decode(deserializer);
         let mut var_outdated = <bool>::sse_decode(deserializer);
+        let mut var_unverified = <bool>::sse_decode(deserializer);
+        let mut var_conflict = <bool>::sse_decode(deserializer);
         return crate::api::sync::SyncRound {
             took: var_took,
             unlinked: var_unlinked,
@@ -10878,6 +10923,8 @@ impl SseDecode for crate::api::sync::SyncRound {
             held: var_held,
             rollback: var_rollback,
             outdated: var_outdated,
+            unverified: var_unverified,
+            conflict: var_conflict,
         };
     }
 }
@@ -11391,55 +11438,56 @@ fn pde_ffi_dispatcher_primary_impl(
         176 => wire__crate__api__sync__sync_answer_invite_impl(port, ptr, rust_vec_len, data_len),
         177 => wire__crate__api__sync__sync_approve_impl(port, ptr, rust_vec_len, data_len),
         178 => wire__crate__api__sync__sync_confirm_removal_impl(port, ptr, rust_vec_len, data_len),
-        180 => wire__crate__api__sync__sync_found_impl(port, ptr, rust_vec_len, data_len),
-        186 => wire__crate__api__sync__sync_invite_server_impl(port, ptr, rust_vec_len, data_len),
-        187 => wire__crate__api__sync__sync_join_impl(port, ptr, rust_vec_len, data_len),
-        189 => wire__crate__api__sync__sync_join_invite_impl(port, ptr, rust_vec_len, data_len),
-        190 => wire__crate__api__sync__sync_keep_account_impl(port, ptr, rust_vec_len, data_len),
-        191 => wire__crate__api__engine__sync_mailbox_now_impl(port, ptr, rust_vec_len, data_len),
-        192 => wire__crate__api__sync__sync_move_impl(port, ptr, rust_vec_len, data_len),
-        193 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        195 => wire__crate__api__sync__sync_phrase_impl(port, ptr, rust_vec_len, data_len),
-        198 => wire__crate__api__sync__sync_recover_impl(port, ptr, rust_vec_len, data_len),
-        199 => wire__crate__api__sync__sync_refuse_impl(port, ptr, rust_vec_len, data_len),
-        200 => wire__crate__api__sync__sync_requests_impl(port, ptr, rust_vec_len, data_len),
-        201 => wire__crate__api__sync__sync_turn_off_impl(port, ptr, rust_vec_len, data_len),
-        202 => wire__crate__api__sync__sync_turn_on_impl(port, ptr, rust_vec_len, data_len),
-        203 => wire__crate__api__sync__sync_unlink_impl(port, ptr, rust_vec_len, data_len),
-        207 => wire__crate__api__engine__thread_brief_impl(port, ptr, rust_vec_len, data_len),
-        208 => wire__crate__api__engine__translate_download_size_impl(
+        180 => wire__crate__api__sync__sync_exposed_done_impl(port, ptr, rust_vec_len, data_len),
+        181 => wire__crate__api__sync__sync_found_impl(port, ptr, rust_vec_len, data_len),
+        187 => wire__crate__api__sync__sync_invite_server_impl(port, ptr, rust_vec_len, data_len),
+        188 => wire__crate__api__sync__sync_join_impl(port, ptr, rust_vec_len, data_len),
+        190 => wire__crate__api__sync__sync_join_invite_impl(port, ptr, rust_vec_len, data_len),
+        191 => wire__crate__api__sync__sync_keep_account_impl(port, ptr, rust_vec_len, data_len),
+        192 => wire__crate__api__engine__sync_mailbox_now_impl(port, ptr, rust_vec_len, data_len),
+        193 => wire__crate__api__sync__sync_move_impl(port, ptr, rust_vec_len, data_len),
+        194 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        196 => wire__crate__api__sync__sync_phrase_impl(port, ptr, rust_vec_len, data_len),
+        199 => wire__crate__api__sync__sync_recover_impl(port, ptr, rust_vec_len, data_len),
+        200 => wire__crate__api__sync__sync_refuse_impl(port, ptr, rust_vec_len, data_len),
+        201 => wire__crate__api__sync__sync_requests_impl(port, ptr, rust_vec_len, data_len),
+        202 => wire__crate__api__sync__sync_turn_off_impl(port, ptr, rust_vec_len, data_len),
+        203 => wire__crate__api__sync__sync_turn_on_impl(port, ptr, rust_vec_len, data_len),
+        204 => wire__crate__api__sync__sync_unlink_impl(port, ptr, rust_vec_len, data_len),
+        208 => wire__crate__api__engine__thread_brief_impl(port, ptr, rust_vec_len, data_len),
+        209 => wire__crate__api__engine__translate_download_size_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        209 => wire__crate__api__engine__translate_pairs_impl(port, ptr, rust_vec_len, data_len),
-        210 => wire__crate__api__engine__translate_status_impl(port, ptr, rust_vec_len, data_len),
-        211 => wire__crate__api__engine__translate_texts_impl(port, ptr, rust_vec_len, data_len),
-        212 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
-        213 => {
+        210 => wire__crate__api__engine__translate_pairs_impl(port, ptr, rust_vec_len, data_len),
+        211 => wire__crate__api__engine__translate_status_impl(port, ptr, rust_vec_len, data_len),
+        212 => wire__crate__api__engine__translate_texts_impl(port, ptr, rust_vec_len, data_len),
+        213 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
+        214 => {
             wire__crate__api__away__turn_off_away_message_impl(port, ptr, rust_vec_len, data_len)
         }
-        214 => {
+        215 => {
             wire__crate__api__engine__unopened_newsletters_impl(port, ptr, rust_vec_len, data_len)
         }
-        215 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
-        216 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
-        218 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
-        219 => wire__crate__api__updates__update_startup_default_impl(
+        216 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
+        217 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
+        219 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
+        220 => wire__crate__api__updates__update_startup_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        220 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
-        221 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
-        223 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
-        225 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
-        226 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
-        227 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
-        228 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
-        229 => wire__crate__api__engine__watch_translate_progress_impl(
+        221 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
+        222 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
+        224 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
+        226 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
+        227 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
+        228 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
+        229 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
+        230 => wire__crate__api__engine__watch_translate_progress_impl(
             port,
             ptr,
             rust_vec_len,
@@ -11528,23 +11576,23 @@ fn pde_ffi_dispatcher_sync_impl(
         167 => wire__crate__api__engine__signature_text_impl(ptr, rust_vec_len, data_len),
         168 => wire__crate__api__engine__signatures_impl(ptr, rust_vec_len, data_len),
         179 => wire__crate__api__sync__sync_dirty_impl(ptr, rust_vec_len, data_len),
-        181 => wire__crate__api__sync__sync_homes_impl(ptr, rust_vec_len, data_len),
-        182 => wire__crate__api__sync__sync_identity_impl(ptr, rust_vec_len, data_len),
-        183 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
-        184 => wire__crate__api__sync__sync_invite_impl(ptr, rust_vec_len, data_len),
-        185 => wire__crate__api__sync__sync_invite_end_impl(ptr, rust_vec_len, data_len),
-        188 => wire__crate__api__sync__sync_join_cancel_impl(ptr, rust_vec_len, data_len),
-        194 => wire__crate__api__sync__sync_pair_code_impl(ptr, rust_vec_len, data_len),
-        196 => wire__crate__api__sync__sync_phrase_valid_impl(ptr, rust_vec_len, data_len),
-        197 => wire__crate__api__sync__sync_read_code_impl(ptr, rust_vec_len, data_len),
-        204 => wire__crate__api__engine__take_swipe_hint_impl(ptr, rust_vec_len, data_len),
-        205 => wire__crate__api__templates__template_used_impl(ptr, rust_vec_len, data_len),
-        206 => wire__crate__api__templates__templates_impl(ptr, rust_vec_len, data_len),
-        217 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
-        222 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
-        224 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
-        230 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
-        231 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
+        182 => wire__crate__api__sync__sync_homes_impl(ptr, rust_vec_len, data_len),
+        183 => wire__crate__api__sync__sync_identity_impl(ptr, rust_vec_len, data_len),
+        184 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
+        185 => wire__crate__api__sync__sync_invite_impl(ptr, rust_vec_len, data_len),
+        186 => wire__crate__api__sync__sync_invite_end_impl(ptr, rust_vec_len, data_len),
+        189 => wire__crate__api__sync__sync_join_cancel_impl(ptr, rust_vec_len, data_len),
+        195 => wire__crate__api__sync__sync_pair_code_impl(ptr, rust_vec_len, data_len),
+        197 => wire__crate__api__sync__sync_phrase_valid_impl(ptr, rust_vec_len, data_len),
+        198 => wire__crate__api__sync__sync_read_code_impl(ptr, rust_vec_len, data_len),
+        205 => wire__crate__api__engine__take_swipe_hint_impl(ptr, rust_vec_len, data_len),
+        206 => wire__crate__api__templates__template_used_impl(ptr, rust_vec_len, data_len),
+        207 => wire__crate__api__templates__templates_impl(ptr, rust_vec_len, data_len),
+        218 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
+        223 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
+        225 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
+        231 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
+        232 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -13959,6 +14007,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncInfo {
             self.outdated.into_into_dart().into_dart(),
             self.held.into_into_dart().into_dart(),
             self.recovery_changed.into_into_dart().into_dart(),
+            self.unverified.into_into_dart().into_dart(),
+            self.conflict.into_into_dart().into_dart(),
+            self.exposed.into_into_dart().into_dart(),
+            self.exposed_device.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -14000,6 +14052,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncRound {
             self.held.into_into_dart().into_dart(),
             self.rollback.into_into_dart().into_dart(),
             self.outdated.into_into_dart().into_dart(),
+            self.unverified.into_into_dart().into_dart(),
+            self.conflict.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -16633,6 +16687,10 @@ impl SseEncode for crate::api::sync::SyncInfo {
         <bool>::sse_encode(self.outdated, serializer);
         <Vec<crate::api::sync::HeldAccount>>::sse_encode(self.held, serializer);
         <bool>::sse_encode(self.recovery_changed, serializer);
+        <bool>::sse_encode(self.unverified, serializer);
+        <Vec<String>>::sse_encode(self.conflict, serializer);
+        <Vec<String>>::sse_encode(self.exposed, serializer);
+        <String>::sse_encode(self.exposed_device, serializer);
     }
 }
 
@@ -16656,6 +16714,8 @@ impl SseEncode for crate::api::sync::SyncRound {
         <Vec<crate::api::sync::HeldAccount>>::sse_encode(self.held, serializer);
         <bool>::sse_encode(self.rollback, serializer);
         <bool>::sse_encode(self.outdated, serializer);
+        <bool>::sse_encode(self.unverified, serializer);
+        <bool>::sse_encode(self.conflict, serializer);
     }
 }
 

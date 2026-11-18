@@ -310,7 +310,13 @@ class EngineMailSource extends MailSource {
   }
 
   /// What the last round had to say on Devices & sync.
-  (String, bool, bool) _syncNotice = ('', false, false);
+  (String, bool, bool, bool, bool) _syncNotice = (
+    '',
+    false,
+    false,
+    false,
+    false,
+  );
 
   Future<void> _round() async {
     if (_rounding) return;
@@ -333,6 +339,8 @@ class EngineMailSource extends MailSource {
         [for (final h in r.held) h.accountId.toInt()].join(','),
         r.rollback,
         r.outdated,
+        r.unverified,
+        r.conflict,
       );
       final changed = notice != _syncNotice;
       _syncNotice = notice;
@@ -390,6 +398,10 @@ class EngineMailSource extends MailSource {
       rollback: s.rollback,
       outdated: s.outdated,
       recoveryChanged: s.recoveryChanged,
+      unverified: s.unverified,
+      conflict: s.conflict,
+      exposed: s.exposed,
+      exposedDevice: s.exposedDevice,
       held: [
         for (final h in s.held)
           HeldRemoval(
@@ -437,6 +449,12 @@ class EngineMailSource extends MailSource {
   Future<Unlinked> unlinkDevice(String id) async {
     final r = await _syncing(() => sync.syncUnlink(deviceId: id));
     return Unlinked(phrase: r.phrase, exposed: r.exposed);
+  }
+
+  @override
+  Future<void> exposedChanged() async {
+    await _syncing(sync.syncExposedDone);
+    _changes.add(null);
   }
 
   @override

@@ -6273,6 +6273,41 @@ class AppLocalizationsIt extends AppLocalizations {
   String get syncExposedDone => 'Ho capito';
 
   @override
+  String get syncConfirmTitle => 'Conferma questo dispositivo';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma ora controlla quali dispositivi fanno parte del tuo spazio. Finché non confermi questo con la frase di recupero, o con un codice da un dispositivo già aggiornato, qui non si sincronizza nulla.';
+
+  @override
+  String get syncConfirm => 'Conferma';
+
+  @override
+  String get syncConflictTitle => 'Due dispositivi si sono rimossi a vicenda';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names si sono rimossi a vicenda dal tuo spazio, e uno dei due potrebbe non essere più tuo. La sincronizzazione si è fermata su questo dispositivo: collegalo di nuovo da un dispositivo che hai ancora.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Collega di nuovo';
+
+  @override
+  String get syncExposedNowTitle => 'Cambia subito queste password';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name conosce ancora queste password. Comincia da $email: finché la sua password non cambia, $name può ancora raggiungere la cartella che contiene il tuo spazio.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Le ho cambiate';
+
+  @override
+  String get syncExposedFirst => 'Prima questa: contiene il tuo spazio';
+
+  @override
   String get syncFailRollback =>
       'In questa casella c’è solo una copia più vecchia del tuo spazio. Non è stato cambiato nulla.';
 
@@ -6350,7 +6385,7 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Due dispositivi sono stati scollegati nello stesso momento, quindi il tuo spazio ha una nuova chiave e una nuova frase di recupero. Quella che avevi scritto non funziona più.';
+      'Il tuo spazio ha una nuova chiave e una nuova frase di recupero, perché un dispositivo è uscito o due sono stati scollegati insieme. Quella che hai scritto non funziona più.';
 
   @override
   String get listFailed => 'Impossibile mostrare queste email.';

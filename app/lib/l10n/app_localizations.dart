@@ -9160,6 +9160,66 @@ abstract class AppLocalizations {
   /// **'Got it'**
   String get syncExposedDone;
 
+  /// No description provided for @syncConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm this device'**
+  String get syncConfirmTitle;
+
+  /// No description provided for @syncConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.'**
+  String get syncConfirmBody;
+
+  /// No description provided for @syncConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get syncConfirm;
+
+  /// No description provided for @syncConflictTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Two devices removed each other'**
+  String get syncConflictTitle;
+
+  /// No description provided for @syncConflictBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{names} each removed the other from your space, and one of them may not be yours any more. Sync stopped on this device: link it again from a device you still have.'**
+  String syncConflictBody(String names);
+
+  /// No description provided for @syncLinkAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Link again'**
+  String get syncLinkAgain;
+
+  /// No description provided for @syncExposedNowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change these passwords now'**
+  String get syncExposedNowTitle;
+
+  /// No description provided for @syncExposedNowBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} still knows these passwords. Start with {email}: until its password changes, {name} can still reach the folder that holds your space.'**
+  String syncExposedNowBody(String name, String email);
+
+  /// No description provided for @syncExposedChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'I changed them'**
+  String get syncExposedChanged;
+
+  /// No description provided for @syncExposedFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'First: it holds your space'**
+  String get syncExposedFirst;
+
   /// No description provided for @syncFailRollback.
   ///
   /// In en, this message translates to:
@@ -9229,7 +9289,7 @@ abstract class AppLocalizations {
   /// No description provided for @syncRecoveryChangedBody.
   ///
   /// In en, this message translates to:
-  /// **'Two devices were unlinked at the same time, so your space got a new key and a new recovery phrase. The one you wrote down no longer works.'**
+  /// **'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.'**
   String get syncRecoveryChangedBody;
 
   /// No description provided for @listFailed.

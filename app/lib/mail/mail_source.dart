@@ -1832,6 +1832,10 @@ class SyncState {
     this.outdated = false,
     this.held = const [],
     this.recoveryChanged = false,
+    this.unverified = false,
+    this.conflict = const [],
+    this.exposed = const [],
+    this.exposedDevice = '',
   });
 
   /// The address whose mailbox holds the space; null while sync is off.
@@ -1853,9 +1857,24 @@ class SyncState {
   /// because something still has to leave with them.
   final List<HeldRemoval> held;
 
-  /// Two devices were unlinked at once: the recovery phrase changed and the
-  /// person hasn't seen the new one.
+  /// The recovery phrase changed in a merge (a device left, or two were
+  /// unlinked at once) and the person hasn't seen the new one.
   final bool recoveryChanged;
+
+  /// This device synced with an older version of Piuma: nothing syncs
+  /// until the person confirms it with the recovery phrase or a code.
+  final bool unverified;
+
+  /// Two devices (by name) removed each other: sync stopped here until
+  /// this device is linked again.
+  final List<String> conflict;
+
+  /// After unlinking a device: the mailboxes whose passwords it still
+  /// knows, until the person says they changed them.
+  final List<String> exposed;
+
+  /// The unlinked device, for the same notice.
+  final String exposedDevice;
 
   bool get on => home != null;
 }
@@ -2866,6 +2885,9 @@ abstract class MailSource {
   /// Unlinks a device: the new recovery phrase, and the mailboxes whose
   /// passwords it still knows.
   Future<Unlinked> unlinkDevice(String id);
+
+  /// "I changed them": the passwords an unlinked device knew were changed.
+  Future<void> exposedChanged() async {}
 
   /// "Remove it here too": an account another device removed, held here
   /// because something still had to leave with it, goes now.

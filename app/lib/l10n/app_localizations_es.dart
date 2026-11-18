@@ -6245,6 +6245,41 @@ class AppLocalizationsEs extends AppLocalizations {
   String get syncExposedDone => 'Entendido';
 
   @override
+  String get syncConfirmTitle => 'Confirma este dispositivo';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma ahora comprueba qué dispositivos forman parte de tu espacio. Hasta que confirmes este con tu frase de recuperación, o con un código de un dispositivo ya actualizado, aquí no se sincroniza nada.';
+
+  @override
+  String get syncConfirm => 'Confirmar';
+
+  @override
+  String get syncConflictTitle => 'Dos dispositivos se quitaron entre sí';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names se quitaron el uno al otro de tu espacio, y puede que uno ya no sea tuyo. La sincronización se detuvo en este dispositivo: vuelve a vincularlo desde un dispositivo que aún tengas.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Vincular de nuevo';
+
+  @override
+  String get syncExposedNowTitle => 'Cambia estas contraseñas ya';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name aún conoce estas contraseñas. Empieza por $email: hasta que cambie su contraseña, $name todavía puede llegar a la carpeta que guarda tu espacio.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Ya las cambié';
+
+  @override
+  String get syncExposedFirst => 'Primero: guarda tu espacio';
+
+  @override
   String get syncFailRollback =>
       'En este buzón solo hay una copia más antigua de tu espacio. No se cambió nada.';
 
@@ -6323,7 +6358,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get syncRecoveryChangedBody =>
-      'Se desvincularon dos dispositivos a la vez, así que tu espacio tiene una clave y una frase de recuperación nuevas. La que apuntaste ya no sirve.';
+      'Tu espacio tiene una clave y una frase de recuperación nuevas, porque un dispositivo salió o se desvincularon dos a la vez. La que apuntaste ya no sirve.';
 
   @override
   String get listFailed => 'No se pudieron mostrar estos correos.';

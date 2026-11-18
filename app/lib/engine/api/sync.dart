@@ -77,6 +77,11 @@ Future<void> syncRefuse({required String requestId}) =>
 Future<UnlinkResult> syncUnlink({required String deviceId}) =>
     RustLib.instance.api.crateApiSyncSyncUnlink(deviceId: deviceId);
 
+/// "I changed them": the passwords an unlinked device knew were changed,
+/// and Devices & sync stops asking.
+Future<void> syncExposedDone() =>
+    RustLib.instance.api.crateApiSyncSyncExposedDone();
+
 /// "Turn off sync on this device": leaves the space and stops syncing
 /// here; accounts and mail stay. On the last device the space is deleted
 /// from its mailbox.
@@ -431,9 +436,27 @@ class SyncInfo {
   /// Accounts removed on another device that wait for the person here.
   final List<HeldAccount> held;
 
-  /// Two devices were unlinked at once: the recovery phrase changed
-  /// again, and the person hasn't seen the new one yet.
+  /// The recovery phrase changed in a merge (two devices unlinked at
+  /// once, or a device turned sync off), and the person hasn't seen the
+  /// new one yet.
   final bool recoveryChanged;
+
+  /// This device was syncing with an older version of Piuma: it takes
+  /// and sends nothing until the person confirms it with the recovery
+  /// phrase or a code from a linked device.
+  final bool unverified;
+
+  /// Two devices removed each other (their names): sync stopped here
+  /// until this device is linked again.
+  final List<String> conflict;
+
+  /// After unlinking a device: the mailboxes whose passwords it still
+  /// knows, until the person says they changed them. Urgent: until the
+  /// space's own mailbox password changes, it can still write there.
+  final List<String> exposed;
+
+  /// The unlinked device's name, for the same notice.
+  final String exposedDevice;
 
   const SyncInfo({
     this.home,
@@ -443,6 +466,10 @@ class SyncInfo {
     required this.outdated,
     required this.held,
     required this.recoveryChanged,
+    required this.unverified,
+    required this.conflict,
+    required this.exposed,
+    required this.exposedDevice,
   });
 
   @override
@@ -453,7 +480,11 @@ class SyncInfo {
       rollback.hashCode ^
       outdated.hashCode ^
       held.hashCode ^
-      recoveryChanged.hashCode;
+      recoveryChanged.hashCode ^
+      unverified.hashCode ^
+      conflict.hashCode ^
+      exposed.hashCode ^
+      exposedDevice.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -466,7 +497,11 @@ class SyncInfo {
           rollback == other.rollback &&
           outdated == other.outdated &&
           held == other.held &&
-          recoveryChanged == other.recoveryChanged;
+          recoveryChanged == other.recoveryChanged &&
+          unverified == other.unverified &&
+          conflict == other.conflict &&
+          exposed == other.exposed &&
+          exposedDevice == other.exposedDevice;
 }
 
 /// The QR code "Link a new device" shows, as on `QrPairToApprove`.
@@ -523,6 +558,12 @@ class SyncRound {
   /// The space was written by a newer version of Piuma.
   final bool outdated;
 
+  /// This device must be confirmed first (see [SyncInfo::unverified]).
+  final bool unverified;
+
+  /// Two devices removed each other (see [SyncInfo::conflict]).
+  final bool conflict;
+
   const SyncRound({
     required this.took,
     required this.unlinked,
@@ -532,6 +573,8 @@ class SyncRound {
     required this.held,
     required this.rollback,
     required this.outdated,
+    required this.unverified,
+    required this.conflict,
   });
 
   @override
@@ -543,7 +586,9 @@ class SyncRound {
       removed.hashCode ^
       held.hashCode ^
       rollback.hashCode ^
-      outdated.hashCode;
+      outdated.hashCode ^
+      unverified.hashCode ^
+      conflict.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -557,7 +602,9 @@ class SyncRound {
           removed == other.removed &&
           held == other.held &&
           rollback == other.rollback &&
-          outdated == other.outdated;
+          outdated == other.outdated &&
+          unverified == other.unverified &&
+          conflict == other.conflict;
 }
 
 /// After unlinking a device: the new recovery phrase, and the mailboxes
