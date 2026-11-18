@@ -265,6 +265,12 @@ class DraggableRows extends StatelessWidget {
         final carried = rows();
         return Draggable<MailDrag>(
           data: MailDrag(carried),
+          // A mouse drags rows to a folder; a finger on a touch screen
+          // keeps scrolling the list.
+          supportedDevices: const {
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.trackpad,
+          },
           dragAnchorStrategy: pointerDragAnchorStrategy,
           feedback: Material(
             type: MaterialType.transparency,

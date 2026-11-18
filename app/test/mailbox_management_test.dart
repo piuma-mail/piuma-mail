@@ -191,7 +191,10 @@ void main() {
       ),
     );
     final to = tester.getCenter(find.text('Invoices'));
-    final drag = await tester.startGesture(from);
+    final drag = await tester.startGesture(
+      from,
+      kind: PointerDeviceKind.mouse,
+    );
     await tester.pump(const Duration(milliseconds: 50));
     for (var i = 1; i <= 10; i++) {
       await drag.moveTo(Offset.lerp(from, to, i / 10)!);
