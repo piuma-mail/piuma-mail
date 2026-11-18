@@ -237,6 +237,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Undo'**
   String get undo;
+
+  /// No description provided for @replyAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply all'**
+  String get replyAll;
+
+  /// No description provided for @replyToAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to {name} and {count, plural, =1{1 other} other{{count} others}}'**
+  String replyToAll(String name, int count);
 }
 
 class _AppLocalizationsDelegate

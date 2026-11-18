@@ -6101,4 +6101,203 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String get actionReplyAll => 'Reply all';
+
+  @override
+  String get actionReplyList => 'Reply to list';
+
+  @override
+  String get actionForwardAttachment => 'Forward as attachment';
+
+  @override
+  String get actionRedirect => 'Redirect';
+
+  @override
+  String get actionEditAsNew => 'Edit as new';
+
+  @override
+  String get actionViewSource => 'View source';
+
+  @override
+  String get actionSaveEml => 'Save as .eml';
+
+  @override
+  String get muteConversation => 'Mute conversation';
+
+  @override
+  String get unmuteConversation => 'Unmute conversation';
+
+  @override
+  String get conversationMuted =>
+      'Conversation muted: new messages arrive read, without a notification';
+
+  @override
+  String get conversationUnmuted => 'Conversation unmuted';
+
+  @override
+  String get conversationMutedLine => 'Muted';
+
+  @override
+  String forwardFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: 'the file',
+    );
+    return 'Getting $_temp0';
+  }
+
+  @override
+  String forwardFilesDone(int done, int total) {
+    return '$done of $total';
+  }
+
+  @override
+  String forwardFilesFailed(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'These files couldn’t be attached:',
+      one: 'This file couldn’t be attached:',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String forwardWithoutFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Go on without them',
+      one: 'Go on without it',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gettingEmail => 'Getting the email';
+
+  @override
+  String get messageFetchFailed =>
+      'Couldn’t get the email from the server. Check the connection and try again.';
+
+  @override
+  String get redirectTitle => 'Redirect this email';
+
+  @override
+  String redirectBody(String sender) {
+    return 'It goes unchanged, as it came from $sender: replies go to $sender, not to you.';
+  }
+
+  @override
+  String get redirectTo => 'To';
+
+  @override
+  String get redirectHint => 'Addresses, separated by commas';
+
+  @override
+  String redirectDone(String to) {
+    return 'Redirected to $to';
+  }
+
+  @override
+  String get redirectFailed =>
+      'Couldn’t redirect the email. Check the addresses and the connection.';
+
+  @override
+  String get sourceTitle => 'Source of the email';
+
+  @override
+  String get sourceHeaders => 'Headers';
+
+  @override
+  String get sourceRaw => 'Raw';
+
+  @override
+  String get sourceCopy => 'Copy';
+
+  @override
+  String emlSaved(String name) {
+    return 'Saved as $name';
+  }
+
+  @override
+  String get emlNotSaved => 'Couldn’t save the email';
+
+  @override
+  String recipientsMore(String names, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return '$names and $_temp0';
+  }
+
+  @override
+  String get recipientYou => 'you';
+
+  @override
+  String get recipientsBcc => 'you were Bcc’d';
+
+  @override
+  String get recipientsTo => 'To';
+
+  @override
+  String get recipientsCc => 'Cc';
+
+  @override
+  String get recipientsBccLabel => 'Bcc';
+
+  @override
+  String get showRecipients => 'Show who received it';
+
+  @override
+  String get hideRecipients => 'Hide who received it';
+
+  @override
+  String replyAllNames(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return '$name and $_temp0';
+  }
+
+  @override
+  String replyAllOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'and $count others',
+      one: 'and 1 other',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutNextEmail => 'Next email';
+
+  @override
+  String get shortcutPreviousEmail => 'Previous email';
+
+  @override
+  String get zoomIn => 'Zoom in';
+
+  @override
+  String get zoomOut => 'Zoom out';
+
+  @override
+  String get zoomReset => 'Actual size';
+
+  @override
+  String zoomLevel(int percent) {
+    return 'Text size $percent%';
+  }
 }
