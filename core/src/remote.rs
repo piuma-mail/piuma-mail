@@ -1,11 +1,13 @@
 //! One way to reach any account's server, IMAP or JMAP, so the app asks
 //! for the same things whatever the protocol.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
-use crate::model::{Account, AccountId, AccountKind};
+use crate::model::{Account, AccountId, AccountKind, Folder};
+use crate::search::{folder_key, InFolder, Query, Scope, ServerAsk};
 use crate::smtp::{self, Draft, Ready, SendError, SendReport, SmtpConfig};
 use crate::store::{Body, Store, StoreError};
 
@@ -39,6 +41,30 @@ impl RemoteError {
 }
 
 pub type Result<T> = std::result::Result<T, RemoteError>;
+
+/// Most messages a server search brings back per folder (per account
+/// with JMAP).
+pub const SERVER_HITS: usize = 100;
+/// Folders a server search looks in per IMAP account, at most.
+pub const SERVER_FOLDERS: usize = 25;
+
+/// What a server search found in one account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerFound {
+    /// Where each message is kept here (folder, UID), all of them on this
+    /// device now.
+    pub at: Vec<(String, u32)>,
+    /// Whether the server was asked anything: not for a search only this
+    /// device can answer (`in:vault`), or one with only filters.
+    pub asked: bool,
+    /// Some of the account could not be searched fully: a folder refused,
+    /// text cut to ASCII, more folders than are searched.
+    pub partial: bool,
+}
+
+fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
+    store.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Resolve without rewriting IDs or caching the body: a successful download
 /// must not depend on a body-cache write succeeding.
@@ -81,6 +107,153 @@ impl Remote {
                 Remote::Jmap(jmap::Client::open(&cfg).await?)
             }
         })
+    }
+
+    /// Runs a search on the account's server and brings the newest
+    /// `limit` messages per folder (per account with JMAP) here, as
+    /// headers; see [`crate::search`] for how each term is asked. IMAP
+    /// looks in the inbox, the folders with a job, the account's own
+    /// folders and the ones the search names, at most [`SERVER_FOLDERS`]
+    /// of them; Trash and Spam only when named.
+    pub async fn search_server(
+        &mut self,
+        store: &Mutex<Store>,
+        account: &Account,
+        query: &Query,
+        limit: usize,
+    ) -> Result<ServerFound> {
+        let (labels, groups) = {
+            let s = lock(store);
+            let labels: HashMap<String, String> = s
+                .labels()?
+                .into_iter()
+                .map(|l| (l.name.to_lowercase(), l.keyword))
+                .collect();
+            let groups: HashMap<i64, Vec<String>> = s
+                .address_groups()?
+                .into_iter()
+                .map(|g| {
+                    let mine = g
+                        .addresses
+                        .into_iter()
+                        .filter(|a| a.account == account.id)
+                        .map(|a| a.email)
+                        .collect();
+                    (g.id, mine)
+                })
+                .collect();
+            (labels, groups)
+        };
+        let mut found = ServerFound::default();
+        match self {
+            Remote::Imap(conn) => {
+                // Where the search's `in:` values point in this account.
+                let mut named: HashMap<String, HashSet<String>> = HashMap::new();
+                for f in query.folders() {
+                    let key = folder_key(f);
+                    let mut places: HashSet<String> = lock(store)
+                        .folders_named(f)?
+                        .into_iter()
+                        .filter(|(a, _)| *a == account.id)
+                        .map(|(_, m)| m)
+                        .collect();
+                    let role = match key.as_str() {
+                        "trash" | "bin" | "deleted" => Some(FolderRole::Trash),
+                        "spam" | "junk" => Some(FolderRole::Junk),
+                        _ => None,
+                    };
+                    if let Some(role) = role {
+                        places.extend(conn.find_folder(role).await?);
+                    }
+                    named.insert(key, places);
+                }
+                let mut folders: Vec<String> = vec!["INBOX".into()];
+                {
+                    let s = lock(store);
+                    for f in [Folder::Sent, Folder::Archive, Folder::Drafts, Folder::Snoozed] {
+                        folders.extend(s.folder_mailbox(account.id, f)?);
+                    }
+                    folders.extend(
+                        s.account_folders(account.id)?
+                            .into_iter()
+                            .filter(|f| f.selectable)
+                            .map(|f| f.mailbox),
+                    );
+                }
+                folders.extend(named.values().flatten().cloned());
+                let mut seen = HashSet::new();
+                folders.retain(|f| seen.insert(f.clone()));
+                let mut asked = 0;
+                for mailbox in folders {
+                    let folder = |v: &str| {
+                        if named
+                            .get(&folder_key(v))
+                            .is_some_and(|places| places.contains(&mailbox))
+                        {
+                            InFolder::Yes
+                        } else {
+                            InFolder::No
+                        }
+                    };
+                    let scope = Scope {
+                        account_name: &account.name,
+                        account_email: &account.email,
+                        labels: &labels,
+                        groups: &groups,
+                        folder: &folder,
+                    };
+                    let ServerAsk::Ask(ask) = query.for_server(&scope) else {
+                        continue;
+                    };
+                    if asked == SERVER_FOLDERS {
+                        found.partial = true;
+                        break;
+                    }
+                    asked += 1;
+                    found.asked = true;
+                    match conn
+                        .search_folder(store, account.id, &mailbox, &ask, limit)
+                        .await
+                    {
+                        Ok((uids, partial)) => {
+                            found.partial |= partial;
+                            found
+                                .at
+                                .extend(uids.into_iter().map(|uid| (mailbox.clone(), uid)));
+                        }
+                        // A folder the server won't open or search: the
+                        // others still count.
+                        Err(ImapError::Protocol(
+                            async_imap::error::Error::No(_) | async_imap::error::Error::Bad(_),
+                        )) => found.partial = true,
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+            }
+            Remote::Jmap(client) => {
+                let named: HashMap<String, Vec<String>> = query
+                    .folders()
+                    .into_iter()
+                    .map(|f| (folder_key(f), client.folders_named(f)))
+                    .collect();
+                let folder =
+                    |v: &str| InFolder::Ids(named.get(&folder_key(v)).cloned().unwrap_or_default());
+                let scope = Scope {
+                    account_name: &account.name,
+                    account_email: &account.email,
+                    labels: &labels,
+                    groups: &groups,
+                    folder: &folder,
+                };
+                if let ServerAsk::Ask(ask) = query.for_server(&scope) {
+                    found.asked = true;
+                    found.at = client
+                        .search(store, account.id, &ask, !named.is_empty(), limit)
+                        .await?;
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// Ends the session politely, where the protocol has one.

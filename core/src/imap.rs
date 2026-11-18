@@ -121,6 +121,8 @@ pub struct Connection {
     idle: bool,
     moves: bool,
     uidplus: bool,
+    /// Literals that need no go-ahead (RFC 7888), for UTF-8 search text.
+    literal_plus: bool,
 }
 
 /// Messages fetched per round trip while downloading a folder.
@@ -203,6 +205,7 @@ impl Connection {
             idle: caps.has_str("IDLE"),
             moves: caps.has_str("MOVE"),
             uidplus: caps.has_str("UIDPLUS"),
+            literal_plus: caps.has_str("LITERAL+") || caps.has_str("LITERAL-"),
         })
     }
 
@@ -660,6 +663,79 @@ impl Connection {
             },
         )?;
         Ok(mailbox)
+    }
+
+    /// Runs a search in one folder on the server and brings the newest
+    /// `limit` messages it finds here, as headers (bodies come when one is
+    /// opened, as for any message). Returns their UIDs, newest first, and
+    /// whether the answer may be partial: the server refused UTF-8 and the
+    /// text was cut to ASCII, or the folder was renumbered since the last
+    /// sync (then nothing is kept until the sync starts it over).
+    ///
+    /// `ESEARCH` (RFC 4731) is not used even where offered: the parser
+    /// under async-imap can't read its answer, and an unreadable answer
+    /// would end the connection. A plain `UID SEARCH` gives the same UIDs.
+    pub async fn search_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        query: &crate::search::ServerQuery,
+        limit: usize,
+    ) -> Result<(Vec<u32>, bool)> {
+        let literal_plus = self.literal_plus;
+        let session = self.session()?;
+        let selected = session.examine(mailbox).await?;
+        let uid_validity = selected.uid_validity.ok_or(ImapError::NoUidValidity)?;
+        let renumbered = lock(store)
+            .mailbox_state(account, mailbox)?
+            .is_some_and(|p| p.uid_validity != uid_validity);
+        lock(store).forget_renumbered_found(account, mailbox, uid_validity)?;
+        let mut partial = renumbered;
+        let mut uids = match uid_search(session, &query.imap(literal_plus)).await? {
+            Ok(uids) => uids,
+            Err(_refusal) if query.needs_utf8() => {
+                // BADCHARSET, or a server that refuses CHARSET at all.
+                partial = true;
+                match query.ascii() {
+                    Some(ascii) => uid_search(session, &ascii.imap(literal_plus))
+                        .await?
+                        .map_err(async_imap::error::Error::No)?,
+                    None => Vec::new(),
+                }
+            }
+            Err(refusal) => return Err(async_imap::error::Error::No(refusal).into()),
+        };
+        uids.sort_unstable_by(|a, b| b.cmp(a));
+        uids.dedup();
+        uids.truncate(limit);
+        if renumbered {
+            return Ok((Vec::new(), true));
+        }
+        let local: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
+        let missing: Vec<u32> = uids.iter().filter(|u| !local.contains(u)).copied().collect();
+        for batch in missing.chunks(BATCH) {
+            let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
+            let summaries: Vec<MessageSummary> = fetches
+                .iter()
+                .filter_map(|f| summary_with(f, account, mailbox, &html))
+                .collect();
+            let found: Vec<u32> = summaries.iter().map(|s| s.uid).collect();
+            let listed: Vec<(u32, Vec<Attachment>)> = fetches
+                .iter()
+                .filter_map(|f| Some((f.uid?, listed_files(f.bodystructure()?))))
+                .collect();
+            let mut store = lock(store);
+            store.upsert_messages(&summaries)?;
+            store.set_server_labels(account, mailbox, &labels_of(&fetches))?;
+            store.set_listed_files(account, mailbox, &listed)?;
+            store.note_server_found(account, mailbox, &found, uid_validity)?;
+        }
+        // What the server listed but didn't fetch (gone meanwhile) is
+        // left out.
+        let here: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
+        uids.retain(|u| here.contains(u));
+        Ok((uids, partial))
     }
 
     /// The folder with a job, when the account has one.
@@ -1567,6 +1643,47 @@ pub async fn watch(
             () = crate::network::wait() => {}
         }
         pause = (pause * 2).clamp(Duration::from_secs(2), Duration::from_secs(60));
+    }
+}
+
+/// Sends `UID SEARCH` and reads its answer itself: async-imap's own
+/// `uid_search` takes a refusal (`NO [BADCHARSET]`) for an empty answer.
+/// The inner error is the server's refusal.
+async fn uid_search(
+    session: &mut Session,
+    criteria: &str,
+) -> Result<std::result::Result<Vec<u32>, String>> {
+    use async_imap::imap_proto::{MailboxDatum, Response, Status};
+    let tag = session.run_command(format!("UID SEARCH {criteria}")).await?;
+    let mut uids = Vec::new();
+    loop {
+        let response = session
+            .read_response()
+            .await
+            .map_err(async_imap::error::Error::Io)?
+            .ok_or(async_imap::error::Error::ConnectionLost)?;
+        match response.parsed() {
+            Response::MailboxData(MailboxDatum::Search(found)) => uids.extend_from_slice(found),
+            Response::Done {
+                tag: done,
+                status,
+                outcome,
+            } if *done == tag => {
+                return Ok(match status {
+                    Status::Ok => Ok(uids),
+                    _ => Err(format!(
+                        "{status:?} {:?} {:?}",
+                        outcome.code, outcome.information
+                    )),
+                });
+            }
+            Response::Data {
+                status: Status::Bye,
+                ..
+            } => return Err(async_imap::error::Error::ConnectionLost.into()),
+            // News about the folder meanwhile: the next sync reads it.
+            _ => {}
+        }
     }
 }
 

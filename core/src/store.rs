@@ -2918,6 +2918,21 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Where a JMAP email is kept here, in one of its folders, if it is.
+    pub fn jmap_email_at(&self, account: AccountId, email_id: &str) -> Result<Option<(String, u32)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT j.mailbox, j.uid FROM jmap_email j
+                   JOIN message m ON m.account = j.account AND m.mailbox = j.mailbox AND m.uid = j.uid
+                  WHERE j.account = ?1 AND j.email_id = ?2
+                  ORDER BY j.mailbox = 'INBOX' DESC LIMIT 1",
+                params![account.0, email_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     /// Gives new JMAP ids of a folder their local numbers, in order.
     /// Ids that already have one keep it.
     pub fn add_jmap_ids(

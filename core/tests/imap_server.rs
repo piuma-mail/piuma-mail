@@ -1784,3 +1784,44 @@ async fn labels_are_keywords_on_the_server() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn server_search_finds_mail_not_here_yet() {
+    use piuma_core::remote::Remote;
+    use piuma_core::Query;
+    let Some(cfg) = config("serversearch") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(PLAIN, "12-Oct-2026 09:41:00 +0200").await;
+    outside
+        .deliver(
+            &PLAIN.replace("New website quote", "Città e caffè"),
+            "13-Oct-2026 09:41:00 +0200",
+        )
+        .await;
+    let (store, id) = store_with_account();
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::Imap(Connection::open(&cfg).await.unwrap());
+    // Nothing is synced: only the server knows.
+    let found = remote
+        .search_server(&store, &account, &Query::parse("subject:caffè"), 100)
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    assert!(found.asked && !found.partial);
+    let found = remote
+        .search_server(
+            &store,
+            &account,
+            &Query::parse("updated -subject:città from:julia"),
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    remote.close().await;
+    let s = store.lock().unwrap();
+    assert_eq!(s.search(&Query::parse("caffè"), 10).unwrap().total, 1);
+    assert_eq!(s.search(&Query::parse("website"), 10).unwrap().total, 1);
+}

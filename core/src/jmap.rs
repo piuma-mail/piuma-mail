@@ -464,6 +464,165 @@ impl Client {
         Ok(id)
     }
 
+    /// The ids of the folders an `in:` value names: a job (`inbox`,
+    /// `sent`, `archive`, `drafts`, `trash`, `spam`), or a folder by its
+    /// name or path ("Clients/Acme"), in any case.
+    pub fn folders_named(&self, value: &str) -> Vec<String> {
+        use crate::search::folder_key;
+        let key = folder_key(value);
+        if key.is_empty() {
+            return Vec::new();
+        }
+        let role = match key.as_str() {
+            "spam" => "junk",
+            "bin" | "deleted" => "trash",
+            k => k,
+        };
+        let path = |m: &Mailbox| {
+            let mut names = vec![m.name.as_str()];
+            let mut parent = m.parent_id.as_deref();
+            // A loop in a broken tree stops here.
+            for _ in 0..32 {
+                let Some(p) = parent.and_then(|id| self.mailboxes.iter().find(|x| x.id == id))
+                else {
+                    break;
+                };
+                names.push(&p.name);
+                parent = p.parent_id.as_deref();
+            }
+            names.reverse();
+            names.join("/")
+        };
+        self.mailboxes
+            .iter()
+            .filter(|m| {
+                m.role.as_deref() == Some(role)
+                    || folder_key(&m.name) == key
+                    || folder_key(&path(m)) == key
+            })
+            .map(|m| m.id.clone())
+            .collect()
+    }
+
+    /// Runs a search on the server across the account (`Email/query`) and
+    /// brings the newest `limit` messages it finds here, as headers, each
+    /// in one of its folders: the inbox when it is there. Unless the search
+    /// names folders, mail only in Trash or Spam is left out. Returns where
+    /// each one is kept, newest first.
+    pub async fn search(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        query: &crate::search::ServerQuery,
+        names_folder: bool,
+        limit: usize,
+    ) -> Result<Vec<(String, u32)>> {
+        let away: Vec<&str> = self
+            .mailboxes
+            .iter()
+            .filter(|m| matches!(m.role.as_deref(), Some("trash" | "junk")))
+            .map(|m| m.id.as_str())
+            .collect();
+        let mut filter = query.jmap();
+        if !names_folder && !away.is_empty() {
+            filter = json!({ "operator": "AND", "conditions": [
+                filter, { "inMailboxOtherThan": away },
+            ]});
+        }
+        let [page] = self
+            .call([(
+                "Email/query",
+                json!({
+                    "accountId": self.account_id,
+                    "filter": filter,
+                    "sort": [{ "property": "receivedAt", "isAscending": false }],
+                    "collapseThreads": false,
+                    "limit": limit,
+                }),
+            )])
+            .await?;
+        let ids: Vec<String> = page["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .take(limit)
+            .collect();
+        let mut at: HashMap<String, (String, u32)> = HashMap::new();
+        let mut missing = Vec::new();
+        for id in &ids {
+            match lock(store).jmap_email_at(account, id)? {
+                Some(place) => {
+                    at.insert(id.clone(), place);
+                }
+                None => missing.push(id.clone()),
+            }
+        }
+        let mut properties: Vec<&str> = SUMMARY_PROPERTIES.to_vec();
+        properties.extend(["mailboxIds", "attachments"]);
+        for batch in missing.chunks(self.max_get) {
+            let emails = self.get_emails(batch, &properties).await?;
+            // Each in one folder.
+            let mut by_folder: HashMap<String, Vec<(&Value, String)>> = HashMap::new();
+            for e in &emails {
+                if let (Some(mailbox), Some(id)) = (self.home_of(e), email_id(e)) {
+                    by_folder.entry(mailbox).or_default().push((e, id));
+                }
+            }
+            for (mailbox, emails) in by_folder {
+                let ids: Vec<String> = emails.iter().map(|(_, id)| id.clone()).collect();
+                let uids = lock(store).add_jmap_ids(account, &mailbox, &ids)?;
+                let numbered: Vec<(&Value, String, u32)> = emails
+                    .into_iter()
+                    .zip(uids)
+                    .map(|((e, id), uid)| (e, id, uid))
+                    .collect();
+                let summaries: Vec<MessageSummary> = numbered
+                    .iter()
+                    .map(|(e, _, uid)| summary(e, account, &mailbox, *uid))
+                    .collect();
+                let labels: Vec<(u32, Vec<String>)> = numbered
+                    .iter()
+                    .map(|(e, _, uid)| (*uid, keywords(e)))
+                    .collect();
+                let listed: Vec<(u32, Vec<Attachment>)> = numbered
+                    .iter()
+                    .map(|(e, _, uid)| (*uid, listed_files(&e["attachments"])))
+                    .collect();
+                let found: Vec<u32> = numbered.iter().map(|(_, _, uid)| *uid).collect();
+                let mut store = lock(store);
+                store.upsert_messages(&summaries)?;
+                store.set_server_labels(account, &mailbox, &labels)?;
+                store.set_listed_files(account, &mailbox, &listed)?;
+                store.note_server_found(account, &mailbox, &found, 0)?;
+                for (_, id, uid) in numbered {
+                    at.insert(id, (mailbox.clone(), uid));
+                }
+            }
+        }
+        Ok(ids.iter().filter_map(|id| at.remove(id)).collect())
+    }
+
+    /// The folder a found email is kept in here: the inbox when it is
+    /// there, else its first folder that isn't Trash or Spam, else its
+    /// first.
+    fn home_of(&self, e: &Value) -> Option<String> {
+        let ids = e["mailboxIds"].as_object()?;
+        let all: Vec<&Mailbox> = self
+            .mailboxes
+            .iter()
+            .filter(|m| ids.contains_key(&m.id))
+            .collect();
+        all.iter()
+            .find(|m| m.role.as_deref() == Some("inbox"))
+            .or_else(|| {
+                all.iter()
+                    .find(|m| !matches!(m.role.as_deref(), Some("trash" | "junk")))
+            })
+            .or(all.first())
+            .map(|m| m.local())
+    }
+
     /// The JMAP id of a cached folder.
     fn remote(&self, local: &str) -> Result<String> {
         self.mailboxes
