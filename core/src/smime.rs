@@ -328,9 +328,7 @@ fn may_issue(c: &Cert<'_>) -> bool {
 /// signatures, and its extended usages, if it lists them, e-mail.
 fn may_sign(c: &Cert<'_>) -> bool {
     c.usage.is_some_and(|u| u & DIGITAL_SIGNATURE != 0)
-        && c.extended
-            .as_ref()
-            .is_none_or(|e| e.iter().any(|o| *o == EMAIL_PROTECTION))
+        && c.extended.as_ref().is_none_or(|e| e.contains(&EMAIL_PROTECTION))
 }
 
 /// Who signed: the signer's certificate names.
@@ -543,7 +541,7 @@ mod tests {
     #[test]
     fn hostile_signatures_never_panic() {
         let anchors = pem(ROOT);
-        let mut rng = Rng(0x5EED_0F_5_1A7E);
+        let mut rng = Rng(0x05EE_D0F5_1A7E);
         for round in 0..4000 {
             let mut bytes = P7S.to_vec();
             match round % 5 {
