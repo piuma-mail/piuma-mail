@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import 'quoting.dart';
 import 'rich_body.dart' show bulletPrefix;
 
 /// Who an answer goes to.
@@ -28,10 +29,30 @@ enum ReplyMode {
 /// ([MailEnvelope]). Nothing here sends: the draft goes to compose, or to
 /// whatever sends it.
 class ReplyBuilder {
-  const ReplyBuilder(this.l, this.locale);
+  const ReplyBuilder(
+    this.l,
+    this.locale, {
+    this.settings = const ComposeSettings(),
+    this.accounts = const [],
+  });
 
   final AppLocalizations l;
   final String locale;
+
+  /// Settings › Writing: where a reply is written, what it quotes, and the
+  /// accounts that write plain text.
+  final ComposeSettings settings;
+
+  /// The person's accounts, for the address of a message's own account.
+  final List<MailAccount> accounts;
+
+  /// A message from [row]'s account, or from [fromEmail], is plain text
+  /// (Settings › Writing): its draft keeps no formatting.
+  bool plainText(MailRow row, String? fromEmail) =>
+      settings.plainTextFor(fromEmail ?? '') ||
+      settings.plainTextFor(
+        accounts.where((a) => a.id == row.accountId).firstOrNull?.email ?? '',
+      );
 
   /// Who [mode] writes to, as compose writes addresses. Without an
   /// envelope (mail kept before its headers were read, offline), every
@@ -72,9 +93,11 @@ class ReplyBuilder {
       ? subject
       : 'Fwd: $subject';
 
-  /// An answer to [row], whose text is [body]: [text] first, then the
-  /// message quoted unless [quote] is off. [to] replaces the recipients
-  /// (Write again).
+  /// An answer to [row], whose text is [body]: [text], then the message
+  /// quoted unless [quote] is off (above it with
+  /// [ComposeSettings.replyBelow]). With [ComposeSettings.quoteSelection],
+  /// only the [selection] made in the reader is quoted, when it is part of
+  /// [body]. [to] replaces the recipients (Write again).
   Draft reply(
     MailRow row,
     String body, {
@@ -85,14 +108,12 @@ class ReplyBuilder {
     int? signatureId,
     List<String>? to,
     bool quote = true,
+    String? selection,
   }) {
     final when = DateFormat.yMMMd(locale).add_Hm().format(row.receivedAt);
-    final quoted = body
-        .replaceAll('\r\n', '\n')
-        .trimRight()
-        .split('\n')
-        .map((line) => line.isEmpty ? '>' : '> $line')
-        .join('\n');
+    final quoted = quoteLines(
+      quoteSource(body, selection, trim: settings.quoteSelection),
+    );
     final going = to != null
         ? (to: to, cc: const <String>[])
         : recipients(row, envelope, mode);
@@ -103,7 +124,12 @@ class ReplyBuilder {
       cc: going.cc,
       subject: replySubject(row.subject),
       body: quote
-          ? '$text\n\n${l.quoteHeader(when, row.sender)}\n$quoted'
+          ? replyBody(
+              text: text,
+              header: l.quoteHeader(when, row.sender),
+              quoted: quoted,
+              below: settings.replyBelow,
+            )
           : text,
       inReplyTo: row.messageId.isEmpty ? '' : row.messageId,
       references: [
@@ -111,6 +137,7 @@ class ReplyBuilder {
         if (row.messageId.isNotEmpty) row.messageId,
       ],
       signatureId: signatureId,
+      plainText: plainText(row, fromEmail),
     );
   }
 
@@ -143,12 +170,7 @@ class ReplyBuilder {
       _ => toLine,
     };
     final head = '\n\n${l.forwardBlock(from, date, to, row.subject)}\n\n';
-    final content = blocks != null && blocks.isNotEmpty
-        ? formatted(blocks)
-        : (
-            text: text.replaceAll('\r\n', '\n').trimRight(),
-            marks: const <BodyMark>[],
-          );
+    final content = _content(row, blocks, text, fromEmail);
     return Draft(
       accountId: row.accountId,
       fromEmail: fromEmail,
@@ -160,6 +182,7 @@ class ReplyBuilder {
       ],
       files: files,
       forward: true,
+      plainText: plainText(row, fromEmail),
     );
   }
 
@@ -172,6 +195,7 @@ class ReplyBuilder {
         subject: forwardSubject(row.subject),
         files: [DraftFile(emlName(row.subject), raw)],
         forward: true,
+        plainText: plainText(row, fromEmail),
       );
 
   /// Edit as new: a new email with the message's recipients (not the
@@ -185,12 +209,7 @@ class ReplyBuilder {
     String? fromEmail,
     List<DraftFile> files = const [],
   }) {
-    final content = blocks != null && blocks.isNotEmpty
-        ? formatted(blocks)
-        : (
-            text: text.replaceAll('\r\n', '\n').trimRight(),
-            marks: const <BodyMark>[],
-          );
+    final content = _content(row, blocks, text, fromEmail);
     final to = envelope == null
         ? [
             for (final a in row.waitingFor) a,
@@ -213,7 +232,30 @@ class ReplyBuilder {
       body: content.text,
       marks: content.marks,
       files: files,
+      plainText: plainText(row, fromEmail),
     );
+  }
+
+  /// What Forward and Edit as new carry of the message: its [blocks] with
+  /// their formatting, or its plain [text]; never a picture's placeholder
+  /// character (U+FFFC), and no formatting from a plain-text account.
+  ({String text, List<BodyMark> marks}) _content(
+    MailRow row,
+    List<BodyBlock>? blocks,
+    String text,
+    String? fromEmail,
+  ) {
+    final content = blocks != null && blocks.isNotEmpty
+        ? formatted(blocks)
+        : (
+            text: withoutPlaceholders(text)
+                .replaceAll('\r\n', '\n')
+                .trimRight(),
+            marks: const <BodyMark>[],
+          );
+    return plainText(row, fromEmail)
+        ? (text: content.text, marks: const <BodyMark>[])
+        : content;
   }
 
   /// A file name for a message saved or attached whole: its subject,
@@ -274,7 +316,7 @@ class ReplyBuilder {
       for (final span in lines) {
         final start = out.length;
         // A quote's later lines keep their "> ".
-        out.write(span.text.replaceAll('\n', '\n$prefix'));
+        out.write(withoutPlaceholders(span.text).replaceAll('\n', '\n$prefix'));
         final end = out.length;
         if (end > start) {
           if (span.bold || b.kind == BlockKind.heading) {
@@ -303,9 +345,13 @@ class ReplyBuilder {
       default:
         final spans = [
           for (final s in b.spans)
-            if (s.text.isNotEmpty) s,
+            if (withoutPlaceholders(s.text).isNotEmpty) s,
         ];
-        if (spans.map((s) => s.text).join().trim().isEmpty) return null;
+        if (withoutPlaceholders(spans.map((s) => s.text).join())
+            .trim()
+            .isEmpty) {
+          return null;
+        }
         return spans;
     }
   }

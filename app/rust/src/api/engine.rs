@@ -630,9 +630,13 @@ fn start_maintenance() {
                     }
                 }
                 let more = match store() {
-                    Ok(mut store) => store.maintain().unwrap_or(false),
+                    Ok(mut store) => store.maintain().unwrap_or_else(|e| {
+                        log::warn!("background work: {e}");
+                        false
+                    }),
                     Err(_) => false,
                 };
+                take_restored();
                 if more {
                     std::thread::sleep(MAINTENANCE_PAUSE);
                 } else {
@@ -647,6 +651,36 @@ fn start_maintenance() {
         });
     if let Ok(handle) = spawned {
         let _ = MAINTENANCE.set(handle.thread().clone());
+    }
+}
+
+/// Accounts a removal gave back, because mail written in them hadn't
+/// gone (see `Store::maintain`): followed again, and since their password
+/// and sign-in went with the removal, the app asks to sign in to them
+/// again, as for a password the server refused.
+pub(crate) fn take_restored() {
+    let restored = match store().and_then(|s| Ok(s.take_restored()?)) {
+        Ok(restored) => restored,
+        Err(e) => {
+            log::warn!("accounts given back: {e}");
+            return;
+        }
+    };
+    for back in restored {
+        if back.address_taken {
+            log::warn!(
+                "account {} given back with a placeholder address: another account has its own",
+                back.account.0
+            );
+        }
+        let account = store()
+            .and_then(|s| Ok(s.accounts()?))
+            .map(|accounts| accounts.into_iter().find(|a| a.id == back.account));
+        if let Ok(Some(account)) = account {
+            // Without a password, its watcher asks to sign in again.
+            let _ = watch_account(account);
+            crate::background::sign_in_failed(back.account, false);
+        }
     }
 }
 
@@ -2095,6 +2129,60 @@ mod credential_recovery_tests {
             .map(|d| d.as_secs())
             .collect();
         assert_eq!(secs, [5, 10, 20, 40, 80, 160, 300, 300, 300]);
+    }
+
+    #[test]
+    fn an_account_a_removal_gives_back_asks_to_sign_in_again() {
+        memory_keychain();
+        open_engine(":memory:".into()).unwrap();
+        let id = store()
+            .unwrap()
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Home".into(),
+                email: "given.back@studio.it".into(),
+                sender_name: "Matteo".into(),
+                color: "#3451D1".into(),
+                kind: piuma_core::AccountKind::Jmap {
+                    session_url: "https://jmap.studio.invalid/session".into(),
+                    username: "matteo".into(),
+                },
+            })
+            .unwrap();
+        {
+            let mut store = store().unwrap();
+            store.start_removing_account(id).unwrap();
+            // A draft kept for it before the removal went on.
+            store
+                .keep_waiting_draft(
+                    &piuma_core::store::WaitingDraft {
+                        id: 0,
+                        account: id,
+                        raw: b"Subject: Plans\r\n\r\nHi".to_vec(),
+                        message_id: "<plans@studio.it>".into(),
+                        earlier: None,
+                        signature: None,
+                    },
+                    None,
+                    100,
+                )
+                .unwrap();
+            store.maintain_all().unwrap();
+            assert!(store.accounts().unwrap().iter().any(|a| a.id == id));
+        }
+        take_restored();
+        let asked = || {
+            WAITING
+                .lock()
+                .unwrap()
+                .contains(&(id.0, SyncEventKind::SignInFailed))
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !asked() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(asked());
+        stop_watching(id);
     }
 
     #[test]
@@ -3576,6 +3664,45 @@ pub struct OutgoingMessage {
     pub remind_at: Option<i64>,
     /// Bold, italic and links over [body].
     pub marks: Vec<BodyMark>,
+    /// Pictures inside the text, one for each U+FFFC in [body], in order.
+    pub images: Vec<InlineImageData>,
+    /// Goes as plain text only (`format=flowed`).
+    pub plain_text: bool,
+    /// Asks for a read receipt.
+    pub read_receipt: bool,
+    /// Marked important.
+    pub high_priority: bool,
+}
+
+/// A picture inside a message being written.
+#[derive(Debug, Clone)]
+pub struct InlineImageData {
+    pub name: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+fn core_images(images: Vec<InlineImageData>) -> Vec<piuma_core::compose_image::InlineImage> {
+    images
+        .into_iter()
+        .map(|i| piuma_core::compose_image::InlineImage {
+            cid: String::new(),
+            name: i.name,
+            mime: i.mime,
+            data: i.data,
+        })
+        .collect()
+}
+
+fn image_data(images: Vec<piuma_core::compose_image::InlineImage>) -> Vec<InlineImageData> {
+    images
+        .into_iter()
+        .map(|i| InlineImageData {
+            name: i.name,
+            mime: i.mime,
+            data: i.data,
+        })
+        .collect()
 }
 
 /// Bold, italic or a link over the characters `start..end` of a body
@@ -4082,6 +4209,10 @@ pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
         signature_picked: false,
         remind_at: None,
         marks: body_marks(d.marks),
+        images: image_data(d.images),
+        plain_text: d.plain_text,
+        read_receipt: d.read_receipt,
+        high_priority: d.high_priority,
         draft: out.saved.map(|(mailbox, uid)| MessageRef {
             account_id: out.account.0,
             mailbox,
@@ -4237,6 +4368,10 @@ fn core_draft(account: &Account, message: OutgoingMessage) -> Result<Draft, Engi
         date: None,
         calendar: None,
         marks: core_marks(message.marks),
+        images: core_images(message.images),
+        plain_text: message.plain_text,
+        read_receipt: message.read_receipt,
+        high_priority: message.high_priority,
     })
 }
 
@@ -4531,6 +4666,10 @@ pub async fn open_draft(draft: MessageRef) -> Result<OutgoingMessage, EngineErro
         signature_picked: picked.is_some(),
         remind_at: None,
         marks: body_marks(d.marks),
+        images: image_data(d.images),
+        plain_text: d.plain_text,
+        read_receipt: d.read_receipt,
+        high_priority: d.high_priority,
         draft: Some(draft),
     })
 }
@@ -5622,6 +5761,10 @@ pub async fn unsubscribe(account_id: i64, mailbox: String, uid: u32) -> Result<(
         signature_picked: false,
         remind_at: None,
         marks: vec![],
+        images: vec![],
+        plain_text: false,
+        read_receipt: false,
+        high_priority: false,
         draft: None,
     })
     .await?;

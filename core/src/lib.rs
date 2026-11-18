@@ -11,12 +11,15 @@ pub mod backoff;
 pub mod brief;
 pub mod calendar;
 pub mod cert;
+pub mod compose_image;
+pub mod contact_groups;
 pub mod dates;
 pub mod eml;
 pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
+pub mod flowed;
 pub mod groups;
 pub mod guard;
 #[cfg(test)]
@@ -28,6 +31,7 @@ pub mod invite;
 pub mod jmap;
 pub mod label;
 pub mod language;
+pub mod mdn;
 pub mod model;
 pub mod network;
 pub mod newsletter;
@@ -69,7 +73,7 @@ pub use reading::Readable;
 pub use search::Query;
 pub use store::{
     AccountFolder, Attachment, Body, Conversation, Found, Hit, MailboxState, MessageTemplate,
-    Person, PrivacyCounts, SenderAddress, Store, StoreError, TrustedSender,
+    Person, PrivacyCounts, Restored, SenderAddress, Store, StoreError, TrustedSender,
 };
 
 /// Engine version, shown in the app's settings.

@@ -6414,6 +6414,169 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get composeOptions => 'Options';
+
+  @override
+  String get composePlainText => 'Plain text';
+
+  @override
+  String get composeHighPriority => 'High priority';
+
+  @override
+  String get composeReadReceipt => 'Ask for a read receipt';
+
+  @override
+  String get composePlainTitle => 'Switch to plain text?';
+
+  @override
+  String get composePlainBody =>
+      'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.';
+
+  @override
+  String get composePlainConfirm => 'Switch to plain text';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Forgot the attachment?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Your message mentions an attachment, but nothing is attached.';
+
+  @override
+  String get sendNoSubjectTitle => 'Send without a subject?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'A subject helps people find your message later.';
+
+  @override
+  String get sendAddSubject => 'Add a subject';
+
+  @override
+  String get sendAnyway => 'Send anyway';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name is too big: attachments can be up to $size in all.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name is too big to go in the text.';
+  }
+
+  @override
+  String get pastedImage => 'The pasted picture';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count addresses',
+      one: '1 address',
+      zero: 'No addresses',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Group';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender asked to be told when you read this.';
+  }
+
+  @override
+  String get readReceiptSend => 'Send receipt';
+
+  @override
+  String get readReceiptDontSend => 'Don’t send';
+
+  @override
+  String get readReceiptNever => 'Never for this sender';
+
+  @override
+  String get readReceiptSent => 'Receipt sent';
+
+  @override
+  String get readReceiptFailed =>
+      'The receipt couldn’t be sent. Try again later.';
+
+  @override
+  String get highPriority => 'High priority';
+
+  @override
+  String get repliesTitle => 'Replies';
+
+  @override
+  String get replyBelowQuote => 'Reply below the quote';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Off, replies start above the quoted message.';
+
+  @override
+  String get quoteSelection => 'Quote only the selected words';
+
+  @override
+  String get quoteSelectionHint =>
+      'With words selected in a message, Reply quotes just them.';
+
+  @override
+  String get plainTextTitle => 'New messages in plain text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · new messages start as plain text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Contact groups';
+
+  @override
+  String get contactGroupsHint =>
+      'Type a group’s name in To, Cc or Bcc to add everyone in it.';
+
+  @override
+  String get contactGroupNew => 'New group';
+
+  @override
+  String get contactGroupUntitled => 'Untitled group';
+
+  @override
+  String get contactGroupName => 'Group name';
+
+  @override
+  String get contactGroupAddresses => 'Addresses';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'One per line, or separated by commas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Delete $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insert picture';
+
+  @override
+  String get composePastePicture => 'Paste picture';
+
+  @override
+  String get noPictureToPaste => 'There’s no picture on the clipboard.';
+
+  @override
+  String get composeReadReceiptAsked => 'Read receipt asked for';
+
+  @override
+  String get readReceiptQueued =>
+      'The receipt is waiting in the Outbox and goes as soon as it can.';
+
+  @override
   String oauthOwnClientNotHere(String provider) {
     return 'On Android this app can only sign in to $provider with the client it was built with. Use an app password, or a build made with your client.';
   }

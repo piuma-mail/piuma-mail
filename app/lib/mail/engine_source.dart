@@ -31,6 +31,7 @@ import '../engine/api/storage.dart' as store;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
+import 'engine_compose.dart';
 import 'mail_source.dart';
 import 'recipient_suggestions.dart';
 import 'resubscribe.dart';
@@ -47,7 +48,7 @@ void refreshAndroidNotices(engine.SyncEvent e) {
 }
 
 /// The real thing: mail from the Rust engine.
-class EngineMailSource extends MailSource {
+class EngineMailSource extends MailSource with EngineCompose {
   EngineMailSource() {
     _reloadAccounts();
     _readFeatures();
@@ -634,6 +635,12 @@ class EngineMailSource extends MailSource {
         _changes.add(null);
         _dropped.add(e.removed);
       case engine.SyncEventKind.signInFailed:
+        // An account a removal gave back, because mail written in it
+        // hadn't gone: listed again, to sign in to it.
+        if (!_accounts.any((a) => a.id == id)) {
+          _reloadAccounts();
+          _changes.add(null);
+        }
         _progress.remove(id);
         _offline.remove(id);
         _failed.add(id);
@@ -3238,7 +3245,18 @@ class EngineMailSource extends MailSource {
           null => null,
         },
         marks: _engineMarks(draft.body, draft.marks),
+        images: [
+          for (final i in draft.images)
+            engine.InlineImageData(name: i.name, mime: i.mime, data: i.data),
+        ],
+        plainText: draft.plainText,
+        readReceipt: draft.readReceipt,
+        highPriority: draft.highPriority,
       );
+
+  static List<DraftImage> _draftImages(List<engine.InlineImageData> images) => [
+    for (final i in images) DraftImage(i.name, i.mime, i.data),
+  ];
 
   @override
   Future<int> draftCount() =>
@@ -3278,6 +3296,10 @@ class EngineMailSource extends MailSource {
       signaturePicked: m.signaturePicked,
       copy: DraftCopy(row.accountId, row.mailbox, row.uid),
       marks: _dartMarks(m.body.replaceAll('\r\n', '\n'), m.marks),
+      images: _draftImages(m.images),
+      plainText: m.plainText,
+      readReceipt: m.readReceipt,
+      highPriority: m.highPriority,
     );
   }
 
@@ -3492,6 +3514,10 @@ class EngineMailSource extends MailSource {
             ? null
             : DraftCopy(copy.accountId, copy.mailbox, copy.uid),
         marks: _dartMarks(m.body, m.marks),
+        images: _draftImages(m.images),
+        plainText: m.plainText,
+        readReceipt: m.readReceipt,
+        highPriority: m.highPriority,
       );
     } finally {
       _changes.add(null);

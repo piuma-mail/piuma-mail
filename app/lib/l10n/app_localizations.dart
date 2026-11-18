@@ -9502,6 +9502,276 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
 
+  /// No description provided for @composeOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Options'**
+  String get composeOptions;
+
+  /// No description provided for @composePlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text'**
+  String get composePlainText;
+
+  /// No description provided for @composeHighPriority.
+  ///
+  /// In en, this message translates to:
+  /// **'High priority'**
+  String get composeHighPriority;
+
+  /// No description provided for @composeReadReceipt.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for a read receipt'**
+  String get composeReadReceipt;
+
+  /// No description provided for @composePlainTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to plain text?'**
+  String get composePlainTitle;
+
+  /// No description provided for @composePlainBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.'**
+  String get composePlainBody;
+
+  /// No description provided for @composePlainConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to plain text'**
+  String get composePlainConfirm;
+
+  /// No description provided for @sendForgotAttachmentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot the attachment?'**
+  String get sendForgotAttachmentTitle;
+
+  /// No description provided for @sendForgotAttachmentBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Your message mentions an attachment, but nothing is attached.'**
+  String get sendForgotAttachmentBody;
+
+  /// No description provided for @sendNoSubjectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send without a subject?'**
+  String get sendNoSubjectTitle;
+
+  /// No description provided for @sendNoSubjectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A subject helps people find your message later.'**
+  String get sendNoSubjectBody;
+
+  /// No description provided for @sendAddSubject.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a subject'**
+  String get sendAddSubject;
+
+  /// No description provided for @sendAnyway.
+  ///
+  /// In en, this message translates to:
+  /// **'Send anyway'**
+  String get sendAnyway;
+
+  /// No description provided for @fileTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too big: attachments can be up to {size} in all.'**
+  String fileTooLarge(String name, String size);
+
+  /// No description provided for @imageTooBig.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too big to go in the text.'**
+  String imageTooBig(String name);
+
+  /// No description provided for @pastedImage.
+  ///
+  /// In en, this message translates to:
+  /// **'The pasted picture'**
+  String get pastedImage;
+
+  /// No description provided for @contactGroupCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No addresses} =1{1 address} other{{count} addresses}}'**
+  String contactGroupCount(int count);
+
+  /// No description provided for @contactGroupTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get contactGroupTag;
+
+  /// No description provided for @readReceiptAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'{sender} asked to be told when you read this.'**
+  String readReceiptAsk(String sender);
+
+  /// No description provided for @readReceiptSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send receipt'**
+  String get readReceiptSend;
+
+  /// No description provided for @readReceiptDontSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Don’t send'**
+  String get readReceiptDontSend;
+
+  /// No description provided for @readReceiptNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never for this sender'**
+  String get readReceiptNever;
+
+  /// No description provided for @readReceiptSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Receipt sent'**
+  String get readReceiptSent;
+
+  /// No description provided for @readReceiptFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The receipt couldn’t be sent. Try again later.'**
+  String get readReceiptFailed;
+
+  /// No description provided for @highPriority.
+  ///
+  /// In en, this message translates to:
+  /// **'High priority'**
+  String get highPriority;
+
+  /// No description provided for @repliesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Replies'**
+  String get repliesTitle;
+
+  /// No description provided for @replyBelowQuote.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply below the quote'**
+  String get replyBelowQuote;
+
+  /// No description provided for @replyBelowQuoteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, replies start above the quoted message.'**
+  String get replyBelowQuoteHint;
+
+  /// No description provided for @quoteSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote only the selected words'**
+  String get quoteSelection;
+
+  /// No description provided for @quoteSelectionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'With words selected in a message, Reply quotes just them.'**
+  String get quoteSelectionHint;
+
+  /// No description provided for @plainTextTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages in plain text'**
+  String get plainTextTitle;
+
+  /// No description provided for @plainTextOn.
+  ///
+  /// In en, this message translates to:
+  /// **'{email} · new messages start as plain text'**
+  String plainTextOn(String email);
+
+  /// No description provided for @contactGroupsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact groups'**
+  String get contactGroupsTitle;
+
+  /// No description provided for @contactGroupsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Type a group’s name in To, Cc or Bcc to add everyone in it.'**
+  String get contactGroupsHint;
+
+  /// No description provided for @contactGroupNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New group'**
+  String get contactGroupNew;
+
+  /// No description provided for @contactGroupUntitled.
+  ///
+  /// In en, this message translates to:
+  /// **'Untitled group'**
+  String get contactGroupUntitled;
+
+  /// No description provided for @contactGroupName.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name'**
+  String get contactGroupName;
+
+  /// No description provided for @contactGroupAddresses.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses'**
+  String get contactGroupAddresses;
+
+  /// No description provided for @contactGroupAddressesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'One per line, or separated by commas.'**
+  String get contactGroupAddressesHint;
+
+  /// No description provided for @contactGroupDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {name}'**
+  String contactGroupDelete(String name);
+
+  /// No description provided for @composeInsertPicture.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert picture'**
+  String get composeInsertPicture;
+
+  /// No description provided for @composePastePicture.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste picture'**
+  String get composePastePicture;
+
+  /// No description provided for @noPictureToPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'There’s no picture on the clipboard.'**
+  String get noPictureToPaste;
+
+  /// No description provided for @composeReadReceiptAsked.
+  ///
+  /// In en, this message translates to:
+  /// **'Read receipt asked for'**
+  String get composeReadReceiptAsked;
+
+  /// No description provided for @readReceiptQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'The receipt is waiting in the Outbox and goes as soon as it can.'**
+  String get readReceiptQueued;
+
   /// No description provided for @oauthOwnClientNotHere.
   ///
   /// In en, this message translates to:

@@ -8,6 +8,7 @@ import '../design/icons.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
+import '../compose/quoting.dart' show readerSelection;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
@@ -96,6 +97,8 @@ class MessageBody extends StatelessWidget {
       previous = b;
     }
     return SelectionArea(
+      // A reply can quote only the words selected (Settings › Writing).
+      onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
