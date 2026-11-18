@@ -44,6 +44,17 @@ fn config(test: &str) -> Option<ImapConfig> {
 }
 
 fn store_with_account() -> (Arc<Mutex<Store>>, AccountId) {
+    store_with_imap_host("localhost")
+}
+
+/// An account whose IMAP host names a PEC provider: receipts count only on
+/// certified mailboxes (`pec::certified`). The connection still goes to
+/// the test server.
+fn store_with_pec_account() -> (Arc<Mutex<Store>>, AccountId) {
+    store_with_imap_host("imaps.pec.example.it")
+}
+
+fn store_with_imap_host(host: &str) -> (Arc<Mutex<Store>>, AccountId) {
     let store = Store::open_in_memory().unwrap();
     let id = store
         .add_account(&Account {
@@ -54,7 +65,7 @@ fn store_with_account() -> (Arc<Mutex<Store>>, AccountId) {
             color: "#2F8F83".into(),
             kind: AccountKind::Imap {
                 imap: Server {
-                    host: "localhost".into(),
+                    host: host.into(),
                     port: 31143,
                     security: Security::None,
                 },
@@ -1827,7 +1838,7 @@ async fn pec_receipts_leave_the_inbox_and_gather_per_message() {
         .deliver(PEC_DELIVERED, "19-Oct-2026 09:12:04 +0200")
         .await;
 
-    let (store, account) = store_with_account();
+    let (store, account) = store_with_pec_account();
     let mut conn = Connection::open(&cfg).await.unwrap();
     let report = conn
         .sync_mailbox(&store, account, "INBOX", |_, _| {})
@@ -1845,6 +1856,15 @@ async fn pec_receipts_leave_the_inbox_and_gather_per_message() {
     // The receipt is the provider's signed message, saved whole.
     let raw = conn.raw("INBOX", 3).await.unwrap();
     assert!(String::from_utf8_lossy(&raw).contains("X-Ricevuta: avvenuta-consegna"));
+
+    // On an ordinary mailbox anyone can write those headers: the same mail
+    // stays in the inbox and proves nothing.
+    let (plain, other) = store_with_account();
+    conn.sync_mailbox(&plain, other, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(subjects(&plain, Folder::Inbox).len(), 3);
+    assert!(plain.lock().unwrap().pec_sent(None).unwrap().is_empty());
 }
 
 #[tokio::test]

@@ -171,6 +171,28 @@ pub struct Connection {
     /// The deadline and budget of the commands under way.
     limits: Arc<crate::watchdog::Limits>,
     timing: Timing,
+    /// What the last [`Self::sync_round`] of each mailbox found when it
+    /// selected it, for [`Self::reselect`].
+    synced: HashMap<String, Selected>,
+}
+
+/// A mailbox as SELECT described it: message count, UIDNEXT and, with
+/// CONDSTORE, its highest modseq.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Selected {
+    exists: u32,
+    uid_next: Option<u32>,
+    modseq: Option<u64>,
+}
+
+impl Selected {
+    fn of(m: &async_imap::types::Mailbox) -> Self {
+        Selected {
+            exists: m.exists,
+            uid_next: m.uid_next,
+            modseq: m.highest_modseq,
+        }
+    }
 }
 
 /// How long the connection waits on the server, and how long the watcher
@@ -308,6 +330,7 @@ impl Connection {
             roles: Vec::new(),
             limits,
             timing,
+            synced: HashMap::new(),
         })
     }
 
@@ -424,6 +447,9 @@ impl Connection {
         if !keeps_keywords(&selected) {
             lock(store).set_labels_local(account)?;
         }
+        self.synced
+            .insert(mailbox.to_owned(), Selected::of(&selected));
+        let session = self.session()?;
 
         let (prior, local) = {
             let store = lock(store);
@@ -774,6 +800,21 @@ impl Connection {
             .try_collect()
             .await?;
         Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
+    }
+
+    /// Selects `mailbox` again after commands on other folders, for IDLE
+    /// to watch it. True when it changed since the last
+    /// [`Self::sync_round`] of it: mail that came in meanwhile is told
+    /// only in SELECT's own answer, and IDLE would never report it.
+    pub async fn reselect(&mut self, mailbox: &str) -> Result<bool> {
+        let condstore = self.condstore;
+        let session = self.session()?;
+        let selected = if condstore {
+            session.select_condstore(mailbox).await?
+        } else {
+            session.select(mailbox).await?
+        };
+        Ok(self.synced.get(mailbox) != Some(&Selected::of(&selected)))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -2105,8 +2146,11 @@ pub async fn watch_timed(
                     };
                     folders_more = conn.sync_folders_round(&store, account, round).await?;
                     folders_synced = Some(std::time::Instant::now());
-                    // IDLE watches the selected folder.
-                    conn.session()?.select(&mailbox).await?;
+                    // IDLE watches the selected folder. Mail that came in
+                    // during the other folders' round is synced first.
+                    if conn.reselect(&mailbox).await? {
+                        continue;
+                    }
                 }
                 // A whole round went through: the next failure is a new
                 // one, with a short wait.
