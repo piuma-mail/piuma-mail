@@ -217,19 +217,22 @@ class _SearchPanelState extends State<SearchPanel> {
     if (token != null) _suggestStart = token.start;
     if (!listEquals(shown, _suggestions)) setState(() => _suggestions = shown);
     final person = token == null ? null : personTyped(token.typed);
-    if (person != null) _lookUpPeople(person.$2);
+    if (person != null && person.$2 != _peopleFor) _lookUpPeople(person.$2);
   }
+
+  /// What the people in the suggestions were looked up for.
+  String? _peopleFor;
 
   /// People whose name or address starts with [typed], for `from:` and
   /// the like.
   Future<void> _lookUpPeople(String typed) async {
+    _peopleFor = typed;
     final round = ++_suggestRound;
     final people = typed.trim().isEmpty
         ? _frequent
         : await widget.source.suggestRecipients(typed);
     if (!mounted || round != _suggestRound) return;
     final d = _suggestData;
-    if (identical(d.people, people)) return;
     _suggestData = SuggestionData(
       folders: d.folders,
       labels: d.labels,
