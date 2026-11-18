@@ -176,10 +176,11 @@ pub struct Connection {
     synced: HashMap<String, Selected>,
 }
 
-/// A mailbox as SELECT described it: message count, UIDNEXT and, with
-/// CONDSTORE, its highest modseq.
+/// A mailbox as SELECT described it: UIDVALIDITY, message count,
+/// UIDNEXT and, with CONDSTORE, its highest modseq.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Selected {
+    uid_validity: Option<u32>,
     exists: u32,
     uid_next: Option<u32>,
     modseq: Option<u64>,
@@ -188,11 +189,18 @@ struct Selected {
 impl Selected {
     fn of(m: &async_imap::types::Mailbox) -> Self {
         Selected {
+            uid_validity: m.uid_validity,
             exists: m.exists,
             uid_next: m.uid_next,
             modseq: m.highest_modseq,
         }
     }
+}
+
+/// Whether `now` differs from what the last sync of the mailbox saw
+/// (`synced`), or the mailbox was never synced on this connection.
+fn changed_since(synced: Option<&Selected>, now: &async_imap::types::Mailbox) -> bool {
+    synced != Some(&Selected::of(now))
 }
 
 /// How long the connection waits on the server, and how long the watcher
@@ -896,7 +904,7 @@ impl Connection {
         } else {
             session.select(mailbox).await?
         };
-        Ok(self.synced.get(mailbox) != Some(&Selected::of(&selected)))
+        Ok(changed_since(self.synced.get(mailbox), &selected))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -3823,6 +3831,50 @@ pub(crate) fn attachment_data_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reselect_notices_any_change_since_the_last_sync() {
+        let seen = async_imap::types::Mailbox {
+            exists: 10,
+            uid_next: Some(41),
+            uid_validity: Some(7),
+            highest_modseq: Some(900),
+            ..Default::default()
+        };
+        let synced = Selected::of(&seen);
+        assert!(!changed_since(Some(&synced), &seen));
+        assert!(changed_since(None, &seen));
+        // New mail, mail gone with the same count, a flag change, a
+        // recreated mailbox: each one is synced before IDLE.
+        for now in [
+            async_imap::types::Mailbox {
+                exists: 11,
+                uid_next: Some(42),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                uid_next: Some(42),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                highest_modseq: Some(901),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                uid_validity: Some(8),
+                ..seen.clone()
+            },
+        ] {
+            assert!(changed_since(Some(&synced), &now), "{now:?}");
+        }
+        // RECENT and UNSEEN alone are not a change to sync for.
+        let now = async_imap::types::Mailbox {
+            recent: 3,
+            unseen: Some(2),
+            ..seen.clone()
+        };
+        assert!(!changed_since(Some(&synced), &now));
+    }
 
     #[test]
     fn folder_names_under_inbox_are_compared_by_character() {
