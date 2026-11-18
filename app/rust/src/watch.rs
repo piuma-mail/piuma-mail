@@ -92,7 +92,7 @@ pub fn summary_json(
 
 /// How many more people Reply all reaches than Reply, from the headers
 /// kept with the message: 0 when they aren't known yet.
-fn others(account_id: i64, mailbox: &str, uid: u32) -> u32 {
+pub(crate) fn others(account_id: i64, mailbox: &str, uid: u32) -> u32 {
     let Ok(store) = engine::reader() else {
         return 0;
     };

@@ -457,8 +457,20 @@ pub fn to_json(notices: &[MailNotice]) -> String {
             let no_reply = n.no_reply.as_ref().map_or(String::new(), |r| {
                 format!(r#","noReply":{{"sentDaysAgo":{}}}"#, r.sent_days_ago)
             });
+            // How many more people Reply all reaches, for its button on a
+            // watch; left out when none (or the headers aren't known yet).
+            let others = if n.count == 1 && n.away.is_none() && n.reminder.is_none() {
+                crate::watch::others(n.account_id, &n.mailbox, n.uid)
+            } else {
+                0
+            };
+            let others = if others > 0 {
+                format!(r#","others":{others}"#)
+            } else {
+                String::new()
+            };
             format!(
-                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}}}"#,
+                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}{}}}"#,
                 notice_id(n),
                 quote(&n.sender),
                 n.count,
@@ -473,7 +485,8 @@ pub fn to_json(notices: &[MailNotice]) -> String {
                 n.silent,
                 vault,
                 away,
-                no_reply
+                no_reply,
+                others
             )
         })
         .collect();

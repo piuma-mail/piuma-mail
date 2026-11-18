@@ -25,7 +25,7 @@ class NoticeActions : BroadcastReceiver() {
         val id = intent.getIntExtra(ID, 0)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(REPLY)?.toString().orEmpty()
-        if (action == "reply" && text.isBlank()) return
+        if ((action == "reply" || action == "replyAll") && text.isBlank()) return
         val pending = goAsync()
         Thread {
             val done = try {
@@ -89,9 +89,10 @@ class NoticeActions : BroadcastReceiver() {
 
         /**
          * Adds the three buttons to the notice [id] for one email, and on a
-         * paired watch Delete and Mark read too.
+         * paired watch Delete and Mark read too, and Reply all when the
+         * email went to [others] more people than Reply reaches.
          */
-        fun add(context: Context, builder: Notification.Builder, id: Int, payload: String, sender: String) {
+        fun add(context: Context, builder: Notification.Builder, id: Int, payload: String, sender: String, others: Int = 0) {
             fun intent(action: String, code: Int, mutable: Boolean = false): PendingIntent {
                 val i = Intent(context, NoticeActions::class.java)
                     .putExtra(ACTION, action)
@@ -126,6 +127,17 @@ class NoticeActions : BroadcastReceiver() {
             val read = Notification.Action.Builder(icon, context.getString(R.string.notice_read), intent("read", 5))
                 .means(Notification.Action.SEMANTIC_ACTION_MARK_AS_READ)
                 .build()
+            val replyAll = if (others > 0) {
+                val everyone = RemoteInput.Builder(REPLY)
+                    .setLabel(context.getString(R.string.notice_reply_all_hint, sender, others))
+                    .build()
+                Notification.Action.Builder(icon, context.getString(R.string.notice_reply_all), intent("replyAll", 6, mutable = true))
+                    .addRemoteInput(everyone)
+                    .setAllowGeneratedReplies(false)
+                    .build()
+            } else {
+                null
+            }
             builder.addAction(reply)
             builder.addAction(archive)
             builder.addAction(snooze)
@@ -133,6 +145,7 @@ class NoticeActions : BroadcastReceiver() {
             builder.extend(
                 Notification.WearableExtender()
                     .addAction(reply)
+                    .apply { if (replyAll != null) addAction(replyAll) }
                     .addAction(archive)
                     .addAction(read)
                     .addAction(delete)
