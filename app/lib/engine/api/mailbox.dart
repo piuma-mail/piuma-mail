@@ -9,7 +9,7 @@ import 'engine.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `accounts_of`, `by_folder`, `quota_info`, `refs`, `send`, `split_for_good`, `swipe_in`, `swipe_out`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Stars emails, or takes their stars off: here at once, then on their
 /// servers; offline, at the next sync.
@@ -58,8 +58,9 @@ Future<int> folderTotal({
 );
 
 /// Empty Trash, Empty spam: every email of the folder goes for good.
-/// Online, all of them on the server; offline, the ones here, at the next
-/// sync. Refused for any other folder. Returns how many went (or will).
+/// Online, those on the server when [`folder_total`] counted them (or,
+/// when it couldn't reach the server, only the ones here); offline, the
+/// ones here, at the next sync. Refused for any other folder. Returns how many went (or will).
 Future<int> emptyFolder({
   required PlatformInt64 accountId,
   required String mailbox,

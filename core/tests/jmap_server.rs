@@ -8,7 +8,7 @@ use std::time::Duration;
 use piuma_core::imap::FolderRole;
 use piuma_core::jmap::{discover_at, Client, JmapConfig, JmapError};
 use piuma_core::model::{Account, AccountId, AccountKind};
-use piuma_core::remote::Remote;
+use piuma_core::remote::{Remote, Snapshot};
 use piuma_core::space::{self, Device, Key};
 use piuma_core::space_sync::{self, Me, Round};
 use piuma_core::{Folder, Store};
@@ -1678,7 +1678,7 @@ async fn manages_the_mailbox() {
         .add("mb-trash", "Ana <ana@example.org>", "Late", 3, true);
     assert_eq!(
         remote
-            .empty(&store, account, "mb-trash", Some(&upto))
+            .empty(&store, account, "mb-trash", &upto)
             .await
             .unwrap(),
         2
@@ -1693,6 +1693,15 @@ async fn manages_the_mailbox() {
             .collect();
         assert_eq!(left, [&late]);
     }
+
+    // Counted with the server out of reach: only what is here goes, and
+    // Late isn't here yet, so it stays (re-check finding 1).
+    let here = Snapshot::here(&store, account, "mb-trash").unwrap();
+    remote
+        .empty(&store, account, "mb-trash", &here)
+        .await
+        .unwrap();
+    assert!(server.lock().unwrap().emails.contains_key(&late));
 
     // A move to Trash of mail already there does nothing: deleting for
     // good is only ever asked for by name.

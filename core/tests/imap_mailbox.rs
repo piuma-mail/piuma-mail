@@ -12,7 +12,7 @@ use std::time::Duration;
 use piuma_core::imap::{Connection, FolderRole, ImapConfig, Timing};
 use piuma_core::model::ReplyInfo;
 use piuma_core::pending::{Change, FolderChange};
-use piuma_core::remote::Remote;
+use piuma_core::remote::{Remote, Snapshot};
 use piuma_core::{
     Account, AccountId, AccountKind, Flags, ListInfo, MailboxState, MessageSummary, Security,
     Server, Store,
@@ -496,11 +496,24 @@ async fn empty_trash_deletes_all_of_it() {
     let (n, upto) = remote.count("Trash").await.unwrap();
     assert_eq!(n, 2);
     // One not here yet goes too.
-    assert_eq!(
-        remote.empty(&store, a, "Trash", Some(&upto)).await.unwrap(),
-        2
-    );
+    assert_eq!(remote.empty(&store, a, "Trash", &upto).await.unwrap(), 2);
     assert!(state.lock().unwrap().uids("Trash").is_empty());
+    assert_eq!(store.lock().unwrap().messages_in(a, "Trash").unwrap(), 0);
+}
+
+/// When the count couldn't reach the server, Empty keeps to the messages
+/// that are here: one on the server and not here yet stays, even if the
+/// server is back by the time the person confirms (re-check finding 1).
+#[tokio::test]
+async fn empty_trash_without_a_count_takes_only_what_is_here() {
+    let state = mailbox();
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    stored(&store, a, "Trash", 1, &[1]);
+    let here = Snapshot::here(&store, a, "Trash").unwrap();
+    let mut remote = connect(&cfg).await;
+    assert_eq!(remote.empty(&store, a, "Trash", &here).await.unwrap(), 1);
+    assert_eq!(state.lock().unwrap().uids("Trash"), [2]);
     assert_eq!(store.lock().unwrap().messages_in(a, "Trash").unwrap(), 0);
 }
 
@@ -814,10 +827,7 @@ async fn empty_trash_spares_new_mail_and_waiting_changes() {
         s.queue_change(a, "Trash", 1, Change::MoveTo("INBOX".into()))
             .unwrap();
     }
-    assert_eq!(
-        remote.empty(&store, a, "Trash", Some(&upto)).await.unwrap(),
-        1
-    );
+    assert_eq!(remote.empty(&store, a, "Trash", &upto).await.unwrap(), 1);
     assert_eq!(state.lock().unwrap().uids("Trash"), [1, 3]);
     // The move then goes, as the bridge sends it first.
     remote.send_pending(&store, a).await.unwrap();

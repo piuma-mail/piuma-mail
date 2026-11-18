@@ -1,6 +1,7 @@
 //! One way to reach any account's server, IMAP or JMAP, so the app asks
 //! for the same things whatever the protocol.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
@@ -68,8 +69,29 @@ pub(crate) fn resolve_historical_attachment(
 /// next UID then (IMAP), or the ids (JMAP).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Snapshot {
-    Imap { uid_next: Option<u32> },
-    Jmap { ids: Vec<String> },
+    Imap {
+        uid_next: Option<u32>,
+    },
+    Jmap {
+        ids: Vec<String>,
+    },
+    /// The server couldn't be counted: only these messages that are here
+    /// (their uids here), never more.
+    Here {
+        uids: Vec<u32>,
+    },
+}
+
+impl Snapshot {
+    /// What Empty keeps to when the server couldn't say what it holds:
+    /// the messages shown here with nothing waiting for them.
+    pub fn here(store: &Mutex<Store>, account: AccountId, mailbox: &str) -> Result<Self> {
+        let uids = store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .erasable_uids(account, mailbox)?;
+        Ok(Snapshot::Here { uids })
+    }
 }
 
 /// A logged-in connection to an account's server.
@@ -408,30 +430,52 @@ impl Remote {
     }
 
     /// Deletes the messages of a folder for good (Empty Trash, Empty
-    /// spam): with `upto`, only what was there when [`Self::count`] gave
-    /// it, so mail that came after stays; never one with a change still
-    /// waiting. Returns how many went.
+    /// spam), keeping to `upto`: what was there when [`Self::count`] gave
+    /// it, so mail that came after stays, or, when the server couldn't be
+    /// counted, only the messages that are here. Never one with a change
+    /// still waiting. Returns how many went.
     pub async fn empty(
         &mut self,
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
-        upto: Option<&Snapshot>,
+        upto: &Snapshot,
     ) -> Result<usize> {
+        // A snapshot of the other protocol says nothing about this
+        // server: keep to what is here.
+        let fallback;
+        let upto = match (&*self, upto) {
+            (Remote::Imap(_), Snapshot::Jmap { .. }) | (Remote::Jmap(_), Snapshot::Imap { .. }) => {
+                fallback = Snapshot::here(store, account, mailbox)?;
+                &fallback
+            }
+            _ => upto,
+        };
         Ok(match self {
             Remote::Imap(c) => {
-                let below = match upto {
-                    Some(Snapshot::Imap { uid_next }) => *uid_next,
-                    _ => None,
+                let limit = match upto {
+                    Snapshot::Imap { uid_next } => imap::EmptyLimit::Below(*uid_next),
+                    Snapshot::Here { uids } => {
+                        imap::EmptyLimit::Only(uids.iter().copied().collect())
+                    }
+                    Snapshot::Jmap { .. } => unreachable!("replaced above"),
                 };
-                c.empty(store, account, mailbox, below).await?
+                c.empty(store, account, mailbox, &limit).await?
             }
             Remote::Jmap(c) => {
-                let only = match upto {
-                    Some(Snapshot::Jmap { ids }) => Some(ids.as_slice()),
-                    _ => None,
+                let only: HashSet<String> = match upto {
+                    Snapshot::Jmap { ids } => ids.iter().cloned().collect(),
+                    Snapshot::Here { uids } => {
+                        let st = store.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut ids = HashSet::new();
+                        for uid in uids {
+                            ids.extend(st.jmap_id(account, mailbox, *uid)?);
+                        }
+                        ids
+                    }
+                    Snapshot::Imap { .. } => unreachable!("replaced above"),
                 };
-                c.empty(store, account, mailbox, only).await?
+                c.empty(store, account, mailbox, &only).await?
             }
         })
     }

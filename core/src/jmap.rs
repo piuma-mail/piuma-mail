@@ -922,8 +922,9 @@ impl Client {
     }
 
     /// Deletes the emails of `mailbox` for good (Empty Trash, Empty spam)
-    /// and forgets them here: with `only`, those of the ids the person
-    /// was told the count with, so mail that came after stays; none with
+    /// and forgets them here: only those of `only` (the ids the person
+    /// was told the count with, or those here when the server couldn't be
+    /// counted), so mail that came after stays; none with
     /// a change still waiting. An email that is in another folder too
     /// only leaves this one. Returns how many went.
     pub async fn empty(
@@ -931,7 +932,7 @@ impl Client {
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
-        only: Option<&[String]>,
+        only: &HashSet<String>,
     ) -> Result<usize> {
         let remote = self.remote(mailbox)?;
         let waiting: HashSet<String> = {
@@ -946,7 +947,7 @@ impl Client {
             .query_ids(&remote)
             .await?
             .into_iter()
-            .filter(|id| only.is_none_or(|o| o.contains(id)) && !waiting.contains(id))
+            .filter(|id| only.contains(id) && !waiting.contains(id))
             .collect();
         for chunk in ids.chunks(self.max_get) {
             self.leave_or_destroy(&remote, chunk).await?;

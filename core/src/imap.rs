@@ -1060,16 +1060,17 @@ impl Connection {
     }
 
     /// Deletes the messages of `mailbox` for good (Empty Trash, Empty
-    /// spam) and forgets them here: those numbered below `below` (the
-    /// UIDNEXT the person was told the count with), so mail that came
-    /// after it stays; none with a change still waiting (a message put
-    /// back from Trash meanwhile). Returns how many went.
+    /// spam) and forgets them here: those `limit` allows (numbered below
+    /// the UIDNEXT the person was told the count with, so mail that came
+    /// after it stays, or only those that are here when the server
+    /// couldn't be counted); none with a change still waiting (a message
+    /// put back from Trash meanwhile). Returns how many went.
     pub async fn empty(
         &mut self,
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
-        below: Option<u32>,
+        limit: &EmptyLimit,
     ) -> Result<usize> {
         let uidplus = self.uidplus;
         let selected = self.select_checked(store, account, mailbox).await?;
@@ -1082,7 +1083,7 @@ impl Connection {
             .uid_search("ALL")
             .await?
             .into_iter()
-            .filter(|u| below.is_none_or(|b| *u < b) && !waiting.contains(u))
+            .filter(|u| limit.allows(*u) && !waiting.contains(u))
             .collect();
         uids.sort_unstable();
         if uids.is_empty() {
@@ -2151,6 +2152,24 @@ fn retry_cap(answered: bool, e: &ImapError) -> Duration {
     }
 }
 
+/// Which messages [`Connection::empty`] may delete.
+pub enum EmptyLimit {
+    /// Those numbered below this UIDNEXT, read with the count; every one
+    /// when the server gave none.
+    Below(Option<u32>),
+    /// Only these: the messages here, when the server couldn't be counted.
+    Only(HashSet<u32>),
+}
+
+impl EmptyLimit {
+    fn allows(&self, uid: u32) -> bool {
+        match self {
+            EmptyLimit::Below(below) => below.is_none_or(|b| uid < b),
+            EmptyLimit::Only(uids) => uids.contains(&uid),
+        }
+    }
+}
+
 fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
     store.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -2263,7 +2282,6 @@ fn classify_login(e: async_imap::error::Error) -> ImapError {
     }
 }
 
-/// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
 /// Deletes `uids` of the selected folder for good: `\Deleted`, then
 /// `UID EXPUNGE`. Without UIDPLUS only a plain EXPUNGE is there, which
 /// would also remove what another app marked `\Deleted` and meant to
@@ -2306,6 +2324,7 @@ async fn store_checked(session: &mut Session, set: &str, op: &str) -> Result<()>
     Ok(())
 }
 
+/// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
 fn uid_set(uids: &[u32]) -> String {
     let mut sorted = uids.to_vec();
     sorted.sort_unstable();

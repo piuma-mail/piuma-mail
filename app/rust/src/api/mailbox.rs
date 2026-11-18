@@ -126,9 +126,13 @@ pub async fn folder_total(account_id: i64, mailbox: String) -> Result<u32, Engin
             Ok(n)
         }
         Err(_) => {
-            if let Some(counts) = counts.as_mut() {
-                counts.remove(&key);
-            }
+            // The count shown is what is here, and so is all Empty may
+            // take if the server comes back before the person confirms.
+            let shared = engine.store.clone();
+            let snapshot = Snapshot::here(&shared, id, &key.1)?;
+            counts
+                .get_or_insert_with(HashMap::new)
+                .insert(key, snapshot);
             Ok(here)
         }
     }
@@ -138,8 +142,9 @@ pub async fn folder_total(account_id: i64, mailbox: String) -> Result<u32, Engin
 static COUNTED: Mutex<Option<HashMap<(i64, String), Snapshot>>> = Mutex::new(None);
 
 /// Empty Trash, Empty spam: every email of the folder goes for good.
-/// Online, all of them on the server; offline, the ones here, at the next
-/// sync. Refused for any other folder. Returns how many went (or will).
+/// Online, those on the server when [`folder_total`] counted them (or,
+/// when it couldn't reach the server, only the ones here); offline, the
+/// ones here, at the next sync. Refused for any other folder. Returns how many went (or will).
 pub async fn empty_folder(account_id: i64, mailbox: String) -> Result<u32, EngineError> {
     let engine = engine()?;
     let id = AccountId(account_id);
@@ -152,11 +157,17 @@ pub async fn empty_folder(account_id: i64, mailbox: String) -> Result<u32, Engin
     let (account, password) = signed_in(id)?;
     let shared = engine.store.clone();
     let target = mailbox.clone();
-    let snapshot = COUNTED
+    let counted = COUNTED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_mut()
         .and_then(|c| c.remove(&(account_id, mailbox.clone())));
+    // Never counted on the server: only what is here goes, never
+    // everything the server holds.
+    let snapshot = match counted {
+        Some(s) => s,
+        None => Snapshot::here(&shared, id, &mailbox)?,
+    };
     let emptied = engine
         .runtime
         .spawn(async move {
@@ -165,7 +176,7 @@ pub async fn empty_folder(account_id: i64, mailbox: String) -> Result<u32, Engin
             // it before Trash is emptied.
             let dropped = conn.send_pending(&shared, id).await?;
             crate::api::engine::changes_dropped(id, dropped);
-            let n = conn.empty(&shared, id, &target, snapshot.as_ref()).await?;
+            let n = conn.empty(&shared, id, &target, &snapshot).await?;
             conn.close().await;
             Ok::<_, RemoteError>(n as u32)
         })
