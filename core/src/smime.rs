@@ -458,6 +458,16 @@ pub fn verify_detached(
     None
 }
 
+/// The organization (O) a certificate is issued to, if it reads.
+pub fn organization(der: &[u8]) -> Option<String> {
+    cert(der)?.organization
+}
+
+/// Whether a certificate reads at all, as a chain needs it.
+pub fn readable(der: &[u8]) -> bool {
+    cert(der).is_some()
+}
+
 /// The certificates of a PEM text, as DER.
 pub fn pem(text: &str) -> Vec<Vec<u8>> {
     use base64::Engine;

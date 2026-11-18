@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Writes what PEC receipt signatures are checked against (core/src/pec.rs).
 
-- core/src/pec_anchors.pem: the qualified CAs (service type CA/QC, status
-  "granted") of the Italian trusted list, TSL-IT, the ETSI TS 119 612 list
-  AgID publishes at TSL_URL.
+- core/src/pec_anchors.pem: the CAs AgID runs for the PEC network itself
+  (AgID CA1, AgID CA SMIME RSA 2026: they certify only PEC providers'
+  nodes and signing keys), from AgID_CA_URL; and the qualified CAs
+  (service type CA/QC, status "granted") of the Italian trusted list,
+  TSL-IT, the ETSI TS 119 612 list AgID publishes at TSL_URL.
 - core/src/pec_providers.txt: the PEC providers in AgID's public list
   ("elenco pubblico dei gestori di posta elettronica certificata"), at
   PROVIDERS_URL. A receipt counts only when its signer's certificate is
   issued to one of them: qualified CAs also certify people.
+
+AgID's PEC CAs are anchors themselves: the Actalis roots above them are
+fetched too, only to check (with `openssl verify`) that each AgID CA
+really is issued by them, and are not anchors, since Actalis certifies far
+more than PEC providers.
 
 TSL-IT is signed (XMLDSig). The certificate it is signed with must be one
 the EU's list of trusted lists (LOTL_URL) publishes for Italy, and the
@@ -36,6 +43,18 @@ import xml.etree.ElementTree as ET
 
 TSL_URL = "https://eidas.agid.gov.it/TL/TSL-IT.xml"
 LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
+AGID_CA_URL = (
+    "https://www.agid.gov.it/it/piattaforme/posta-elettronica-certificata/"
+    "certificati-gestori-pec-siti-web"
+)
+# The archives on that page: the PEC network's CAs, and the roots and
+# cross-certificates they hang from (checked, not trusted).
+AGID_PEC_CAS = ("Certificato_SubCA_AGID_CA1", "Sub_AgID CA SMIME RSA 2026")
+AGID_CHAIN = (
+    "Certificato_CA_Actalis_Authentication_Root_CA",
+    "Root_Actalis SMIME RSA Root CA 2025",
+    "Cross_Actalis SMIME RSA RootCA 2025",
+)
 PROVIDERS_URL = (
     "https://www.agid.gov.it/it/piattaforme/posta-elettronica-certificata/elenco-gestori-pec"
 )
@@ -173,6 +192,75 @@ def providers():
     return names
 
 
+def pem_blocks(data):
+    """The base64 of each certificate in a PEM text."""
+    text = data.decode("ascii", "replace")
+    return [
+        "".join(b.split())
+        for b in re.findall(
+            r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", text, flags=re.S
+        )
+    ]
+
+
+def write_pem(f, b64):
+    f.write("-----BEGIN CERTIFICATE-----\n")
+    for i in range(0, len(b64), 64):
+        f.write(b64[i : i + 64] + "\n")
+    f.write("-----END CERTIFICATE-----\n")
+
+
+def agid_cas(skip):
+    """The PEC network's CAs from AgID's page, each checked against the
+    Actalis roots the same page publishes: [(name, base64)], and how."""
+    import io
+    import urllib.parse
+    import zipfile
+
+    page = fetch(AGID_CA_URL).decode("utf-8", "replace")
+    links = {}
+    for href in re.findall(r'href="([^"]+\.zip)"', page):
+        url = urllib.parse.urljoin(AGID_CA_URL, html.unescape(href))
+        name = urllib.parse.unquote(url.rsplit("/", 1)[-1])[: -len(".zip")]
+        links[name] = url
+
+    def certs(name):
+        if name not in links:
+            sys.exit("AgID's page no longer links %r" % name)
+        archive = zipfile.ZipFile(io.BytesIO(fetch(links[name])))
+        found = []
+        for member in archive.namelist():
+            found.extend(pem_blocks(archive.read(member)))
+        if not found:
+            sys.exit("%r holds no certificate" % name)
+        return found
+
+    cas = [(n, b) for n in AGID_PEC_CAS for b in certs(n)]
+    chain = [b for n in AGID_CHAIN for b in certs(n)]
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        if skip:
+            return cas, "chain to the Actalis roots NOT checked (no openssl)"
+        sys.exit("openssl is not installed: install it, or pass --no-signature-check")
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = os.path.join(tmp, "chain.pem")
+        with open(bundle, "w") as f:
+            for b in chain:
+                write_pem(f, b)
+        for name, b64 in cas:
+            leaf = os.path.join(tmp, "ca.pem")
+            with open(leaf, "w") as f:
+                write_pem(f, b64)
+            done = subprocess.run(
+                [openssl, "verify", "-partial_chain", "-CAfile", bundle, leaf],
+                capture_output=True,
+                text=True,
+            )
+            if done.returncode != 0:
+                sys.exit("%s doesn't chain to the Actalis roots:\n%s" % (name, done.stderr))
+    return cas, "each checked with openssl to chain to the Actalis roots on the same page"
+
+
 def generated(path):
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -203,6 +291,7 @@ def main():
     if args.check:
         return check()
 
+    pec_cas, pec_how = agid_cas(args.no_signature_check)
     tsl = fetch(TSL_URL)
     how = check_signature(tsl, italian_signers(fetch(LOTL_URL)), args.no_signature_check)
     issued, cas = anchors(tsl)
@@ -212,18 +301,19 @@ def main():
     today = datetime.date.today().isoformat()
 
     with open(ANCHORS, "w", encoding="utf-8", newline="\n") as f:
-        f.write("# The CAs a PEC receipt's S/MIME signature must lead to (pec.rs): the\n")
-        f.write("# qualified CAs (CA/QC, granted) of the Italian trusted list.\n")
+        f.write("# The CAs a PEC receipt's S/MIME signature must lead to (pec.rs):\n")
+        f.write("# AgID's CAs for the PEC network, then the qualified CAs (CA/QC,\n")
+        f.write("# granted) of the Italian trusted list.\n")
         f.write("# Written by tools/gen_pec_trust.py; don't edit by hand.\n")
         f.write("# Generated: %s\n" % today)
-        f.write("# Source: %s (issued %s)\n" % (TSL_URL, issued))
-        f.write("# Integrity: %s.\n" % how)
+        f.write("# Source: %s (%s)\n" % (AGID_CA_URL, pec_how))
+        f.write("# Source: %s (issued %s; %s)\n" % (TSL_URL, issued, how))
+        for name, b64 in pec_cas:
+            f.write("\n# AgID, PEC network: %s\n" % name)
+            write_pem(f, b64)
         for provider, name, b64 in cas:
             f.write("\n# %s: %s\n" % (provider, name))
-            f.write("-----BEGIN CERTIFICATE-----\n")
-            for i in range(0, len(b64), 64):
-                f.write(b64[i : i + 64] + "\n")
-            f.write("-----END CERTIFICATE-----\n")
+            write_pem(f, b64)
 
     with open(PROVIDERS, "w", encoding="utf-8", newline="\n") as f:
         f.write("# PEC providers, one a line: a receipt's signer must be issued to one\n")
@@ -232,7 +322,8 @@ def main():
         f.write("# Source: %s (current providers, not the ceased ones)\n" % PROVIDERS_URL)
         for n in names:
             f.write(n + "\n")
-    print("%d qualified CAs, %d providers; %s" % (len(cas), len(names), how))
+    print("%d AgID PEC CAs (%s), %d qualified CAs, %d providers; %s"
+          % (len(pec_cas), pec_how, len(cas), len(names), how))
     return 0
 
 

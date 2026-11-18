@@ -8,7 +8,8 @@
 //! outside the PEC system in an envelope of its own), only from the
 //! provider's certificate address, and it is proof only once the
 //! provider's S/MIME signature checks ([`signed`]): a certificate that
-//! leads to a qualified CA of the Italian trusted list ([`ANCHORS`]),
+//! leads to one of AgID's CAs for the PEC network or a qualified CA of the
+//! Italian trusted list ([`ANCHORS`]),
 //! issued to an organization in AgID's list of PEC providers
 //! ([`PROVIDERS`]), for the address the receipt comes from. Qualified CAs
 //! also certify people; the organization keeps their signatures from
@@ -588,6 +589,9 @@ mod tests {
     const NOSIGN: &str = include_str!("../tests/fixtures/pec/nosign.eml");
     const SHA1: &str = include_str!("../tests/fixtures/pec/sha1.eml");
     const TEST_ROOT: &str = include_str!("../tests/fixtures/pec/test-root.pem");
+    const AGID_PEC_CA: &str = include_str!("../tests/fixtures/pec/agid-pec-ca.pem");
+    const PECNET: &str = include_str!("../tests/fixtures/pec/pecnet.eml");
+    const ROOTONLY: &str = include_str!("../tests/fixtures/pec/rootonly.eml");
     /// 18 November 2026.
     const NOW: i64 = 1_795_000_000;
 
@@ -688,6 +692,28 @@ mod tests {
         assert!(!signed_at(SIGNED, &anchors, 2_524_608_000));
     }
 
+    /// The anchors as the app has them: AgID's PEC CA (a stand-in here)
+    /// and the qualified CAs (one stand-in).
+    fn both() -> Vec<Vec<u8>> {
+        let mut anchors = crate::smime::pem(AGID_PEC_CA);
+        anchors.extend(crate::smime::pem(TEST_ROOT));
+        anchors
+    }
+
+    #[test]
+    fn a_receipt_from_agid_s_pec_network_ca_is_proof() {
+        let anchors = both();
+        assert!(parse(PECNET).is_some());
+        assert!(signed_by(PECNET, &anchors));
+        // The root above AgID's CA is not trusted for itself.
+        assert!(!signed_by(ROOTONLY, &anchors));
+        // A qualified CA's certificate for a person, with the provider's
+        // address: still refused.
+        assert!(!signed_by(PERSON, &anchors));
+        // The qualified CA's provider certificate still checks.
+        assert!(signed_by(SIGNED, &anchors));
+    }
+
     #[test]
     fn the_bundled_lists_are_read() {
         assert!(organization_key("Aruba PEC S.p.A.") == organization_key("ArubaPEC S.p.A."));
@@ -698,6 +724,15 @@ mod tests {
         assert!(PROVIDERS.contains(&organization_key("Aruba PEC S.p.A.")));
         assert!(PROVIDERS.contains(&organization_key("Poste Italiane S.p.A.")));
         assert!(ANCHORS.len() > 10);
+        // AgID's own CAs for the PEC network come first, and read.
+        for der in &ANCHORS[..2] {
+            assert_eq!(
+                crate::smime::organization(der).as_deref(),
+                Some("Agenzia per l'Italia Digitale")
+            );
+        }
+        // Every anchor reads.
+        assert!(ANCHORS.iter().all(|d| crate::smime::readable(d)));
     }
 
     #[test]
