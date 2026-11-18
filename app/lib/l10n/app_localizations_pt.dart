@@ -1583,6 +1583,24 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'Pode ter sido enviado';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'A ligação caiu durante o envio. Veja em Enviados antes de o enviar outra vez.';
+
+  @override
+  String get dataProblemTitle => 'O Piuma não conseguiu abrir os seus dados';
+
+  @override
+  String get dataProblemBody =>
+      'O seu correio está seguro nos servidores e nada foi alterado aqui. Tente de novo; se continuar a acontecer, comunique-o com o que o Piuma indica.';
+
+  @override
+  String get dataProblemNewer =>
+      'Estes dados foram escritos por uma versão mais recente do Piuma. Atualize o Piuma para os abrir; nada foi alterado aqui.';
+
+  @override
   String get inOutbox =>
       'Na caixa de saída · sai quando você voltar a ficar on-line';
 
@@ -6316,4 +6334,11 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get noPictureToPaste =>
       'Não há nenhuma imagem na área de transferência.';
+
+  @override
+  String get composeReadReceiptAsked => 'Confirmação de leitura pedida';
+
+  @override
+  String get readReceiptQueued =>
+      'A confirmação será enviada assim que você voltar a ficar online.';
 }

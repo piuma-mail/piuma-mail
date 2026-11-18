@@ -401,6 +401,11 @@
   "outboxWaiting": "Aguardando",
   "outboxNotSent": "Não enviado",
   "outboxRefused": "O servidor recusou: {reason}",
+  "outboxMaybeSent": "Pode ter sido enviado",
+  "outboxMaybeSentCheck": "A ligação caiu durante o envio. Veja em Enviados antes de o enviar outra vez.",
+  "dataProblemTitle": "O Piuma não conseguiu abrir os seus dados",
+  "dataProblemBody": "O seu correio está seguro nos servidores e nada foi alterado aqui. Tente de novo; se continuar a acontecer, comunique-o com o que o Piuma indica.",
+  "dataProblemNewer": "Estes dados foram escritos por uma versão mais recente do Piuma. Atualize o Piuma para os abrir; nada foi alterado aqui.",
   "inOutbox": "Na caixa de saída · sai quando você voltar a ficar on-line",
   "editAction": "Editar",
   "backgroundTitle": "Novos e-mails assim que chegam",
@@ -1535,5 +1540,7 @@
   "contactGroupDelete": "Excluir {name}",
   "composeInsertPicture": "Inserir imagem",
   "composePastePicture": "Colar imagem",
-  "noPictureToPaste": "Não há nenhuma imagem na área de transferência."
+  "noPictureToPaste": "Não há nenhuma imagem na área de transferência.",
+  "composeReadReceiptAsked": "Confirmação de leitura pedida",
+  "readReceiptQueued": "A confirmação será enviada assim que você voltar a ficar online."
 }

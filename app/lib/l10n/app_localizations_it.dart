@@ -1581,6 +1581,24 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String get outboxMaybeSent => 'Forse inviato';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'La connessione si è interrotta durante l’invio. Controlla in Inviati prima di inviarlo di nuovo.';
+
+  @override
+  String get dataProblemTitle => 'Piuma non è riuscita ad aprire i suoi dati';
+
+  @override
+  String get dataProblemBody =>
+      'La tua posta è al sicuro sui server e qui non è cambiato nulla. Riprova; se succede ancora, segnalalo allegando quello che dice Piuma.';
+
+  @override
+  String get dataProblemNewer =>
+      'Questi dati sono stati scritti da una versione più recente di Piuma. Aggiorna Piuma per aprirli; qui non è cambiato nulla.';
+
+  @override
   String get inOutbox => 'In uscita · parte appena torni online';
 
   @override
@@ -6347,4 +6365,10 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get noPictureToPaste => 'Non c’è nessuna immagine negli appunti.';
+
+  @override
+  String get composeReadReceiptAsked => 'Conferma di lettura richiesta';
+
+  @override
+  String get readReceiptQueued => 'La conferma partirà appena torni online.';
 }

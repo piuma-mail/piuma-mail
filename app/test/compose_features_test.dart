@@ -34,6 +34,14 @@ class _Clipboard extends DemoMailSource {
       DraftImage('image.png', 'image/png', _png);
 }
 
+/// The demo, with a message quoted from a mailer that leaves U+FFFC
+/// where its pictures were.
+class _Placeholders extends _Clipboard {
+  @override
+  Future<String> body(MailRow row) async =>
+      'Look at this:\n\uFFFC\nand this \uFFFC too';
+}
+
 /// A 2 GB video: its size is known, reading it is a failure.
 class _HugeFile extends XFile {
   _HugeFile() : super('/videos/holiday.mov');
@@ -441,6 +449,18 @@ void main() {
   testWidgets('a pasted picture goes inside the text and out with it', (
     tester,
   ) async {
+    // A clipboard with a picture and no text.
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async =>
+          call.method == 'Clipboard.hasStrings' ? {'value': false} : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
     final source = await _pump(tester, demo: _Clipboard());
     await _write(tester, body: 'Look:');
     await tester.tap(_field(2));
@@ -468,5 +488,142 @@ void main() {
     final d = source.sent.single;
     expect(d.images.single.name, 'image.png');
     expect(d.body, contains(imagePlaceholder));
+  });
+
+  testWidgets('a quote with U+FFFC under the reply takes no picture place', (
+    tester,
+  ) async {
+    final demo = _Placeholders();
+    await demo.setComposeSettings(const ComposeSettings(replyBelow: true));
+    final first = (await demo.page(0, 1)).first;
+    await _pump(tester, demo: demo, compose: false, open: first);
+    await tester.tap(find.text('Reply'));
+    await tester.pumpAndSettle();
+    final body = _body(tester);
+    expect(body.text, isNot(contains(imagePlaceholder)));
+    // A picture pasted under the quote is the only one, and nothing breaks.
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste picture'));
+    await tester.pumpAndSettle();
+    expect(imagePlaceholder.allMatches(_body(tester).text).length, 1);
+    expect(_body(tester).images, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  test('stray picture places in a body go when it opens', () {
+    final body = RichBodyController(
+      text: 'a￼b￼',
+      marks: const [BodyMark(BodyMarkKind.bold, 2, 3)],
+      images: [DraftImage('x.png', 'image/png', _png)],
+    );
+    expect(body.text, 'a￼b');
+    expect(body.marks.single, const BodyMark(BodyMarkKind.bold, 2, 3));
+    body.selection = const TextSelection.collapsed(offset: 3);
+    body.insertImages([DraftImage('y.png', 'image/png', _png)]);
+    expect(body.images.map((i) => i.name), ['x.png', 'y.png']);
+  });
+
+  testWidgets('Ctrl+V pastes the text when the clipboard has some', (
+    tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => switch (call.method) {
+        'Clipboard.hasStrings' => {'value': true},
+        'Clipboard.getData' => {'text': 'Q3 totals'},
+        _ => null,
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await _pump(tester, demo: _Clipboard());
+    await _write(tester, body: 'Numbers: ');
+    await tester.tap(_field(2));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+    await tester.pumpAndSettle();
+    expect(_body(tester).text, 'Numbers: Q3 totals');
+    expect(_body(tester).images, isEmpty);
+  });
+
+  testWidgets('a picture the engine cannot read is attached as it is', (
+    tester,
+  ) async {
+    final before = pickPictures;
+    pickPictures = () async => [
+      XFile.fromData(
+        Uint8List.fromList(List.filled(40, 7)),
+        path: '/photos/scan.webp',
+        name: 'scan.webp',
+      ),
+    ];
+    addTearDown(() => pickPictures = before);
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Insert picture'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InlinePicture), findsNothing);
+    expect(find.text('scan.webp'), findsOneWidget);
+    await tester.tap(find.text('Send'));
+    await _sendAndWait(tester);
+    expect(source.sent.single.files.single.name, 'scan.webp');
+  });
+
+  testWidgets('the options on are said in words over the foot', (tester) async {
+    await _pump(tester);
+    expect(find.byType(ComposeOptionsLine), findsNothing);
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('High priority'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ask for a read receipt'));
+    await tester.pumpAndSettle();
+    expect(find.text('High priority · Read receipt asked for'), findsOneWidget);
+  });
+
+  group('read receipt results', () {
+    Future<DemoMailSource> open(
+      WidgetTester tester,
+      DemoMailSource demo,
+    ) async {
+      final first = (await demo.page(0, 1)).first;
+      await _pump(tester, demo: demo, compose: false, open: first);
+      return demo;
+    }
+
+    testWidgets('offline it waits in the outbox, and says so', (tester) async {
+      final demo = DemoMailSource(now: _now, asks: true)..offline = true;
+      await open(tester, demo);
+      await tester.tap(find.text('Send receipt'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('The receipt goes as soon as you’re back online.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a failure keeps the band, with the reason', (tester) async {
+      final demo = DemoMailSource(now: _now, asks: true)
+        ..failNextReceipt = StateError('refused');
+      await open(tester, demo);
+      await tester.tap(find.text('Send receipt'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadReceiptBand), findsOneWidget);
+      expect(
+        find.text('The receipt couldn’t be sent. Try again later.'),
+        findsOneWidget,
+      );
+    });
   });
 }

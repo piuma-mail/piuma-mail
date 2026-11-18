@@ -315,10 +315,7 @@ class _ContactGroupsSettingsState extends State<ContactGroupsSettings> {
     _filling = false;
   }
 
-  List<String> get _typedAddresses => [
-    for (final a in _addresses.text.split(RegExp(r'[\n,;]')))
-      if (a.trim().isNotEmpty) a.trim(),
-  ];
+  List<String> get _typedAddresses => splitAddresses(_addresses.text);
 
   void _typed() {
     final g = _current;

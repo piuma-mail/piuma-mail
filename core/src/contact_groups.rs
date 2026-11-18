@@ -43,7 +43,7 @@ pub fn tidy(addresses: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for piece in addresses
         .iter()
-        .flat_map(|a| a.split(['\n', ';', ',']))
+        .flat_map(|a| split(a))
         .map(str::trim)
         .filter(|a| !a.is_empty())
     {
@@ -57,6 +57,37 @@ pub fn tidy(addresses: &[String]) -> Vec<String> {
             break;
         }
     }
+    out
+}
+
+/// `text` cut into addresses at new lines, commas and semicolons outside
+/// quotes and angle brackets: `"Rossi, Mario" <m@x.it>` stays whole.
+pub fn split(text: &str) -> Vec<&str> {
+    let (mut quoted, mut angle, mut escaped) = (false, false, false);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '<' if !quoted => angle = true,
+            '>' if !quoted => angle = false,
+            '\n' => {
+                // A line always ends an address, even inside a stray quote.
+                out.push(&text[start..i]);
+                start = i + 1;
+                quoted = false;
+                angle = false;
+            }
+            ',' | ';' if !quoted && !angle => {
+                out.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&text[start..]);
     out
 }
 
@@ -88,6 +119,17 @@ mod tests {
                 "Luca <luca@example.org>".to_string(),
                 "giulia@example.org".into(),
                 "marco@example.org".into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn names_with_commas_stay_whole() {
+        assert_eq!(
+            tidy(&["\"Rossi, Mario\" <mario@example.it>, luca@example.org".into()]),
+            vec![
+                "\"Rossi, Mario\" <mario@example.it>".to_string(),
+                "luca@example.org".into()
             ]
         );
     }

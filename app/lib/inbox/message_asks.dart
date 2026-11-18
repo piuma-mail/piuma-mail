@@ -48,12 +48,16 @@ class _MessageAsksBarState extends State<MessageAsksBar> {
     final l = AppLocalizations.of(context);
     setState(() => _answered = true);
     try {
-      await widget.source.answerReadReceipt(
+      final waits = await widget.source.answerReadReceipt(
         widget.row,
         send: send,
         never: never,
       );
-      if (mounted && send) setState(() => _result = l.readReceiptSent);
+      if (mounted && send) {
+        setState(
+          () => _result = waits ? l.readReceiptQueued : l.readReceiptSent,
+        );
+      }
     } catch (_) {
       if (mounted) {
         setState(() {

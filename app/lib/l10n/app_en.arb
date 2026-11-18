@@ -606,6 +606,11 @@
   "outboxNotSent": "Not sent",
   "outboxRefused": "The server refused it: {reason}",
   "@outboxRefused": {"placeholders": {"reason": {"type": "String"}}},
+  "outboxMaybeSent": "May have been sent",
+  "outboxMaybeSentCheck": "The connection broke as it went. Check Sent before sending it again.",
+  "dataProblemTitle": "Piuma couldn’t open its data",
+  "dataProblemBody": "Your mail is safe on your servers, and nothing here was changed. Try again; if it keeps happening, report it and attach what Piuma says.",
+  "dataProblemNewer": "This data was written by a newer version of Piuma. Update Piuma to open it; nothing here was changed.",
   "inOutbox": "In the Outbox · it goes once you’re back online",
   "editAction": "Edit",
   "backgroundTitle": "New mail as it arrives",
@@ -2088,5 +2093,7 @@
   "@contactGroupDelete": {"placeholders": {"name": {"type": "String"}}},
   "composeInsertPicture": "Insert picture",
   "composePastePicture": "Paste picture",
-  "noPictureToPaste": "There’s no picture on the clipboard."
+  "noPictureToPaste": "There’s no picture on the clipboard.",
+  "composeReadReceiptAsked": "Read receipt asked for",
+  "readReceiptQueued": "The receipt goes as soon as you’re back online."
 }

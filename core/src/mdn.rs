@@ -126,13 +126,31 @@ fn address(value: &str) -> Option<String> {
         .filter(|(kind, _)| kind.trim().eq_ignore_ascii_case("rfc822"))
         .map(|(_, a)| a)
         .unwrap_or(value);
-    let first = value.split(',').next()?.trim();
+    let first = first_mailbox(value).trim();
     let inner = match (first.rfind('<'), first.rfind('>')) {
         (Some(a), Some(b)) if a < b => &first[a + 1..b],
         _ => first,
     };
     let inner = inner.trim();
     (inner.contains('@') && !inner.contains(char::is_whitespace)).then(|| inner.to_owned())
+}
+
+/// The first mailbox of an address list: up to the first comma outside
+/// quotes and angle brackets, so `"Rossi, Mario" <a@x.it>` stays whole.
+fn first_mailbox(value: &str) -> &str {
+    let (mut quoted, mut angle, mut escaped) = (false, false, false);
+    for (i, c) in value.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            '<' if !quoted => angle = true,
+            '>' if !quoted => angle = false,
+            ',' if !quoted && !angle => return &value[..i],
+            _ => {}
+        }
+    }
+    value
 }
 
 /// What `m` asks of its reader.
@@ -190,6 +208,14 @@ text_header!(DispositionNotificationTo, "Disposition-Notification-To");
 text_header!(Importance, "Importance");
 text_header!(XPriority, "X-Priority");
 text_header!(AutoSubmitted, "Auto-Submitted");
+
+/// The receipt's words as the outbox lists them.
+pub fn summary(original: &Original) -> String {
+    format!(
+        "Read receipt for \"{}\": it was shown on your screen.",
+        original.subject.trim()
+    )
+}
 
 /// The receipt for `original`, from `from` (the address it was read at)
 /// to `to`, the address the request named: sent by hand, "displayed".
@@ -304,6 +330,17 @@ mod tests {
         assert_eq!(a.return_path.as_deref(), Some("luca@example.org"));
         assert!(a.high_priority);
         assert_eq!(a.receipt_offered(), Some("Luca@Example.org"));
+    }
+
+    #[test]
+    fn names_with_commas_stay_whole() {
+        let a = parse(
+            "Return-Path: <mario@example.it>\r\n\
+             Disposition-Notification-To: \"Rossi, Mario\" <mario@example.it>, other@x.it\r\n\
+             Subject: x\r\n\r\nbody",
+        );
+        assert_eq!(a.receipt_to.as_deref(), Some("mario@example.it"));
+        assert_eq!(a.receipt_offered(), Some("mario@example.it"));
     }
 
     #[test]

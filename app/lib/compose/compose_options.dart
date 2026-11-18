@@ -200,3 +200,50 @@ class _OptionsMenu extends StatelessWidget {
     );
   }
 }
+
+/// Over the foot while any option is on: which ones, in words ("Plain
+/// text · High priority · Read receipt asked for"), so the message says
+/// how it will go without opening the menu.
+class ComposeOptionsLine extends StatelessWidget {
+  const ComposeOptionsLine({
+    super.key,
+    required this.plainText,
+    required this.highPriority,
+    required this.readReceipt,
+  });
+
+  final bool plainText;
+  final bool highPriority;
+  final bool readReceipt;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final on = [
+      if (plainText) l.composePlainText,
+      if (highPriority) l.composeHighPriority,
+      if (readReceipt) l.composeReadReceiptAsked,
+    ];
+    if (on.isEmpty) return const SizedBox.shrink();
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: PiumaIconView(PiumaIcon.sliders, size: 13, color: c.muted),
+          ),
+          const SizedBox(width: PiumaSpace.s8),
+          Expanded(
+            child: Text(
+              on.join(' · '),
+              style: TextStyle(fontSize: 13, color: c.muted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

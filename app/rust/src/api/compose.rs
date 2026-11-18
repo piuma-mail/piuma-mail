@@ -9,7 +9,7 @@ use piuma_core::contact_groups::ContactGroup;
 use piuma_core::mdn;
 use piuma_core::AccountId;
 
-use super::engine::{engine, now_secs, reader, store, EngineError, ErrorKind};
+use super::engine::{now_secs, reader, store, EngineError, ErrorKind};
 
 /// A picture made ready to go inside a message.
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub fn prepare_inline_image(data: Vec<u8>) -> Result<PreparedImage, EngineError>
 /// always on phones (their keyboards hand pictures to the text field).
 pub fn clipboard_image() -> Result<Option<PreparedImage>, EngineError> {
     crate::clipboard::image()
-        .map(|png| compose_image::prepare(&png).map(PreparedImage::from))
+        .map(|picture| compose_image::prepare_picture(picture).map(PreparedImage::from))
         .transpose()
         .map_err(prepare_error)
 }
@@ -179,22 +179,27 @@ pub fn message_asks(
 
 /// The person's answer to a read receipt asked for: [send] it now, or
 /// not; with [never], the account never offers one to that sender
-/// again. Only an offered receipt is sent, never one on its own.
+/// again. Only an offered receipt is sent, never one on its own. It goes
+/// through the outbox like any message, so offline it waits there and
+/// goes once the server can be reached: returns true while it waits.
 pub async fn answer_read_receipt(
     account_id: i64,
     mailbox: String,
     uid: u32,
     send: bool,
     never: bool,
-) -> Result<(), EngineError> {
+) -> Result<bool, EngineError> {
     let id = AccountId(account_id);
     if !send {
-        return Ok(store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Declined, never)?);
+        store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Declined, never)?;
+        return Ok(false);
     }
     let Some(to) = reader()?.receipt_offered(id, &mailbox, uid)? else {
         return Err(EngineError::new(ErrorKind::Other, "no receipt to send"));
     };
-    let (account, password) = super::engine::signed_in(id)?;
+    let account = store()?
+        .account(id)?
+        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
     let Some((original, written_to)) = reader()?.receipt_original(id, &mailbox, uid)? else {
         return Err(EngineError::new(ErrorKind::Other, "message gone"));
     };
@@ -202,13 +207,38 @@ pub async fn answer_read_receipt(
     let name = account.sender_name.trim();
     let from = lettre_mailbox(name, &email)?;
     let ready = mdn::report(&from, &to, &original)?;
-    let sending = account.clone();
-    engine()?
-        .runtime
-        .spawn(async move { piuma_core::remote::send_ready(&sending, &password, &ready).await })
-        .await
-        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
-    Ok(store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Sent, false)?)
+    // What the outbox lists and Edit would open: the receipt's words.
+    let draft = piuma_core::smtp::Draft {
+        from_name: name.to_owned(),
+        from_email: email,
+        to: vec![to],
+        subject: format!("Read: {}", original.subject.trim()),
+        body: mdn::summary(&original),
+        ..Default::default()
+    };
+    let out = piuma_core::outbox::Outgoing {
+        account: id,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+    };
+    let queued = store()?.queue_outgoing(&out, now_secs())?;
+    // Answered once it is in the outbox: it goes from there.
+    store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Sent, false)?;
+    let delivery = super::engine::deliver_outgoing(queued).await?;
+    use super::engine::DeliveryKind as K;
+    match delivery.kind {
+        K::Sent => Ok(false),
+        K::Waiting | K::MaybeSent | K::Gone => Ok(true),
+        K::WrongPassword => Err(EngineError::new(ErrorKind::WrongPassword, delivery.detail)),
+        K::Refused => Err(EngineError::new(ErrorKind::Rejected, delivery.detail)),
+        K::Insecure => Err(EngineError::new(
+            ErrorKind::InsecureConnection,
+            delivery.detail,
+        )),
+    }
 }
 
 fn lettre_mailbox(name: &str, email: &str) -> Result<piuma_core::mdn::Mailbox, EngineError> {

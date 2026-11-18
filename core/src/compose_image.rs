@@ -6,7 +6,8 @@
 
 use std::io::Cursor;
 
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+pub use image::DynamicImage;
+use image::{ImageDecoder, ImageFormat, ImageReader};
 
 /// Where a picture sits in the text: one character per picture, in order
 /// (the object replacement character, as text fields draw a widget).
@@ -71,15 +72,14 @@ pub struct Prepared {
 /// transparency stay PNG, photos become JPEG; an animated GIF small
 /// enough goes as it is.
 pub fn prepare(data: &[u8]) -> Result<Prepared, PrepareError> {
-    let reader = ImageReader::new(Cursor::new(data))
+    let mut reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
         .map_err(|_| PrepareError::NotAnImage)?;
+    reader.limits(limits());
     let format = reader.format().ok_or(PrepareError::NotAnImage)?;
-    let mut decoder = reader
-        .into_decoder()
-        .map_err(|_| PrepareError::NotAnImage)?;
+    let mut decoder = reader.into_decoder().map_err(decode_error)?;
     let orientation = decoder.orientation().ok();
-    let mut picture = DynamicImage::from_decoder(decoder).map_err(|_| PrepareError::NotAnImage)?;
+    let mut picture = DynamicImage::from_decoder(decoder).map_err(decode_error)?;
     if let Some(o) = orientation {
         picture.apply_orientation(o);
     }
@@ -91,6 +91,38 @@ pub fn prepare(data: &[u8]) -> Result<Prepared, PrepareError> {
             width,
             height,
         });
+    }
+    prepare_picture(picture)
+}
+
+/// The most a picture may be to be read at all: a picture bigger than
+/// this (a decompression bomb, a panorama of 60000 pixels) is refused
+/// before it fills memory.
+const MAX_DECODED_EDGE: u32 = 12_000;
+const MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024;
+
+fn limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODED_EDGE);
+    limits.max_image_height = Some(MAX_DECODED_EDGE);
+    limits.max_alloc = Some(MAX_DECODED_BYTES);
+    limits
+}
+
+fn decode_error(e: image::ImageError) -> PrepareError {
+    match e {
+        image::ImageError::Limits(_) => PrepareError::TooBig,
+        _ => PrepareError::NotAnImage,
+    }
+}
+
+/// A picture already in memory (the clipboard's) made ready as
+/// [prepare] makes one: at most [MAX_EDGE] and [MAX_BYTES], PNG when it
+/// has transparency, JPEG otherwise.
+pub fn prepare_picture(picture: DynamicImage) -> Result<Prepared, PrepareError> {
+    let (width, height) = (picture.width(), picture.height());
+    if width.max(height) > MAX_DECODED_EDGE {
+        return Err(PrepareError::TooBig);
     }
     let alpha = picture.color().has_alpha();
     let mut edge = width.max(height).min(MAX_EDGE);
@@ -116,6 +148,12 @@ pub fn prepare(data: &[u8]) -> Result<Prepared, PrepareError> {
     }
 }
 
+/// RGBA pixels (as a clipboard holds a picture) as a picture; None when
+/// they don't make one of that size.
+pub fn from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Option<DynamicImage> {
+    image::RgbaImage::from_raw(width, height, rgba).map(DynamicImage::ImageRgba8)
+}
+
 fn encode(picture: &DynamicImage, alpha: bool) -> Result<(&'static str, Vec<u8>), PrepareError> {
     let mut out = Cursor::new(Vec::new());
     if alpha {
@@ -129,17 +167,6 @@ fn encode(picture: &DynamicImage, alpha: bool) -> Result<(&'static str, Vec<u8>)
     rgb.write_with_encoder(encoder)
         .map_err(|_| PrepareError::NotAnImage)?;
     Ok(("image/jpeg", out.into_inner()))
-}
-
-/// RGBA pixels (as a clipboard holds a picture) as PNG; None when they
-/// don't make a picture of that size.
-pub fn png_from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Option<Vec<u8>> {
-    let picture = image::RgbaImage::from_raw(width, height, rgba)?;
-    let mut out = Cursor::new(Vec::new());
-    DynamicImage::ImageRgba8(picture)
-        .write_to(&mut out, ImageFormat::Png)
-        .ok()?;
-    Some(out.into_inner())
 }
 
 /// A fresh Content-ID for the `index`th picture of a message.
@@ -234,6 +261,19 @@ mod tests {
         let p = prepare(&png(40, 30, true)).unwrap();
         assert_eq!(p.mime, "image/png");
         assert_eq!((p.width, p.height), (40, 30));
+    }
+
+    #[test]
+    fn pictures_too_big_to_read_are_refused() {
+        // A PNG header that claims 20000 × 20000 pixels.
+        let mut png = png(1, 1, false);
+        png[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        png[20..24].copy_from_slice(&20_000u32.to_be_bytes());
+        assert!(prepare(&png).is_err());
+        let wide = from_rgba(13_000, 1, vec![0; 13_000 * 4]).unwrap();
+        assert_eq!(prepare_picture(wide), Err(PrepareError::TooBig));
+        let small = from_rgba(2, 2, vec![255; 16]).unwrap();
+        assert_eq!(prepare_picture(small).unwrap().mime, "image/png");
     }
 
     #[test]

@@ -57,8 +57,10 @@ MessageAsks messageAsks({
 
 /// The person's answer to a read receipt asked for: [send] it now, or
 /// not; with [never], the account never offers one to that sender
-/// again. Only an offered receipt is sent, never one on its own.
-Future<void> answerReadReceipt({
+/// again. Only an offered receipt is sent, never one on its own. It goes
+/// through the outbox like any message, so offline it waits there and
+/// goes once the server can be reached: returns true while it waits.
+Future<bool> answerReadReceipt({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,

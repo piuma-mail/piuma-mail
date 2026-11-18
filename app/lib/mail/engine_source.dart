@@ -2668,7 +2668,12 @@ class EngineMailSource extends MailSource with EngineCompose {
       final waiting = await engine.outbox(accountId: draft.accountId);
       return waiting.isEmpty ? null : waiting.last.id;
     } on engine.EngineError catch (e) {
-      throw SendException(switch (e.kind) {
+      throw _sendException(e);
+    }
+  }
+
+  static SendException _sendException(engine.EngineError e) =>
+      SendException(switch (e.kind) {
         engine.ErrorKind.badAddress => SendError.badAddress,
         engine.ErrorKind.noRecipients => SendError.noRecipients,
         engine.ErrorKind.wrongPassword => SendError.wrongPassword,
@@ -2676,6 +2681,47 @@ class EngineMailSource extends MailSource with EngineCompose {
         engine.ErrorKind.rejected => SendError.rejected,
         _ => SendError.other,
       }, e.detail);
+
+  @override
+  Future<int> sendWithUndo(Draft draft, Duration window) async {
+    try {
+      final id = await engine.sendWithUndo(
+        message: _outgoing(draft),
+        undoSeconds: window.inSeconds,
+      );
+      // Should the app be swiped away in the window, Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
+      _changes.add(null);
+      return id;
+    } on engine.EngineError catch (e) {
+      throw _sendException(e);
+    }
+  }
+
+  @override
+  Future<Delivery> deliver(int id) async {
+    try {
+      final d = await engine.deliverOutgoing(id: id);
+      final outcome = switch (d.kind) {
+        engine.DeliveryKind.sent => SendOutcome.sent,
+        engine.DeliveryKind.waiting => SendOutcome.waiting,
+        engine.DeliveryKind.wrongPassword => SendOutcome.wrongPassword,
+        engine.DeliveryKind.refused => SendOutcome.refused,
+        engine.DeliveryKind.insecure => SendOutcome.insecure,
+        engine.DeliveryKind.maybeSent => SendOutcome.maybeSent,
+        engine.DeliveryKind.gone => SendOutcome.gone,
+      };
+      if (outcome == SendOutcome.waiting ||
+          outcome == SendOutcome.wrongPassword) {
+        _retryOutbox();
+      }
+      return Delivery(outcome, d.detail);
+    } on engine.EngineError catch (e) {
+      // Kept in the outbox all the same: it goes with the next try.
+      _retryOutbox();
+      return Delivery(SendOutcome.waiting, e.detail);
+    } finally {
+      _changes.add(null);
     }
   }
 
@@ -2686,6 +2732,7 @@ class EngineMailSource extends MailSource with EngineCompose {
         message: _outgoing(draft),
         sendAt: at.millisecondsSinceEpoch ~/ 1000,
       );
+      AndroidBackground.outboxAt(id, at).ignore();
       _changes.add(null);
       return id;
     } on engine.EngineError catch (e) {
@@ -2723,7 +2770,9 @@ class EngineMailSource extends MailSource with EngineCompose {
   /// new mail wakes the account's watcher.
   void _retryOutbox() {
     _outboxTimer ??= Timer.periodic(const Duration(minutes: 1), (_) async {
-      if ((await engine.outbox()).every((o) => o.error != null)) {
+      if ((await engine.outbox()).every(
+        (o) => o.state != engine.OutboxState.waiting,
+      )) {
         _outboxTimer?.cancel();
         _outboxTimer = null;
         return;
@@ -2748,6 +2797,13 @@ class EngineMailSource extends MailSource with EngineCompose {
         sendAt: o.sendAt == null
             ? null
             : DateTime.fromMillisecondsSinceEpoch(o.sendAt! * 1000),
+        state: switch (o.state) {
+          engine.OutboxState.waiting => OutboxState.waiting,
+          engine.OutboxState.sending => OutboxState.sending,
+          engine.OutboxState.refused => OutboxState.refused,
+          engine.OutboxState.maybeSent => OutboxState.maybeSent,
+        },
+        undo: o.undo,
       ),
   ];
 
@@ -2755,6 +2811,8 @@ class EngineMailSource extends MailSource with EngineCompose {
   Future<Draft> reopenOutgoing(int id) async {
     try {
       final m = await engine.reopenOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
       final copy = m.draft;
       return Draft(
         accountId: m.accountId,

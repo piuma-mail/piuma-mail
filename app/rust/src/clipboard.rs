@@ -2,12 +2,12 @@
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod inner {
-    /// The clipboard's picture as PNG.
-    pub fn image() -> Option<Vec<u8>> {
+    /// The clipboard's picture, as pixels.
+    pub fn image() -> Option<piuma_core::compose_image::DynamicImage> {
         let picture = arboard::Clipboard::new().ok()?.get_image().ok()?;
-        piuma_core::compose_image::png_from_rgba(
-            picture.width as u32,
-            picture.height as u32,
+        piuma_core::compose_image::from_rgba(
+            u32::try_from(picture.width).ok()?,
+            u32::try_from(picture.height).ok()?,
             picture.bytes.into_owned(),
         )
     }
@@ -15,7 +15,7 @@ mod inner {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 mod inner {
-    pub fn image() -> Option<Vec<u8>> {
+    pub fn image() -> Option<piuma_core::compose_image::DynamicImage> {
         None
     }
 }

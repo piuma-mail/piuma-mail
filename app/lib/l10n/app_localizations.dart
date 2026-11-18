@@ -2518,6 +2518,36 @@ abstract class AppLocalizations {
   /// **'The server refused it: {reason}'**
   String outboxRefused(String reason);
 
+  /// No description provided for @outboxMaybeSent.
+  ///
+  /// In en, this message translates to:
+  /// **'May have been sent'**
+  String get outboxMaybeSent;
+
+  /// No description provided for @outboxMaybeSentCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'The connection broke as it went. Check Sent before sending it again.'**
+  String get outboxMaybeSentCheck;
+
+  /// No description provided for @dataProblemTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma couldn’t open its data'**
+  String get dataProblemTitle;
+
+  /// No description provided for @dataProblemBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Your mail is safe on your servers, and nothing here was changed. Try again; if it keeps happening, report it and attach what Piuma says.'**
+  String get dataProblemBody;
+
+  /// No description provided for @dataProblemNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'This data was written by a newer version of Piuma. Update Piuma to open it; nothing here was changed.'**
+  String get dataProblemNewer;
+
   /// No description provided for @inOutbox.
   ///
   /// In en, this message translates to:
@@ -9315,6 +9345,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'There’s no picture on the clipboard.'**
   String get noPictureToPaste;
+
+  /// No description provided for @composeReadReceiptAsked.
+  ///
+  /// In en, this message translates to:
+  /// **'Read receipt asked for'**
+  String get composeReadReceiptAsked;
+
+  /// No description provided for @readReceiptQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'The receipt goes as soon as you’re back online.'**
+  String get readReceiptQueued;
 }
 
 class _AppLocalizationsDelegate

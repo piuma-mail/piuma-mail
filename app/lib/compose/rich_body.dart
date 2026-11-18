@@ -40,7 +40,35 @@ class RichBodyController extends TextEditingController {
     List<BodyMark> marks = const [],
     List<DraftImage> images = const [],
   }) : _marks = [...marks],
-       _images = [...images];
+       _images = [...images] {
+    _dropStrayPlaceholders();
+  }
+
+  /// A body can hold more picture places than pictures (text quoted from
+  /// a mailer that leaves U+FFFC where a picture was): the places past
+  /// the pictures go, so every place has its picture.
+  void _dropStrayPlaceholders() {
+    final t = text;
+    final at = [
+      for (
+        var i = t.indexOf(imagePlaceholder);
+        i >= 0;
+        i = t.indexOf(imagePlaceholder, i + 1)
+      )
+        i,
+    ];
+    if (at.length <= _images.length) return;
+    var now = t;
+    for (final i in at.skip(_images.length).toList().reversed) {
+      _move(i, i + 1, 0);
+      now = now.replaceRange(i, i + 1, '');
+    }
+    _marks = _normal(_marks, now.length);
+    super.value = TextEditingValue(
+      text: now,
+      selection: TextSelection.collapsed(offset: now.length),
+    );
+  }
 
   List<BodyMark> _marks;
 
@@ -376,8 +404,14 @@ class RichBodyController extends TextEditingController {
     final after = end < t.length && t[end] != '\n' ? '\n' : '';
     final add =
         '$before${List.filled(pictures.length, imagePlaceholder).join('\n')}$after';
-    final first = imagePlaceholder.allMatches(t.substring(0, start)).length;
-    final gone = imagePlaceholder.allMatches(t.substring(start, end)).length;
+    final first = imagePlaceholder
+        .allMatches(t.substring(0, start))
+        .length
+        .clamp(0, _images.length);
+    final gone = imagePlaceholder
+        .allMatches(t.substring(start, end))
+        .length
+        .clamp(0, _images.length - first);
     _images
       ..removeRange(first, first + gone)
       ..insertAll(first, pictures);

@@ -401,6 +401,11 @@
   "outboxWaiting": "Wartet",
   "outboxNotSent": "Nicht gesendet",
   "outboxRefused": "Der Server hat sie abgelehnt: {reason}",
+  "outboxMaybeSent": "Vielleicht gesendet",
+  "outboxMaybeSentCheck": "Die Verbindung brach beim Senden ab. Sieh in „Gesendet“ nach, bevor du sie noch einmal sendest.",
+  "dataProblemTitle": "Piuma konnte seine Daten nicht öffnen",
+  "dataProblemBody": "Deine E-Mails sind sicher auf deinen Servern, und hier wurde nichts verändert. Versuche es noch einmal; passiert es wieder, melde es mit dem, was Piuma anzeigt.",
+  "dataProblemNewer": "Diese Daten stammen von einer neueren Version von Piuma. Aktualisiere Piuma, um sie zu öffnen; hier wurde nichts verändert.",
   "inOutbox": "Im Postausgang · wird gesendet, sobald du wieder online bist",
   "editAction": "Bearbeiten",
   "backgroundTitle": "Neue E-Mails sofort bei Eingang",
@@ -1535,5 +1540,7 @@
   "contactGroupDelete": "{name} löschen",
   "composeInsertPicture": "Bild einfügen",
   "composePastePicture": "Bild aus Zwischenablage",
-  "noPictureToPaste": "In der Zwischenablage ist kein Bild."
+  "noPictureToPaste": "In der Zwischenablage ist kein Bild.",
+  "composeReadReceiptAsked": "Lesebestätigung angefordert",
+  "readReceiptQueued": "Die Bestätigung geht raus, sobald du wieder online bist."
 }

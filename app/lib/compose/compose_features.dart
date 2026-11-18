@@ -5,7 +5,7 @@ Future<List<XFile>> Function() pickPictures = () => openFiles(
   acceptedTypeGroups: const [
     XTypeGroup(
       label: 'images',
-      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'],
+      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
       mimeTypes: ['image/*'],
       uniformTypeIdentifiers: ['public.image'],
     ),
@@ -196,19 +196,34 @@ extension _ComposeFeatures on _ComposePaneState {
       return;
     }
     final ready = <DraftImage>[];
+    final asFiles = <DraftFile>[];
     String? problem;
     for (final (name, data) in pictures) {
       try {
         ready.add(await source.prepareImage(name, data));
       } on ImageException catch (e) {
-        problem = e.problem == ImageProblem.tooBig
-            ? l.imageTooBig(name)
-            : l.fileNotRead(name);
+        if (e.problem == ImageProblem.notAnImage) {
+          // A kind the engine can't draw (HEIC, TIFF from some phones):
+          // it goes as it is, attached.
+          asFiles.add(DraftFile(name, data));
+        } else {
+          problem = l.imageTooBig(name);
+        }
       } catch (_) {
         problem = l.fileNotRead(name);
       }
     }
     if (!mounted) return;
+    if (asFiles.isNotEmpty) {
+      final size = _draft(commit: false).filesSize;
+      final more = asFiles.fold(0, (sum, f) => sum + f.data.length);
+      if (size + more > maxDraftFilesSize) {
+        problem = _limitText(l);
+      } else {
+        _update(() => _files.addAll(asFiles));
+        _edited();
+      }
+    }
     _addReadyPictures(ready, problem);
   }
 
@@ -243,8 +258,7 @@ extension _ComposeFeatures on _ComposePaneState {
               lower.endsWith('.jpg') ||
               lower.endsWith('.jpeg') ||
               lower.endsWith('.gif') ||
-              lower.endsWith('.webp') ||
-              lower.endsWith('.heic'));
+              lower.endsWith('.webp'));
       (picture ? images : files).add(f);
     }
     if (files.isNotEmpty) await _addFiles(files);
@@ -275,6 +289,15 @@ extension _ComposeFeatures on _ComposePaneState {
   /// anything else pastes as usual, or, [fromMenu], says there is none.
   Future<void> _paste({bool fromMenu = false}) async {
     final source = _source;
+    // Ctrl+V pastes text whenever there is some: a spreadsheet's cells
+    // come with a picture of them too. Paste picture takes the picture.
+    if (!fromMenu && await Clipboard.hasStrings()) {
+      if (mounted) {
+        _editableText()?.pasteText(SelectionChangedCause.keyboard);
+      }
+      return;
+    }
+    if (!mounted) return;
     DraftImage? picture;
     try {
       picture = await source?.clipboardImage();

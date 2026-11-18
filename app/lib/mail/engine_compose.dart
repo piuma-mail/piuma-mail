@@ -132,7 +132,7 @@ mixin EngineCompose on MailSource {
   }
 
   @override
-  Future<void> answerReadReceipt(
+  Future<bool> answerReadReceipt(
     MailRow row, {
     required bool send,
     bool never = false,

@@ -1287,6 +1287,17 @@ class _ComposePaneState extends State<ComposePane> {
                         ],
                       ),
                     ),
+                  if (_extras.plainText ||
+                      _extras.highPriority ||
+                      _extras.readReceipt)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ComposeOptionsLine(
+                        plainText: _extras.plainText,
+                        highPriority: _extras.highPriority,
+                        readReceipt: _extras.readReceipt,
+                      ),
+                    ),
                   if (error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
