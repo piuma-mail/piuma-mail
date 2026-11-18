@@ -46,6 +46,7 @@ pub mod search;
 pub mod sender_auth;
 pub mod sieve;
 pub mod signature;
+pub mod smime;
 pub mod smtp;
 pub mod space;
 pub mod space_sync;

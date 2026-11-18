@@ -43,6 +43,9 @@ hkdf = "0.13.0"
 sha2 = "0.11.1"
 # Comparing the OAuth state and certificate pins in constant time.
 subtle = "2.6.1"
+# S/MIME signatures of PEC receipts (smime.rs): the crypto lettre and
+# rustls already bring.
+aws-lc-rs = { version = "1.18.2", default-features = false, features = ["aws-lc-sys"] }
 getrandom = "0.4.3"
 zeroize = { version = "1.9.1", features = ["derive"] }
 bip39 = { version = "3.0.0", default-features = false, features = ["std"] }

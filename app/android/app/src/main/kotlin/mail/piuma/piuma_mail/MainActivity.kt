@@ -29,14 +29,14 @@ class MainActivity : FlutterActivity() {
         // the app context, so it needs it before Flutter starts.
         init(applicationContext)
         NetworkWatch.follow(applicationContext)
-        launchPayload = Background.payload(intent)
+        launchPayload = Background.payload(applicationContext, intent)
         oauthRedirect(intent)
         super.onCreate(savedInstanceState)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        Background.payload(intent)?.let { notices?.invokeMethod("open", it) }
+        Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
         oauthRedirect(intent)
     }
 
@@ -140,11 +140,20 @@ class MainActivity : FlutterActivity() {
         notices = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/notices")
             .apply {
                 setMethodCallHandler { call, result ->
-                    if (call.method == "launch") {
-                        result.success(launchPayload)
-                        launchPayload = null
-                    } else {
-                        result.notImplemented()
+                    when (call.method) {
+                        "launch" -> {
+                            result.success(launchPayload)
+                            launchPayload = null
+                        }
+                        // Notices the Flutter plugin shows carry sealed
+                        // payloads too (notice_seal.dart).
+                        "seal" -> result.success(
+                            NoticeSeal.seal(applicationContext, call.arguments as String),
+                        )
+                        "unseal" -> result.success(
+                            NoticeSeal.open(applicationContext, call.arguments as? String),
+                        )
+                        else -> result.notImplemented()
                     }
                 }
             }
