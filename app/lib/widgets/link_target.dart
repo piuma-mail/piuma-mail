@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart' show ScaffoldMessenger, SnackBar, SnackBarBehavior;
+import 'package:flutter/material.dart'
+    show ScaffoldMessenger, SnackBar, SnackBarBehavior;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -119,7 +120,8 @@ Future<void> showLinkTarget(
 }) async {
   final l = AppLocalizations.of(context);
   final phone = MediaQuery.sizeOf(context).width < 600;
-  Widget panel(BuildContext context) => _LinkTargetPanel(url: url, phone: phone);
+  Widget panel(BuildContext context) =>
+      _LinkTargetPanel(url: url, phone: phone);
   final open = phone
       ? await showPiumaSheet<_LinkChoice>(
           context,

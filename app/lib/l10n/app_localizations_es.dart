@@ -653,6 +653,18 @@ class AppLocalizationsEs extends AppLocalizations {
   String get openAnyway => 'Abrir de todos modos';
 
   @override
+  String get linkTargetTitle => 'Adónde lleva este enlace';
+
+  @override
+  String get linkOpen => 'Abrir enlace';
+
+  @override
+  String get linkCopy => 'Copiar enlace';
+
+  @override
+  String get linkCopied => 'Enlace copiado';
+
+  @override
   String get dontOpen => 'No abrir';
 
   @override

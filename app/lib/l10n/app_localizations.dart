@@ -1144,6 +1144,30 @@ abstract class AppLocalizations {
   /// **'Open anyway'**
   String get openAnyway;
 
+  /// No description provided for @linkTargetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Where this link goes'**
+  String get linkTargetTitle;
+
+  /// No description provided for @linkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open link'**
+  String get linkOpen;
+
+  /// No description provided for @linkCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get linkCopy;
+
+  /// No description provided for @linkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Link copied'**
+  String get linkCopied;
+
   /// No description provided for @dontOpen.
   ///
   /// In en, this message translates to:

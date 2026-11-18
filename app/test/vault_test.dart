@@ -542,7 +542,10 @@ void main() {
     tester,
   ) async {
     await _openDesktop(tester, certified: true, unsigned: {702});
-    await tester.tap(find.text('Certified mail').first);
+    final tile = find.text('Certified mail').first;
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    await tester.tap(tile);
     await _settle(tester);
     expect(find.text('Lease renewal 2027'), findsOneWidget);
     expect(find.text('Unverified'), findsOneWidget);
