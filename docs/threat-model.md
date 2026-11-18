@@ -14,7 +14,7 @@ that moves a trust boundary or adds a network service updates this file. Reporti
 | Mail, contacts, calendars, drafts, attachments | Each device's SQLite database (app support folder); the user's mail servers | The user's private correspondence |
 | Account credentials (passwords, app passwords, future OAuth tokens) | The system keychain (Keychain, Credential Manager, Secret Service, Android Keystore), never the database | Full access to the mailbox |
 | Sync space key and device list | The device keychain; the encrypted space folder on the user's IMAP server | Settings and state shared between the user's devices |
-| The release signing keys: Android key, Windows Authenticode certificate, Apple Developer ID | GitHub Actions secrets; the maintainer's offline backup | Whoever holds one can ship code that users' devices accept as Piuma Mail |
+| The release signing keys: Android key, Windows Authenticode certificate, Apple Developer ID | The `signing` environment's secrets in GitHub Actions (deployment from `main` only, read only by the signing jobs); the maintainer's offline backup | Whoever holds one can ship code that users' devices accept as Piuma Mail |
 | The release feed | GitHub Releases of the repository (`PIUMA_UPDATE_URL`) | Installed Windows apps install what it lists; other platforms link to it |
 | The relay's GitHub token and ticket secret | Cloudflare Worker secrets | The token opens issues in the feedback repository |
 | Reports sent from the app | The feedback repository (private) | May hold logs and descriptions written by users |
@@ -95,19 +95,26 @@ From a commit on `main` to code running on users' devices:
 4. **Signing**: separate jobs that compile nothing sign the packages: Velopack with Authenticode on
    Windows, `apksigner` with the project key on Android, `codesign` and notarisation on macOS. The
    keys never reach a build step.
-5. **Provenance**: every file, and the `SHA256SUMS` list of their checksums, gets a build provenance
-   attestation; verify it with `gh attestation verify` naming `--signer-workflow` (the release
-   workflow) and `--source-ref refs/heads/main`, as in [SECURITY.md](../SECURITY.md).
-6. **Publication**: one job with write access uploads the files to a **draft** release and runs
-   nothing from the repository; a final job un-drafts it once every platform is there. Both wait for a
-   reviewer in the `release` environment. Apps never see drafts.
+5. **Provenance**: each signing or packaging job reports the SHA-256 of its files as a job output;
+   the attest job downloads only those jobs' artifacts, by exact name, and refuses any file they did
+   not report, so an artifact uploaded by a compromised build job is never shipped. Every file, and
+   the `SHA256SUMS` list of their checksums, gets a build provenance attestation; verify it with
+   `gh attestation verify` naming `--signer-workflow` (the release workflow) and
+   `--source-ref refs/heads/main`, as in [SECURITY.md](../SECURITY.md).
+6. **Publication**: one job with write access uploads the files to a **draft** release, removes any
+   file an earlier run left there, and runs nothing from the repository; a final job un-drafts it once
+   every platform is there, the draft's `SHA256SUMS` is the one this run's attest job made (its hash is
+   a job output), the draft holds exactly the files it lists and each file's attestation names this
+   commit. Both wait for a reviewer in the `release` environment. Apps never see drafts.
 7. **Update**: installed Windows apps follow Velopack's feed in the release, check package hashes from
    that feed and, once releases are signed, run only Authenticode-signed code; other platforms only
    show a notice that links to the release page. Android refuses an update signed with another key.
 
 Residual risks, accepted for now: the feed's hashes come from the same release as the packages, so
 whoever can publish a release can ship an update (hence the environment, the draft step and the
-attestations); until a Windows certificate exists, Windows packages are unsigned; GitHub itself, its
+attestations); someone with write access could swap a draft's file between the final check and the
+un-draft: the job checks every file again once the release is published (release immutability then
+locks them) and fails loudly, to be handled as a bad release ([incident runbook](incident-runbook.md)); until a Windows certificate exists, Windows packages are unsigned; GitHub itself, its
 runners and the Actions pinned by commit are trusted; a compromised maintainer account defeats the
 environment's review (use a hardware security key and keep admin rights to as few accounts as possible).
 
