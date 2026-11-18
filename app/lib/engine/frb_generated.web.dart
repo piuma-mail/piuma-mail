@@ -9,11 +9,13 @@
 import 'api/accounts.dart';
 import 'api/away.dart';
 import 'api/calendars.dart';
+import 'api/compose.dart';
 import 'api/engine.dart';
 import 'api/feedback.dart';
 import 'api/groups.dart';
 import 'api/labels.dart';
 import 'api/mailbox.dart';
+import 'api/oauth.dart';
 import 'api/outside.dart';
 import 'api/preview.dart';
 import 'api/reply.dart';
@@ -121,6 +123,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool dco_decode_box_autoadd_bool(dynamic raw);
 
   @protected
+  ComposeSettings dco_decode_box_autoadd_compose_settings(dynamic raw);
+
+  @protected
+  ContactGroupInfo dco_decode_box_autoadd_contact_group_info(dynamic raw);
+
+  @protected
   DesktopSettings dco_decode_box_autoadd_desktop_settings(dynamic raw);
 
   @protected
@@ -169,16 +177,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef dco_decode_box_autoadd_message_ref(dynamic raw);
 
   @protected
+  NewSecrets dco_decode_box_autoadd_new_secrets(dynamic raw);
+
+  @protected
   NoReplyInfo dco_decode_box_autoadd_no_reply_info(dynamic raw);
 
   @protected
   NotifySettings dco_decode_box_autoadd_notify_settings(dynamic raw);
 
   @protected
+  OAuthClient dco_decode_box_autoadd_o_auth_client(dynamic raw);
+
+  @protected
   OutgoingMessage dco_decode_box_autoadd_outgoing_message(dynamic raw);
 
   @protected
   OutgoingServer dco_decode_box_autoadd_outgoing_server(dynamic raw);
+
+  @protected
+  PreparedImage dco_decode_box_autoadd_prepared_image(dynamic raw);
 
   @protected
   PrivacySettings dco_decode_box_autoadd_privacy_settings(dynamic raw);
@@ -241,10 +258,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CalendarSuggestion dco_decode_calendar_suggestion(dynamic raw);
 
   @protected
+  ComposeSettings dco_decode_compose_settings(dynamic raw);
+
+  @protected
   ConnectionSecurity dco_decode_connection_security(dynamic raw);
 
   @protected
   Contact dco_decode_contact(dynamic raw);
+
+  @protected
+  ContactGroupInfo dco_decode_contact_group_info(dynamic raw);
 
   @protected
   Delivery dco_decode_delivery(dynamic raw);
@@ -328,6 +351,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InboxTab dco_decode_inbox_tab(dynamic raw);
 
   @protected
+  InlineImageData dco_decode_inline_image_data(dynamic raw);
+
+  @protected
   InviteAnswer dco_decode_invite_answer(dynamic raw);
 
   @protected
@@ -397,6 +423,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Contact> dco_decode_list_contact(dynamic raw);
 
   @protected
+  List<ContactGroupInfo> dco_decode_list_contact_group_info(dynamic raw);
+
+  @protected
   List<FeedbackAttachment> dco_decode_list_feedback_attachment(dynamic raw);
 
   @protected
@@ -419,6 +448,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<InboxRow> dco_decode_list_inbox_row(dynamic raw);
+
+  @protected
+  List<InlineImageData> dco_decode_list_inline_image_data(dynamic raw);
 
   @protected
   List<InvitePerson> dco_decode_list_invite_person(dynamic raw);
@@ -451,7 +483,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<MessageRef> dco_decode_list_message_ref(dynamic raw);
 
   @protected
+  List<NewSecret> dco_decode_list_new_secret(dynamic raw);
+
+  @protected
   List<NewsletterRow> dco_decode_list_newsletter_row(dynamic raw);
+
+  @protected
+  List<OAuthProvider> dco_decode_list_o_auth_provider(dynamic raw);
 
   @protected
   ListOrder dco_decode_list_order(dynamic raw);
@@ -526,6 +564,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TranslatePair> dco_decode_list_translate_pair(dynamic raw);
 
   @protected
+  List<TrustedCertificate> dco_decode_list_trusted_certificate(dynamic raw);
+
+  @protected
   List<TrustedSenderInfo> dco_decode_list_trusted_sender_info(dynamic raw);
 
   @protected
@@ -556,6 +597,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageAction dco_decode_message_action(dynamic raw);
 
   @protected
+  MessageAsks dco_decode_message_asks(dynamic raw);
+
+  @protected
   MessageEnvelope dco_decode_message_envelope(dynamic raw);
 
   @protected
@@ -563,6 +607,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageRef dco_decode_message_ref(dynamic raw);
+
+  @protected
+  NewSecret dco_decode_new_secret(dynamic raw);
+
+  @protected
+  NewSecrets dco_decode_new_secrets(dynamic raw);
 
   @protected
   NewsletterRow dco_decode_newsletter_row(dynamic raw);
@@ -575,6 +625,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   NotifySettings dco_decode_notify_settings(dynamic raw);
+
+  @protected
+  OAuthClient dco_decode_o_auth_client(dynamic raw);
+
+  @protected
+  OAuthProvider dco_decode_o_auth_provider(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -622,10 +678,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef? dco_decode_opt_box_autoadd_message_ref(dynamic raw);
 
   @protected
+  NewSecrets? dco_decode_opt_box_autoadd_new_secrets(dynamic raw);
+
+  @protected
   NoReplyInfo? dco_decode_opt_box_autoadd_no_reply_info(dynamic raw);
 
   @protected
+  OAuthClient? dco_decode_opt_box_autoadd_o_auth_client(dynamic raw);
+
+  @protected
   OutgoingServer? dco_decode_opt_box_autoadd_outgoing_server(dynamic raw);
+
+  @protected
+  PreparedImage? dco_decode_opt_box_autoadd_prepared_image(dynamic raw);
 
   @protected
   QuotaInfo? dco_decode_opt_box_autoadd_quota_info(dynamic raw);
@@ -692,6 +757,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PecStage dco_decode_pec_stage(dynamic raw);
+
+  @protected
+  PreparedImage dco_decode_prepared_image(dynamic raw);
 
   @protected
   PrivacySettings dco_decode_privacy_settings(dynamic raw);
@@ -821,6 +889,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TranslatePair dco_decode_translate_pair(dynamic raw);
+
+  @protected
+  TrustedCertificate dco_decode_trusted_certificate(dynamic raw);
 
   @protected
   TrustedSenderInfo dco_decode_trusted_sender_info(dynamic raw);
@@ -968,6 +1039,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
+  ComposeSettings sse_decode_box_autoadd_compose_settings(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ContactGroupInfo sse_decode_box_autoadd_contact_group_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   DesktopSettings sse_decode_box_autoadd_desktop_settings(
     SseDeserializer deserializer,
   );
@@ -1032,6 +1113,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef sse_decode_box_autoadd_message_ref(SseDeserializer deserializer);
 
   @protected
+  NewSecrets sse_decode_box_autoadd_new_secrets(SseDeserializer deserializer);
+
+  @protected
   NoReplyInfo sse_decode_box_autoadd_no_reply_info(
     SseDeserializer deserializer,
   );
@@ -1042,12 +1126,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  OAuthClient sse_decode_box_autoadd_o_auth_client(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OutgoingMessage sse_decode_box_autoadd_outgoing_message(
     SseDeserializer deserializer,
   );
 
   @protected
   OutgoingServer sse_decode_box_autoadd_outgoing_server(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PreparedImage sse_decode_box_autoadd_prepared_image(
     SseDeserializer deserializer,
   );
 
@@ -1132,12 +1226,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ComposeSettings sse_decode_compose_settings(SseDeserializer deserializer);
+
+  @protected
   ConnectionSecurity sse_decode_connection_security(
     SseDeserializer deserializer,
   );
 
   @protected
   Contact sse_decode_contact(SseDeserializer deserializer);
+
+  @protected
+  ContactGroupInfo sse_decode_contact_group_info(SseDeserializer deserializer);
 
   @protected
   Delivery sse_decode_delivery(SseDeserializer deserializer);
@@ -1223,6 +1323,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   InboxTab sse_decode_inbox_tab(SseDeserializer deserializer);
 
   @protected
+  InlineImageData sse_decode_inline_image_data(SseDeserializer deserializer);
+
+  @protected
   InviteAnswer sse_decode_invite_answer(SseDeserializer deserializer);
 
   @protected
@@ -1304,6 +1407,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Contact> sse_decode_list_contact(SseDeserializer deserializer);
 
   @protected
+  List<ContactGroupInfo> sse_decode_list_contact_group_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<FeedbackAttachment> sse_decode_list_feedback_attachment(
     SseDeserializer deserializer,
   );
@@ -1336,6 +1444,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<InboxRow> sse_decode_list_inbox_row(SseDeserializer deserializer);
+
+  @protected
+  List<InlineImageData> sse_decode_list_inline_image_data(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<InvitePerson> sse_decode_list_invite_person(
@@ -1376,7 +1489,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<MessageRef> sse_decode_list_message_ref(SseDeserializer deserializer);
 
   @protected
+  List<NewSecret> sse_decode_list_new_secret(SseDeserializer deserializer);
+
+  @protected
   List<NewsletterRow> sse_decode_list_newsletter_row(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<OAuthProvider> sse_decode_list_o_auth_provider(
     SseDeserializer deserializer,
   );
 
@@ -1471,6 +1592,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<TrustedCertificate> sse_decode_list_trusted_certificate(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TrustedSenderInfo> sse_decode_list_trusted_sender_info(
     SseDeserializer deserializer,
   );
@@ -1503,6 +1629,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageAction sse_decode_message_action(SseDeserializer deserializer);
 
   @protected
+  MessageAsks sse_decode_message_asks(SseDeserializer deserializer);
+
+  @protected
   MessageEnvelope sse_decode_message_envelope(SseDeserializer deserializer);
 
   @protected
@@ -1510,6 +1639,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageRef sse_decode_message_ref(SseDeserializer deserializer);
+
+  @protected
+  NewSecret sse_decode_new_secret(SseDeserializer deserializer);
+
+  @protected
+  NewSecrets sse_decode_new_secrets(SseDeserializer deserializer);
 
   @protected
   NewsletterRow sse_decode_newsletter_row(SseDeserializer deserializer);
@@ -1522,6 +1657,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   NotifySettings sse_decode_notify_settings(SseDeserializer deserializer);
+
+  @protected
+  OAuthClient sse_decode_o_auth_client(SseDeserializer deserializer);
+
+  @protected
+  OAuthProvider sse_decode_o_auth_provider(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -1585,12 +1726,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  NewSecrets? sse_decode_opt_box_autoadd_new_secrets(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   NoReplyInfo? sse_decode_opt_box_autoadd_no_reply_info(
     SseDeserializer deserializer,
   );
 
   @protected
+  OAuthClient? sse_decode_opt_box_autoadd_o_auth_client(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   OutgoingServer? sse_decode_opt_box_autoadd_outgoing_server(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  PreparedImage? sse_decode_opt_box_autoadd_prepared_image(
     SseDeserializer deserializer,
   );
 
@@ -1677,6 +1833,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PecStage sse_decode_pec_stage(SseDeserializer deserializer);
+
+  @protected
+  PreparedImage sse_decode_prepared_image(SseDeserializer deserializer);
 
   @protected
   PrivacySettings sse_decode_privacy_settings(SseDeserializer deserializer);
@@ -1812,6 +1971,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TranslatePair sse_decode_translate_pair(SseDeserializer deserializer);
+
+  @protected
+  TrustedCertificate sse_decode_trusted_certificate(
+    SseDeserializer deserializer,
+  );
 
   @protected
   TrustedSenderInfo sse_decode_trusted_sender_info(
@@ -1989,6 +2153,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_compose_settings(
+    ComposeSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_contact_group_info(
+    ContactGroupInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_desktop_settings(
     DesktopSettings self,
     SseSerializer serializer,
@@ -2085,6 +2261,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_new_secrets(
+    NewSecrets self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_no_reply_info(
     NoReplyInfo self,
     SseSerializer serializer,
@@ -2097,6 +2279,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_o_auth_client(
+    OAuthClient self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_outgoing_message(
     OutgoingMessage self,
     SseSerializer serializer,
@@ -2105,6 +2293,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_outgoing_server(
     OutgoingServer self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_prepared_image(
+    PreparedImage self,
     SseSerializer serializer,
   );
 
@@ -2211,6 +2405,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_compose_settings(
+    ComposeSettings self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_connection_security(
     ConnectionSecurity self,
     SseSerializer serializer,
@@ -2218,6 +2418,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_contact(Contact self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_contact_group_info(
+    ContactGroupInfo self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_delivery(Delivery self, SseSerializer serializer);
@@ -2325,6 +2531,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_inbox_tab(InboxTab self, SseSerializer serializer);
 
   @protected
+  void sse_encode_inline_image_data(
+    InlineImageData self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_invite_answer(InviteAnswer self, SseSerializer serializer);
 
   @protected
@@ -2418,6 +2630,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_contact(List<Contact> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_contact_group_info(
+    List<ContactGroupInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_feedback_attachment(
     List<FeedbackAttachment> self,
     SseSerializer serializer,
@@ -2461,6 +2679,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_list_inbox_row(List<InboxRow> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_inline_image_data(
+    List<InlineImageData> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_invite_person(
@@ -2523,8 +2747,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_new_secret(
+    List<NewSecret> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_newsletter_row(
     List<NewsletterRow> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_o_auth_provider(
+    List<OAuthProvider> self,
     SseSerializer serializer,
   );
 
@@ -2655,6 +2891,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_trusted_certificate(
+    List<TrustedCertificate> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_trusted_sender_info(
     List<TrustedSenderInfo> self,
     SseSerializer serializer,
@@ -2697,6 +2939,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_message_action(MessageAction self, SseSerializer serializer);
 
   @protected
+  void sse_encode_message_asks(MessageAsks self, SseSerializer serializer);
+
+  @protected
   void sse_encode_message_envelope(
     MessageEnvelope self,
     SseSerializer serializer,
@@ -2707,6 +2952,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_message_ref(MessageRef self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_new_secret(NewSecret self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_new_secrets(NewSecrets self, SseSerializer serializer);
 
   @protected
   void sse_encode_newsletter_row(NewsletterRow self, SseSerializer serializer);
@@ -2722,6 +2973,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     NotifySettings self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_o_auth_client(OAuthClient self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_o_auth_provider(OAuthProvider self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
@@ -2808,14 +3065,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_new_secrets(
+    NewSecrets? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_no_reply_info(
     NoReplyInfo? self,
     SseSerializer serializer,
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_o_auth_client(
+    OAuthClient? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_outgoing_server(
     OutgoingServer? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_prepared_image(
+    PreparedImage? self,
     SseSerializer serializer,
   );
 
@@ -2923,6 +3198,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_pec_stage(PecStage self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_prepared_image(PreparedImage self, SseSerializer serializer);
 
   @protected
   void sse_encode_privacy_settings(
@@ -3091,6 +3369,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_translate_pair(TranslatePair self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_trusted_certificate(
+    TrustedCertificate self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_trusted_sender_info(

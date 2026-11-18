@@ -60,6 +60,69 @@ cd ../wear && dart format lib test && flutter analyze && flutter test   # the wa
 - **Wear OS watch:** `wear/` is a small Flutter app with no engine of its own: the phone app sends it the inbox over the watch connection (`WatchLink.kt`, `app/rust/src/watch.rs`) and does what its buttons ask. It shares the phone app's application id and key, as Wear OS requires. `cd wear && flutter test`; to try it, start a Wear OS emulator (Round, API 33 or later), pair it with a phone or phone emulator through the Wear OS app, then `flutter run -d <watch>` with the phone app installed on the phone. Its icons and tokens come from `tools/gen_icons.py` and `tools/gen_tokens.py`, like the phone's.
 - **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without them, release builds keep the local debug key. The "Release" workflow builds the same APK, with the key from repository secrets, and attaches it to the GitHub prerelease.
 
+## Platform differences in compose
+
+- **Spell check** uses the platform's own checker, in the language the text is written in (one of the app's six, detected by the engine, else the app's language): Android and, through Flutter, iOS and macOS. Flutter has no spell checker on Windows and Linux yet, so there the body and subject are not checked; nothing else is needed to build.
+- **Pasting a picture** into the text reads the system clipboard through the engine on Windows, macOS and Linux (`arboard`; on Linux it uses the X11 clipboard, which XWayland provides). On Android, pictures come from the keyboard (Gboard's clipboard, GIFs, stickers) through the text field. iOS is not wired yet.
+
+## Sign-in with Microsoft and Google
+
+Microsoft 365 and Outlook.com no longer accept passwords from mail apps, and Gmail takes them only as app passwords. Piuma Mail signs in to them with OAuth 2.0 instead: Authorization Code with PKCE in the system browser (never a web view of the app's own), as RFC 8252 asks of native apps. The engine side is `core/src/oauth.rs`; the providers are data in `core/src/oauth_providers.json` (endpoints, scopes, servers, domains and MX hosts), so another provider is a new entry there, not new code.
+
+Every build needs its own registration with each provider, called a client. **None is in the repository, and none is needed to build**: without one, the app explains that it can't sign in to Microsoft, keeps app passwords for Gmail, and anyone can enter their own client ID under "Advanced: your own client ID" when adding the account.
+
+### Giving a build its clients
+
+The engine reads `PIUMA_OAUTH_CLIENTS` when it is compiled (`flutter build` and `flutter run` compile it through cargokit), as entries separated by `;` or new lines:
+
+```sh
+export PIUMA_OAUTH_CLIENTS="microsoft=<application id>;google=<desktop client id>;google.secret=<desktop client secret>;google.android=<android client id>"
+```
+
+- `<provider>`: the client ID on Windows, macOS and Linux (and on Android when there is no `.android` entry).
+- `<provider>.android`: a client of Android type, used on Android. Google needs it; Microsoft's one client works everywhere.
+- `<provider>.secret`: the client "secret" of a Google **desktop** client. It is not a secret: an installed app can't keep one, anyone can read it from the program, and Google documents it as such for installed apps (RFC 8252 section 8.5). PKCE is what protects the sign-in. Still, keep it out of the repository with the rest.
+- `<provider>.tenant`: Microsoft's tenant, when not `common` (`organizations` for work and school accounts only, or a tenant ID).
+
+The Android build (`app/android/app/build.gradle.kts`) reads the same variable to register Google's redirect scheme (the reversed Android client ID). Microsoft's redirect scheme on Android is always `mail.piuma.app://oauth`.
+
+Refresh tokens are kept only in the system keychain (the Android Keystore on Android), in the account's entry, never in the database or the logs, and never travel through the device-sync space: another device signs in on its own. Access tokens stay in memory and are renewed five minutes before they run out, or once after a server refuses one; a second refusal asks the person to sign in again. Removing an account gives Google its refresh token back (Microsoft has no revocation endpoint for public clients; its token runs out on its own).
+
+### Microsoft (Entra ID)
+
+No paid verification is needed. In the [Microsoft Entra admin center](https://entra.microsoft.com) › Identity › Applications › App registrations › **New registration**:
+
+1. **Name**: Piuma Mail. **Supported account types**: "Accounts in any organizational directory and personal Microsoft accounts" (multitenant and personal), so both Microsoft 365 and Outlook.com sign in.
+2. **Authentication** › Add a platform › **Mobile and desktop applications**, with these redirect URIs:
+   - `http://localhost` (the portal's own suggestion; keeps working if a later version uses it).
+   - `http://127.0.0.1`: what the desktop apps use. The port is chosen at random each time and Microsoft ignores the port of loopback addresses. If the portal refuses an `http` address, add it in the **Manifest** under `replyUrlsWithType` as `{ "url": "http://127.0.0.1", "type": "InstalledClient" }`.
+   - `mail.piuma.app://oauth`: Android.
+   - Turn on **Allow public client flows** (Advanced settings). There is no client secret for Microsoft.
+3. **API permissions** › Add a permission › APIs my organization uses › **Office 365 Exchange Online** (search "Office 365 Exchange Online"), Delegated: `IMAP.AccessAsUser.All` and `SMTP.Send`. `offline_access` (Microsoft Graph, delegated) gives the refresh token; add it too. The app asks for `https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access`.
+4. **Branding & properties**: the publisher domain and the links to the privacy statement and terms.
+5. **Publisher verification** (optional, free with a Microsoft AI Cloud Partner Program ID): without it the consent page shows the app as "unverified", and some organizations' policies stop people from consenting to unverified multitenant apps; their administrator can still consent for the whole organization. Microsoft 365 administrators can also turn off IMAP or SMTP AUTH per mailbox (SMTP AUTH is off by default in newer tenants): that is the organization's choice, not something the app can change.
+6. Copy the **Application (client) ID** into `microsoft=` above.
+
+### Google (Google Cloud)
+
+In the [Google Cloud console](https://console.cloud.google.com), in a project of its own:
+
+1. **Google Auth Platform** › Branding (the OAuth consent screen): app name, support email, logo, the home page, privacy policy and terms links, and the authorized domain they live on. **Audience**: External.
+2. **Data access** › Add scope: `https://mail.google.com/` (full mailbox access, needed for IMAP and SMTP). It is a **restricted** scope.
+3. **Clients** › Create client:
+   - **Desktop app**: for Windows, macOS and Linux. Copy its client ID and client secret into `google=` and `google.secret=`. Desktop clients take any loopback port on `http://127.0.0.1`; there is nothing to add.
+   - **Android**: package name `mail.piuma.piuma_mail` and the SHA-1 of the signing key (the beta key for beta builds, the store key for store builds). In its **Advanced settings**, enable **Custom URI scheme**: Google turned it off by default for new Android clients. The redirect is `com.googleusercontent.apps.<id>:/oauth2redirect`. Copy the client ID into `google.android=`.
+4. **Testing** (before verification): while the app's publishing status is "Testing", only the **test users** listed in Audience can sign in, at most **100**, and their refresh tokens expire after **7 days**, so they must sign in again every week.
+5. **Verification** for "In production": because `https://mail.google.com/` is restricted, Google requires the app verification (brand, domain ownership, a video of the sign-in and of how the data is used, a privacy policy that follows the Google API Services User Data Policy, including its Limited Use requirements) **and** a yearly **CASA security assessment** (Cloud Application Security Assessment) by an authorized assessor, whose cost falls on the publisher. Until it passes, Gmail users outside the test list sign in with an app password, which the app offers on its own.
+
+### Using your own client
+
+A fork, or a person whose organization requires its own app registration, follows the same steps, then either builds with `PIUMA_OAUTH_CLIENTS` or enters the client ID (and, for Microsoft, the tenant; for a Google desktop client, the secret) under "Advanced: your own client ID" in the add-account flow. The client is kept with the account in the keychain and used for every renewal.
+
+One exception: **Google on Android** takes only the client the build was made with. Google sends Android sign-ins back to a scheme made from the client ID (`com.googleusercontent.apps.<id>`), and the app can only answer the scheme registered in its manifest at build time, so the option is hidden there and the engine refuses another Google client on Android. A Microsoft client of one's own works on Android too: its redirect, `mail.piuma.app://oauth`, is the same for every client (add it to your registration).
+
+The sign-in answer is accepted only with this sign-in's `state` (compared in constant time); answers with another `state` are ignored and the app keeps waiting until the five minutes run out. When the provider names itself in the answer (`iss`, RFC 9207; Google does), it must be the `issuer` in `oauth_providers.json`.
+
 ## License and DCO sign-off
 
 - Every contribution is released under GPL-3.0-or-later plus the additional app store permission described in [`LICENSE-APPSTORE.md`](LICENSE-APPSTORE.md).

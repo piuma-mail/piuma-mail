@@ -17,7 +17,6 @@ use super::engine::{
     body_block, engine, file_risk, privacy_settings, store, AttachmentInfo, EngineError, ErrorKind,
     ReadableMessage, StoppedTracker, TrackerKind,
 };
-use crate::credentials;
 
 const KEEP_RUNNING: &str = "desktop.keep_running";
 const START_AT_LOGIN: &str = "desktop.start_at_login";
@@ -195,7 +194,7 @@ pub async fn import_eml(account_id: i64, mailbox: String, path: String) -> Resul
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     engine
         .runtime
         .spawn(async move {

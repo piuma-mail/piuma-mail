@@ -3397,6 +3397,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der Server hat das Passwort abgelehnt. Hat es sich geändert?';
 
   @override
+  String get accountCertificateRefused =>
+      'Das Zertifikat des Servers wurde abgelehnt. Melde dich erneut an, um es anzusehen.';
+
+  @override
   String get accountEditServers => 'Server bearbeiten';
 
   @override
@@ -4205,6 +4209,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get pairPhraseOld =>
       'Diese Wiederherstellungsphrase wurde ersetzt: Dein Bereich hat eine neuere bekommen, als ein Gerät getrennt wurde oder die Synchronisierung ausgeschaltet hat. Verwende die neueste Phrase oder einen Code von einem verbundenen Gerät.';
+
+  @override
+  String get pairConflict =>
+      'Zwei deiner Geräte haben sich gegenseitig entfernt, daher kannst du diesem Bereich noch nicht beitreten. Ändere das Passwort des Postfachs, das ihn enthält, synchronisiere ein Gerät, das du noch hast, und versuche es dann erneut.';
 
   @override
   String get pairContinue => 'Weiter';
@@ -6441,6 +6449,119 @@ class AppLocalizationsDe extends AppLocalizations {
       'Dein Bereich hat einen neuen Schlüssel und eine neue Wiederherstellungsphrase, weil ein Gerät ausgetreten ist oder zwei gleichzeitig getrennt wurden. Die aufgeschriebene funktioniert nicht mehr.';
 
   @override
+  String get errorNoKeyring =>
+      'Piuma bewahrt Passwörter im Schlüsselbund des Systems auf, und keiner läuft. Installiere und starte einen, etwa GNOME Keyring oder KWallet, und versuche es dann erneut. Passwörter landen nie in einer einfachen Datei.';
+
+  @override
+  String get errorCertificate =>
+      'Dem Zertifikat des Servers kann nicht vertraut werden.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'Diese Kopie von Piuma Mail kann sich bei diesem Anbieter nicht anmelden. Gib unter Erweitert deine eigene Client-ID ein oder nutze ein App-Passwort, wo der Anbieter das erlaubt.';
+
+  @override
+  String get errorSignInCancelled =>
+      'Die Anmeldeseite wurde geschlossen, bevor sie fertig war. Versuche es erneut.';
+
+  @override
+  String get errorSignInDenied =>
+      'Der Anbieter hat die Anmeldung nicht erlaubt. Versuche es erneut oder prüfe die Client-ID unter Erweitert.';
+
+  @override
+  String get errorOAuthServers =>
+      'Dieses Konto meldet sich über die Seite seines Anbieters an und bleibt deshalb bei dessen eigenen Servern, über eine sichere Verbindung.';
+
+  @override
+  String get errorPort => 'Ein Port ist eine Zahl von 1 bis 65535.';
+
+  @override
+  String get certUntrusted =>
+      'Keine Stelle, der dein System vertraut, bürgt für dieses Zertifikat. So sehen Server aus, die ihr Zertifikat selbst ausstellen.';
+
+  @override
+  String get certExpired =>
+      'Dieses Zertifikat ist abgelaufen oder noch nicht gültig.';
+
+  @override
+  String get certNameMismatch =>
+      'Dieses Zertifikat wurde für einen anderen Servernamen ausgestellt.';
+
+  @override
+  String get certChanged =>
+      'Das ist nicht das Zertifikat, dem du bei diesem Server vertraut hast. Es wurde vielleicht erneuert, oder jemand hört dazwischen mit. Vertraue ihm nur, wenn du weißt, warum es sich geändert hat.';
+
+  @override
+  String get certInvalid =>
+      'Dieses Zertifikat ist ungültig, und ihm zu vertrauen würde die Verbindung nicht sicher machen.';
+
+  @override
+  String get certProvider =>
+      'Das ist der Server eines großen Anbieters, und für seine Zertifikate bürgt immer eine Zertifizierungsstelle. Vielleicht schaltet sich jemand in die Verbindung ein: Versuche ein anderes Netz und prüfe Datum und Uhrzeit dieses Geräts.';
+
+  @override
+  String get certIssuedTo => 'Ausgestellt für';
+
+  @override
+  String get certIssuedBy => 'Ausgestellt von';
+
+  @override
+  String get certValidUntil => 'Gültig bis';
+
+  @override
+  String get certFingerprint => 'SHA-256-Fingerabdruck';
+
+  @override
+  String get certTrust => 'Diesem Zertifikat vertrauen';
+
+  @override
+  String get certTrustNew => 'Dem neuen Zertifikat vertrauen';
+
+  @override
+  String get certCopyFingerprint => 'Fingerabdruck kopieren';
+
+  @override
+  String get certTrustHint =>
+      'Nur für dieses Konto und genau dieses Zertifikat. Vergleiche den Fingerabdruck vorher mit dem, den dir dein Anbieter oder Administrator nennt.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Mit $provider anmelden';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail öffnet die Seite von $provider in deinem Browser. Melde dich dort an und komm dann zurück: Dein Passwort bleibt bei $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'Warte auf den Browser…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft lässt Mail-Apps nicht mehr mit einem Passwort anmelden, und in dieser Kopie von Piuma Mail ist keine Microsoft-Anmeldung eingerichtet. Nutze einen offiziellen Build oder gib unter Erweitert die Client-ID deiner eigenen App ein.';
+
+  @override
+  String get oauthUseAppPassword => 'Stattdessen ein App-Passwort nutzen';
+
+  @override
+  String get oauthAdvanced => 'Erweitert: eigene Client-ID';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'Für deine eigene App-Registrierung bei $provider. Leer lassen, um die dieses Builds zu nutzen.';
+  }
+
+  @override
+  String get oauthClientId => 'Client-ID';
+
+  @override
+  String get oauthTenant => 'Mandant (optional)';
+
+  @override
+  String get oauthClientSecret => 'Client-Geheimnis (nur Google-Desktop-Apps)';
+
+  @override
   String get listFailed => 'Diese E-Mails konnten nicht angezeigt werden.';
 
   @override
@@ -6457,6 +6578,174 @@ class AppLocalizationsDe extends AppLocalizations {
       one: 'Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.',
     );
     return '$_temp0';
+  }
+
+  @override
+  String get composeOptions => 'Optionen';
+
+  @override
+  String get composePlainText => 'Nur-Text';
+
+  @override
+  String get composeHighPriority => 'Hohe Priorität';
+
+  @override
+  String get composeReadReceipt => 'Lesebestätigung anfordern';
+
+  @override
+  String get composePlainTitle => 'Zu Nur-Text wechseln?';
+
+  @override
+  String get composePlainBody =>
+      'Nur-Text kennt kein Fett, Kursiv, keine Links und keine Bilder. Links behalten ihre Adresse in Klammern, Bilder werden als Dateien angehängt.';
+
+  @override
+  String get composePlainConfirm => 'Zu Nur-Text wechseln';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Anhang vergessen?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Deine Nachricht erwähnt einen Anhang, aber es ist nichts angehängt.';
+
+  @override
+  String get sendNoSubjectTitle => 'Ohne Betreff senden?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Ein Betreff hilft, deine Nachricht später wiederzufinden.';
+
+  @override
+  String get sendAddSubject => 'Betreff hinzufügen';
+
+  @override
+  String get sendAnyway => 'Trotzdem senden';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name ist zu groß: Anhänge dürfen insgesamt höchstens $size groß sein.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name ist zu groß für den Text.';
+  }
+
+  @override
+  String get pastedImage => 'Das eingefügte Bild';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Adressen',
+      one: '1 Adresse',
+      zero: 'Keine Adressen',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Gruppe';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender möchte wissen, wann du diese Nachricht liest.';
+  }
+
+  @override
+  String get readReceiptSend => 'Bestätigung senden';
+
+  @override
+  String get readReceiptDontSend => 'Nicht senden';
+
+  @override
+  String get readReceiptNever => 'Nie für diesen Absender';
+
+  @override
+  String get readReceiptSent => 'Bestätigung gesendet';
+
+  @override
+  String get readReceiptFailed =>
+      'Die Bestätigung konnte nicht gesendet werden. Versuch es später noch einmal.';
+
+  @override
+  String get highPriority => 'Hohe Priorität';
+
+  @override
+  String get repliesTitle => 'Antworten';
+
+  @override
+  String get replyBelowQuote => 'Unter dem Zitat antworten';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Aus: Antworten beginnen über der zitierten Nachricht.';
+
+  @override
+  String get quoteSelection => 'Nur markierte Wörter zitieren';
+
+  @override
+  String get quoteSelectionHint =>
+      'Sind in einer Nachricht Wörter markiert, zitiert Antworten nur diese.';
+
+  @override
+  String get plainTextTitle => 'Neue Nachrichten als Nur-Text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · neue Nachrichten beginnen als Nur-Text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Kontaktgruppen';
+
+  @override
+  String get contactGroupsHint =>
+      'Gib den Namen einer Gruppe in An, Cc oder Bcc ein, um alle darin hinzuzufügen.';
+
+  @override
+  String get contactGroupNew => 'Neue Gruppe';
+
+  @override
+  String get contactGroupUntitled => 'Unbenannte Gruppe';
+
+  @override
+  String get contactGroupName => 'Gruppenname';
+
+  @override
+  String get contactGroupAddresses => 'Adressen';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Eine pro Zeile oder durch Kommas getrennt.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return '$name löschen';
+  }
+
+  @override
+  String get composeInsertPicture => 'Bild einfügen';
+
+  @override
+  String get composePastePicture => 'Bild aus Zwischenablage';
+
+  @override
+  String get noPictureToPaste => 'In der Zwischenablage ist kein Bild.';
+
+  @override
+  String get composeReadReceiptAsked => 'Lesebestätigung angefordert';
+
+  @override
+  String get readReceiptQueued =>
+      'Die Bestätigung wartet im Postausgang und geht raus, sobald es geht.';
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'Auf Android kann sich diese App bei $provider nur mit dem Client anmelden, mit dem sie gebaut wurde. Nutze ein App-Passwort oder einen Build mit deinem Client.';
   }
 
   @override

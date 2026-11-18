@@ -50,7 +50,8 @@ class MessageActions {
     required this.openCompose,
     required this.toast,
     this.phone = false,
-  });
+    ReplyBuilder? builder,
+  }) : _given = builder;
 
   final BuildContext context;
   final MailSource source;
@@ -68,8 +69,16 @@ class MessageActions {
 
   AppLocalizations get _l => AppLocalizations.of(context);
 
+  /// Builds the drafts, with Settings › Writing when the screen has them.
+  final ReplyBuilder? _given;
+
   ReplyBuilder get _builder =>
-      ReplyBuilder(_l, Localizations.localeOf(context).toLanguageTag());
+      _given ??
+      ReplyBuilder(
+        _l,
+        Localizations.localeOf(context).toLanguageTag(),
+        accounts: source.accounts,
+      );
 
   /// Forward, as on `ForwardToApprove` (option A), keeping the message's
   /// formatting: compose opens once its files are here, each fetched in

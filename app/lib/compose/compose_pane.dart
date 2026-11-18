@@ -20,11 +20,16 @@ import '../inbox/pictures.dart' show SenderPicture;
 import '../widgets/attachment_chip.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart' show showPiumaPopover, showPiumaSheet;
+import 'compose_options.dart';
 import 'format_bar.dart';
+import 'quoting.dart' show replyCaret;
 import 'remind_me.dart';
 import 'rich_body.dart';
+import 'send_checks.dart';
 import 'send_later.dart';
 import 'templates.dart';
+
+part 'compose_features.dart';
 
 /// How long a sent message waits before it really leaves, so Undo works.
 const undoSendWindow = Duration(seconds: 10);
@@ -67,7 +72,12 @@ class ComposePane extends StatefulWidget {
     this.aliases = const {},
     this.groups = const [],
     this.suggest,
+    this.extras,
   });
+
+  /// Pictures, contact groups, the writing settings and the spell
+  /// checker's language (the mail source). Null leaves them out.
+  final ComposeExtras? extras;
 
   /// Every account's other addresses, offered in From.
   final Map<int, List<String>> aliases;
@@ -184,15 +194,23 @@ class _ComposePaneState extends State<ComposePane> {
   // A reply starts with the caret above the quoted message, after any
   // words carried over from the quick reply box.
   late final _body =
-      RichBodyController(text: widget.initial.body, marks: widget.initial.marks)
+      RichBodyController(
+          text: widget.initial.body,
+          marks: widget.initial.marks,
+          images: widget.initial.images,
+        )
         ..selection = TextSelection.collapsed(
           offset: widget.initial.inReplyTo != null
-              ? switch (widget.initial.body.indexOf('\n\n')) {
-                  final i when i > 0 => i,
-                  _ => 0,
-                }
+              ? replyCaret(widget.initial.body)
               : 0,
         );
+
+  /// Plain text, priority, the read receipt, contact groups and the
+  /// spell checker's language (`compose_features.dart`).
+  late final _extras = _Extras(widget.initial);
+
+  /// [setState], for the features kept in `compose_features.dart`.
+  void _update(VoidCallback change) => setState(change);
   final _toKey = GlobalKey<_RecipientsFieldState>();
   final _ccKey = GlobalKey<_RecipientsFieldState>();
   final _bccKey = GlobalKey<_RecipientsFieldState>();
@@ -218,10 +236,11 @@ class _ComposePaneState extends State<ComposePane> {
   /// The formatting bar shows: words are selected, or a link is being
   /// added (`FormattingToApprove`).
   bool get _formatting =>
-      _linking ||
-      (_bodyFocus.hasFocus &&
-          _body.selection.isValid &&
-          !_body.selection.isCollapsed);
+      !_extras.plainText &&
+      (_linking ||
+          (_bodyFocus.hasFocus &&
+              _body.selection.isValid &&
+              !_body.selection.isCollapsed));
 
   late bool _formattingShown = _formatting;
   bool _bodyFocused = false;
@@ -404,6 +423,8 @@ class _ComposePaneState extends State<ComposePane> {
       l.addListener(_placePill);
     }
     if (!widget.phone) _pill.show();
+    _body.addListener(_languageTyped);
+    _loadExtras();
   }
 
   bool _focusPlanned = false;
@@ -666,8 +687,21 @@ class _ComposePaneState extends State<ComposePane> {
     final l = AppLocalizations.of(context);
     final added = <DraftFile>[];
     String? problem;
+    // What the message carries already, so a file is refused by its size
+    // before it is read: a 2 GB video never fills memory.
+    var size = _draft(commit: false).filesSize;
+    final limit = fileSize(
+      maxDraftFilesSize,
+      locale: Localizations.localeOf(context).languageCode,
+    );
     for (final f in picked) {
       try {
+        final length = await fileLength(f);
+        if (size + length > maxDraftFilesSize) {
+          problem = l.fileTooLarge(f.name, limit);
+          continue;
+        }
+        size += length;
         added.add(DraftFile(f.name, await f.readAsBytes()));
       } catch (_) {
         problem = l.fileNotRead(f.name);
@@ -684,6 +718,7 @@ class _ComposePaneState extends State<ComposePane> {
   @override
   void dispose() {
     _saveTimer?.cancel();
+    _extras.languageTimer?.cancel();
     _noteTimer?.cancel();
     _subject.dispose();
     _body.dispose();
@@ -719,6 +754,10 @@ class _ComposePaneState extends State<ComposePane> {
       copy: _copy,
       forward: widget.initial.forward,
       remindAt: _remindAt,
+      images: _body.images,
+      plainText: _extras.plainText,
+      readReceipt: _extras.readReceipt,
+      highPriority: _extras.highPriority,
     );
   }
 
@@ -752,7 +791,7 @@ class _ComposePaneState extends State<ComposePane> {
 
   Future<void> _send() async {
     final d = _draft();
-    if (!_ready(d)) return;
+    if (!_ready(d) || !await _checksPass(d)) return;
     // A save on its way finishes first, so its copy goes when this is sent.
     _saveTimer?.cancel();
     await _saves;
@@ -795,7 +834,8 @@ class _ComposePaneState extends State<ComposePane> {
   Future<void> _sendLater({DateTime? at}) async {
     final schedule = widget.onSchedule;
     final d = _draft();
-    if (schedule == null || !_ready(d)) return;
+    if (schedule == null || !_ready(d) || !await _checksPass(d)) return;
+    if (!mounted) return;
     final names = d.recipients
         .map((a) => a.replaceAll(RegExp(r'\s*<.*>'), '').trim())
         .join(', ');
@@ -876,7 +916,7 @@ class _ComposePaneState extends State<ComposePane> {
       onDragExited: (_) => setState(() => _dropping = false),
       onDragDone: (d) {
         setState(() => _dropping = false);
-        _addFiles([
+        _dropFiles([
           for (final f in d.files)
             if (f is! DropItemDirectory) f,
         ]);
@@ -982,6 +1022,7 @@ class _ComposePaneState extends State<ComposePane> {
                   : s.email;
               _signaturePicked = false;
             });
+            _applyPlainDefault();
             _edited();
           },
         ),
@@ -999,7 +1040,8 @@ class _ComposePaneState extends State<ComposePane> {
           key: _toKey,
           label: l.to,
           addresses: _to,
-          suggest: widget.suggest,
+          suggest: _suggestions,
+          expand: _expandGroup,
           onListing: _listing(_toKey),
           autofocus: widget.initial.to.isEmpty,
           focusAfter: focusAfter,
@@ -1018,7 +1060,8 @@ class _ComposePaneState extends State<ComposePane> {
             key: _ccKey,
             label: l.cc,
             addresses: _cc,
-            suggest: widget.suggest,
+            suggest: _suggestions,
+            expand: _expandGroup,
             onListing: _listing(_ccKey),
             onChanged: () {
               setState(() => _localError = null);
@@ -1034,7 +1077,8 @@ class _ComposePaneState extends State<ComposePane> {
             key: _bccKey,
             label: l.bcc,
             addresses: _bcc,
-            suggest: widget.suggest,
+            suggest: _suggestions,
+            expand: _expandGroup,
             onListing: _listing(_bccKey),
             onChanged: () {
               setState(() => _localError = null);
@@ -1051,6 +1095,7 @@ class _ComposePaneState extends State<ComposePane> {
           controller: _subject,
           focusNode: _subjectFocus,
           label: l.subject,
+          spellCheck: _spellCheck,
           style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
@@ -1135,34 +1180,50 @@ class _ComposePaneState extends State<ComposePane> {
                                 LogicalKeyboardKey.keyB,
                                 meta: apple,
                                 control: !apple,
-                              ): () =>
-                                  _body.toggle(BodyMarkKind.bold),
+                              ): () {
+                                if (!_extras.plainText) {
+                                  _body.toggle(BodyMarkKind.bold);
+                                }
+                              },
                               SingleActivator(
                                 LogicalKeyboardKey.keyI,
                                 meta: apple,
                                 control: !apple,
-                              ): () =>
-                                  _body.toggle(BodyMarkKind.italic),
+                              ): () {
+                                if (!_extras.plainText) {
+                                  _body.toggle(BodyMarkKind.italic);
+                                }
+                              },
                               SingleActivator(
                                 LogicalKeyboardKey.keyL,
                                 meta: apple,
                                 control: !apple,
-                              ): () =>
-                                  _setLinking(true),
+                              ): () {
+                                if (!_extras.plainText) _setLinking(true);
+                              },
+                              SingleActivator(
+                                LogicalKeyboardKey.keyV,
+                                meta: apple,
+                                control: !apple,
+                              ): _paste,
                             },
-                            child: _BareField(
-                              key: _bodyField,
-                              focusNode: _bodyFocus,
-                              controller: _body,
-                              label: l.messageBody,
-                              multiline: true,
-                              autofocus:
-                                  widget.initial.to.isNotEmpty &&
-                                  focusAfter == null,
-                              style: TextStyle(
-                                fontSize: 16,
-                                height: 1.65,
-                                color: c.fg,
+                            child: _inTextLanguage(
+                              _BareField(
+                                key: _bodyField,
+                                focusNode: _bodyFocus,
+                                controller: _body,
+                                label: l.messageBody,
+                                multiline: true,
+                                autofocus:
+                                    widget.initial.to.isNotEmpty &&
+                                    focusAfter == null,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  height: 1.65,
+                                  color: c.fg,
+                                ),
+                                spellCheck: _spellCheck,
+                                onPicture: _keyboardPicture,
                               ),
                             ),
                           ),
@@ -1226,6 +1287,17 @@ class _ComposePaneState extends State<ComposePane> {
                         ],
                       ),
                     ),
+                  if (_extras.plainText ||
+                      _extras.highPriority ||
+                      _extras.readReceipt)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ComposeOptionsLine(
+                        plainText: _extras.plainText,
+                        highPriority: _extras.highPriority,
+                        readReceipt: _extras.readReceipt,
+                      ),
+                    ),
                   if (error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
@@ -1276,6 +1348,13 @@ class _ComposePaneState extends State<ComposePane> {
                                 open: _picking,
                                 onTap: _picking ? null : () => _openTemplates(),
                               ),
+                            ComposeOptionsButton(
+                              plainText: _extras.plainText,
+                              highPriority: _extras.highPriority,
+                              readReceipt: _extras.readReceipt,
+                              phone: phone,
+                              onToggle: _toggleOption,
+                            ),
                             if (widget.onDiscard != null)
                               _IconButton(
                                 icon: PiumaIcon.trash,
@@ -1430,6 +1509,8 @@ class _BareField extends StatelessWidget {
     required this.style,
     this.multiline = false,
     this.autofocus = false,
+    this.spellCheck,
+    this.onPicture,
   });
 
   final TextEditingController controller;
@@ -1438,6 +1519,12 @@ class _BareField extends StatelessWidget {
   final TextStyle style;
   final bool multiline;
   final bool autofocus;
+
+  /// The platform's spell checker, where there is one.
+  final SpellCheckConfiguration? spellCheck;
+
+  /// A picture the phone's keyboard puts in the text.
+  final ValueChanged<KeyboardInsertedContent>? onPicture;
 
   @override
   Widget build(BuildContext context) {
@@ -1457,6 +1544,18 @@ class _BareField extends StatelessWidget {
         style: style.copyWith(fontFamily: PiumaFonts.sans),
         cursorColor: c.accent,
         decoration: const InputDecoration.collapsed(hintText: null),
+        spellCheckConfiguration: spellCheck,
+        contentInsertionConfiguration: onPicture == null
+            ? null
+            : ContentInsertionConfiguration(
+                onContentInserted: onPicture!,
+                allowedMimeTypes: const [
+                  'image/png',
+                  'image/jpeg',
+                  'image/gif',
+                  'image/webp',
+                ],
+              ),
       ),
     );
   }
@@ -1474,7 +1573,11 @@ class _RecipientsField extends StatefulWidget {
     this.focusAfter,
     this.suggest,
     this.onListing,
+    this.expand,
   });
+
+  /// The addresses of a contact group by its name, typed and committed.
+  final List<String>? Function(String typed)? expand;
 
   final String label;
   final List<String> addresses;
@@ -1589,9 +1692,13 @@ class _RecipientsFieldState extends State<_RecipientsField> {
   void _pick(Contact p) {
     _hide();
     setState(() {
-      widget.addresses.add(
-        p.name.trim().isEmpty ? p.email : '${p.name.trim()} <${p.email}>',
-      );
+      if (p is GroupSuggestion) {
+        _addAll(p.group.addresses);
+      } else {
+        widget.addresses.add(
+          p.name.trim().isEmpty ? p.email : '${p.name.trim()} <${p.email}>',
+        );
+      }
       _text.clear();
     });
     widget.onChanged();
@@ -1603,21 +1710,41 @@ class _RecipientsFieldState extends State<_RecipientsField> {
 
   /// Moves whatever is typed into the list.
   void commit() {
-    final parts = _text.text
-        .split(RegExp(r'[,;\n]'))
-        .map((p) => p.trim())
-        .where((p) => p.isNotEmpty)
-        .toList();
+    final parts = typedRecipients(_text.text, widget.expand);
     if (parts.isEmpty) return;
     setState(() {
-      widget.addresses.addAll(parts);
+      for (final part in parts) {
+        // A contact group's name brings all its addresses.
+        if (part.group case final group?) {
+          _addAll(group);
+        } else {
+          widget.addresses.add(part.text);
+        }
+      }
       _text.clear();
     });
     widget.onChanged();
   }
 
+  /// Adds [addresses], each only once.
+  void _addAll(List<String> addresses) {
+    final there = {
+      for (final a in widget.addresses) _bareAddress(a).toLowerCase(),
+    };
+    for (final a in addresses) {
+      if (there.add(_bareAddress(a).toLowerCase())) widget.addresses.add(a);
+    }
+  }
+
   void _onChanged(String value) {
-    if (value.contains(RegExp(r'[,;]'))) {
+    // A comma ends what was typed once it is an address or a group: a
+    // group's name with a comma in it, or a name before its address,
+    // goes on being typed.
+    if (value.contains(RegExp(r'[,;]')) &&
+        typedRecipients(
+          value,
+          widget.expand,
+        ).every((p) => p.group != null || p.text.contains('@'))) {
       _hide();
       commit();
       return;
@@ -1843,7 +1970,9 @@ class _Suggestions extends StatelessWidget {
                               _Dot(color)
                             else
                               Text(
-                                p.writtenTo
+                                p is GroupSuggestion
+                                    ? l.contactGroupTag
+                                    : p.writtenTo
                                     ? l.suggestWroteTo
                                     : l.suggestWroteToYou,
                                 style: TextStyle(fontSize: 12, color: c.muted),
@@ -1906,6 +2035,12 @@ class _PhoneSuggestions extends StatelessWidget {
                       if (p.accountColor case final color?) ...[
                         const SizedBox(width: PiumaSpace.s12),
                         _Dot(color),
+                      ] else if (p is GroupSuggestion) ...[
+                        const SizedBox(width: PiumaSpace.s12),
+                        Text(
+                          AppLocalizations.of(context).contactGroupTag,
+                          style: TextStyle(fontSize: 13, color: c.muted),
+                        ),
                       ],
                     ],
                   ),

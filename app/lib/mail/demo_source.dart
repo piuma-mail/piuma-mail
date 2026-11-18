@@ -35,9 +35,24 @@ class DemoMailSource extends MailSource {
     this.riskyFiles = false,
     this.impostor = false,
     bool away = false,
+    this.asks = false,
+    bool contactGroups = false,
     this.mailbox = false,
   }) : now = now ?? DateTime.now(),
        _crashWaiting = crashed {
+    if (contactGroups) {
+      // A group typed in To brings every address.
+      saveContactGroup(
+        const ContactGroup(
+          name: 'Book club',
+          addresses: [
+            'Giulia Romano <giulia.romano@posta.it>',
+            'Sara Conti <sara@studio.it>',
+            'Luca Bianchi <luca.bianchi@example.org>',
+          ],
+        ),
+      );
+    }
     if (away) {
       // Work's, as on `RemindAwayPrintToApprove`.
       _away[2] = AwayMessage(
@@ -670,6 +685,92 @@ class DemoMailSource extends MailSource {
   /// "PayPal" writing from paypa1.com, as on `ProtectionToApprove`.
   final bool impostor;
 
+  /// Mail in the inbox marked high priority, asking for a read receipt.
+  final bool asks;
+
+  /// The read receipts answered: the row, sent or not, and "never".
+  final receiptAnswers = <(MailRow, bool, bool)>[];
+
+  @override
+  Future<MessageAsks> messageAsks(MailRow row) async =>
+      !asks ||
+          row.folder != MailFolder.inbox ||
+          receiptAnswers.any((a) => a.$1.key == row.key)
+      ? const MessageAsks()
+      : MessageAsks(readReceiptTo: row.fromEmail, highPriority: true);
+
+  /// Read receipts in the outbox, by the message they answer, as the
+  /// engine links them: deleted there, the answer becomes "not sent".
+  final _receiptsWaiting = <Object, int>{};
+
+  @override
+  Future<bool?> answerReadReceipt(
+    MailRow row, {
+    required bool send,
+    bool never = false,
+  }) async {
+    final failure = failNextReceipt;
+    failNextReceipt = null;
+    if (failure != null) throw failure;
+    receiptAnswers.removeWhere((a) => a.$1.key == row.key);
+    receiptAnswers.add((row, send, never));
+    if (!send) {
+      // Not sent takes back one still waiting in the outbox.
+      if (_receiptsWaiting.remove(row.key) case final id?) {
+        _outbox.removeWhere(
+          (o) => o.id == id && o.state != OutboxState.sending,
+        );
+        _outboxDrafts.remove(id);
+        _changes.add(null);
+      }
+      return false;
+    }
+    if (goneNextReceipt) {
+      // Deleted from the Outbox before its first try: not sent.
+      goneNextReceipt = false;
+      receiptAnswers.last = (row, false, never);
+      return null;
+    }
+    final refused = refuseNextReceipt;
+    refuseNextReceipt = null;
+    if (!offline && refused == null) return false;
+    // It waits in the outbox, offline or refused: the band doesn't ask
+    // again, and the Outbox says why.
+    final id = _outboxId++;
+    final draft = Draft(
+      accountId: row.accountId,
+      to: [row.fromEmail],
+      subject: 'Read: ${row.subject}',
+      body: 'Your message was displayed.',
+    );
+    _outbox.add(
+      OutboxItem(
+        id: id,
+        accountId: row.accountId,
+        to: draft.recipients,
+        subject: draft.subject,
+        body: draft.body,
+        queuedAt: now,
+        state: refused == null ? OutboxState.waiting : OutboxState.refused,
+        error: refused,
+      ),
+    );
+    _outboxDrafts[id] = draft;
+    _receiptsWaiting[row.key] = id;
+    _changes.add(null);
+    return true;
+  }
+
+  /// The next read receipt fails before it reaches the outbox.
+  Object? failNextReceipt;
+
+  /// The next read receipt is deleted from the Outbox before it goes.
+  bool goneNextReceipt = false;
+
+  /// The server refuses the next read receipt with this reason: it stays
+  /// in the outbox.
+  String? refuseNextReceipt;
+
   /// Mailbox management's data: two starred emails, a Trash with two, a
   /// hidden folder, and how full each mailbox is. Off in the older
   /// screenshots, so they stay as they were.
@@ -783,7 +884,11 @@ class DemoMailSource extends MailSource {
   }
 
   @override
-  Future<void> setAccountServers(int accountId, AccountServers servers) async {
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (servers.imap.host.trim().isEmpty || servers.smtp.host.trim().isEmpty) {
       throw const AddAccountException(AddAccountError.unreachable, 'demo');
     }
@@ -815,7 +920,11 @@ class DemoMailSource extends MailSource {
     failedSince: status.value.failed.contains(accountId)
         ? DateTime(now.year, now.month, now.day, 9, 12)
         : null,
+    certificate: certificateFailed.contains(accountId),
   );
+
+  /// Accounts whose failure tests say was the server's certificate.
+  final certificateFailed = <int>{};
 
   final _changes = StreamController<void>.broadcast();
 
@@ -1667,7 +1776,11 @@ class DemoMailSource extends MailSource {
 
   /// The demo's one good password, for trying "Sign in again".
   @override
-  Future<void> signInAgain(int accountId, String password) async {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (password != 'carta-120-opaca') {
       throw const AddAccountException(AddAccountError.wrongPassword, 'demo');
     }
@@ -4241,6 +4354,7 @@ class DemoMailSource extends MailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.other, 'demo');
 
   @override
@@ -4252,6 +4366,7 @@ class DemoMailSource extends MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.other, 'demo');
 
   /// Finds settings for the mockup's studio.it, and JMAP for
@@ -4887,6 +5002,7 @@ class DemoMailSource extends MailSource {
     if (_outbox[i].redirect) throw StateError('a redirect');
     _outbox.removeAt(i);
     _undoWindows.remove(id);
+    _receiptDeleted(id);
     final draft = _outboxDrafts.remove(id)!;
     _changes.add(null);
     return draft;
@@ -4901,7 +5017,21 @@ class DemoMailSource extends MailSource {
     _outbox.removeAt(i);
     _undoWindows.remove(id);
     _outboxDrafts.remove(id);
+    _receiptDeleted(id);
     _changes.add(null);
+  }
+
+  /// A read receipt deleted from the outbox was not sent.
+  void _receiptDeleted(int id) {
+    for (final e in [..._receiptsWaiting.entries]) {
+      if (e.value != id) continue;
+      _receiptsWaiting.remove(e.key);
+      final i = receiptAnswers.indexWhere((a) => a.$1.key == e.key);
+      if (i >= 0) {
+        final (row, _, never) = receiptAnswers[i];
+        receiptAnswers[i] = (row, false, never);
+      }
+    }
   }
 
   /// Messages tried again from the Outbox, for tests.

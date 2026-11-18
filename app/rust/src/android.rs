@@ -191,6 +191,93 @@ pub fn reminders<'caller>(
         .resolve::<ThrowRuntimeExAndDefault>()
 }
 
+/// The browser came back from an OAuth sign-in page (`MainActivity`).
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn oauth_redirect<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    url: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, Error> {
+            let url = url.try_to_string(env)?;
+            Ok(crate::api::oauth::deliver_oauth_redirect(url))
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Secrets the engine got, for the Keystore, as JSON:
+/// `{"claim": n, "secrets": [{"key", "value", "seq"}]}`, the claim 0 and
+/// no secrets when there are none or the app is writing them. Hand the
+/// claim back to `secrets_written` once they are in the Keystore.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn kept_secrets<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Error> {
+            let (claim, entries) = crate::credentials::claim_kept().unwrap_or_default();
+            let items: Vec<String> = entries
+                .into_iter()
+                .map(|e| {
+                    format!(
+                        r#"{{"key":{},"value":{},"seq":{}}}"#,
+                        json_string(&e.key),
+                        json_string(&e.value),
+                        e.seq
+                    )
+                })
+                .collect();
+            JString::from_str(
+                env,
+                format!(r#"{{"claim":{claim},"secrets":[{}]}}"#, items.join(",")),
+            )
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// The secrets of `claim` that went into the Keystore, one `key=seq` a
+/// line; the others stay for the next try.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn secrets_written<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    claim: jlong,
+    written: JString<'caller>,
+) {
+    unowned_env
+        .with_env(|env| -> Result<(), Error> {
+            let written = written.try_to_string(env)?;
+            let written: Vec<(String, i64)> = written
+                .lines()
+                .filter_map(|l| {
+                    let (key, seq) = l.rsplit_once('=')?;
+                    Some((key.to_owned(), seq.trim().parse().ok()?))
+                })
+                .collect();
+            crate::credentials::release_kept(claim, &written);
+            Ok(())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+/// A JSON string literal.
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// The accounts that can't sign in, as JSON, each told once.
 #[jni_mangle("mail.piuma.piuma_mail.MailNative")]
 pub fn sign_in_notices<'caller>(

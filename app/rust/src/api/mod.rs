@@ -1,11 +1,13 @@
 pub mod accounts;
 pub mod away;
 pub mod calendars;
+pub mod compose;
 pub mod engine;
 pub mod feedback;
 pub mod groups;
 pub mod labels;
 pub mod mailbox;
+pub mod oauth;
 pub mod outside;
 pub mod preview;
 pub mod reply;

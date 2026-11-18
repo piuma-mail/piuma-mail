@@ -141,7 +141,7 @@ async fn serve(state: Arc<Mutex<State>>) -> ImapConfig {
         port,
         security: Security::None,
         username: "me".into(),
-        password: "test".into(),
+        login: "test".into(),
     }
 }
 

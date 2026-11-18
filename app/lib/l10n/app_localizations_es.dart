@@ -3392,6 +3392,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'El servidor rechazó la contraseña. ¿Ha cambiado?';
 
   @override
+  String get accountCertificateRefused =>
+      'Se rechazó el certificado del servidor. Vuelve a iniciar sesión para revisarlo.';
+
+  @override
   String get accountEditServers => 'Editar servidores';
 
   @override
@@ -4197,6 +4201,10 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get pairPhraseOld =>
       'Esta frase de recuperación fue reemplazada: tu espacio recibió una más nueva cuando se desvinculó un dispositivo o uno desactivó la sincronización. Usa la frase más reciente, o un código de un dispositivo vinculado.';
+
+  @override
+  String get pairConflict =>
+      'Dos de tus dispositivos se quitaron el uno al otro, así que aún no puedes unirte a este espacio. Cambia la contraseña del buzón que lo contiene, sincroniza un dispositivo que aún tengas y vuelve a intentarlo.';
 
   @override
   String get pairContinue => 'Continuar';
@@ -6423,6 +6431,120 @@ class AppLocalizationsEs extends AppLocalizations {
       'Tu espacio tiene una clave y una frase de recuperación nuevas, porque un dispositivo salió o se desvincularon dos a la vez. La que apuntaste ya no sirve.';
 
   @override
+  String get errorNoKeyring =>
+      'Piuma guarda las contraseñas en el llavero del sistema y no hay ninguno en marcha. Instala e inicia uno, como GNOME Keyring o KWallet, y vuelve a intentarlo. Las contraseñas nunca se guardan en un archivo sin cifrar.';
+
+  @override
+  String get errorCertificate =>
+      'No se puede confiar en el certificado del servidor.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'Esta copia de Piuma Mail no puede iniciar sesión en este proveedor. Escribe tu propio ID de cliente en Avanzado o usa una contraseña de aplicación si el proveedor lo permite.';
+
+  @override
+  String get errorSignInCancelled =>
+      'La página de inicio de sesión se cerró antes de terminar. Vuelve a intentarlo.';
+
+  @override
+  String get errorSignInDenied =>
+      'El proveedor no permitió el inicio de sesión. Vuelve a intentarlo o revisa el ID de cliente en Avanzado.';
+
+  @override
+  String get errorOAuthServers =>
+      'Esta cuenta inicia sesión con la página de su proveedor, así que se queda con los servidores del proveedor, con una conexión segura.';
+
+  @override
+  String get errorPort => 'Un puerto es un número del 1 al 65535.';
+
+  @override
+  String get certUntrusted =>
+      'Ninguna autoridad en la que confíe tu sistema respalda este certificado. Así se ven los servidores que crean su propio certificado.';
+
+  @override
+  String get certExpired =>
+      'Este certificado ha caducado o todavía no es válido.';
+
+  @override
+  String get certNameMismatch =>
+      'Este certificado se hizo para otro nombre de servidor.';
+
+  @override
+  String get certChanged =>
+      'No es el certificado en el que confiabas para este servidor. Puede que se haya renovado, o que alguien esté escuchando en medio. Confía en él solo si sabes por qué cambió.';
+
+  @override
+  String get certInvalid =>
+      'Este certificado no es válido y confiar en él no haría segura la conexión.';
+
+  @override
+  String get certProvider =>
+      'Este es el servidor de un gran proveedor, y una autoridad siempre respalda sus certificados. Puede que alguien se interponga en la conexión: prueba otra red y revisa la fecha y la hora de este dispositivo.';
+
+  @override
+  String get certIssuedTo => 'Emitido para';
+
+  @override
+  String get certIssuedBy => 'Emitido por';
+
+  @override
+  String get certValidUntil => 'Válido hasta';
+
+  @override
+  String get certFingerprint => 'Huella SHA-256';
+
+  @override
+  String get certTrust => 'Confiar en este certificado';
+
+  @override
+  String get certTrustNew => 'Confiar en el nuevo certificado';
+
+  @override
+  String get certCopyFingerprint => 'Copiar huella';
+
+  @override
+  String get certTrustHint =>
+      'Solo para esta cuenta y este certificado exacto. Antes compara la huella con la que te da tu proveedor o administrador.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Iniciar sesión con $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail abre la página de $provider en tu navegador. Inicia sesión allí y vuelve aquí: tu contraseña se queda en $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'Esperando al navegador…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft ya no permite que las apps de correo inicien sesión con contraseña, y esta copia de Piuma Mail no tiene configurado el inicio de sesión de Microsoft. Usa una versión oficial o escribe el ID de cliente de tu propia app en Avanzado.';
+
+  @override
+  String get oauthUseAppPassword => 'Usar una contraseña de aplicación';
+
+  @override
+  String get oauthAdvanced => 'Avanzado: tu propio ID de cliente';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'Para tu propio registro de app en $provider. Déjalo vacío para usar el de esta versión.';
+  }
+
+  @override
+  String get oauthClientId => 'ID de cliente';
+
+  @override
+  String get oauthTenant => 'Inquilino (opcional)';
+
+  @override
+  String get oauthClientSecret =>
+      'Secreto de cliente (solo apps de escritorio de Google)';
+
+  @override
   String get listFailed => 'No se pudieron mostrar estos correos.';
 
   @override
@@ -6439,6 +6561,174 @@ class AppLocalizationsEs extends AppLocalizations {
       one: 'El servidor no aceptó un cambio que hiciste: ese correo vuelve a estar como antes.',
     );
     return '$_temp0';
+  }
+
+  @override
+  String get composeOptions => 'Opciones';
+
+  @override
+  String get composePlainText => 'Texto sin formato';
+
+  @override
+  String get composeHighPriority => 'Prioridad alta';
+
+  @override
+  String get composeReadReceipt => 'Pedir confirmación de lectura';
+
+  @override
+  String get composePlainTitle => '¿Cambiar a texto sin formato?';
+
+  @override
+  String get composePlainBody =>
+      'El texto sin formato no tiene negrita, cursiva, enlaces ni imágenes. Los enlaces conservan su dirección entre paréntesis y las imágenes se adjuntan como archivos.';
+
+  @override
+  String get composePlainConfirm => 'Cambiar a texto sin formato';
+
+  @override
+  String get sendForgotAttachmentTitle => '¿Olvidaste el adjunto?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Tu mensaje menciona un adjunto, pero no hay nada adjunto.';
+
+  @override
+  String get sendNoSubjectTitle => '¿Enviar sin asunto?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Un asunto ayuda a encontrar tu mensaje más tarde.';
+
+  @override
+  String get sendAddSubject => 'Añadir un asunto';
+
+  @override
+  String get sendAnyway => 'Enviar de todos modos';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name es demasiado grande: los adjuntos pueden sumar como máximo $size.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name es demasiado grande para ir en el texto.';
+  }
+
+  @override
+  String get pastedImage => 'La imagen pegada';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count direcciones',
+      one: '1 dirección',
+      zero: 'Ninguna dirección',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Grupo';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender pidió que se le avise cuando leas este mensaje.';
+  }
+
+  @override
+  String get readReceiptSend => 'Enviar confirmación';
+
+  @override
+  String get readReceiptDontSend => 'No enviar';
+
+  @override
+  String get readReceiptNever => 'Nunca para este remitente';
+
+  @override
+  String get readReceiptSent => 'Confirmación enviada';
+
+  @override
+  String get readReceiptFailed =>
+      'No se pudo enviar la confirmación. Inténtalo más tarde.';
+
+  @override
+  String get highPriority => 'Prioridad alta';
+
+  @override
+  String get repliesTitle => 'Respuestas';
+
+  @override
+  String get replyBelowQuote => 'Responder debajo de la cita';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Desactivado, las respuestas empiezan encima del mensaje citado.';
+
+  @override
+  String get quoteSelection => 'Citar solo las palabras seleccionadas';
+
+  @override
+  String get quoteSelectionHint =>
+      'Con palabras seleccionadas en un mensaje, Responder cita solo esas.';
+
+  @override
+  String get plainTextTitle => 'Mensajes nuevos en texto sin formato';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · los mensajes nuevos empiezan en texto sin formato';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Grupos de contactos';
+
+  @override
+  String get contactGroupsHint =>
+      'Escribe el nombre de un grupo en Para, Cc o Cco para añadir a todos.';
+
+  @override
+  String get contactGroupNew => 'Nuevo grupo';
+
+  @override
+  String get contactGroupUntitled => 'Grupo sin nombre';
+
+  @override
+  String get contactGroupName => 'Nombre del grupo';
+
+  @override
+  String get contactGroupAddresses => 'Direcciones';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Una por línea, o separadas por comas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Eliminar $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insertar imagen';
+
+  @override
+  String get composePastePicture => 'Pegar imagen';
+
+  @override
+  String get noPictureToPaste => 'No hay ninguna imagen en el portapapeles.';
+
+  @override
+  String get composeReadReceiptAsked => 'Confirmación de lectura pedida';
+
+  @override
+  String get readReceiptQueued =>
+      'La confirmación espera en la Bandeja de salida y se enviará en cuanto se pueda.';
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'En Android esta app solo puede iniciar sesión en $provider con el cliente con el que se compiló. Usa una contraseña de aplicación o una versión hecha con tu cliente.';
   }
 
   @override

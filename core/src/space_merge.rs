@@ -416,8 +416,16 @@ const LOCAL_SETTINGS: &[&str] = &[
 ];
 
 /// Settings that name an account and travel, by the account's global id:
-/// (prefix, suffix) around the id.
-const ACCOUNT_SETTINGS: &[(&str, &str)] = &[("account.", ".sign_in_alert"), ("notify.loud.", "")];
+/// (prefix, suffix) around the id. `account.<id>.oauth` names the provider
+/// an account signs in with (no token: those stay in each device's
+/// keychain), so another device asks to sign in with that provider rather
+/// than for a password. The certificates trusted for an account
+/// (`account.<id>.cert.<host>`) stay on their device.
+const ACCOUNT_SETTINGS: &[(&str, &str)] = &[
+    ("account.", ".sign_in_alert"),
+    ("account.", ".oauth"),
+    ("notify.loud.", ""),
+];
 
 /// Marks a global id where a local one stood in a setting's key.
 const GLOBAL: char = '@';
@@ -814,8 +822,13 @@ mod tests {
             setting_out("account.3.sign_in_alert", gid).as_deref(),
             Some("account.@abc.sign_in_alert")
         );
+        assert_eq!(
+            setting_out("account.3.oauth", gid).as_deref(),
+            Some("account.@abc.oauth")
+        );
         // Device-local, or an account this build doesn't know to translate.
         assert_eq!(setting_out("account.3.junk", gid), None);
+        assert_eq!(setting_out("account.3.cert.imap.example.org", gid), None);
         assert_eq!(setting_out("draft.signature.3.Drafts.9", gid), None);
         assert_eq!(setting_out("rules.sorted.3", gid), None);
         assert_eq!(setting_out("notify.loud.4", gid), None);

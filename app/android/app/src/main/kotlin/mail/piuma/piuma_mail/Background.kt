@@ -14,6 +14,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Calendar
 
 /** The engine's calls for the background (`rust/src/android.rs`). */
@@ -52,6 +53,23 @@ object MailNative {
 
     /** The accounts whose password was refused, as JSON, each given once. */
     @JvmStatic external fun signInNotices(): String
+
+    /** The browser came back from an OAuth sign-in page with this address. */
+    @JvmStatic external fun oauthRedirect(url: String): Boolean
+
+    /**
+     * Secrets the engine got (an OAuth sign-in, a renewed refresh token)
+     * for the Keystore, as JSON `{"claim", "secrets": [{"key", "value",
+     * "seq"}]}`: claim 0 and none while the app writes them. Hand the
+     * claim back to [secretsWritten] once written.
+     */
+    @JvmStatic external fun keptSecrets(): String
+
+    /**
+     * The secrets of [claim] now in the Keystore, one `key=seq` a line;
+     * the engine keeps the others for the next try.
+     */
+    @JvmStatic external fun secretsWritten(claim: Long, written: String)
 
     /** The inbox as a paired watch shows it, as JSON (`watch.rs`). */
     @JvmStatic external fun watchSummary(): String
@@ -202,6 +220,39 @@ object Background {
         return ids.size
     }
 
+    /**
+     * Puts the secrets the engine got in the Keystore. The engine hands
+     * them to one writer at a time (this or the app) and drops each only
+     * once the write went through, so the newest one always lands last.
+     */
+    fun keepSecrets(context: Context) {
+        val claim: Long
+        val kept: JSONArray
+        try {
+            val json = JSONObject(MailNative.keptSecrets())
+            claim = json.getLong("claim")
+            kept = json.getJSONArray("secrets")
+        } catch (e: Exception) {
+            return
+        }
+        if (claim == 0L) return
+        val written = StringBuilder()
+        try {
+            val passwords = Passwords(context)
+            for (i in 0 until kept.length()) {
+                val k = kept.getJSONObject(i)
+                try {
+                    passwords.write(k.getString("key"), k.getString("value"))
+                    written.append(k.getString("key")).append('=').append(k.getLong("seq")).append('\n')
+                } catch (e: Exception) {
+                    // Stays in the engine for the next try; the old token still works.
+                }
+            }
+        } finally {
+            MailNative.secretsWritten(claim, written.toString())
+        }
+    }
+
     /** The Vault notices due now, and "While you were away", where the phone is. */
     fun reminders(): String {
         val offset = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
@@ -325,7 +376,13 @@ object Background {
                 manager.cancel(id)
                 continue
             }
-            val body = context.getString(R.string.notice_sign_in_body)
+            val body = context.getString(
+                if (n.optBoolean("certificate", false)) {
+                    R.string.notice_sign_in_certificate
+                } else {
+                    R.string.notice_sign_in_body
+                },
+            )
             val tap = PendingIntent.getActivity(
                 context,
                 id,

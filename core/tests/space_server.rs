@@ -26,7 +26,7 @@ fn config() -> Option<ImapConfig> {
         port: port.parse().ok()?,
         security: Security::None,
         username: format!("space-{stamp}"),
-        password: "test".into(),
+        login: "test".into(),
     })
 }
 

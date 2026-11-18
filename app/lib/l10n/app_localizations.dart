@@ -5236,6 +5236,12 @@ abstract class AppLocalizations {
   /// **'The server refused the password. Did it change?'**
   String get accountPasswordRefused;
 
+  /// No description provided for @accountCertificateRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The server’s certificate was refused. Sign in again to look at it.'**
+  String get accountCertificateRefused;
+
   /// No description provided for @accountEditServers.
   ///
   /// In en, this message translates to:
@@ -6399,6 +6405,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.'**
   String get pairPhraseOld;
+
+  /// No description provided for @pairConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Two of your devices removed each other, so this space can\'t be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.'**
+  String get pairConflict;
 
   /// No description provided for @pairContinue.
   ///
@@ -9394,6 +9406,192 @@ abstract class AppLocalizations {
   /// **'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.'**
   String get syncRecoveryChangedBody;
 
+  /// No description provided for @errorNoKeyring.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma keeps passwords in the system keyring, and none is running. Install and start one, such as GNOME Keyring or KWallet, then try again. Passwords are never saved in a plain file.'**
+  String get errorNoKeyring;
+
+  /// No description provided for @errorCertificate.
+  ///
+  /// In en, this message translates to:
+  /// **'The server’s certificate can’t be trusted.'**
+  String get errorCertificate;
+
+  /// No description provided for @errorSignInUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This copy of Piuma Mail can’t sign in to this provider. Enter your own client ID under Advanced, or use an app password where the provider allows one.'**
+  String get errorSignInUnavailable;
+
+  /// No description provided for @errorSignInCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'The sign-in page was closed before it finished. Try again.'**
+  String get errorSignInCancelled;
+
+  /// No description provided for @errorSignInDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.'**
+  String get errorSignInDenied;
+
+  /// No description provided for @errorOAuthServers.
+  ///
+  /// In en, this message translates to:
+  /// **'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.'**
+  String get errorOAuthServers;
+
+  /// No description provided for @errorPort.
+  ///
+  /// In en, this message translates to:
+  /// **'A port is a number from 1 to 65535.'**
+  String get errorPort;
+
+  /// No description provided for @certUntrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'No authority your system trusts vouches for this certificate. Servers that make their own certificate look like this.'**
+  String get certUntrusted;
+
+  /// No description provided for @certExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate is expired, or not valid yet.'**
+  String get certExpired;
+
+  /// No description provided for @certNameMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate was made for another server name.'**
+  String get certNameMismatch;
+
+  /// No description provided for @certChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'This isn’t the certificate you trusted for this server before. It may have been renewed, or someone may be listening in between. Trust it only if you know why it changed.'**
+  String get certChanged;
+
+  /// No description provided for @certInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.'**
+  String get certInvalid;
+
+  /// No description provided for @certProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.'**
+  String get certProvider;
+
+  /// No description provided for @certIssuedTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Issued to'**
+  String get certIssuedTo;
+
+  /// No description provided for @certIssuedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Issued by'**
+  String get certIssuedBy;
+
+  /// No description provided for @certValidUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Valid until'**
+  String get certValidUntil;
+
+  /// No description provided for @certFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'SHA-256 fingerprint'**
+  String get certFingerprint;
+
+  /// No description provided for @certTrust.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust this certificate'**
+  String get certTrust;
+
+  /// No description provided for @certTrustNew.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust the new certificate'**
+  String get certTrustNew;
+
+  /// No description provided for @certCopyFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy fingerprint'**
+  String get certCopyFingerprint;
+
+  /// No description provided for @certTrustHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Only for this account and this exact certificate. Compare the fingerprint with the one your mail provider or administrator gives you first.'**
+  String get certTrustHint;
+
+  /// No description provided for @oauthSignInWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with {provider}'**
+  String oauthSignInWith(String provider);
+
+  /// No description provided for @oauthLead.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma Mail opens {provider}’s page in your browser. Sign in there, then come back here: your password stays with {provider}.'**
+  String oauthLead(String provider);
+
+  /// No description provided for @oauthWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the browser…'**
+  String get oauthWaiting;
+
+  /// No description provided for @oauthMicrosoftNoClient.
+  ///
+  /// In en, this message translates to:
+  /// **'Microsoft no longer lets mail apps sign in with a password, and this copy of Piuma Mail has no Microsoft sign-in set up. Use an official build, or enter your own app’s client ID under Advanced.'**
+  String get oauthMicrosoftNoClient;
+
+  /// No description provided for @oauthUseAppPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Use an app password instead'**
+  String get oauthUseAppPassword;
+
+  /// No description provided for @oauthAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced: your own client ID'**
+  String get oauthAdvanced;
+
+  /// No description provided for @oauthAdvancedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For your own app registration with {provider}. Leave it empty to use this build’s.'**
+  String oauthAdvancedHint(String provider);
+
+  /// No description provided for @oauthClientId.
+  ///
+  /// In en, this message translates to:
+  /// **'Client ID'**
+  String get oauthClientId;
+
+  /// No description provided for @oauthTenant.
+  ///
+  /// In en, this message translates to:
+  /// **'Tenant (optional)'**
+  String get oauthTenant;
+
+  /// No description provided for @oauthClientSecret.
+  ///
+  /// In en, this message translates to:
+  /// **'Client secret (Google desktop apps only)'**
+  String get oauthClientSecret;
+
   /// No description provided for @listFailed.
   ///
   /// In en, this message translates to:
@@ -9411,6 +9609,282 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
   String changesDropped(int count);
+
+  /// No description provided for @composeOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Options'**
+  String get composeOptions;
+
+  /// No description provided for @composePlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text'**
+  String get composePlainText;
+
+  /// No description provided for @composeHighPriority.
+  ///
+  /// In en, this message translates to:
+  /// **'High priority'**
+  String get composeHighPriority;
+
+  /// No description provided for @composeReadReceipt.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for a read receipt'**
+  String get composeReadReceipt;
+
+  /// No description provided for @composePlainTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to plain text?'**
+  String get composePlainTitle;
+
+  /// No description provided for @composePlainBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.'**
+  String get composePlainBody;
+
+  /// No description provided for @composePlainConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to plain text'**
+  String get composePlainConfirm;
+
+  /// No description provided for @sendForgotAttachmentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot the attachment?'**
+  String get sendForgotAttachmentTitle;
+
+  /// No description provided for @sendForgotAttachmentBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Your message mentions an attachment, but nothing is attached.'**
+  String get sendForgotAttachmentBody;
+
+  /// No description provided for @sendNoSubjectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Send without a subject?'**
+  String get sendNoSubjectTitle;
+
+  /// No description provided for @sendNoSubjectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A subject helps people find your message later.'**
+  String get sendNoSubjectBody;
+
+  /// No description provided for @sendAddSubject.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a subject'**
+  String get sendAddSubject;
+
+  /// No description provided for @sendAnyway.
+  ///
+  /// In en, this message translates to:
+  /// **'Send anyway'**
+  String get sendAnyway;
+
+  /// No description provided for @fileTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too big: attachments can be up to {size} in all.'**
+  String fileTooLarge(String name, String size);
+
+  /// No description provided for @imageTooBig.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is too big to go in the text.'**
+  String imageTooBig(String name);
+
+  /// No description provided for @pastedImage.
+  ///
+  /// In en, this message translates to:
+  /// **'The pasted picture'**
+  String get pastedImage;
+
+  /// No description provided for @contactGroupCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No addresses} =1{1 address} other{{count} addresses}}'**
+  String contactGroupCount(int count);
+
+  /// No description provided for @contactGroupTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get contactGroupTag;
+
+  /// No description provided for @readReceiptAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'{sender} asked to be told when you read this.'**
+  String readReceiptAsk(String sender);
+
+  /// No description provided for @readReceiptSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send receipt'**
+  String get readReceiptSend;
+
+  /// No description provided for @readReceiptDontSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Don’t send'**
+  String get readReceiptDontSend;
+
+  /// No description provided for @readReceiptNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never for this sender'**
+  String get readReceiptNever;
+
+  /// No description provided for @readReceiptSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Receipt sent'**
+  String get readReceiptSent;
+
+  /// No description provided for @readReceiptFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The receipt couldn’t be sent. Try again later.'**
+  String get readReceiptFailed;
+
+  /// No description provided for @highPriority.
+  ///
+  /// In en, this message translates to:
+  /// **'High priority'**
+  String get highPriority;
+
+  /// No description provided for @repliesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Replies'**
+  String get repliesTitle;
+
+  /// No description provided for @replyBelowQuote.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply below the quote'**
+  String get replyBelowQuote;
+
+  /// No description provided for @replyBelowQuoteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, replies start above the quoted message.'**
+  String get replyBelowQuoteHint;
+
+  /// No description provided for @quoteSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote only the selected words'**
+  String get quoteSelection;
+
+  /// No description provided for @quoteSelectionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'With words selected in a message, Reply quotes just them.'**
+  String get quoteSelectionHint;
+
+  /// No description provided for @plainTextTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages in plain text'**
+  String get plainTextTitle;
+
+  /// No description provided for @plainTextOn.
+  ///
+  /// In en, this message translates to:
+  /// **'{email} · new messages start as plain text'**
+  String plainTextOn(String email);
+
+  /// No description provided for @contactGroupsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact groups'**
+  String get contactGroupsTitle;
+
+  /// No description provided for @contactGroupsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Type a group’s name in To, Cc or Bcc to add everyone in it.'**
+  String get contactGroupsHint;
+
+  /// No description provided for @contactGroupNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New group'**
+  String get contactGroupNew;
+
+  /// No description provided for @contactGroupUntitled.
+  ///
+  /// In en, this message translates to:
+  /// **'Untitled group'**
+  String get contactGroupUntitled;
+
+  /// No description provided for @contactGroupName.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name'**
+  String get contactGroupName;
+
+  /// No description provided for @contactGroupAddresses.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses'**
+  String get contactGroupAddresses;
+
+  /// No description provided for @contactGroupAddressesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'One per line, or separated by commas.'**
+  String get contactGroupAddressesHint;
+
+  /// No description provided for @contactGroupDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {name}'**
+  String contactGroupDelete(String name);
+
+  /// No description provided for @composeInsertPicture.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert picture'**
+  String get composeInsertPicture;
+
+  /// No description provided for @composePastePicture.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste picture'**
+  String get composePastePicture;
+
+  /// No description provided for @noPictureToPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'There’s no picture on the clipboard.'**
+  String get noPictureToPaste;
+
+  /// No description provided for @composeReadReceiptAsked.
+  ///
+  /// In en, this message translates to:
+  /// **'Read receipt asked for'**
+  String get composeReadReceiptAsked;
+
+  /// No description provided for @readReceiptQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'The receipt is waiting in the Outbox and goes as soon as it can.'**
+  String get readReceiptQueued;
+
+  /// No description provided for @oauthOwnClientNotHere.
+  ///
+  /// In en, this message translates to:
+  /// **'On Android this app can only sign in to {provider} with the client it was built with. Use an app password, or a build made with your client.'**
+  String oauthOwnClientNotHere(String provider);
 
   /// No description provided for @actionReplyAll.
   ///

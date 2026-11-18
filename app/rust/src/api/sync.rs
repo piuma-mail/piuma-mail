@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
+use piuma_core::oauth::Stored;
 use piuma_core::pair_qr::{self, Invite, INVITE_TTL};
 use piuma_core::remote::Remote;
 use piuma_core::space::{self, Device, Key, Pairing, SpaceError};
@@ -424,8 +425,8 @@ fn account(id: AccountId) -> Result<Account, EngineError> {
 }
 
 async fn connect(account: &Account) -> Result<Remote, EngineError> {
-    let password = credentials::load(account.id)?;
-    Ok(Remote::open(account, &password).await?)
+    let login = crate::login::load(account.id)?;
+    Ok(Remote::open(account, &login).await?)
 }
 
 /// The mailbox that holds the space.
@@ -446,6 +447,9 @@ fn passwords() -> Result<Vec<(String, String)>, EngineError> {
         .accounts()?
         .into_iter()
         .filter_map(|a| Some((a.email.clone(), credentials::load(a.id).ok()?)))
+        // An OAuth sign-in stays on this device: its refresh token never
+        // travels, and the other device signs in on its own.
+        .filter(|(_, secret)| !Stored::is_stored(secret))
         .collect();
     // Connected calendars with a password of their own.
     for source in store.calendar_sources()? {
@@ -488,6 +492,15 @@ fn took(secrets: Vec<SecretIn>) -> Result<Vec<KeptSecret>, EngineError> {
     let mut keep = Vec::new();
     for secret in secrets {
         let (key, password) = match secret {
+            // Never a sign-in token from the space (no device sends one),
+            // and never a password over an account that signs in with a
+            // provider's page here: that sign-in stays.
+            SecretIn::Account(_, password) if Stored::is_stored(&password) => continue,
+            SecretIn::Account(id, _)
+                if credentials::read(id).is_ok_and(|s| Stored::is_stored(&s)) =>
+            {
+                continue
+            }
             SecretIn::Account(id, password) => {
                 credentials::save(id, &password)?;
                 (format!("account-{}", id.0), password)
@@ -1091,5 +1104,5 @@ pub async fn sync_add_invite_account(
         color,
         kind,
     };
-    add_checked_account(account, password).await
+    add_checked_account(account, password, Vec::new()).await
 }

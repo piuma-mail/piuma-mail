@@ -3374,6 +3374,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server refused the password. Did it change?';
 
   @override
+  String get accountCertificateRefused =>
+      'The server’s certificate was refused. Sign in again to look at it.';
+
+  @override
   String get accountEditServers => 'Edit servers';
 
   @override
@@ -4172,6 +4176,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get pairPhraseOld =>
       'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.';
+
+  @override
+  String get pairConflict =>
+      'Two of your devices removed each other, so this space can\'t be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.';
 
   @override
   String get pairContinue => 'Continue';
@@ -6388,6 +6396,117 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.';
 
   @override
+  String get errorNoKeyring =>
+      'Piuma keeps passwords in the system keyring, and none is running. Install and start one, such as GNOME Keyring or KWallet, then try again. Passwords are never saved in a plain file.';
+
+  @override
+  String get errorCertificate => 'The server’s certificate can’t be trusted.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'This copy of Piuma Mail can’t sign in to this provider. Enter your own client ID under Advanced, or use an app password where the provider allows one.';
+
+  @override
+  String get errorSignInCancelled =>
+      'The sign-in page was closed before it finished. Try again.';
+
+  @override
+  String get errorSignInDenied =>
+      'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.';
+
+  @override
+  String get errorOAuthServers =>
+      'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.';
+
+  @override
+  String get errorPort => 'A port is a number from 1 to 65535.';
+
+  @override
+  String get certUntrusted =>
+      'No authority your system trusts vouches for this certificate. Servers that make their own certificate look like this.';
+
+  @override
+  String get certExpired => 'This certificate is expired, or not valid yet.';
+
+  @override
+  String get certNameMismatch =>
+      'This certificate was made for another server name.';
+
+  @override
+  String get certChanged =>
+      'This isn’t the certificate you trusted for this server before. It may have been renewed, or someone may be listening in between. Trust it only if you know why it changed.';
+
+  @override
+  String get certInvalid =>
+      'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.';
+
+  @override
+  String get certProvider =>
+      'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.';
+
+  @override
+  String get certIssuedTo => 'Issued to';
+
+  @override
+  String get certIssuedBy => 'Issued by';
+
+  @override
+  String get certValidUntil => 'Valid until';
+
+  @override
+  String get certFingerprint => 'SHA-256 fingerprint';
+
+  @override
+  String get certTrust => 'Trust this certificate';
+
+  @override
+  String get certTrustNew => 'Trust the new certificate';
+
+  @override
+  String get certCopyFingerprint => 'Copy fingerprint';
+
+  @override
+  String get certTrustHint =>
+      'Only for this account and this exact certificate. Compare the fingerprint with the one your mail provider or administrator gives you first.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Sign in with $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail opens $provider’s page in your browser. Sign in there, then come back here: your password stays with $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'Waiting for the browser…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft no longer lets mail apps sign in with a password, and this copy of Piuma Mail has no Microsoft sign-in set up. Use an official build, or enter your own app’s client ID under Advanced.';
+
+  @override
+  String get oauthUseAppPassword => 'Use an app password instead';
+
+  @override
+  String get oauthAdvanced => 'Advanced: your own client ID';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'For your own app registration with $provider. Leave it empty to use this build’s.';
+  }
+
+  @override
+  String get oauthClientId => 'Client ID';
+
+  @override
+  String get oauthTenant => 'Tenant (optional)';
+
+  @override
+  String get oauthClientSecret => 'Client secret (Google desktop apps only)';
+
+  @override
   String get listFailed => 'Couldn’t show these emails.';
 
   @override
@@ -6404,6 +6523,174 @@ class AppLocalizationsEn extends AppLocalizations {
       one: 'The server didn’t take a change you made, so that email is back as it was.',
     );
     return '$_temp0';
+  }
+
+  @override
+  String get composeOptions => 'Options';
+
+  @override
+  String get composePlainText => 'Plain text';
+
+  @override
+  String get composeHighPriority => 'High priority';
+
+  @override
+  String get composeReadReceipt => 'Ask for a read receipt';
+
+  @override
+  String get composePlainTitle => 'Switch to plain text?';
+
+  @override
+  String get composePlainBody =>
+      'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.';
+
+  @override
+  String get composePlainConfirm => 'Switch to plain text';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Forgot the attachment?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Your message mentions an attachment, but nothing is attached.';
+
+  @override
+  String get sendNoSubjectTitle => 'Send without a subject?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'A subject helps people find your message later.';
+
+  @override
+  String get sendAddSubject => 'Add a subject';
+
+  @override
+  String get sendAnyway => 'Send anyway';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name is too big: attachments can be up to $size in all.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name is too big to go in the text.';
+  }
+
+  @override
+  String get pastedImage => 'The pasted picture';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count addresses',
+      one: '1 address',
+      zero: 'No addresses',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Group';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender asked to be told when you read this.';
+  }
+
+  @override
+  String get readReceiptSend => 'Send receipt';
+
+  @override
+  String get readReceiptDontSend => 'Don’t send';
+
+  @override
+  String get readReceiptNever => 'Never for this sender';
+
+  @override
+  String get readReceiptSent => 'Receipt sent';
+
+  @override
+  String get readReceiptFailed =>
+      'The receipt couldn’t be sent. Try again later.';
+
+  @override
+  String get highPriority => 'High priority';
+
+  @override
+  String get repliesTitle => 'Replies';
+
+  @override
+  String get replyBelowQuote => 'Reply below the quote';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Off, replies start above the quoted message.';
+
+  @override
+  String get quoteSelection => 'Quote only the selected words';
+
+  @override
+  String get quoteSelectionHint =>
+      'With words selected in a message, Reply quotes just them.';
+
+  @override
+  String get plainTextTitle => 'New messages in plain text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · new messages start as plain text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Contact groups';
+
+  @override
+  String get contactGroupsHint =>
+      'Type a group’s name in To, Cc or Bcc to add everyone in it.';
+
+  @override
+  String get contactGroupNew => 'New group';
+
+  @override
+  String get contactGroupUntitled => 'Untitled group';
+
+  @override
+  String get contactGroupName => 'Group name';
+
+  @override
+  String get contactGroupAddresses => 'Addresses';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'One per line, or separated by commas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Delete $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insert picture';
+
+  @override
+  String get composePastePicture => 'Paste picture';
+
+  @override
+  String get noPictureToPaste => 'There’s no picture on the clipboard.';
+
+  @override
+  String get composeReadReceiptAsked => 'Read receipt asked for';
+
+  @override
+  String get readReceiptQueued =>
+      'The receipt is waiting in the Outbox and goes as soon as it can.';
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'On Android this app can only sign in to $provider with the client it was built with. Use an app password, or a build made with your client.';
   }
 
   @override

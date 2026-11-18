@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:piuma_mail/compose/quoting.dart';
 import 'package:piuma_mail/compose/reply_builder.dart';
 import 'package:piuma_mail/inbox/message_actions.dart';
 import 'package:piuma_mail/inbox/recipients_line.dart';
@@ -248,6 +249,108 @@ void main() {
     expect(d.inReplyTo, isNull);
   });
 
+  group('Settings › Writing', () {
+    const body = 'First line.\nSecond line here.';
+
+    test('a reply below the quote', () {
+      final b = ReplyBuilder(
+        _l,
+        'en',
+        settings: const ComposeSettings(replyBelow: true),
+      );
+      final d = b.reply(_row(), body, text: 'Sure');
+      expect(
+        d.body,
+        'On Oct 15, 2026 09:42, Anna Bo wrote:\n> First line.\n'
+        '> Second line here.\n\nSure',
+      );
+      expect(replyCaret(d.body), d.body.length);
+      // Above, as before, by default.
+      expect(_b.reply(_row(), body, text: 'Sure').body, startsWith('Sure\n\n'));
+    });
+
+    test('only the selected words, when they are in the message', () {
+      final d = _b.reply(_row(), body, selection: 'Second line');
+      expect(d.body.split('\n').where((l) => l.startsWith('>')), [
+        '> Second line',
+      ]);
+      // Elsewhere, or with the setting off: the whole message.
+      expect(
+        _b.reply(_row(), body, selection: 'not here').body,
+        contains('> First line.'),
+      );
+      final whole = ReplyBuilder(
+        _l,
+        'en',
+        settings: const ComposeSettings(quoteSelection: false),
+      );
+      expect(
+        whole.reply(_row(), body, selection: 'Second line').body,
+        contains('> First line.'),
+      );
+    });
+
+    test('a plain-text account answers and forwards in plain text', () {
+      final b = ReplyBuilder(
+        _l,
+        'en',
+        settings: const ComposeSettings(plainTextAccounts: {'me@studio.it'}),
+        accounts: const [
+          MailAccount(
+            id: 1,
+            name: 'Studio',
+            email: 'me@studio.it',
+            color: Color(0xFF2F8F83),
+          ),
+        ],
+      );
+      expect(b.reply(_row(), body).plainText, isTrue);
+      final forward = b.forward(
+        _row(),
+        blocks: const [
+          BodyBlock(
+            kind: BlockKind.paragraph,
+            spans: [BodySpan('Bold', bold: true)],
+          ),
+        ],
+      );
+      expect(forward.plainText, isTrue);
+      expect(forward.marks, isEmpty);
+      expect(forward.body, endsWith('Bold'));
+      // From an alias of another account set so, too.
+      expect(
+        ReplyBuilder(
+          _l,
+          'en',
+          settings: const ComposeSettings(plainTextAccounts: {'al@x.it'}),
+        ).reply(_row(), body, fromEmail: 'al@x.it').plainText,
+        isTrue,
+      );
+      expect(_b.reply(_row(), body).plainText, isFalse);
+      expect(_b.forward(_row(), text: body).plainText, isFalse);
+    });
+
+    test('Forward and Edit as new keep no picture placeholder', () {
+      const text = 'Look at this:\n\uFFFC\nand this \uFFFC too';
+      expect(_b.forward(_row(), text: text).body, isNot(contains('\uFFFC')));
+      expect(_b.editAsNew(_row(), text: text).body, isNot(contains('\uFFFC')));
+      final blocks = _b.forward(
+        _row(),
+        blocks: const [
+          BodyBlock(
+            kind: BlockKind.paragraph,
+            spans: [BodySpan('Look \uFFFC'), BodySpan('here', bold: true)],
+          ),
+          BodyBlock(kind: BlockKind.paragraph, spans: [BodySpan('\uFFFC')]),
+        ],
+      );
+      expect(blocks.body, endsWith('Look here'));
+      final bold = blocks.marks.single;
+      expect(blocks.body.substring(bold.start, bold.end), 'here');
+      expect(_b.reply(_row(), 'a \uFFFC b').body, isNot(contains('\uFFFC')));
+    });
+  });
+
   group('file names', () {
     test('no direction marks, no half emoji', () {
       expect(
@@ -272,6 +375,17 @@ void main() {
         'd@x.it',
       ]);
       expect(splitAddresses(' , ;'), isEmpty);
+      // A line break ends an address: a line that isn't one stays alone
+      // (the engine leaves it out of a contact group).
+      expect(splitAddresses('Luca <l@x.it>, g@x.it\nnope\ns@x.it'), [
+        'Luca <l@x.it>',
+        'g@x.it',
+        'nope',
+        's@x.it',
+      ]);
+      expect(splitAddresses(r'"Bo \" Ann, B" <b@x.it>'), [
+        r'"Bo \" Ann, B" <b@x.it>',
+      ]);
     });
 
     test('what is an address', () {

@@ -32,6 +32,7 @@ class _Joining extends DemoMailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async => MailAccount(id: 1, name: name, email: email, color: color);
 }
 
@@ -89,6 +90,7 @@ class _FirstRun extends _Joining {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     final a = MailAccount(id: 1, name: name, email: email, color: color);
     accounts = [a];

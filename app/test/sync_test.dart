@@ -591,7 +591,10 @@ Future<void> _linkWithCode(
   await _settle(tester);
   expect(find.text('We found your space'), findsOneWidget);
   await tester.tap(find.text('Show code'));
-  await _settle(tester);
+  // The code counts down every second: nothing settles while it shows.
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
   expect(find.bySemanticsLabel(RegExp('^Code ')), findsOneWidget);
   source.answerJoin(problem);
   await _settle(tester);
