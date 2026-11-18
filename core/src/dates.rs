@@ -242,10 +242,13 @@ fn minute_of(c: &Captures, evening: bool) -> Option<u32> {
     Some(h * 60 + m)
 }
 
+/// The longest text that joins a day and a time, in bytes.
+const JOIN_MAX: usize = 16;
+
 /// What lies between a day and a time may only join them: spaces, commas
 /// and a short word or two, never the end of a sentence.
 fn joins(between: &str) -> bool {
-    between.len() <= 16
+    between.len() <= JOIN_MAX
         && !between.contains(['.', '?', '!', ';', '\n', ':'])
         && between.split_whitespace().count() <= 2
 }
@@ -277,14 +280,20 @@ pub fn find(text: &str, reference: i64) -> Vec<Found> {
             continue;
         };
         // The nearest time just after the day, else just before it.
-        let after = times
+        // Times come in order, and what joins is at most JOIN_MAX bytes
+        // long: only the few nearby are looked at, so a text full of days
+        // and times isn't read once per day.
+        let first_after = times.partition_point(|(s, _, _)| *s < m_end);
+        let after = times[first_after..]
             .iter()
-            .filter(|(s, _, _)| *s >= m_end && joins(&text[m_end..*s]))
-            .min_by_key(|(s, _, _)| *s);
-        let before = times
+            .take_while(|(s, _, _)| *s <= m_end + JOIN_MAX)
+            .find(|(s, _, _)| joins(&text[m_end..*s]));
+        let last_before = times.partition_point(|(_, e, _)| *e <= m_start);
+        let before = times[..last_before]
             .iter()
-            .filter(|(s, e, _)| *s >= used_until && *e <= m_start && joins(&text[*e..m_start]))
-            .max_by_key(|(_, e, _)| *e);
+            .rev()
+            .take_while(|(_, e, _)| *e + JOIN_MAX >= m_start)
+            .find(|(s, e, _)| *s >= used_until && joins(&text[*e..m_start]));
         let Some((start, end, minute)) = after.or(before).and_then(|(s, e, t)| {
             Some(((*s).min(m_start), (*e).max(m_end), minute_of(t, evening)?))
         }) else {
@@ -336,6 +345,14 @@ pub fn event(uid: &str, summary: &str, start: i64, end: i64, now: i64) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn many_days_and_times_are_matched_quickly() {
+        let started = std::time::Instant::now();
+        let text = "Friday 10:00 and 3 May 18:30, ".repeat(5_000);
+        let _ = find(&text, 0);
+        assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    }
 
     /// Wednesday, October 14, 2026.
     fn wednesday() -> i64 {

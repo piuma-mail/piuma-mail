@@ -62,7 +62,14 @@ libc = "0.2"
 lettre = { version = "0.11.23", default-features = false, features = ["webpki-roots"] }
 webpki-roots = "1.0.9"
 
+[features]
+# Switches only tests may use (plain http to a JMAP server on 127.0.0.1).
+# Turned on for the integration tests by the dev-dependency on this crate
+# below; never by the app.
+test-support = []
+
 [dev-dependencies]
+piuma-core = { path = ".", features = ["test-support"] }
 # As on Windows, where Velopack brings rustls with `ring`: see tls.rs.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }

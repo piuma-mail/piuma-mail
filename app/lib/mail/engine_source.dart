@@ -1651,6 +1651,7 @@ class EngineMailSource extends MailSource {
     engine.FileRisk.disguised => FileRisk.disguised,
     engine.FileRisk.macros => FileRisk.macros,
     engine.FileRisk.locked => FileRisk.locked,
+    engine.FileRisk.web => FileRisk.web,
   };
 
   @override

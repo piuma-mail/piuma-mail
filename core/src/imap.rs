@@ -89,6 +89,8 @@ pub enum ImapError {
     Gone,
     #[error("the account has no folder for this")]
     NoFolder,
+    #[error("the message is larger than the app downloads")]
+    TooLarge,
 }
 
 impl ImapError {
@@ -374,9 +376,19 @@ impl Connection {
                 let mut lists: Vec<(u32, ListInfo)> = fetches
                     .iter()
                     .filter_map(|f| {
-                        let m = MessageParser::default().parse_headers(f.header()?)?;
-                        recipients.push((f.uid?, groups::recipients(&m)));
-                        Some((f.uid?, newsletter::list_info(&m)))
+                        let uid = f.uid?;
+                        // One that trips the readers gets no list details,
+                        // and isn't asked again.
+                        let (to, list) = crate::guard::shielded(
+                            "list headers",
+                            || None,
+                            || {
+                                let m = MessageParser::default().parse_headers(f.header()?)?;
+                                Some((groups::recipients(&m), newsletter::list_info(&m)))
+                            },
+                        )?;
+                        recipients.push((uid, to));
+                        Some((uid, list))
                     })
                     .collect();
                 lock(store).set_recipients(account, mailbox, &recipients)?;
@@ -510,17 +522,10 @@ impl Connection {
         if let Some(body) = lock(store).full_body(account, mailbox, uid)? {
             return Ok(body);
         }
-        let session = self.session()?;
-        session.examine(mailbox).await?;
-        let fetches: Vec<Fetch> = session
-            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
+        let body = self
+            .whole(mailbox, uid)
             .await?
-            .try_collect()
-            .await?;
-        let body = fetches
-            .iter()
-            .find_map(|f| f.body())
-            .map(parse_body)
+            .map(|raw| parse_body(&raw))
             .unwrap_or_default();
         lock(store).set_full_body(account, mailbox, uid, &body)?;
         Ok(body)
@@ -562,17 +567,33 @@ impl Connection {
 
     /// One whole message as the server keeps it.
     pub async fn raw(&mut self, mailbox: &str, uid: u32) -> Result<Vec<u8>> {
+        self.whole(mailbox, uid).await?.ok_or(ImapError::Gone)
+    }
+
+    /// One whole message, after its size says it fits [`MESSAGE_MAX`]:
+    /// None when the server has no body for it.
+    ///
+    /// [`MESSAGE_MAX`]: crate::guard::MESSAGE_MAX
+    async fn whole(&mut self, mailbox: &str, uid: u32) -> Result<Option<Vec<u8>>> {
         let session = self.session()?;
         session.examine(mailbox).await?;
+        let sizes: Vec<Fetch> = session
+            .uid_fetch(uid.to_string(), "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        if sizes.iter().any(|f| {
+            f.size
+                .is_some_and(|n| n as usize > crate::guard::MESSAGE_MAX)
+        }) {
+            return Err(ImapError::TooLarge);
+        }
         let fetches: Vec<Fetch> = session
             .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")
             .await?
             .try_collect()
             .await?;
-        fetches
-            .iter()
-            .find_map(|f| f.body().map(<[u8]>::to_vec))
-            .ok_or(ImapError::Gone)
+        Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -1194,10 +1215,10 @@ impl Round {
 
 /// A folder as LIST names it.
 #[derive(Debug, Clone)]
-struct Listed {
-    name: String,
-    delimiter: Option<String>,
-    selectable: bool,
+pub(crate) struct Listed {
+    pub(crate) name: String,
+    pub(crate) delimiter: Option<String>,
+    pub(crate) selectable: bool,
 }
 
 /// Folders with a job the app already shows, or that hold no mail of
@@ -1222,7 +1243,7 @@ const JUNK: &[&str] = &["Junk", "Spam", "Junk E-mail", "Posta indesiderata"];
 /// in `skip`, not spam. Servers that keep everything under INBOX
 /// ("INBOX.Clients") show it as a top folder; a parent the server doesn't
 /// list is added, as a folder that only holds others.
-fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
+pub(crate) fn own_folders(listed: &[Listed], skip: &HashSet<String>) -> Vec<crate::AccountFolder> {
     let mut by_path: std::collections::BTreeMap<Vec<String>, crate::AccountFolder> =
         Default::default();
     for l in listed {
@@ -1353,7 +1374,7 @@ fn space_folder_in(names: &[async_imap::types::Name]) -> Option<String> {
 }
 
 /// "Piuma Sync", or "INBOX.Piuma Sync" and the like.
-fn is_space_folder(name: &str) -> bool {
+pub(crate) fn is_space_folder(name: &str) -> bool {
     let f = crate::space::FOLDER;
     name == f
         || (name.len() == 6 + f.len()
@@ -1362,10 +1383,16 @@ fn is_space_folder(name: &str) -> bool {
             && name.ends_with(f))
 }
 
+/// "INBOX.Work" and the like: a name under INBOX, as the server sent it
+/// (raw UTF-8 from some), compared without cutting a character.
+pub(crate) fn inside_inbox(name: &str) -> bool {
+    name.len() > 6 && crate::guard::strip_prefix_ci(name, "INBOX").is_some()
+}
+
 fn new_folder_name(names: &[async_imap::types::Name], base: &str) -> String {
     let under_inbox = |n: &&async_imap::types::Name| {
         let name = n.name();
-        name.len() > 6 && name[..5].eq_ignore_ascii_case("INBOX") && n.delimiter().is_some()
+        inside_inbox(name) && n.delimiter().is_some()
     };
     let others: Vec<_> = names
         .iter()
@@ -1756,9 +1783,15 @@ fn flags(f: &Fetch) -> Flags {
 /// Turns a FETCH of headers and the start of the body into a list row.
 /// Whether the fetched headers say a machine sent it.
 fn is_automated(f: &Fetch) -> bool {
-    MessageParser::default()
-        .parse_headers(f.header().unwrap_or_default())
-        .is_some_and(|m| notify::automated(&m))
+    crate::guard::shielded(
+        "automated check",
+        || false,
+        || {
+            MessageParser::default()
+                .parse_headers(f.header().unwrap_or_default())
+                .is_some_and(|m| notify::automated(&m))
+        },
+    )
 }
 
 /// A message's summary, with the preview made from its HTML part when
@@ -1780,9 +1813,34 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
     let uid = f.uid?;
     let mut raw = f.header().unwrap_or_default().to_vec();
     raw.extend_from_slice(f.text().unwrap_or_default());
+    // A message the parsers trip on is still listed, with what the
+    // server said of it, instead of stopping the sync.
+    let (from_name, from_email, to, subject, preview, reply, list) =
+        crate::guard::shielded("message summary", Default::default, || summary_fields(raw));
+    Some(MessageSummary {
+        account,
+        mailbox: mailbox.to_owned(),
+        uid,
+        from_name,
+        from_email,
+        to,
+        subject,
+        preview,
+        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
+        flags: flags(f),
+        reply,
+        list,
+    })
+}
+
+type SummaryFields = (String, String, String, String, String, ReplyInfo, ListInfo);
+
+/// Sender, recipients, subject, preview, reply and list details read from
+/// the start of a message.
+fn summary_fields(raw: Vec<u8>) -> SummaryFields {
     let raw = close_parts(raw);
     let parsed = MessageParser::default().parse(&raw);
-    let (from_name, from_email, to, subject, preview, reply, list) = match &parsed {
+    match &parsed {
         Some(m) => {
             let from = m.from().and_then(|a| a.first());
             let from_email = from
@@ -1812,21 +1870,7 @@ fn summary(f: &Fetch, account: AccountId, mailbox: &str) -> Option<MessageSummar
             )
         }
         None => Default::default(),
-    };
-    Some(MessageSummary {
-        account,
-        mailbox: mailbox.to_owned(),
-        uid,
-        from_name,
-        from_email,
-        to,
-        subject,
-        preview,
-        received_at: f.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
-        flags: flags(f),
-        reply,
-        list,
-    })
+    }
 }
 
 /// The start of a message, cut where the preview fetch stopped, made whole
@@ -1961,9 +2005,11 @@ fn first_html(m: &mail_parser::Message) -> Option<String> {
 
 /// The preview of a body as the reader draws it.
 pub(crate) fn reader_preview(text: &str, html: Option<&str>) -> String {
-    clean_preview(&crate::reading::plain_text(&crate::reading::readable(
-        text, html,
-    )))
+    crate::guard::shielded("preview", String::new, || {
+        clean_preview(&crate::reading::plain_text(&crate::reading::readable(
+            text, html,
+        )))
+    })
 }
 
 /// One line of plain words: no quoted replies, no runs of spaces, no
@@ -2167,9 +2213,15 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
         };
         let mut raw = f.header().unwrap_or_default().to_vec();
         raw.extend_from_slice(f.text().unwrap_or_default());
-        let reached = MessageParser::default()
-            .parse(&close_parts(raw))
-            .is_some_and(|m| first_html(&m).is_some());
+        let reached = crate::guard::shielded(
+            "html part check",
+            || true,
+            || {
+                MessageParser::default()
+                    .parse(&close_parts(raw))
+                    .is_some_and(|m| first_html(&m).is_some())
+            },
+        );
         if !reached {
             wanted
                 .entry(part.section.clone())
@@ -2210,7 +2262,9 @@ async fn html_previews(session: &mut Session, fetches: &[Fetch]) -> Result<HashM
                     continue;
                 };
                 let cut = data.len() >= bytes;
-                let preview = reader_preview("", Some(&part.decode(data, cut)));
+                let preview = crate::guard::shielded("html preview", String::new, || {
+                    reader_preview("", Some(&part.decode(data, cut)))
+                });
                 if !preview.is_empty() {
                     out.insert(uid, preview);
                 } else if cut {
@@ -2352,7 +2406,29 @@ async fn fetch_bodies(
     Ok(cached)
 }
 
+/// Text and HTML of a whole message. When the readers trip on it, what a
+/// plain reading gives is kept instead, so the message counts as read and
+/// is never fetched and parsed again in a loop.
 pub fn parse_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("message body", || plain_body(raw), || parse_body_whole(raw))
+}
+
+/// The text part alone, as the parser gives it: the fallback of a body
+/// the readers couldn't handle.
+fn plain_body(raw: &[u8]) -> Body {
+    crate::guard::shielded("plain message body", Body::default, || {
+        let text = MessageParser::default()
+            .parse(raw)
+            .and_then(|m| m.body_text(0).map(|t| t.into_owned()))
+            .unwrap_or_default();
+        Body {
+            text,
+            ..Body::default()
+        }
+    })
+}
+
+pub(crate) fn parse_body_whole(raw: &[u8]) -> Body {
     let Some(m) = MessageParser::default().parse(raw) else {
         return Body::default();
     };
@@ -2418,7 +2494,11 @@ fn inline_images(m: &mail_parser::Message, html: &str) -> Vec<InlineImage> {
             continue;
         }
         let data = part.decoded();
-        if data.is_empty() || data.len() > INLINE_MAX || total + data.len() > INLINE_TOTAL {
+        if data.is_empty()
+            || data.len() > INLINE_MAX
+            || total + data.len() > INLINE_TOTAL
+            || !crate::images::fits(&data)
+        {
             continue;
         }
         total += data.len();
@@ -2755,11 +2835,39 @@ pub fn file_name(name: &str) -> String {
         })
         .collect();
     let clean = clean.trim().trim_start_matches('.').trim();
+    let clean: String = clean.chars().take(120).collect();
+    // Windows drops a final dot or space, so "a.exe." would open as "a.exe".
+    let clean = clean.trim_end_matches(['.', ' ']).trim();
     if clean.is_empty() {
-        "attachment".into()
-    } else {
-        clean.chars().take(120).collect()
+        return "attachment".into();
     }
+    // "NUL", "con.txt", "COM1.pdf" name devices on Windows, not files:
+    // saving there would report success and keep nothing.
+    let stem = clean.split('.').next().unwrap_or(clean).trim_end();
+    if windows_device(stem) {
+        format!("_{clean}")
+    } else {
+        clean.to_owned()
+    }
+}
+
+/// Whether a name (without its extension) is one of Windows' devices.
+fn windows_device(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let (Some(head), Some(digit)) = (upper.get(..3), upper.get(3..)) else {
+        return false;
+    };
+    matches!(head, "COM" | "LPT")
+        && matches!(
+            digit,
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
 }
 
 /// Namespace tag used by the attachment-ID schema migration.
@@ -2800,6 +2908,54 @@ pub(crate) fn attachment_data_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_names_under_inbox_are_compared_by_character() {
+        // The fifth byte falls inside "é".
+        assert!(!inside_inbox("INBO\u{e9}xx"));
+        assert!(inside_inbox("INBOX.Work"));
+        assert!(inside_inbox("inbox/Work"));
+        assert!(!inside_inbox("Work"));
+    }
+
+    #[test]
+    fn windows_device_names_and_trailing_dots_are_neutralised() {
+        assert_eq!(file_name("NUL"), "_NUL");
+        assert_eq!(file_name("con.txt"), "_con.txt");
+        assert_eq!(file_name("Com1.pdf"), "_Com1.pdf");
+        assert_eq!(file_name("lpt9"), "_lpt9");
+        assert_eq!(file_name("aux .doc"), "_aux .doc");
+        assert_eq!(file_name("invoice.exe."), "invoice.exe");
+        assert_eq!(file_name("report . . "), "report");
+        assert_eq!(file_name("console.txt"), "console.txt");
+        assert_eq!(file_name("COM10.txt"), "COM10.txt");
+        assert_eq!(file_name("..."), "attachment");
+    }
+
+    #[test]
+    fn a_body_the_readers_trip_on_is_kept_as_plain_text() {
+        crate::guard::install();
+        let raw = b"Subject: x\r\nContent-Type: text/plain\r\n\r\nHello there\r\n";
+        let body = crate::guard::shielded(
+            "test body",
+            || plain_body(raw),
+            || -> Body { panic!("a reader tripped") },
+        );
+        assert_eq!(body.text.trim(), "Hello there");
+        assert!(body.html.is_none());
+    }
+
+    #[test]
+    fn inline_pictures_too_big_to_draw_are_left_out() {
+        let huge = crate::images::tests::png_header(20_000, 20_000);
+        let raw = format!(
+            "Content-Type: multipart/related; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:p@x\">\r\n--b\r\nContent-Type: image/png\r\nContent-ID: <p@x>\r\nContent-Transfer-Encoding: base64\r\n\r\n{}\r\n--b--\r\n",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &huge)
+        );
+        let body = parse_body(raw.as_bytes());
+        assert!(body.html.is_some());
+        assert!(body.inline.is_empty());
+    }
 
     #[test]
     fn calendar_decodes_its_declared_charset() {
