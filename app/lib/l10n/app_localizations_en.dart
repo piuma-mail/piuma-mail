@@ -6101,4 +6101,88 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String get saveSearch => 'Save search';
+
+  @override
+  String get savedSearchEdit => 'Edit saved search';
+
+  @override
+  String get savedSearchName => 'Name';
+
+  @override
+  String get savedSearchSave => 'Save';
+
+  @override
+  String get savedSearchDelete => 'Delete search';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Only the saved search goes: the emails stay where they are.';
+
+  @override
+  String get savedSearchNameTaken => 'Another saved search has this name.';
+
+  @override
+  String get savedSearchesSection => 'SAVED SEARCHES';
+
+  @override
+  String get savedSearches => 'Saved searches';
+
+  @override
+  String get searchSuggestions => 'Suggestions';
+
+  @override
+  String get searchOnServer => 'Search on server';
+
+  @override
+  String get searchOnServerHeading => 'On the server';
+
+  @override
+  String get searchingServers => 'Searching on the server…';
+
+  @override
+  String get searchServerError => 'Couldn’t search on the server.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'This search can only look at this device.';
+
+  @override
+  String get searchServerNothing => 'Nothing more on the server.';
+
+  @override
+  String get searchFromServer => 'Found on the server';
+
+  @override
+  String get searchServerPartial =>
+      'Some folders couldn’t be searched in full.';
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more emails found on the server, now on this device.',
+      one: '1 more email found on the server, now on this device.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count accounts’ servers couldn’t be reached.',
+      one: '1 account’s server couldn’t be reached.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Rename or delete $name';
+  }
 }

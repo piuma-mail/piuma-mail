@@ -6133,4 +6133,90 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## El correo, hecho ligero\n- Diseños originales con desplazamiento único y control de imágenes\n- Barra de formato y acceso al editor completo en las respuestas\n- Gestos de deslizamiento horizontal más precisos\n- Avisos de remitente para marcas suplantadas y dominios similares\n- Exportación CSV mensual de la Bóveda con NIF/IVA del comercio';
+
+  @override
+  String get saveSearch => 'Guardar búsqueda';
+
+  @override
+  String get savedSearchEdit => 'Editar búsqueda guardada';
+
+  @override
+  String get savedSearchName => 'Nombre';
+
+  @override
+  String get savedSearchSave => 'Guardar';
+
+  @override
+  String get savedSearchDelete => 'Eliminar búsqueda';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Solo se elimina la búsqueda guardada: los correos se quedan donde están.';
+
+  @override
+  String get savedSearchNameTaken =>
+      'Otra búsqueda guardada ya tiene este nombre.';
+
+  @override
+  String get savedSearchesSection => 'BÚSQUEDAS GUARDADAS';
+
+  @override
+  String get savedSearches => 'Búsquedas guardadas';
+
+  @override
+  String get searchSuggestions => 'Sugerencias';
+
+  @override
+  String get searchOnServer => 'Buscar en el servidor';
+
+  @override
+  String get searchOnServerHeading => 'En el servidor';
+
+  @override
+  String get searchingServers => 'Buscando en el servidor…';
+
+  @override
+  String get searchServerError => 'No se ha podido buscar en el servidor.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'Esta búsqueda solo puede mirar en este dispositivo.';
+
+  @override
+  String get searchServerNothing => 'No hay nada más en el servidor.';
+
+  @override
+  String get searchFromServer => 'Encontrado en el servidor';
+
+  @override
+  String get searchServerPartial =>
+      'Algunas carpetas no se han podido buscar por completo.';
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count correos más encontrados en el servidor, ahora en este dispositivo.',
+      one: '1 correo más encontrado en el servidor, ahora en este dispositivo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'No se ha podido contactar con los servidores de $count cuentas.',
+      one: 'No se ha podido contactar con el servidor de 1 cuenta.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Cambiar el nombre o eliminar $name';
+  }
 }

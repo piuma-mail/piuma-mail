@@ -11,6 +11,7 @@ import 'api/feedback.dart';
 import 'api/groups.dart';
 import 'api/labels.dart';
 import 'api/preview.dart';
+import 'api/search.dart';
 import 'api/sync.dart';
 import 'api/templates.dart';
 import 'api/updates.dart';
@@ -443,6 +444,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RuleInfo> dco_decode_list_rule_info(dynamic raw);
 
   @protected
+  List<SavedSearchInfo> dco_decode_list_saved_search_info(dynamic raw);
+
+  @protected
   List<SearchHit> dco_decode_list_search_hit(dynamic raw);
 
   @protected
@@ -650,6 +654,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RuleSuggestion dco_decode_rule_suggestion(dynamic raw);
 
   @protected
+  SavedSearchInfo dco_decode_saved_search_info(dynamic raw);
+
+  @protected
   ScannedInvite dco_decode_scanned_invite(dynamic raw);
 
   @protected
@@ -678,6 +685,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SentMessage dco_decode_sent_message(dynamic raw);
+
+  @protected
+  ServerSearchResult dco_decode_server_search_result(dynamic raw);
 
   @protected
   SettingsSource dco_decode_settings_source(dynamic raw);
@@ -1284,6 +1294,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<RuleInfo> sse_decode_list_rule_info(SseDeserializer deserializer);
 
   @protected
+  List<SavedSearchInfo> sse_decode_list_saved_search_info(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<SearchHit> sse_decode_list_search_hit(SseDeserializer deserializer);
 
   @protected
@@ -1541,6 +1556,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RuleSuggestion sse_decode_rule_suggestion(SseDeserializer deserializer);
 
   @protected
+  SavedSearchInfo sse_decode_saved_search_info(SseDeserializer deserializer);
+
+  @protected
   ScannedInvite sse_decode_scanned_invite(SseDeserializer deserializer);
 
   @protected
@@ -1571,6 +1589,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SentMessage sse_decode_sent_message(SseDeserializer deserializer);
+
+  @protected
+  ServerSearchResult sse_decode_server_search_result(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SettingsSource sse_decode_settings_source(SseDeserializer deserializer);
@@ -2336,6 +2359,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_rule_info(List<RuleInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_saved_search_info(
+    List<SavedSearchInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_search_hit(
     List<SearchHit> self,
     SseSerializer serializer,
@@ -2675,6 +2704,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_saved_search_info(
+    SavedSearchInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_scanned_invite(ScannedInvite self, SseSerializer serializer);
 
   @protected
@@ -2712,6 +2747,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_sent_message(SentMessage self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_server_search_result(
+    ServerSearchResult self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_settings_source(
