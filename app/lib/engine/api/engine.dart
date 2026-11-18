@@ -8,7 +8,7 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `checked_list`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
@@ -433,12 +433,29 @@ Future<String> saveAttachment({
 Future<Uint8List> fetchImage({required String url}) =>
     RustLib.instance.api.crateApiEngineFetchImage(url: url);
 
-/// The picture of a company sender (`PicturesToApprove`): its verified
-/// logo, or its website's icon, as a square PNG; none for people at mail
+/// The picture of a company sender (`PicturesToApprove`): its brand logo,
+/// or its website's icon, as a square PNG; none for people at mail
 /// providers, while "Sender pictures" is off, or when there is nothing.
-/// Looked up once per domain and kept on the device.
-Future<Uint8List?> senderPicture({required String email}) =>
-    RustLib.instance.api.crateApiEngineSenderPicture(email: email);
+///
+/// A logo is only for the message [account_id], [mailbox], [uid], and only
+/// when that message's own DMARC check passed (`Store::logo_allowed`):
+/// never for a domain because some other message of it was verified. It
+/// is looked up only when [opened] (the person is reading that message),
+/// and kept per organization; a list shows it once it is kept. Icons are
+/// looked up once per domain, as before, when "Website icons" is on.
+Future<Uint8List?> senderPicture({
+  required String email,
+  PlatformInt64? accountId,
+  String? mailbox,
+  int? uid,
+  required bool opened,
+}) => RustLib.instance.api.crateApiEngineSenderPicture(
+  email: email,
+  accountId: accountId,
+  mailbox: mailbox,
+  uid: uid,
+  opened: opened,
+);
 
 /// Always load a sender's images, or stop.
 Future<void> setSenderTrusted({required String email, required bool trusted}) =>
@@ -828,7 +845,8 @@ Future<Unsubscribe> unsubscribeInfo({
 );
 
 /// Leaves the list a message came from, with one request or a message
-/// to its address. A page to open is the app's to open.
+/// to its address (the one [unsubscribe_info] showed). A page to open is
+/// the app's to open.
 Future<void> unsubscribe({
   required PlatformInt64 accountId,
   required String mailbox,
@@ -2402,6 +2420,11 @@ class PecMessage {
   /// The folder the proofs are in.
   final String proofMailbox;
 
+  /// The receipts the stage rests on carry their provider's checked
+  /// signature. When false the stage is only what their headers claim,
+  /// and the Vault says so.
+  final bool verified;
+
   const PecMessage({
     required this.row,
     required this.subject,
@@ -2413,6 +2436,7 @@ class PecMessage {
     required this.failedTo,
     required this.proofs,
     required this.proofMailbox,
+    required this.verified,
   });
 
   @override
@@ -2426,7 +2450,8 @@ class PecMessage {
       reason.hashCode ^
       failedTo.hashCode ^
       proofs.hashCode ^
-      proofMailbox.hashCode;
+      proofMailbox.hashCode ^
+      verified.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2442,7 +2467,8 @@ class PecMessage {
           reason == other.reason &&
           failedTo == other.failedTo &&
           proofs == other.proofs &&
-          proofMailbox == other.proofMailbox;
+          proofMailbox == other.proofMailbox &&
+          verified == other.verified;
 }
 
 /// How far a message sent from a PEC mailbox has got.
@@ -3431,10 +3457,22 @@ class Unsubscribe {
   /// The page, or the address the message goes to.
   final String address;
 
-  const Unsubscribe({required this.kind, required this.address});
+  /// For [UnsubscribeKind::Mail]: the subject and text of the message
+  /// the list's header asks for, shown before it is sent from the
+  /// person's account.
+  final String subject;
+  final String body;
+
+  const Unsubscribe({
+    required this.kind,
+    required this.address,
+    required this.subject,
+    required this.body,
+  });
 
   @override
-  int get hashCode => kind.hashCode ^ address.hashCode;
+  int get hashCode =>
+      kind.hashCode ^ address.hashCode ^ subject.hashCode ^ body.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3442,7 +3480,9 @@ class Unsubscribe {
       other is Unsubscribe &&
           runtimeType == other.runtimeType &&
           kind == other.kind &&
-          address == other.address;
+          address == other.address &&
+          subject == other.subject &&
+          body == other.body;
 }
 
 /// How a newsletter can be left.

@@ -187,6 +187,7 @@ class PecMessage {
     this.reason = '',
     this.failedTo = '',
     this.proofs = const [],
+    this.verified = false,
   });
 
   /// The receipt a tap opens: the failure, else the newest one.
@@ -209,6 +210,11 @@ class PecMessage {
 
   /// The receipts worth keeping as proof, by uid in [row]'s folder.
   final List<int> proofs;
+
+  /// The receipts [stage] rests on carry their provider's checked
+  /// signature. Otherwise the stage is only what their headers claim and
+  /// the Vault shows it as unverified, never as proof.
+  final bool verified;
 }
 
 /// A card in the Vault, read on the device from the email it opens. Only
@@ -389,7 +395,12 @@ enum UnsubscribeKind {
 }
 
 class UnsubscribeInfo {
-  const UnsubscribeInfo(this.kind, [this.address = '']);
+  const UnsubscribeInfo(
+    this.kind, [
+    this.address = '',
+    this.subject = '',
+    this.body = '',
+  ]);
 
   static const none = UnsubscribeInfo(UnsubscribeKind.none);
 
@@ -397,6 +408,12 @@ class UnsubscribeInfo {
 
   /// The page, or the address the message goes to.
   final String address;
+
+  /// For [UnsubscribeKind.mail]: the subject and text the list's header
+  /// asks for. They come from the sender, so the person sees them before
+  /// they go out from their account.
+  final String subject;
+  final String body;
 }
 
 /// One of an account's own folders, as its server keeps them.
@@ -2427,10 +2444,18 @@ abstract class MailSource {
   Future<void> setPrivacySettings(PrivacySettings settings);
 
   /// A company sender's picture as a PNG (`PicturesToApprove`), or null.
-  Future<Uint8List?> senderPicture(String email) async => null;
+  /// A brand logo comes only for a message [row] whose own sender check
+  /// passed, and is looked up only when it is [opened].
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async => null;
 
   /// The pictures already asked for, shared by every list and reader.
-  late final SenderPictures pictures = SenderPictures(senderPicture);
+  late final SenderPictures pictures = SenderPictures(
+    (email, row, opened) => senderPicture(email, row: row, opened: opened),
+  );
 
   /// Read newsletters more than a week old archive themselves (on unless
   /// turned off in Settings › Rules & folders).

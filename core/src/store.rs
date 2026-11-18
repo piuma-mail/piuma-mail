@@ -950,6 +950,19 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS outbox_state ON outbox(account, state);
 "#,
     r#"
+    -- What a kept body proves about itself: DMARC passed for the domain in
+    -- From (a brand logo needs it), and a signature of that domain covers
+    -- the list headers (one-click unsubscribe needs it). Bodies kept
+    -- before prove neither.
+    -- Their columns, and pec_receipt.verified (a receipt whose provider
+    -- signature was checked; those kept before show as unverified until
+    -- their body is read again), are added by `Store::migrate`, so that
+    -- this runs again safely.
+    -- Logos were kept per domain, whatever message asked: looked up again
+    -- for verified messages only.
+    DELETE FROM sender_picture WHERE kind = 'logo';
+"#,
+    r#"
     -- Muted conversations: new mail in them arrives read and silent.
     CREATE TABLE IF NOT EXISTS muted_thread (
         account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
@@ -1343,6 +1356,9 @@ pub struct Body {
     /// What its server found about the sender, read as it is kept: see
     /// [`Store::sender_verified`].
     pub auth: crate::sender_auth::Trail,
+    /// It is a PEC receipt signed by its provider (see
+    /// [`crate::pec::signed`]).
+    pub receipt_signed: bool,
 }
 
 /// A picture that travels inside a message, shown by its HTML as
@@ -1512,6 +1528,23 @@ impl Store {
         )?;
         if !bulk {
             tx.execute_batch("ALTER TABLE message ADD COLUMN bulk INTEGER NOT NULL DEFAULT 0")?;
+        }
+        // What a kept body proves, and whether a PEC receipt is signed.
+        for (table, column) in [
+            ("sender_check", "dmarc_pass"),
+            ("sender_check", "list_signed"),
+            ("pec_receipt", "verified"),
+        ] {
+            let has: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+                params![table, column],
+                |r| r.get(0),
+            )?;
+            if !has {
+                tx.execute_batch(&format!(
+                    "ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                ))?;
+            }
         }
         // Bold, italic and links of mail sent later, kept to edit it again.
         let marks: bool = tx.query_row(
@@ -1750,11 +1783,21 @@ impl Store {
     /// Inserts or updates messages in a single transaction.
     pub fn upsert_messages(&mut self, messages: &[MessageSummary]) -> Result<()> {
         let mut own: HashMap<AccountId, Vec<String>> = HashMap::new();
+        // Receipts count only on certified mailboxes: anywhere else anyone
+        // could write their headers.
+        let mut certified: HashMap<AccountId, bool> = HashMap::new();
         for m in messages {
             if bare_reply(m).is_some() && !own.contains_key(&m.account) {
                 own.insert(m.account, self.own_addresses(m.account)?);
             }
+            if m.list.receipt.is_some() && !certified.contains_key(&m.account) {
+                let pec = self.account(m.account)?.is_some_and(|a| pec::certified(&a));
+                certified.insert(m.account, pec);
+            }
         }
+        let receipt_of = |m: &MessageSummary| -> bool {
+            m.list.receipt.is_some() && certified.get(&m.account).copied().unwrap_or(false)
+        };
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare(&format!(
@@ -1781,10 +1824,15 @@ impl Store {
                     envelope = COALESCE(excluded.envelope, envelope)",
                 inbox_zone("?5", "?15")
             ))?;
+            // An update keeps `verified`: the proof was found in the body,
+            // and a resync or a flag changing doesn't take it away.
             let mut receipt = tx.prepare(
-                "INSERT OR REPLACE INTO pec_receipt
+                "INSERT INTO pec_receipt
                     (account, mailbox, uid, kind, refers, recipients, reason)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                    kind = excluded.kind, refers = excluded.refers,
+                    recipients = excluded.recipients, reason = excluded.reason",
             )?;
             let mut known = tx.prepare(
                 "SELECT thread FROM message WHERE account = ?1 AND message_id = ?2 LIMIT 1",
@@ -1885,7 +1933,7 @@ impl Store {
                     m.list.newsletter,
                     m.list.unsubscribe,
                     m.list.one_click,
-                    m.list.receipt.is_some(),
+                    receipt_of(m),
                     m.reply.recipients,
                     m.list.bulk,
                     m.reply
@@ -1899,7 +1947,7 @@ impl Store {
                 if !m.reply.recipients.is_empty() {
                     written.execute(params![m.account.0, m.mailbox, m.uid])?;
                 }
-                if let Some(r) = &m.list.receipt {
+                if let Some(r) = m.list.receipt.as_ref().filter(|_| receipt_of(m)) {
                     receipt.execute(params![
                         m.account.0,
                         m.mailbox,
@@ -3268,6 +3316,44 @@ impl Store {
             .unwrap_or(false))
     }
 
+    /// What a cached message proves: (DMARC passed for its From domain, a
+    /// signature of that domain covers its list headers). Both false
+    /// until the body is kept.
+    pub fn sender_proofs(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<(bool, bool)> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT dmarc_pass, list_signed FROM sender_check
+                 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![account.0, mailbox, uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((false, false)))
+    }
+
+    /// Whether a message may show its sender's brand logo: DMARC itself
+    /// passed for it (not only for some other message of its domain), and,
+    /// with [`impostor`], no sender warning hangs over it. The logo
+    /// follows the message, never the domain.
+    pub fn logo_allowed(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        impostor: bool,
+    ) -> Result<bool> {
+        if !self.sender_proofs(account, mailbox, uid)?.0 {
+            return Ok(false);
+        }
+        Ok(!impostor || self.sender_warning(account, mailbox, uid)?.is_none())
+    }
+
     /// Whether a cached message's sender isn't who they say, as on
     /// `ProtectionToApprove` section 2: its domain failed DMARC, imitates
     /// a domain the person gets verified mail from, or its name claims a
@@ -3580,8 +3666,9 @@ impl Store {
             ],
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO sender_check (account, mailbox, uid, dmarc_failed, signed_by, sent_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO sender_check
+                 (account, mailbox, uid, dmarc_failed, signed_by, sent_by, dmarc_pass, list_signed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 account.0,
                 mailbox,
@@ -3589,7 +3676,17 @@ impl Store {
                 checked.dmarc_failed,
                 checked.signed_by.unwrap_or_default(),
                 checked.sent_by.unwrap_or_default(),
+                checked.dmarc_pass,
+                checked.list_signed,
             ],
+        )?;
+        // A receipt is proof only once its provider's signature checks;
+        // checked when first read, so a certificate that expires later
+        // doesn't take the proof away (see smime.rs).
+        tx.execute(
+            "UPDATE pec_receipt SET verified = MAX(verified, ?4)
+             WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![account.0, mailbox, uid, body.receipt_signed],
         )?;
         tx.execute(
             "DELETE FROM inline_image WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
@@ -5188,7 +5285,7 @@ impl Store {
     pub fn pec_sent(&self, account: Option<AccountId>) -> Result<Vec<pec::Sent>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.account, r.mailbox, r.uid, r.kind, r.refers, r.recipients, r.reason,
-                    m.subject, m.received_at
+                    m.subject, m.received_at, r.verified
              FROM pec_receipt r
              JOIN message m ON m.account = r.account AND m.mailbox = r.mailbox AND m.uid = r.uid
              WHERE m.hidden = 0 AND (?1 IS NULL OR r.account = ?1)",
@@ -5205,6 +5302,7 @@ impl Store {
                     reason: r.get(6)?,
                     subject: r.get(7)?,
                     received_at: r.get(8)?,
+                    verified: r.get(9)?,
                 },
                 r.get::<_, String>(3)?,
             ))
@@ -9356,9 +9454,7 @@ From: <help@bank.example>\r\n\r\nHi";
     #[test]
     fn pec_receipts_leave_the_inbox_for_the_vault() {
         let mut store = Store::open_in_memory().unwrap();
-        let a = store
-            .add_account(&imap_account("PEC", "matteo@pec.it", "#E0782F"))
-            .unwrap();
+        let a = store.add_account(&pec_account()).unwrap();
         let receipt = |uid, at, kind, to: &str| MessageSummary {
             from_email: "posta-certificata@pec.aruba.it".into(),
             subject: "CONSEGNA: Lease renewal".into(),
@@ -9386,12 +9482,119 @@ From: <help@bank.example>\r\n\r\nHi";
         assert_eq!(sent[0].subject, "Lease renewal");
         assert_eq!(sent[0].stage, pec::Stage::Delivered);
         assert_eq!(sent[0].proofs, [("INBOX".to_owned(), 3)]);
+        // Headers alone: the stage is not proof yet.
+        assert!(!sent[0].verified);
+        // Once the delivery's body is kept with its provider's signature
+        // checked, it is.
+        let signed = Body {
+            text: "consegnato".into(),
+            receipt_signed: true,
+            ..Body::default()
+        };
+        store.set_full_body(a, "INBOX", 3, &signed).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Listed again (a resync, marked read): still the proof it was.
+        store
+            .upsert_messages(&[receipt(3, 210, pec::Kind::Delivered, "x@pec.it")])
+            .unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Read again after its certificate expired: still the proof it was.
+        let later = Body {
+            receipt_signed: false,
+            ..signed
+        };
+        store.set_full_body(a, "INBOX", 3, &later).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
         // A receipt deleted on the server goes from the card too.
         store.remove_messages(a, "INBOX", &[3]).unwrap();
         assert_eq!(
             store.pec_sent(Some(a)).unwrap()[0].stage,
             pec::Stage::Accepted
         );
+    }
+
+    fn pec_account() -> Account {
+        let mut a = imap_account("PEC", "matteo@pec.it", "#E0782F");
+        if let AccountKind::Imap { imap, .. } = &mut a.kind {
+            imap.host = "imaps.pec.aruba.it".into();
+        }
+        a
+    }
+
+    #[test]
+    fn receipt_headers_on_an_ordinary_mailbox_stay_in_the_inbox() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "matteo@example.org", "#E0782F"))
+            .unwrap();
+        let forged = MessageSummary {
+            from_email: "posta-certificata@pec.aruba.it".into(),
+            subject: "CONSEGNA: Contract".into(),
+            list: ListInfo {
+                receipt: Some(pec::Receipt {
+                    kind: pec::Kind::Delivered,
+                    refers: "<contract@example.org>".into(),
+                    recipients: vec!["x@pec.it".into()],
+                    reason: String::new(),
+                }),
+                ..ListInfo::default()
+            },
+            ..msg(a, 1, 100, false)
+        };
+        store.upsert_messages(&[forged]).unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
+        assert!(store.pec_sent(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_logo_follows_the_message_not_the_domain() {
+        use crate::sender_auth::{Method, Step, Trail};
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "matteo@example.org", "#E0782F"))
+            .unwrap();
+        let from = |uid| MessageSummary {
+            from_email: "news@bank.example".into(),
+            ..msg(a, uid, 100 + uid as i64, false)
+        };
+        store.upsert_messages(&[from(1), from(2), from(3)]).unwrap();
+        // The account's server vouched for message 1 with DMARC.
+        let checked = |result: &str, name: &str| Body {
+            text: "Hello".into(),
+            auth: Trail {
+                from_domain: "bank.example".into(),
+                steps: vec![Step::Results {
+                    id: "mx.example.org".into(),
+                    methods: vec![Method {
+                        name: name.into(),
+                        result: result.into(),
+                        props: vec![("header.from".into(), "bank.example".into())],
+                    }],
+                }],
+                signatures: vec![],
+            },
+            ..Body::default()
+        };
+        store
+            .set_full_body(a, "INBOX", 1, &checked("pass", "dmarc"))
+            .unwrap();
+        // Message 2 claims the same From, with nothing to show for it.
+        store
+            .set_full_body(a, "INBOX", 2, &Body::default())
+            .unwrap();
+        // Message 3 is verified only by a DKIM signature: no DMARC pass.
+        let mut dkim = checked("pass", "dkim");
+        if let Step::Results { methods, .. } = &mut dkim.auth.steps[0] {
+            methods[0].props = vec![("header.d".into(), "bank.example".into())];
+        }
+        store.set_full_body(a, "INBOX", 3, &dkim).unwrap();
+        assert!(store.sender_verified(a, "INBOX", 1).unwrap());
+        assert!(store.logo_allowed(a, "INBOX", 1, true).unwrap());
+        assert!(!store.logo_allowed(a, "INBOX", 2, false).unwrap());
+        assert!(store.sender_verified(a, "INBOX", 3).unwrap());
+        assert!(!store.logo_allowed(a, "INBOX", 3, false).unwrap());
+        // Not kept yet: nothing proven.
+        assert!(!store.logo_allowed(a, "INBOX", 9, false).unwrap());
     }
 
     #[test]
@@ -12179,6 +12382,7 @@ From: <help@bank.example>\r\n\r\nHi";
             calendar: Some("BEGIN:VCALENDAR".into()),
             inline: Vec::new(),
             auth: Default::default(),
+            receipt_signed: false,
         };
         store.set_full_body(a, "INBOX", 1, &body).unwrap();
         assert_eq!(store.full_body(a, "INBOX", 1).unwrap(), Some(body.clone()));

@@ -1,9 +1,13 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
+import 'notice_seal.dart';
+
+export 'notice_seal.dart' show NoticeSeal, noticeSeal;
 
 /// One notification as the system shows it.
 class SystemNotice {
@@ -84,6 +88,27 @@ const noticeActions = ['reply', 'archive', 'snooze', 'delete', 'read'];
   return (payload: payload, action: action, text: text);
 }
 
+/// Acts on a clicked notice or one of its buttons, once its payload's
+/// seal checks ([NoticeSeal]): a payload made up by another app opens
+/// nothing.
+Future<void> handleNoticeResponse(
+  NotificationResponse r, {
+  required void Function(String payload) onOpen,
+  NoticeButtons? buttons,
+  NoticeSeal? seal,
+}) async {
+  final read = readNoticeResponse(r);
+  if (read == null) return;
+  final payload = await (seal ?? noticeSeal).open(read.payload);
+  if (payload == null) return;
+  final action = read.action;
+  if (action != null && buttons != null) {
+    buttons.onAction(payload, action, read.text);
+  } else {
+    onOpen(payload);
+  }
+}
+
 /// Shows notices through the operating system. Tests replace [notifier].
 abstract class Notifier {
   /// [onOpen] gets the payload of a clicked notice. [openLabel] names the
@@ -139,16 +164,8 @@ class SystemNotifier implements Notifier {
     _channel = channelLabel;
     _buttons = buttons;
     if (kIsWeb || _ready) return;
-    void respond(NotificationResponse r) {
-      final read = readNoticeResponse(r);
-      if (read == null) return;
-      final action = read.action;
-      if (action != null && buttons != null) {
-        buttons.onAction(read.payload, action, read.text);
-      } else {
-        onOpen(read.payload);
-      }
-    }
+    void respond(NotificationResponse r) =>
+        unawaited(handleNoticeResponse(r, onOpen: onOpen, buttons: buttons));
 
     final darwin = DarwinInitializationSettings(
       notificationCategories: [
@@ -231,7 +248,7 @@ class SystemNotifier implements Notifier {
         id: n.id,
         title: n.title,
         body: body,
-        payload: n.payload,
+        payload: await noticeSeal.seal(n.payload),
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(
             subtitle: n.subject,

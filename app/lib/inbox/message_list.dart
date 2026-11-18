@@ -1767,6 +1767,7 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                     initials: initials(row.listName),
                                     // Your own mail shows who it went to.
                                     email: outgoing ? '' : row.fromEmail,
+                                    row: row,
                                     dot: account?.color,
                                     dots: widget.accountColors,
                                     ring: selected ? c.sel : c.surface,
@@ -2133,6 +2134,7 @@ class _Avatar extends StatelessWidget {
   const _Avatar({
     required this.initials,
     this.email = '',
+    this.row,
     this.dot,
     this.dots = const [],
     required this.ring,
@@ -2142,6 +2144,9 @@ class _Avatar extends StatelessWidget {
 
   /// Whose picture replaces the letters once it is on the device.
   final String email;
+
+  /// The message the row is: a brand logo is only ever its own.
+  final MailRow? row;
   final List<Color> dots;
   final Color? dot;
   final Color ring;
@@ -2158,6 +2163,7 @@ class _Avatar extends StatelessWidget {
         children: [
           SenderPicture(
             email: email,
+            row: row,
             size: size,
             letter: Container(
               width: size,

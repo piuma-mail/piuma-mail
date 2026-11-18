@@ -654,6 +654,18 @@ class AppLocalizationsDe extends AppLocalizations {
   String get openAnyway => 'Trotzdem öffnen';
 
   @override
+  String get linkTargetTitle => 'Wohin dieser Link führt';
+
+  @override
+  String get linkOpen => 'Link öffnen';
+
+  @override
+  String get linkCopy => 'Link kopieren';
+
+  @override
+  String get linkCopied => 'Link kopiert';
+
+  @override
   String get dontOpen => 'Nicht öffnen';
 
   @override
@@ -1709,6 +1721,16 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'Eine Nachricht geht von deinem Konto an $address, um darum zu bitten. Was schon da ist, bleibt hier.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'An: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Betreff: $subject';
   }
 
   @override
@@ -3007,6 +3029,14 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get pecNote =>
       'Quittungen bleiben aus dem Posteingang heraus und sammeln sich bei der Nachricht, zu der sie gehören. Quittung speichert den signierten Nachweis als Datei.';
+
+  @override
+  String get pecUnverified => 'Nicht verifiziert';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Zeigt „$status“, aber die Signatur des Anbieters ließ sich nicht prüfen: Das ist kein Nachweis.';
+  }
 
   @override
   String get pickDateTime => 'Datum und Uhrzeit wählen';

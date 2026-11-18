@@ -1427,9 +1427,8 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// A row of the Outbox, tapped: a message opens in compose again; a
   /// Redirect, which has nothing to edit, offers Cancel or Try again.
-  void _openOutgoing(OutboxItem item) => item.redirect
-      ? _actions.outboxRedirect(item)
-      : _reopenOutgoing(item.id);
+  void _openOutgoing(OutboxItem item) =>
+      item.redirect ? _actions.outboxRedirect(item) : _reopenOutgoing(item.id);
 
   /// A message in the Outbox opens in compose again, and stops waiting.
   /// Undo of a send is this too.

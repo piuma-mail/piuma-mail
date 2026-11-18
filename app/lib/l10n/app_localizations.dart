@@ -1144,6 +1144,30 @@ abstract class AppLocalizations {
   /// **'Open anyway'**
   String get openAnyway;
 
+  /// No description provided for @linkTargetTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Where this link goes'**
+  String get linkTargetTitle;
+
+  /// No description provided for @linkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open link'**
+  String get linkOpen;
+
+  /// No description provided for @linkCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get linkCopy;
+
+  /// No description provided for @linkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Link copied'**
+  String get linkCopied;
+
   /// No description provided for @dontOpen.
   ///
   /// In en, this message translates to:
@@ -2721,6 +2745,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A message goes from your account to {address} to ask. What already came stays here.'**
   String unsubscribeMail(String address);
+
+  /// No description provided for @unsubscribeMailTo.
+  ///
+  /// In en, this message translates to:
+  /// **'To: {address}'**
+  String unsubscribeMailTo(String address);
+
+  /// No description provided for @unsubscribeMailSubject.
+  ///
+  /// In en, this message translates to:
+  /// **'Subject: {subject}'**
+  String unsubscribeMailSubject(String subject);
 
   /// No description provided for @unsubscribePage.
   ///
@@ -4605,6 +4641,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Receipts stay out of the inbox and gather on the message they belong to. Receipt saves the signed proof as a file.'**
   String get pecNote;
+
+  /// No description provided for @pecUnverified.
+  ///
+  /// In en, this message translates to:
+  /// **'Unverified'**
+  String get pecUnverified;
+
+  /// No description provided for @pecUnverifiedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Says “{status}”, but the provider’s signature couldn’t be checked: this isn’t proof.'**
+  String pecUnverifiedNote(String status);
 
   /// No description provided for @pickDateTime.
   ///
