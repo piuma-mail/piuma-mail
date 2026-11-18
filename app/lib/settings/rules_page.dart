@@ -9,6 +9,7 @@ import '../design/motion.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../inbox/labels.dart';
+import '../inbox/mailbox_actions.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
@@ -1452,6 +1453,8 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
             folders: _folders[a.id],
             create: (name) => _createFolder(a, name),
             reorder: (order) => _reorderFolders(a, order),
+            onFolder: (f, at) => _folderMenu(a, f, at),
+            onSpecial: () => _special(a),
           ),
         ],
         const SizedBox(height: 14),
@@ -1475,6 +1478,109 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
   /// Makes the folder on the account's server and lists it at once.
   Future<void> _createFolder(MailAccount a, String name) async {
     await widget.source.createFolder(a.id, name);
+    final folders = await widget.source.folders(a.id);
+    if (mounted) setState(() => _folders = {..._folders, a.id: folders});
+    widget.onChanged();
+  }
+
+  /// A folder's More: Rename, Hide from lists (or Show in lists) and
+  /// Delete folder, under [at].
+  Future<void> _folderMenu(MailAccount a, AccountFolder f, Rect at) async {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final phone = MediaQuery.sizeOf(context).width < 600;
+    Widget menu(BuildContext menu) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, (icon, label, color)) in [
+          (PiumaIcon.pen, l.folderRename, c.fg),
+          (
+            f.subscribed ? PiumaIcon.lock : PiumaIcon.lockOpen,
+            f.subscribed ? l.folderHide : l.folderShow,
+            c.fg,
+          ),
+          (PiumaIcon.trash, l.folderDelete, c.danger),
+        ].indexed)
+          PiumaPressable(
+            onTap: () => Navigator.of(menu).pop(i),
+            semanticLabel: label,
+            child: ExcludeSemantics(
+              child: Container(
+                constraints: BoxConstraints(minHeight: phone ? 48 : 36),
+                padding: EdgeInsets.symmetric(
+                  horizontal: phone ? 20 : 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    PiumaIconView(icon, size: 16, color: color),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: PiumaType.body.copyWith(color: color),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+    final title = l.folderActions(f.name);
+    final picked = phone
+        ? await showPiumaSheet<int>(context, label: title, builder: menu)
+        : await showPiumaPopover<int>(
+            context,
+            label: title,
+            anchor: at,
+            width: 240,
+            end: true,
+            builder: menu,
+          );
+    if (picked == null || !mounted) return;
+    final source = widget.source;
+    try {
+      switch (picked) {
+        case 0:
+          final name = await askFolderName(context, name: f.name, phone: phone);
+          if (name == null) return;
+          await source.renameFolder(a.id, f.mailbox, name);
+        case 1:
+          await source.setFolderSubscribed(a.id, f.mailbox, !f.subscribed);
+        case 2:
+          final contents = source.folderContents(a.id, f.mailbox);
+          final yes = await confirmDeleteFolder(
+            context,
+            name: f.name,
+            emails: contents.emails,
+            subfolders: contents.subfolders,
+            phone: phone,
+          );
+          if (!yes) return;
+          await source.deleteFolder(a.id, f.mailbox);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(SnackBar(content: Text(l.folderChangeFailed)));
+      }
+    }
+    final folders = await source.folders(a.id);
+    if (mounted) setState(() => _folders = {..._folders, a.id: folders});
+    widget.onChanged();
+  }
+
+  /// Which folder does which job for the account.
+  Future<void> _special(MailAccount a) async {
+    await showSpecialFolders(
+      context,
+      source: widget.source,
+      account: a,
+      phone: MediaQuery.sizeOf(context).width < 600,
+    );
     final folders = await widget.source.folders(a.id);
     if (mounted) setState(() => _folders = {..._folders, a.id: folders});
     widget.onChanged();
@@ -1553,10 +1659,18 @@ class _AccountFolders extends StatefulWidget {
     required this.folders,
     required this.create,
     required this.reorder,
+    this.onFolder,
+    this.onSpecial,
   });
   final MailAccount account;
   final List<AccountFolder>? folders;
   final Future<void> Function(String name) create;
+
+  /// A folder's More, under its button.
+  final void Function(AccountFolder folder, Rect at)? onFolder;
+
+  /// "Special folders": which folder does which job.
+  final VoidCallback? onSpecial;
 
   /// Some sibling folders, in their new order.
   final Future<void> Function(List<String> order) reorder;
@@ -1659,6 +1773,37 @@ class _AccountFoldersState extends State<_AccountFolders> {
           ),
           if (list != null && list.isEmpty)
             _line(c, Text(l.foldersNone, style: text.copyWith(color: c.muted))),
+          if (widget.onSpecial case final special?)
+            PiumaPressable(
+              onTap: special,
+              semanticLabel: l.specialFolders,
+              child: ExcludeSemantics(
+                child: _line(
+                  c,
+                  Row(
+                    children: [
+                      PiumaIconView(
+                        PiumaIcon.sliders,
+                        size: 15,
+                        color: c.muted,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          l.specialFolders,
+                          style: text.copyWith(color: c.accentText),
+                        ),
+                      ),
+                      PiumaIconView(
+                        PiumaIcon.chevronRight,
+                        size: 14,
+                        color: c.muted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           for (final f in list ?? const <AccountFolder>[])
             _folderLine(c, l, text, f, list!),
           if (_adding)
@@ -1799,10 +1944,38 @@ class _AccountFoldersState extends State<_AccountFolders> {
             style: text.copyWith(color: f.selectable ? c.fg : c.muted),
           ),
         ),
+        if (!f.subscribed)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              l.folderHidden,
+              style: text.copyWith(fontSize: 12, color: c.muted),
+            ),
+          ),
         if (f.selectable)
           Text(
             '${f.total}',
             style: PiumaType.mono.copyWith(fontSize: 12, color: c.muted),
+          ),
+        if (widget.onFolder case final more? when !grabbed)
+          Builder(
+            builder: (button) => PiumaPressable(
+              onTap: () {
+                final box = button.findRenderObject()! as RenderBox;
+                more(f, box.localToGlobal(Offset.zero) & box.size);
+              },
+              semanticLabel: l.folderActions(f.name),
+              child: SizedBox.square(
+                dimension: 32,
+                child: Center(
+                  child: PiumaIconView(
+                    PiumaIcon.more,
+                    size: 16,
+                    color: c.muted,
+                  ),
+                ),
+              ),
+            ),
           ),
       ],
     );

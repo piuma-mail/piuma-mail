@@ -1388,17 +1388,17 @@ async fn manages_the_mailbox() {
     let (store, account) = store_with_account(&cfg);
     let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
     remote.sync_folders(&store, account).await.unwrap();
-    remote
-        .sync_mailbox(&store, account, "INBOX")
-        .await
-        .unwrap();
+    remote.sync_mailbox(&store, account, "INBOX").await.unwrap();
     remote
         .sync_mailbox(&store, account, "mb-trash")
         .await
         .unwrap();
     {
         let s = store.lock().unwrap();
-        assert_eq!(s.trash_mailbox(account).unwrap().as_deref(), Some("mb-trash"));
+        assert_eq!(
+            s.trash_mailbox(account).unwrap().as_deref(),
+            Some("mb-trash")
+        );
         let folders: Vec<(String, u32, bool)> = s
             .account_folders(account)
             .unwrap()
@@ -1444,15 +1444,29 @@ async fn manages_the_mailbox() {
                 .count(),
             1
         );
-        assert!(s.mailboxes.iter().any(|(id, name, _)| id == "mb-misc" && name == "Paperwork"));
+        assert!(s
+            .mailboxes
+            .iter()
+            .any(|(id, name, _)| id == "mb-misc" && name == "Paperwork"));
         assert!(!s.unsubscribed.contains("mb-old"));
     }
     // JMAP names folders by id: the rename keeps every name here.
     assert_eq!(
-        store.lock().unwrap().account_folder(account, "mb-misc").unwrap().unwrap().name,
+        store
+            .lock()
+            .unwrap()
+            .account_folder(account, "mb-misc")
+            .unwrap()
+            .unwrap()
+            .name,
         "Paperwork"
     );
-    assert!(store.lock().unwrap().pending_changes(account).unwrap().is_empty());
+    assert!(store
+        .lock()
+        .unwrap()
+        .pending_changes(account)
+        .unwrap()
+        .is_empty());
 
     // Deleted with its subfolder: their email goes to Trash first.
     store
@@ -1463,7 +1477,10 @@ async fn manages_the_mailbox() {
     assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
     {
         let s = server.lock().unwrap();
-        assert!(!s.mailboxes.iter().any(|(id, _, _)| id == "mb-misc" || id == "mb-sub"));
+        assert!(!s
+            .mailboxes
+            .iter()
+            .any(|(id, _, _)| id == "mb-misc" || id == "mb-sub"));
         // Plans, and the copy of Lunch, which stays in the inbox too.
         assert_eq!(
             s.emails
@@ -1521,7 +1538,9 @@ async fn manages_the_mailbox() {
         .move_messages(&store, account, "INBOX", &[lunch], FolderRole::Trash)
         .await
         .unwrap();
-    assert!(server.lock().unwrap().emails["M5"].mailboxes.contains("mb-bin"));
+    assert!(server.lock().unwrap().emails["M5"]
+        .mailboxes
+        .contains("mb-bin"));
 
     assert_eq!(remote.quota().await.unwrap(), Some((900, 1000)));
 }

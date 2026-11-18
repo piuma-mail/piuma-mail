@@ -882,8 +882,7 @@ impl Client {
         uids: &[u32],
         flagged: bool,
     ) -> Result<()> {
-        let patch =
-            json!({ "keywords/$flagged": if flagged { json!(true) } else { Value::Null } });
+        let patch = json!({ "keywords/$flagged": if flagged { json!(true) } else { Value::Null } });
         self.update(store, account, mailbox, uids, patch).await
     }
 
@@ -1008,7 +1007,8 @@ impl Client {
             return Ok(());
         };
         let account_id = self.account_id.clone();
-        let set = |patch: Value| json!({ "accountId": account_id, "update": { id.clone(): patch } });
+        let set =
+            |patch: Value| json!({ "accountId": account_id, "update": { id.clone(): patch } });
         let args = match change {
             FolderChange::Rename(name) => set(json!({ "name": name })),
             FolderChange::Subscribe(on) => set(json!({ "isSubscribed": on })),

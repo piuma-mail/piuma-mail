@@ -35,6 +35,7 @@ class DemoMailSource extends MailSource {
     this.riskyFiles = false,
     this.impostor = false,
     bool away = false,
+    this.mailbox = false,
   }) : now = now ?? DateTime.now(),
        _crashWaiting = crashed {
     if (away) {
@@ -74,30 +75,32 @@ class DemoMailSource extends MailSource {
       ),
     ];
     // Two deleted emails in Work's Trash.
-    _own['Trash'] = [
-      MailRow(
-        accountId: _work.id,
-        mailbox: 'Trash',
-        uid: 9101,
-        fromName: 'Print Shop',
-        fromEmail: 'orders@printshop.it',
-        subject: 'Your proof is ready',
-        preview: 'The proof of your business cards is attached.',
-        receivedAt: this.now.subtract(const Duration(days: 2)),
-        seen: true,
-      ),
-      MailRow(
-        accountId: _work.id,
-        mailbox: 'Trash',
-        uid: 9102,
-        fromName: 'Coworking Nord',
-        fromEmail: 'hello@coworkingnord.it',
-        subject: 'Events this week',
-        preview: 'Breakfast on Tuesday, a talk on Thursday.',
-        receivedAt: this.now.subtract(const Duration(days: 4)),
-        seen: true,
-      ),
-    ];
+    if (mailbox) {
+      _own['Trash'] = [
+        MailRow(
+          accountId: _work.id,
+          mailbox: 'Trash',
+          uid: 9101,
+          fromName: 'Print Shop',
+          fromEmail: 'orders@printshop.it',
+          subject: 'Your proof is ready',
+          preview: 'The proof of your business cards is attached.',
+          receivedAt: this.now.subtract(const Duration(days: 2)),
+          seen: true,
+        ),
+        MailRow(
+          accountId: _work.id,
+          mailbox: 'Trash',
+          uid: 9102,
+          fromName: 'Coworking Nord',
+          fromEmail: 'hello@coworkingnord.it',
+          subject: 'Events this week',
+          preview: 'Breakfast on Tuesday, a talk on Thursday.',
+          receivedAt: this.now.subtract(const Duration(days: 4)),
+          seen: true,
+        ),
+      ];
+    }
     if (groups) {
       _groups.addAll([
         const MailGroup(
@@ -648,6 +651,11 @@ class DemoMailSource extends MailSource {
 
   /// "PayPal" writing from paypa1.com, as on `ProtectionToApprove`.
   final bool impostor;
+
+  /// Mailbox management's data: two starred emails, a Trash with two, a
+  /// hidden folder, and how full each mailbox is. Off in the older
+  /// screenshots, so they stay as they were.
+  final bool mailbox;
   static const impostorSubject = 'Your account has been limited';
 
   /// Older filler rows, to try scrolling a big inbox.
@@ -917,12 +925,14 @@ class DemoMailSource extends MailSource {
   String? junkMailbox(int accountId) => junkFolders ? 'Junk' : null;
 
   @override
-  String? trashMailbox(int accountId) => junkFolders ? 'Trash' : null;
+  String? trashMailbox(int accountId) =>
+      mailbox && junkFolders ? 'Trash' : null;
 
   /// Starred rows, by key.
   late final Set<Object> _starred = {
-    // Two of the inbox, as on the board.
-    for (final r in _rows.skip(1).take(2)) r.key,
+    // Two of the inbox.
+    if (mailbox)
+      for (final r in _rows.skip(1).take(2)) r.key,
   };
 
   /// What was starred or unstarred, for tests.
@@ -987,6 +997,8 @@ class DemoMailSource extends MailSource {
   final _deletedFolders = <String>{};
   final _hiddenFolders = <String>{'Archive 2019'};
 
+  bool _shownFolder(AccountFolder f) => mailbox || f.mailbox != 'Archive 2019';
+
   @override
   Future<void> renameFolder(int accountId, String mailbox, String name) async {
     _renamed[mailbox] = name.trim();
@@ -994,10 +1006,7 @@ class DemoMailSource extends MailSource {
   }
 
   @override
-  ({int emails, int subfolders}) folderContents(
-    int accountId,
-    String mailbox,
-  ) {
+  ({int emails, int subfolders}) folderContents(int accountId, String mailbox) {
     var emails = 0, subfolders = 0;
     for (final f in _workFolders) {
       if (f.mailbox == mailbox) emails += f.total;
@@ -1125,12 +1134,14 @@ class DemoMailSource extends MailSource {
   );
 
   @override
-  MailQuota? quota(int accountId) => switch (accountId) {
-    // Work is nearly full, as a gentle warning shows.
-    2 => const MailQuota(14200 * 1024 * 1024, 15360 * 1024 * 1024),
-    1 => const MailQuota(2100 * 1024 * 1024, 15360 * 1024 * 1024),
-    _ => null,
-  };
+  MailQuota? quota(int accountId) => !mailbox
+      ? null
+      : switch (accountId) {
+          // Work is nearly full, as a gentle warning shows.
+          2 => const MailQuota(14200 * 1024 * 1024, 15360 * 1024 * 1024),
+          1 => const MailQuota(2100 * 1024 * 1024, 15360 * 1024 * 1024),
+          _ => null,
+        };
 
   void _applyOne(MailRow row, MessageAction action) {
     applied.add((row, action));
@@ -1205,7 +1216,7 @@ class DemoMailSource extends MailSource {
     var list = [
       if (accountId == _work.id)
         for (final f in _workFolders)
-          if (!deleted(f.mailbox))
+          if (!deleted(f.mailbox) && _shownFolder(f))
             AccountFolder(
               mailbox: f.mailbox,
               name: _renamed[f.mailbox] ?? f.name,
@@ -1838,18 +1849,13 @@ class DemoMailSource extends MailSource {
     InboxTab? tab,
     bool unread = false,
     GroupScope? group,
-  }) async =>
-      _arranged(
-            folder == MailFolder.label
-                ? await labelled(mailbox ?? '')
-                : account != null && mailbox != null
-                ? _ownList(account, mailbox)
-                : _list(folder, account, tab, group, unread),
-          )
-          .skip(offset)
-          .take(limit)
-          .map(_withLabels)
-          .toList();
+  }) async => _arranged(
+    folder == MailFolder.label
+        ? await labelled(mailbox ?? '')
+        : account != null && mailbox != null
+        ? _ownList(account, mailbox)
+        : _list(folder, account, tab, group, unread),
+  ).skip(offset).take(limit).map(_withLabels).toList();
 
   // Labels, as on `LabelsToApprove`.
   final _labels = <MailLabel>[];

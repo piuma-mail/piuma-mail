@@ -157,7 +157,8 @@ async fn session(stream: tokio::net::TcpStream, state: Arc<Mutex<State>>) {
         }
         let reply = {
             let mut s = state.lock().unwrap();
-            s.commands.push(format!("{verb} {}", args.join(" ")).trim().to_owned());
+            s.commands
+                .push(format!("{verb} {}", args.join(" ")).trim().to_owned());
             let refused = s
                 .refuse
                 .iter_mut()
@@ -226,7 +227,11 @@ fn answer(
             let Some(m) = s.mailboxes.get(&name) else {
                 return missing;
             };
-            let unseen = m.messages.values().filter(|f| !f.contains("\\Seen")).count();
+            let unseen = m
+                .messages
+                .values()
+                .filter(|f| !f.contains("\\Seen"))
+                .count();
             format!(
                 "* STATUS \"{name}\" (MESSAGES {} UNSEEN {unseen})\r\n{ok}",
                 m.messages.len()
@@ -499,14 +504,23 @@ async fn stars_and_copies_reach_the_server() {
         assert_eq!(s.uids("Projects").len(), 3);
         assert_eq!(s.uids("INBOX").len(), 3);
     }
-    assert!(store.lock().unwrap().message(a, "INBOX", 3).unwrap().is_some());
+    assert!(store
+        .lock()
+        .unwrap()
+        .message(a, "INBOX", 3)
+        .unwrap()
+        .is_some());
     store
         .lock()
         .unwrap()
         .queue_flags(&[(a, "INBOX".into(), 1)], false)
         .unwrap();
     remote.send_pending(&store, a).await.unwrap();
-    assert!(!state.lock().unwrap().flags("INBOX", 1).contains("\\Flagged"));
+    assert!(!state
+        .lock()
+        .unwrap()
+        .flags("INBOX", 1)
+        .contains("\\Flagged"));
     assert_eq!(store.lock().unwrap().starred(Some(a)).unwrap().len(), 1);
 }
 
@@ -560,11 +574,12 @@ async fn folders_are_renamed_shown_and_deleted() {
     assert_eq!(contents, (3, 1));
     store.lock().unwrap().delete_folder(a, "Plans").unwrap();
     assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
-    let s = state.lock().unwrap();
-    assert!(!s.mailboxes.contains_key("Plans"));
-    assert!(!s.mailboxes.contains_key("Plans/2026"));
-    assert_eq!(s.uids("Trash").len(), 5);
-    drop(s);
+    {
+        let s = state.lock().unwrap();
+        assert!(!s.mailboxes.contains_key("Plans"));
+        assert!(!s.mailboxes.contains_key("Plans/2026"));
+        assert_eq!(s.uids("Trash").len(), 5);
+    }
     remote.sync_folders(&store, a).await.unwrap();
     let names: Vec<String> = store
         .lock()

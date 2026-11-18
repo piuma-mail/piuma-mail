@@ -15,6 +15,7 @@ import '../mail/senders.dart';
 import '../notify/android_background.dart';
 import '../notify/background_sheet.dart';
 import '../notify/notifier.dart';
+import '../notify/unread_badge.dart';
 import '../design/icons.dart';
 import '../feedback/crash_line.dart';
 import '../feedback/report_context.dart';
@@ -26,6 +27,7 @@ import '../settings/pair_ask.dart';
 import '../settings/settings_screen.dart';
 import '../updates/updates.dart';
 import '../updates/whats_new.dart';
+import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/predictive_back.dart';
 import '../widgets/route.dart';
@@ -33,6 +35,7 @@ import '../design/tokens.g.dart';
 import 'group_sheet.dart';
 import 'inbox_tabs.dart';
 import 'labels.dart';
+import 'mailbox_actions.dart';
 import 'pictures.dart';
 import 'mail_pager.dart';
 import 'message_list.dart';
@@ -48,6 +51,7 @@ import 'away_line.dart';
 import 'service_states.dart';
 import 'sidebar.dart';
 import 'snooze.dart';
+import 'swipe.dart';
 import 'tablet_parts.dart';
 import 'waiting.dart';
 
@@ -153,6 +157,9 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// How many conversations are snoozed, for the sidebar.
   int _snoozed = 0;
+
+  /// Starred emails, for the sidebar's Starred.
+  int _starred = 0;
 
   /// How many sent emails are in Waiting, and how many have waited 3
   /// days or more: the sidebar's count and the phone's line.
@@ -786,6 +793,14 @@ class _InboxScreenState extends State<InboxScreen> {
         picked.every((r) => r.folder == MailFolder.drafts)) {
       action = MessageAction.delete;
     }
+    // In Trash and spam, Delete is for good: asked first, no Undo.
+    if (action == MessageAction.delete &&
+        picked.every(
+          (r) => widget.source.deletesForGood(r.accountId, r.mailbox),
+        )) {
+      await _deleteForever(picked);
+      return;
+    }
     final l = AppLocalizations.of(context);
     final n = picked.length;
     PiumaHaptics.done();
@@ -1096,6 +1111,9 @@ class _InboxScreenState extends State<InboxScreen> {
         case LogicalKeyboardKey.keyL when !shift && open != null:
           if (open.folder == MailFolder.drafts) return KeyEventResult.ignored;
           _label([open]);
+        case LogicalKeyboardKey.keyS when !shift && open != null:
+          if (open.folder == MailFolder.drafts) return KeyEventResult.ignored;
+          _star([open], !open.starred);
         case LogicalKeyboardKey.keyR when !shift && open != null && !_inSent:
           widget.source
               .body(open)
@@ -1121,6 +1139,8 @@ class _InboxScreenState extends State<InboxScreen> {
         _move(rows);
       case LogicalKeyboardKey.keyL when !shift:
         _label(rows);
+      case LogicalKeyboardKey.keyS when !shift:
+        _star(rows, !rows.every((r) => r.starred));
       case LogicalKeyboardKey.keyU when shift:
         _markSeen(rows, false);
         _refreshPicked(false);
@@ -1723,6 +1743,7 @@ class _InboxScreenState extends State<InboxScreen> {
       folder: _mailbox == null ? _folder : null,
       drafts: _drafts,
       snoozed: _snoozed,
+      starred: _starred,
       onFolder: (folder) {
         Navigator.of(sheet).pop();
         _showPhoneFolder(folder);
@@ -1887,6 +1908,7 @@ class _InboxScreenState extends State<InboxScreen> {
     final n = await widget.source.inboxUnread();
     final drafts = await widget.source.draftCount();
     final snoozed = await widget.source.snoozedCount();
+    final starred = await _starredCount();
     final waiting = await widget.source.waitingCount(widget.now());
     // Settings › Features: a zone that is off is not asked for at all.
     final on = await widget.source.featureSettings();
@@ -1902,11 +1924,15 @@ class _InboxScreenState extends State<InboxScreen> {
     }
     if (!mounted) return;
     final spam = AppLocalizations.of(context).spamFolder;
+    final trashName = AppLocalizations.of(context).trashFolder;
     final own = {
       for (final a in widget.source.accounts)
         a.id: [
           ...await widget.source.folders(a.id),
-          // The spam folder comes last, where Not spam is.
+          // Trash and the spam folder come last, where Delete is for
+          // good and Not spam is.
+          if (widget.source.trashMailbox(a.id) case final trash?)
+            AccountFolder(mailbox: trash, name: trashName),
           if (widget.source.junkMailbox(a.id) case final junk?)
             AccountFolder(mailbox: junk, name: spam),
         ],
@@ -1946,6 +1972,8 @@ class _InboxScreenState extends State<InboxScreen> {
         _unread = n;
         _drafts = drafts;
         _snoozed = snoozed;
+        _starred = starred;
+        _badge(n);
         _waiting = waiting;
         _letters = (letters.length, unreadLetters, minutes);
         _vaultCards = vault;
@@ -2396,6 +2424,8 @@ class _InboxScreenState extends State<InboxScreen> {
                 swipeAs: _swipeAs,
                 leftSwipeAs: _leftSwipeAs,
                 onSnoozeSwipe: picking ? null : _swipeSnooze,
+                rightSwipe: _rightSwipe,
+                leftSwipe: _leftSwipe,
                 top: picking
                     ? const []
                     : [
@@ -2537,6 +2567,10 @@ class _InboxScreenState extends State<InboxScreen> {
                     onSnooze: _snoozable
                         ? () => _snooze(picked, phone: true)
                         : null,
+                    onStar: _folder == MailFolder.drafts
+                        ? null
+                        : (on) => _star(picked, on),
+                    allStarred: picked.every((r) => r.starred),
                   ),
                 ),
               ),
@@ -2612,6 +2646,8 @@ class _InboxScreenState extends State<InboxScreen> {
                     ? newFiles(_files, widget.now())
                     : null,
                 syncedDevices: _synced,
+                starred: _starred > 0 ? _starred : null,
+                onDropRows: _dropRows,
               ),
             ),
           Expanded(
@@ -2735,7 +2771,11 @@ class _InboxScreenState extends State<InboxScreen> {
             total: _total,
             onPickAll: _pickAll,
             onUnpickAll: _unpickAll,
-            trailing: _tabletTall && !picking ? _tallActions() : null,
+            trailing: _tabletTall && !picking
+                ? _tallActions()
+                : picking
+                ? null
+                : _emptyButton(),
           ),
         if ((_tablet || _tabletTall) && !picking)
           Padding(
@@ -2837,6 +2877,9 @@ class _InboxScreenState extends State<InboxScreen> {
             onSnoozeSwipe: (_tablet || _tabletTall) && !picking
                 ? _swipeSnooze
                 : null,
+            rightSwipe: _tablet || _tabletTall ? _rightSwipe : null,
+            leftSwipe: _tablet || _tabletTall ? _leftSwipe : null,
+            dragRows: _tablet || _tabletTall ? null : _dragged,
           ),
         ),
       ],
@@ -3108,6 +3151,12 @@ class _InboxScreenState extends State<InboxScreen> {
         _markSeen(_picked.values.toList(), seen);
         _refreshPicked(seen);
       },
+      onStar: _folder == MailFolder.drafts
+          ? null
+          : (on) => _star(_picked.values.toList(), on),
+      onCopy: _oneAccount(_picked.values) && _folder != MailFolder.drafts
+          ? (at) => _copy(_picked.values.toList(), anchor: at)
+          : null,
     ),
     null => Reader(
       source: widget.source,
@@ -3158,6 +3207,8 @@ class _InboxScreenState extends State<InboxScreen> {
           : null,
       onUnsubscribe: (row) =>
           unsubscribeFrom(context, widget.source, row, onToast: _toast),
+      onStar: (row, on) => _star([row], on),
+      onCopy: _canMove ? (row, at) => _copy([row], anchor: at) : null,
     ),
   };
 
@@ -3295,15 +3346,13 @@ class _InboxScreenState extends State<InboxScreen> {
     onFolder: _showFolder,
   );
 
-  /// A swipe to the right (`PhoneSwipe`): archive, or in Waiting stop
-  /// waiting.
+  /// A swipe to the right (`PhoneSwipe`): as the person set it (Archive
+  /// until changed); in Waiting stop waiting, in spam Not spam.
   void _swipeArchive(MailRow row) => _folder == MailFolder.waiting
       ? _stopWaiting([row], reopen: false)
-      : _act(
-          [row],
-          _inJunk(row) ? MessageAction.notJunk : MessageAction.archive,
-          reopen: false,
-        );
+      : _inJunk(row)
+      ? _act([row], MessageAction.notJunk, reopen: false)
+      : _swipeDo(widget.source.listPrefs.value.swipeRight, row);
 
   /// What the swipe to the right says, when not Archive.
   ({PiumaIcon icon, String label})? get _swipeAs =>
@@ -3326,17 +3375,277 @@ class _InboxScreenState extends State<InboxScreen> {
         )
       : null;
 
-  /// A swipe to the left snoozes until tomorrow morning; in Waiting it
-  /// asks when to remind you.
-  ValueChanged<MailRow>? get _swipeSnooze => _folder == MailFolder.waiting
-      ? (row) => _remindMe(row, phone: true)
-      : _snoozable
-      ? (row) => _snooze(
+  /// A swipe to the left: as the person set it (Snooze until tomorrow
+  /// morning until changed); in Waiting it asks when to remind you.
+  ValueChanged<MailRow>? get _swipeSnooze {
+    if (_folder == MailFolder.waiting) {
+      return (row) => _remindMe(row, phone: true);
+    }
+    final left = widget.source.listPrefs.value.swipeLeft;
+    return switch (left) {
+      SwipeChoice.nothing => null,
+      SwipeChoice.snooze when !_snoozable => null,
+      _ => (row) => _swipeDo(left, row),
+    };
+  }
+
+  // Managing the mailbox: stars, deleting for good, emptying Trash and
+  // spam, copying, rows dropped on folders, and the swipes as set.
+
+  /// The unread count on the app's icon, the taskbar or the title.
+  void _badge(int unread) {
+    final l = AppLocalizations.of(context);
+    UnreadBadge.show(
+      unread,
+      title: l.badgeTitle(unread),
+      label: l.badgeUnread(unread),
+      color: PiumaTheme.of(context).accent,
+    );
+  }
+
+  /// How many emails are starred, for the sidebar.
+  Future<int> _starredCount() async =>
+      (await widget.source.page(0, 100000, folder: MailFolder.starred)).length;
+
+  /// Stars the rows, or takes their stars off, at once.
+  Future<void> _star(List<MailRow> rows, bool starred) async {
+    if (rows.isEmpty) return;
+    final keys = {for (final r in rows) r.key};
+    setState(() {
+      if (_selected case final open? when keys.contains(open.key)) {
+        _selected = open.copyWith(starred: starred);
+      }
+      _picked.updateAll(
+        (k, r) => keys.contains(k) ? r.copyWith(starred: starred) : r,
+      );
+    });
+    PiumaHaptics.select();
+    try {
+      await widget.source.setStarred(rows, starred);
+    } catch (_) {
+      if (mounted) _toast(AppLocalizations.of(context).starFailed);
+    }
+    _countUnread();
+  }
+
+  /// Delete in Trash or spam: asked first, then gone for good.
+  Future<void> _deleteForever(List<MailRow> rows) async {
+    final phone = MediaQuery.sizeOf(context).width < phoneWidth;
+    if (!await confirmDeleteForever(
+          context,
+          count: rows.length,
+          phone: phone,
+        ) ||
+        !mounted) {
+      return;
+    }
+    final keys = {for (final r in rows) r.key};
+    await _list.currentState?.fold(keys);
+    if (!mounted) return;
+    for (final r in rows) {
+      widget.source.setHidden(r, true);
+    }
+    setState(() {
+      if (keys.contains(_selected?.key)) _selected = null;
+      _picked.removeWhere((k, _) => keys.contains(k));
+    });
+    final l = AppLocalizations.of(context);
+    try {
+      await widget.source.deleteForever(rows);
+      if (mounted) _toast(l.deletedForeverMany(rows.length));
+    } catch (_) {
+      for (final r in rows) {
+        widget.source.setHidden(r, false);
+      }
+      if (mounted) _toast(l.actionFailed);
+    }
+  }
+
+  /// "Empty Trash" or "Empty spam" at the head of that folder's list.
+  Widget? _emptyButton() {
+    final account = _account;
+    final mailbox = _mailbox;
+    if (account == null || mailbox == null) return null;
+    final source = widget.source;
+    final l = AppLocalizations.of(context);
+    final String label;
+    if (mailbox == source.trashMailbox(account)) {
+      label = l.emptyTrash;
+    } else if (mailbox == source.junkMailbox(account)) {
+      label = l.emptySpam;
+    } else {
+      return null;
+    }
+    return PiumaButton(
+      label: label,
+      kind: PiumaButtonKind.tertiary,
+      size: PiumaButtonSize.compact,
+      onPressed: _total == 0 ? null : () => _empty(account, mailbox),
+    );
+  }
+
+  /// Empties Trash or spam, after saying how many emails go.
+  Future<void> _empty(int account, String mailbox) async {
+    final l = AppLocalizations.of(context);
+    final phone = MediaQuery.sizeOf(context).width < phoneWidth;
+    final name = mailbox == widget.source.trashMailbox(account)
+        ? l.trashFolder
+        : l.spamFolder;
+    var count = _total;
+    try {
+      count = await widget.source.folderTotal(account, mailbox);
+    } catch (_) {}
+    if (!mounted || count == 0) return;
+    if (!await confirmEmpty(
+          context,
+          folder: name,
+          count: count,
+          phone: phone,
+        ) ||
+        !mounted) {
+      return;
+    }
+    try {
+      final n = await widget.source.emptyFolder(account, mailbox);
+      if (mounted) _toast(l.deletedForeverMany(n));
+    } catch (_) {
+      if (mounted) _toast(l.emptyFailed);
+    }
+  }
+
+  /// "Copy to…": the folders of the messages' account; they stay where
+  /// they are.
+  Future<void> _copy(
+    List<MailRow> picked, {
+    Rect? anchor,
+    bool phone = false,
+  }) async {
+    if (picked.isEmpty) return;
+    final account = _accountOf(picked.first.accountId);
+    if (account == null || picked.any((r) => r.accountId != account.id)) {
+      return;
+    }
+    final from = picked.first.mailbox;
+    final target = await showMoveTo(
+      context,
+      source: widget.source,
+      account: account,
+      from: picked.every((r) => r.mailbox == from) ? from : '',
+      anchor: anchor,
+      phone: phone,
+      copy: true,
+    );
+    if (target == null || !mounted) return;
+    final l = AppLocalizations.of(context);
+    try {
+      await widget.source.copyTo(picked, target.mailbox);
+      if (mounted) _toast(l.copiedMany(picked.length, target.name));
+    } catch (_) {
+      if (mounted) _toast(l.actionFailed);
+    }
+  }
+
+  /// What dragging [row] carries: the picked rows when it is one of them.
+  List<MailRow> _dragged(MailRow row) =>
+      _picked.containsKey(row.key) ? _picked.values.toList() : [row];
+
+  /// Rows dropped on one of an account's folders: moved there, with Undo,
+  /// as "Move to…" does.
+  Future<void> _dropRows(
+    int account,
+    String mailbox,
+    List<MailRow> rows,
+  ) async {
+    if (rows.isEmpty) return;
+    final l = AppLocalizations.of(context);
+    String name = mailbox;
+    for (final f in _ownFolders[account] ?? const <AccountFolder>[]) {
+      if (f.mailbox == mailbox) name = f.name;
+    }
+    await _withUndo(
+      rows,
+      l.movedMany(rows.length, name),
+      (rows) => widget.source.moveTo(rows, mailbox),
+    );
+  }
+
+  /// The swipes as the person set them, outside Waiting and spam, where
+  /// they keep their own meaning.
+  SwipeSide? get _rightSwipe => _folder == MailFolder.waiting || _showingJunk
+      ? null
+      : _swipeSide(widget.source.listPrefs.value.swipeRight);
+  SwipeSide? get _leftSwipe => _folder == MailFolder.waiting
+      ? null
+      : _swipeSide(widget.source.listPrefs.value.swipeLeft);
+
+  SwipeSide _swipeSide(SwipeChoice choice) {
+    final l = AppLocalizations.of(context);
+    return switch (choice) {
+      SwipeChoice.archive => SwipeSide(
+        icon: PiumaIcon.archive,
+        label: l.archive,
+      ),
+      SwipeChoice.snooze => SwipeSide(
+        icon: PiumaIcon.clock,
+        label: l.actionSnooze,
+        tone: SwipeTone.warn,
+      ),
+      SwipeChoice.delete => SwipeSide(
+        icon: PiumaIcon.trash,
+        label: l.actionDelete,
+        tone: SwipeTone.danger,
+      ),
+      SwipeChoice.read => SwipeSide(
+        icon: PiumaIcon.mailOpen,
+        label: l.swipeRead,
+        tone: SwipeTone.accent,
+        stays: true,
+      ),
+      SwipeChoice.star => SwipeSide(
+        icon: PiumaIcon.star,
+        label: l.swipeStar,
+        tone: SwipeTone.warn,
+        stays: true,
+      ),
+      SwipeChoice.move => SwipeSide(
+        icon: PiumaIcon.folder,
+        label: l.swipeMove,
+        tone: SwipeTone.accent,
+        stays: true,
+      ),
+      SwipeChoice.nothing => SwipeSide(
+        icon: PiumaIcon.close,
+        label: l.swipeNothing,
+        off: true,
+      ),
+    };
+  }
+
+  /// What a swipe set to [choice] does to [row].
+  void _swipeDo(SwipeChoice choice, MailRow row) {
+    switch (choice) {
+      case SwipeChoice.archive:
+        if (_inArchive) return;
+        _act([row], MessageAction.archive, reopen: false);
+      case SwipeChoice.snooze:
+        if (!_snoozable) return;
+        _snooze(
           [row],
           until: snoozeTime(SnoozeChoice.tomorrow, widget.now()),
           reopen: false,
-        )
-      : null;
+        );
+      case SwipeChoice.delete:
+        _act([row], MessageAction.delete, reopen: false);
+      case SwipeChoice.read:
+        _markSeen([row], !row.seen);
+      case SwipeChoice.star:
+        _star([row], !row.starred);
+      case SwipeChoice.move:
+        _move([row], phone: true, reopen: false);
+      case SwipeChoice.nothing:
+        break;
+    }
+  }
 }
 
 /// Narrower than this, the app takes the phone layout.
@@ -3505,6 +3814,7 @@ class _ListHeader extends StatelessWidget {
         MailFolder.vault => l.folderVault,
         MailFolder.attachments => l.folderAttachments,
         MailFolder.label => l.labelsHeading,
+        MailFolder.starred => l.folderStarred,
       };
 
   @override

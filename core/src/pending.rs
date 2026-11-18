@@ -509,7 +509,8 @@ pub(crate) async fn send<S: Server>(
     }
     for ((_, mailbox, _, _), (change, uids, ids)) in groups {
         // Its numbers name other messages now: what waited is gone.
-        if renumbered.contains(&mailbox) || blocked.iter().any(|b| mailbox.starts_with(b.as_str())) {
+        if renumbered.contains(&mailbox) || blocked.iter().any(|b| mailbox.starts_with(b.as_str()))
+        {
             continue;
         }
         let sent = match change {

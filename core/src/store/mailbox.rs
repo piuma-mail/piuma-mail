@@ -203,7 +203,11 @@ impl Store {
     }
 
     /// One of the account's own folders, by its server name.
-    pub fn account_folder(&self, account: AccountId, mailbox: &str) -> Result<Option<AccountFolder>> {
+    pub fn account_folder(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<Option<AccountFolder>> {
         Ok(self
             .account_folders(account)?
             .into_iter()
@@ -317,7 +321,9 @@ impl Store {
             if delimiter.is_empty() {
                 format!("{column} = ?2")
             } else {
-                format!("({column} = ?2 OR substr({column}, 1, length(?2) + length(?4)) = ?2 || ?4)")
+                format!(
+                    "({column} = ?2 OR substr({column}, 1, length(?2) + length(?4)) = ?2 || ?4)"
+                )
             }
         };
         let renamed = |column: &str| format!("?3 || substr({column}, length(?2) + 1)");
@@ -328,7 +334,11 @@ impl Store {
             ("mailbox", "name", ""),
             ("folder_role", "mailbox", ""),
             // The folder's own operations keep the name they were made on.
-            ("pending_change", "mailbox", " AND change NOT LIKE 'folder.%'"),
+            (
+                "pending_change",
+                "mailbox",
+                " AND change NOT LIKE 'folder.%'",
+            ),
         ] {
             let sql = format!(
                 "UPDATE {table} SET {column} = {} WHERE account = ?1 AND {}{extra}",
@@ -358,8 +368,10 @@ impl Store {
         if delimiter.is_empty() {
             self.conn.execute(&sql, params![account.0, from])?;
         } else {
-            self.conn
-                .execute(&sql.replace("?4", "?3"), params![account.0, from, delimiter])?;
+            self.conn.execute(
+                &sql.replace("?4", "?3"),
+                params![account.0, from, delimiter],
+            )?;
         }
         Ok(())
     }
@@ -490,7 +502,11 @@ impl Store {
 
     /// Remembers every folder the server listed, by server name with the
     /// name people read, so a job can be given to any of them offline.
-    pub fn set_server_folders(&self, account: AccountId, folders: &[(String, String)]) -> Result<()> {
+    pub fn set_server_folders(
+        &self,
+        account: AccountId,
+        folders: &[(String, String)],
+    ) -> Result<()> {
         let list: Vec<[&str; 2]> = folders
             .iter()
             .map(|(m, n)| [m.as_str(), n.as_str()])
@@ -654,9 +670,7 @@ mod tests {
         let starred: Vec<u32> = store.starred(None).unwrap().iter().map(|m| m.uid).collect();
         assert_eq!(starred, [2, 1]);
         // Unstarred before the star went: one change waits, the last.
-        store
-            .queue_flags(&[(a, "INBOX".into(), 2)], false)
-            .unwrap();
+        store.queue_flags(&[(a, "INBOX".into(), 2)], false).unwrap();
         let waiting: Vec<Change> = store
             .pending_changes(a)
             .unwrap()
@@ -840,9 +854,7 @@ mod tests {
         };
         assert_eq!(uids(sender), [(2, 1), (3, 1), (1, 1)]);
         assert_eq!(
-            store
-                .conversation_count(Folder::Inbox, None, flat)
-                .unwrap(),
+            store.conversation_count(Folder::Inbox, None, flat).unwrap(),
             3
         );
         assert_eq!(

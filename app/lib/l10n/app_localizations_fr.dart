@@ -6182,4 +6182,313 @@ class AppLocalizationsFr extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get star => 'Suivre';
+
+  @override
+  String get unstar => 'Ne plus suivre';
+
+  @override
+  String get folderStarred => 'Suivis';
+
+  @override
+  String get messageStarred => 'Suivi';
+
+  @override
+  String starredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations suivies',
+      one: 'Suivi',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String unstarredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations plus suivies',
+      one: 'Plus suivi',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get starFailed =>
+      'Impossible de changer le suivi. Réessayez dans un instant.';
+
+  @override
+  String get trashFolder => 'Corbeille';
+
+  @override
+  String get deleteForever => 'Supprimer définitivement';
+
+  @override
+  String deleteForeverTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Supprimer définitivement $count e-mails ?',
+      one: 'Supprimer définitivement cet e-mail ?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deleteForeverNote =>
+      'Ils ne pourront pas être récupérés, ni ici ni sur le serveur.';
+
+  @override
+  String deletedForeverMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails supprimés définitivement',
+      one: 'Supprimé définitivement',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyTrash => 'Vider la corbeille';
+
+  @override
+  String get emptySpam => 'Vider les spams';
+
+  @override
+  String emptyTitle(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Supprimer définitivement les $count e-mails de $folder ?',
+      one: 'Supprimer définitivement l’e-mail de $folder ?',
+      zero: '$folder est vide',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyConfirm => 'Vider';
+
+  @override
+  String get emptyFailed =>
+      'Impossible de le vider. Réessayez une fois en ligne.';
+
+  @override
+  String get copyTo => 'Copier vers…';
+
+  @override
+  String copyToIn(String name) {
+    return 'Copier dans un dossier de $name';
+  }
+
+  @override
+  String copiedMany(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations copiées dans $folder',
+      one: 'Copié dans $folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderActions(String name) {
+    return 'Plus pour « $name »';
+  }
+
+  @override
+  String get folderRename => 'Renommer';
+
+  @override
+  String folderRenameTitle(String name) {
+    return 'Renommer « $name »';
+  }
+
+  @override
+  String get folderNewName => 'Nouveau nom';
+
+  @override
+  String get folderHide => 'Masquer des listes';
+
+  @override
+  String get folderShow => 'Afficher dans les listes';
+
+  @override
+  String get folderHidden => 'Masqué';
+
+  @override
+  String get folderDelete => 'Supprimer le dossier';
+
+  @override
+  String folderDeleteTitle(String name) {
+    return 'Supprimer « $name » ?';
+  }
+
+  @override
+  String folderDeleteEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ses $count e-mails vont dans la corbeille.',
+      one: 'Son e-mail va dans la corbeille.',
+      zero: 'Il ne contient aucun e-mail.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderDeleteSubfolders(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ses $count sous-dossiers sont supprimés avec lui.',
+      one: 'Son sous-dossier est supprimé avec lui.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get folderDeleteEnd =>
+      'Le dossier ne pourra pas être récupéré ; ses e-mails, oui, depuis la corbeille.';
+
+  @override
+  String get folderChangeFailed => 'Impossible de modifier le dossier.';
+
+  @override
+  String hiddenFoldersShow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Afficher $count dossiers masqués',
+      one: 'Afficher 1 dossier masqué',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get hiddenFoldersHide => 'Masquer les dossiers masqués';
+
+  @override
+  String folderExpand(String name) {
+    return 'Afficher les dossiers de $name';
+  }
+
+  @override
+  String folderCollapse(String name) {
+    return 'Masquer les dossiers de $name';
+  }
+
+  @override
+  String get specialFolders => 'Dossiers spéciaux';
+
+  @override
+  String get specialFoldersNote =>
+      'Piuma les trouve grâce aux marques de votre serveur et à leurs noms. Si l’un est faux, choisissez le bon dossier.';
+
+  @override
+  String specialFoldersOf(String name) {
+    return 'Dossiers spéciaux de $name';
+  }
+
+  @override
+  String get specialAutomatic => 'Comme l’indique le serveur';
+
+  @override
+  String get specialNone => 'Aucun';
+
+  @override
+  String get specialChosen => 'Choisi par vous';
+
+  @override
+  String get listsHeading => 'Listes';
+
+  @override
+  String get listOrder => 'Tri';
+
+  @override
+  String get orderNewest => 'Plus récents d’abord';
+
+  @override
+  String get orderOldest => 'Plus anciens d’abord';
+
+  @override
+  String get orderSender => 'Par expéditeur';
+
+  @override
+  String get listThreads => 'Regrouper en conversations';
+
+  @override
+  String get listThreadsNote => 'Désactivé, chaque e-mail a sa propre ligne.';
+
+  @override
+  String get swipeRight => 'Balayer vers la droite';
+
+  @override
+  String get swipeLeft => 'Balayer vers la gauche';
+
+  @override
+  String get swipeRead => 'Lu ou non lu';
+
+  @override
+  String get swipeStar => 'Suivre';
+
+  @override
+  String get swipeMove => 'Déplacer vers…';
+
+  @override
+  String get swipeNothing => 'Rien';
+
+  @override
+  String get quotaLabel => 'Stockage';
+
+  @override
+  String quotaUsed(String used, String limit) {
+    return '$used sur $limit';
+  }
+
+  @override
+  String get quotaNearlyFull =>
+      'Presque plein. Supprimez ou archivez quelques e-mails, sinon les nouveaux risquent de ne pas arriver.';
+
+  @override
+  String draggedEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails',
+      one: '1 e-mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutStar => 'Suivre ou ne plus suivre';
+
+  @override
+  String badgeTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail ($count)',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String badgeUnread(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails non lus',
+      one: '1 e-mail non lu',
+    );
+    return '$_temp0';
+  }
 }

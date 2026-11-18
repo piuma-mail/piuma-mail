@@ -225,6 +225,10 @@ enum PiumaIcon {
   ]),
 
   /// A map pin: directions to a place.
+  /// Starred mail (`\Flagged`): a five-point star, in amber once on.
+  star([
+    'M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.1l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z',
+  ]),
   pin([
     'M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z',
     'M9.5 9a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z',

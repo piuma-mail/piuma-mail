@@ -1056,7 +1056,10 @@ class EngineMailSource extends MailSource {
   @override
   Future<void> setStarred(List<MailRow> rows, bool starred) async {
     if (rows.isEmpty) return;
-    final sent = mbx.setMessagesFlagged(messages: _refs(rows), flagged: starred);
+    final sent = mbx.setMessagesFlagged(
+      messages: _refs(rows),
+      flagged: starred,
+    );
     // Here at once; the servers hear of it after.
     _changes.add(null);
     await sent;
@@ -1090,10 +1093,7 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  ({int emails, int subfolders}) folderContents(
-    int accountId,
-    String mailbox,
-  ) {
+  ({int emails, int subfolders}) folderContents(int accountId, String mailbox) {
     final c = mbx.folderContents(accountId: accountId, mailbox: mailbox);
     return (emails: c.emails, subfolders: c.subfolders);
   }
