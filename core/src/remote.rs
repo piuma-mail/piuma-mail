@@ -30,6 +30,15 @@ impl RemoteError {
         )
     }
 
+    /// The server's certificate was refused: the person has to look at it.
+    pub fn is_certificate(&self) -> bool {
+        matches!(
+            self,
+            RemoteError::Imap(ImapError::Certificate(_))
+                | RemoteError::Jmap(JmapError::Certificate(_))
+        )
+    }
+
     /// The server could not be reached: worth keeping the change for later.
     pub fn is_offline(&self) -> bool {
         match self {

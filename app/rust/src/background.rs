@@ -27,6 +27,8 @@ pub struct SignInNotice {
     pub account_id: i64,
     pub name: String,
     pub cancelled: bool,
+    /// The server's certificate was refused, not the password.
+    pub certificate: bool,
 }
 
 /// From now on notices wait for [`wait`] instead of going to the app.
@@ -82,17 +84,19 @@ fn told_key(account: AccountId) -> String {
 /// The account's server refused its password: keeps a notice for the
 /// service, unless the app shows its own, the person turned it off, or
 /// it was given already.
-pub(crate) fn sign_in_failed(account: AccountId) {
+/// `certificate`: it was the server's certificate, not the password.
+pub(crate) fn sign_in_failed(account: AccountId, certificate: bool) {
     if enabled() {
-        tell(account);
+        tell(account, certificate);
     }
 }
 
-fn tell(account: AccountId) {
+fn tell(account: AccountId, certificate: bool) {
     let Ok(engine) = engine::engine() else { return };
     let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
     let notice = told(&store, account);
-    let Some(notice) = notice else { return };
+    let Some(mut notice) = notice else { return };
+    notice.certificate = certificate;
     FAILED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -124,6 +128,7 @@ fn told(store: &Store, account: AccountId) -> Option<SignInNotice> {
         account_id: account.0,
         name: a.name,
         cancelled: false,
+        certificate: false,
     })
 }
 
@@ -161,6 +166,7 @@ fn recover_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNo
         account_id: account.0,
         name: String::new(),
         cancelled: true,
+        certificate: false,
     });
     true
 }
@@ -196,10 +202,11 @@ pub fn sign_in_notices() -> String {
                 return format!(r#"{{"id":{},"cancel":true}}"#, sign_in_id(n.account_id));
             }
             format!(
-                r#"{{"id":{},"name":{},"payload":{}}}"#,
+                r#"{{"id":{},"name":{},"payload":{},"certificate":{}}}"#,
                 sign_in_id(n.account_id),
                 quote(&n.name),
                 quote(&format!("account\n{}", n.account_id)),
+                n.certificate,
             )
         })
         .collect();
@@ -270,8 +277,8 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
             let mut conn = match Remote::open(&account, &password).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    if e.is_auth() {
-                        tell(account.id);
+                    if e.is_auth() || e.is_certificate() {
+                        tell(account.id, e.is_certificate());
                     }
                     return None;
                 }
@@ -670,6 +677,7 @@ mod tests {
             account_id: id.0 + 1,
             name: "Other".into(),
             cancelled: false,
+            certificate: false,
         };
         let mut pending = vec![notice.clone(), other.clone()];
         assert!(recover_sign_in(&store, id, &mut pending));
@@ -700,7 +708,7 @@ mod tests {
         assert_eq!(
             json,
             format!(
-                r#"[{{"id":{},"name":"Work \"W\"","payload":"account\n{}"}}]"#,
+                r#"[{{"id":{},"name":"Work \"W\"","payload":"account\n{}","certificate":false}}]"#,
                 sign_in_id(id.0),
                 id.0
             )
@@ -735,6 +743,7 @@ mod tests {
             account_id: id.0 + 1,
             name: "Other".into(),
             cancelled: false,
+            certificate: false,
         };
         // Told, and still waiting for the service: it goes, and what may
         // have been shown already is withdrawn.
@@ -751,6 +760,7 @@ mod tests {
                 account_id: id.0,
                 name: "Work".into(),
                 cancelled: false,
+                certificate: false,
             },
             other.clone(),
         ];

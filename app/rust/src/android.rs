@@ -202,7 +202,10 @@ pub fn oauth_redirect<'caller>(
         .resolve::<ThrowRuntimeExAndDefault>()
 }
 
-/// Secrets the engine got, for the Keystore, as JSON, each given once.
+/// Secrets the engine got, for the Keystore, as JSON:
+/// `{"claim": n, "secrets": [{"key", "value", "seq"}]}`, the claim 0 and
+/// no secrets when there are none or the app is writing them. Hand the
+/// claim back to `secrets_written` once they are in the Keystore.
 #[jni_mangle("mail.piuma.piuma_mail.MailNative")]
 pub fn kept_secrets<'caller>(
     mut unowned_env: EnvUnowned<'caller>,
@@ -210,19 +213,49 @@ pub fn kept_secrets<'caller>(
 ) -> JString<'caller> {
     unowned_env
         .with_env(|env| -> Result<_, Error> {
-            let items: Vec<String> = crate::credentials::take_kept()
+            let (claim, entries) = crate::credentials::claim_kept().unwrap_or_default();
+            let items: Vec<String> = entries
                 .into_iter()
-                .map(|(key, value)| {
+                .map(|e| {
                     format!(
-                        r#"{{"key":{},"value":{}}}"#,
-                        json_string(&key),
-                        json_string(&value)
+                        r#"{{"key":{},"value":{},"seq":{}}}"#,
+                        json_string(&e.key),
+                        json_string(&e.value),
+                        e.seq
                     )
                 })
                 .collect();
-            JString::from_str(env, format!("[{}]", items.join(",")))
+            JString::from_str(
+                env,
+                format!(r#"{{"claim":{claim},"secrets":[{}]}}"#, items.join(",")),
+            )
         })
         .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// The secrets of `claim` that went into the Keystore, one `key=seq` a
+/// line; the others stay for the next try.
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn secrets_written<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    claim: jlong,
+    written: JString<'caller>,
+) {
+    unowned_env
+        .with_env(|env| -> Result<(), Error> {
+            let written = written.try_to_string(env)?;
+            let written: Vec<(String, i64)> = written
+                .lines()
+                .filter_map(|l| {
+                    let (key, seq) = l.rsplit_once('=')?;
+                    Some((key.to_owned(), seq.trim().parse().ok()?))
+                })
+                .collect();
+            crate::credentials::release_kept(claim, &written);
+            Ok(())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 /// A JSON string literal.

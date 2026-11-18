@@ -70,9 +70,6 @@ pub struct Provider {
     /// `{tenant}` is replaced with the client's tenant, or [`Self::tenant`].
     pub authorize_url: String,
     pub token_url: String,
-    /// Where a refresh token is given back when the account goes (RFC
-    /// 7009); none for providers without one for public clients.
-    pub revoke_url: Option<String>,
     /// The default tenant, for providers that have them.
     pub tenant: Option<String>,
     pub scopes: Vec<String>,
@@ -103,6 +100,10 @@ pub struct Provider {
     /// Whether a refresh asks for the scopes again (Microsoft wants them).
     #[serde(default)]
     pub refresh_scopes: bool,
+    /// Besides its IMAP and SMTP hosts, the domains whose hosts are the
+    /// provider's own mail servers: the only ones its tokens go to.
+    #[serde(default)]
+    pub server_domains: Vec<String>,
 }
 
 /// The app's own URL scheme on Android: a reverse domain name the project
@@ -117,6 +118,25 @@ impl Provider {
 
     pub fn smtp(&self) -> Server {
         self.smtp.server()
+    }
+
+    /// Whether `host` is one of the provider's own mail servers, the only
+    /// ones its sign-in tokens are sent to.
+    pub fn serves(&self, host: &str) -> bool {
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        host == self.imap.host.to_ascii_lowercase()
+            || host == self.smtp.host.to_ascii_lowercase()
+            || self
+                .server_domains
+                .iter()
+                .any(|d| host.ends_with(&format!(".{d}")))
+    }
+
+    /// Whether a client of this build's needs one made for Android there
+    /// (Google: the redirect scheme comes from the client ID, and a
+    /// desktop client's can't come back to the app).
+    fn needs_android_client(&self) -> bool {
+        self.android_redirect.contains("{reversed_client_id}")
     }
 
     fn with_tenant(&self, url: &str, client: &Client) -> String {
@@ -233,6 +253,8 @@ pub fn built_in_client(provider: &str) -> Option<Client> {
 }
 
 fn clients_from(config: &str, provider: &str, android: bool) -> Option<Client> {
+    let android_only =
+        android && self::provider(provider).is_some_and(|p| p.needs_android_client());
     let mut values = BTreeMap::new();
     for entry in config.split([';', '\n']) {
         if let Some((key, value)) = entry.split_once('=') {
@@ -245,8 +267,11 @@ fn clients_from(config: &str, provider: &str, android: bool) -> Option<Client> {
     let get = |suffix: &str| values.get(&format!("{provider}{suffix}")).cloned();
     // Android signs in with a client of its own type where there is one;
     // such clients have no secret.
+    // Where only such a client can come back (Google), a desktop one is
+    // no client at all: its redirect isn't the app's.
     let (client_id, client_secret) = match (android, get(".android")) {
         (true, Some(id)) => (id, None),
+        _ if android_only => return None,
         _ => (get("")?, get(".secret")),
     };
     Some(Client {
@@ -641,30 +666,6 @@ pub async fn refresh(
     token_request(provider, client, &form).await
 }
 
-/// Gives a refresh token back, when the account is removed. Providers
-/// without a revocation endpoint keep it until it runs out.
-pub async fn revoke(provider: &Provider, client: &Client, token: &str) -> Result<(), TokenError> {
-    let Some(url) = &provider.revoke_url else {
-        return Ok(());
-    };
-    let response = http()?
-        .post(url)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(form_body(&[
-            ("token", token),
-            ("client_id", &client.client_id),
-        ]))
-        .send()
-        .await
-        .map_err(|e| TokenError::Offline(e.without_url().to_string()))?;
-    // 400 means the token was already invalid: just as good.
-    if response.status().is_success() || response.status().as_u16() == 400 {
-        Ok(())
-    } else {
-        Err(TokenError::Offline(response.status().to_string()))
-    }
-}
-
 /// What the keychain keeps for an account signed in with OAuth, in place
 /// of a password.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -868,7 +869,6 @@ mod tests {
         assert!(ms.scopes.iter().any(|s| s == "offline_access"));
         let google = provider("google").unwrap();
         assert_eq!(google.scopes, ["https://mail.google.com/"]);
-        assert!(google.revoke_url.is_some());
         assert!(google.app_passwords && !ms.app_passwords);
         assert!(ms.refresh_scopes && !google.refresh_scopes);
     }
@@ -885,6 +885,26 @@ mod tests {
         assert_eq!(for_mx("ASPMX.L.GOOGLE.COM").unwrap().id, "google");
         assert!(for_mx("mx.notoutlook.com").is_none());
         assert_eq!(for_server("IMAP.gmail.com").unwrap().id, "google");
+    }
+
+    #[test]
+    fn tokens_go_only_to_the_provider_s_own_servers() {
+        let ms = provider("microsoft").unwrap();
+        let google = provider("google").unwrap();
+        assert!(ms.serves("outlook.office365.com"));
+        assert!(ms.serves("SMTP.office365.com."));
+        assert!(ms.serves("smtp-mail.outlook.com"));
+        assert!(google.serves("imap.gmail.com"));
+        for host in [
+            "imap.studio.it",
+            "outlook.office365.com.evil.example",
+            "office365.com.evil.example",
+            "notgmail.com",
+            "imap.gmail.com.example",
+        ] {
+            assert!(!ms.serves(host) && !google.serves(host), "{host}");
+        }
+        assert!(!ms.serves("imap.gmail.com"));
     }
 
     #[test]
@@ -920,6 +940,18 @@ mod tests {
             "mail.piuma.app://oauth"
         );
         assert!(clients_from("", "microsoft", false).is_none());
+        // Google on Android without a client made for it: none, not the
+        // desktop one, whose redirect can't come back to the app.
+        let desktop_only = "google=d-id;google.secret=not-secret;microsoft=ms-id";
+        assert!(clients_from(desktop_only, "google", true).is_none());
+        assert!(clients_from(desktop_only, "google", false).is_some());
+        // Microsoft comes back to the app's own scheme with any client.
+        assert_eq!(
+            clients_from(desktop_only, "microsoft", true)
+                .unwrap()
+                .client_id,
+            "ms-id"
+        );
         assert!(clients_from("microsoft=", "microsoft", false).is_none());
     }
 

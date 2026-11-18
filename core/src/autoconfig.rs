@@ -205,6 +205,47 @@ fn preset(domain: &str) -> Option<(Server, Server)> {
     })
 }
 
+/// One address domain of each provider [`preset`] knows, for
+/// [`well_known_host`].
+const PRESET_DOMAINS: &[&str] = &[
+    "icloud.com",
+    "yahoo.com",
+    "aol.com",
+    "fastmail.com",
+    "gmx.com",
+    "zoho.com",
+    "libero.it",
+    "virgilio.it",
+    "tim.it",
+    "alice.it",
+    "fastwebnet.it",
+    "aruba.it",
+    "pec.it",
+    "legalmail.it",
+    "postecert.it",
+    "sicurezzapostale.it",
+];
+
+/// Whether `host` is a server of a provider the engine knows (an OAuth
+/// provider's, or one of the presets): their certificates are always
+/// vouched for by an authority, so one that isn't means someone is in
+/// the way, and it is never trusted by hand.
+pub fn well_known_host(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    if crate::oauth::providers().iter().any(|p| p.serves(&host)) {
+        return true;
+    }
+    PRESET_DOMAINS
+        .iter()
+        .filter_map(|d| preset(d))
+        .any(|(imap, smtp)| {
+            imap.host.eq_ignore_ascii_case(&host) || smtp.host.eq_ignore_ascii_case(&host)
+        })
+}
+
 /// A custom domain whose mail a known provider receives, by the host name
 /// of one of its MX records.
 pub fn by_mx(host: &str) -> Option<(Server, Server)> {
@@ -404,6 +445,33 @@ mod tests {
     </outgoingServer>
   </emailProvider>
 </clientConfig>"#;
+
+    #[test]
+    fn big_providers_servers_are_well_known() {
+        for host in [
+            "outlook.office365.com",
+            "smtp.office365.com",
+            "IMAP.GMAIL.COM.",
+            "smtp.gmail.com",
+            "imap.mail.me.com",
+            "imapmail.libero.it",
+            "smtps.pec.aruba.it",
+        ] {
+            assert!(well_known_host(host), "{host}");
+        }
+        for host in [
+            "mail.studio.it",
+            "imap.gmail.com.studio.it",
+            "",
+            "localhost",
+        ] {
+            assert!(!well_known_host(host), "{host}");
+        }
+        // Every preset is in the list.
+        for domain in PRESET_DOMAINS {
+            assert!(preset(domain).is_some(), "{domain}");
+        }
+    }
 
     #[test]
     fn parses_the_most_secure_servers() {

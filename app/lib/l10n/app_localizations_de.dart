@@ -3381,6 +3381,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der Server hat das Passwort abgelehnt. Hat es sich geändert?';
 
   @override
+  String get accountCertificateRefused =>
+      'Das Zertifikat des Servers wurde abgelehnt. Melde dich erneut an, um es anzusehen.';
+
+  @override
   String get accountEditServers => 'Server bearbeiten';
 
   @override
@@ -6232,6 +6236,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der Anbieter hat die Anmeldung nicht erlaubt. Versuche es erneut oder prüfe die Client-ID unter Erweitert.';
 
   @override
+  String get errorOAuthServers =>
+      'Dieses Konto meldet sich über die Seite seines Anbieters an und bleibt deshalb bei dessen eigenen Servern, über eine sichere Verbindung.';
+
+  @override
   String get errorPort => 'Ein Port ist eine Zahl von 1 bis 65535.';
 
   @override
@@ -6253,6 +6261,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get certInvalid =>
       'Dieses Zertifikat ist ungültig, und ihm zu vertrauen würde die Verbindung nicht sicher machen.';
+
+  @override
+  String get certProvider =>
+      'Das ist der Server eines großen Anbieters, und für seine Zertifikate bürgt immer eine Zertifizierungsstelle. Vielleicht schaltet sich jemand in die Verbindung ein: Versuche ein anderes Netz und prüfe Datum und Uhrzeit dieses Geräts.';
 
   @override
   String get certIssuedTo => 'Ausgestellt für';

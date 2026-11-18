@@ -123,12 +123,11 @@ pub fn provider(base: &str, mechanism: Mechanism) -> Provider {
         "name": "Test",
         "authorize_url": format!("{base}/authorize"),
         "token_url": format!("{base}/token"),
-        "revoke_url": null,
         "tenant": null,
         "scopes": ["mail"],
         "mechanism": mechanism,
-        "imap": { "host": "127.0.0.1", "port": 993, "security": "tls" },
-        "smtp": { "host": "127.0.0.1", "port": 465, "security": "tls" },
+        "imap": { "host": "localhost", "port": 993, "security": "tls" },
+        "smtp": { "host": "localhost", "port": 465, "security": "tls" },
         "android_redirect": "{app_scheme}://oauth",
     }))
     .unwrap()

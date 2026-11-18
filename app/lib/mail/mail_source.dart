@@ -877,13 +877,21 @@ class AccountServers {
 
 /// How an account's connection is going, as its details show it.
 class AccountHealth {
-  const AccountHealth({this.checkedAt, this.failedSince});
+  const AccountHealth({
+    this.checkedAt,
+    this.failedSince,
+    this.certificate = false,
+  });
 
   /// When the server last answered.
   final DateTime? checkedAt;
 
   /// Since when the server refuses the password; null while it works.
   final DateTime? failedSince;
+
+  /// With [failedSince]: it was the server's certificate that was
+  /// refused, not the password.
+  final bool certificate;
 }
 
 /// An account's away message (`RemindAwayPrintToApprove`, section 2): an
@@ -999,6 +1007,10 @@ enum AddAccountError {
 
   /// The provider refused the sign-in.
   signInDenied,
+
+  /// New servers for an account that signs in with a provider's page:
+  /// its sign-in only goes to that provider's servers, over TLS.
+  oauthServers,
   other,
 }
 
@@ -1026,8 +1038,14 @@ enum CertificateIssue {
   /// Not the one trusted for this account before.
   changed,
 
-  /// Revoked or broken: trusting it can't help.
+  /// Revoked or broken: trusting it can't help. Also one trusted before
+  /// and revoked since.
   invalid,
+
+  /// A big provider's server (Microsoft, Google…), whose certificates an
+  /// authority always vouches for: refused, someone may be in the way.
+  /// Never trusted by hand.
+  provider,
 }
 
 /// A refused certificate, for the person to look at and maybe trust.
@@ -1072,7 +1090,8 @@ class CertificateProblem {
   /// The last day it is valid, `2027-01-31`.
   final String notAfter;
 
-  bool get canTrust => issue != CertificateIssue.invalid;
+  bool get canTrust =>
+      issue != CertificateIssue.invalid && issue != CertificateIssue.provider;
 
   TrustedCertificate get trusted =>
       TrustedCertificate(host: host, fingerprint: fingerprint);
@@ -2601,8 +2620,16 @@ abstract class MailSource {
   Future<MailAccount> updateAccount(MailAccount account);
 
   /// Checks new servers with the account's password and keeps them.
-  /// Throws [AddAccountException].
-  Future<void> setAccountServers(int accountId, AccountServers servers);
+  /// [trusted] are certificates the person chose to trust for them after
+  /// a [AddAccountError.certificate]: kept only once the check went
+  /// through. An account that signs in with a provider's page keeps that
+  /// provider's servers ([AddAccountError.oauthServers]). Throws
+  /// [AddAccountException].
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  });
 
   /// Removes an account and its mail from this device; the mail stays on
   /// the server.

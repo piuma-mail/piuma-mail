@@ -4,7 +4,6 @@
     "name": "Microsoft",
     "authorize_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
     "token_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
-    "revoke_url": null,
     "issuer": null,
     "tenant": "common",
     "scopes": [
@@ -24,14 +23,14 @@
     "mx": ["mail.protection.outlook.com", "olc.protection.outlook.com"],
     "android_redirect": "{app_scheme}://oauth",
     "app_passwords": false,
-    "refresh_scopes": true
+    "refresh_scopes": true,
+    "server_domains": ["office365.com", "outlook.com"]
   },
   {
     "id": "google",
     "name": "Google",
     "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
     "token_url": "https://oauth2.googleapis.com/token",
-    "revoke_url": "https://oauth2.googleapis.com/revoke",
     "issuer": "https://accounts.google.com",
     "tenant": null,
     "scopes": ["https://mail.google.com/"],
@@ -42,6 +41,7 @@
     "domains": ["gmail.com", "googlemail.com"],
     "mx": ["google.com", "googlemail.com"],
     "android_redirect": "{reversed_client_id}:/oauth2redirect",
-    "app_passwords": true
+    "app_passwords": true,
+    "server_domains": ["gmail.com", "googlemail.com"]
   }
 ]

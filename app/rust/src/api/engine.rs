@@ -86,6 +86,9 @@ pub enum ErrorKind {
     /// OAuth: the provider refused (the person said no, the answer was
     /// forged, the client is wrong).
     SignInDenied,
+    /// OAuth: new servers for an account that signs in with a provider's
+    /// page that aren't that provider's, or not over TLS.
+    OAuthServers,
     /// A recipient is not an email address; `detail` is the address.
     BadAddress,
     NoRecipients,
@@ -753,9 +756,11 @@ pub struct TrustedCertificate {
     pub fingerprint: String,
 }
 
-fn pins_of(trusted: &[TrustedCertificate]) -> Vec<piuma_core::tls::Pin> {
+pub(crate) fn pins_of(trusted: &[TrustedCertificate]) -> Vec<piuma_core::tls::Pin> {
     trusted
         .iter()
+        // Never for a big provider's server (the engine refuses those).
+        .filter(|t| piuma_core::tls::can_pin(&t.host))
         .filter_map(|t| {
             Some(piuma_core::tls::Pin {
                 host: t.host.trim().to_owned(),
@@ -1407,7 +1412,7 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
 /// nothing else starts a second one.
 async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
     let id = account.id;
-    keep_following(
+    let certificate = keep_following(
         id,
         |worked| follow(account.clone(), store.clone(), worked),
         RESTART_FIRST,
@@ -1417,16 +1422,28 @@ async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|a| *a != id.0);
-    emit(SyncEvent::new(SyncEventKind::SignInFailed, id.0));
-    crate::background::sign_in_failed(id);
+    // The app words a refused certificate as such, not as a password.
+    emit(SyncEvent {
+        reason: if certificate {
+            CERTIFICATE_REFUSED.into()
+        } else {
+            String::new()
+        },
+        ..SyncEvent::new(SyncEventKind::SignInFailed, id.0)
+    });
+    crate::background::sign_in_failed(id, certificate);
 }
 
-/// Runs the watcher `start` makes until it ends with a refused password,
-/// starting it again whenever it ends otherwise or panics: after `first`,
-/// then longer each time in a row, up to [`RESTART_MOST`]. `start` gets a
-/// flag to raise once a sync round went through; then the waits start
-/// over.
-async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration)
+/// The `reason` of a [SyncEventKind::SignInFailed] for a server
+/// certificate that was refused, rather than the password.
+pub const CERTIFICATE_REFUSED: &str = "certificate";
+
+/// Runs the watcher `start` makes until it ends with a refused password
+/// or certificate, starting it again whenever it ends otherwise or
+/// panics: after `first`, then longer each time in a row, up to
+/// [`RESTART_MOST`]. `start` gets a flag to raise once a sync round went
+/// through; then the waits start over. True when it was the certificate.
+async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration) -> bool
 where
     F: FnMut(Arc<std::sync::atomic::AtomicBool>) -> Fut,
     Fut: std::future::Future<Output = Followed> + Send + 'static,
@@ -1438,7 +1455,8 @@ where
         // the watcher too.
         let mut follow = AbortOnDrop(tokio::spawn(start(worked.clone())));
         let why = match (&mut follow.0).await {
-            Ok(Followed::SignInFailed) => return,
+            Ok(Followed::SignInFailed) => return false,
+            Ok(Followed::CertificateRefused) => return true,
             Ok(Followed::Ended(why)) => why,
             Err(e) if e.is_panic() => {
                 format!("panic{}", piuma_core::guard::last_panic_place())
@@ -1468,6 +1486,8 @@ where
 enum Followed {
     /// The server refused the password: it waits for a new one.
     SignInFailed,
+    /// The server's certificate was refused: the person has to look at it.
+    CertificateRefused,
     /// Anything else, with what happened.
     Ended(String),
 }
@@ -1549,17 +1569,10 @@ async fn follow(
     .await;
     match result {
         // A refused password, or a certificate other than the one
-        // trusted: the person has to act, through the same notice.
-        Err(e)
-            if e.is_auth()
-                || matches!(
-                    e,
-                    RemoteError::Imap(ImapError::Certificate(_))
-                        | RemoteError::Jmap(JmapError::Certificate(_))
-                ) =>
-        {
-            Followed::SignInFailed
-        }
+        // trusted: the person has to act, through the same notice, in
+        // words that say which.
+        Err(e) if e.is_certificate() => Followed::CertificateRefused,
+        Err(e) if e.is_auth() => Followed::SignInFailed,
         Err(e) => Followed::Ended(e.to_string()),
         Ok(()) => Followed::Ended("finished".into()),
     }

@@ -398,7 +398,11 @@ class _AccountPageState extends State<AccountPage> {
               null => l.accountConnecting,
             },
       servers: failed ? null : serverLines,
-      note: failed ? l.accountPasswordRefused : null,
+      note: failed
+          ? (health.certificate
+                ? l.accountCertificateRefused
+                : l.accountPasswordRefused)
+          : null,
       action: failed
           ? PiumaButton(
               label: l.signInAgain,
@@ -410,7 +414,11 @@ class _AccountPageState extends State<AccountPage> {
                 phone: phone,
               ),
             )
-          : servers != null && servers.jmapUrl == null
+          // An account that signs in with a provider's page keeps the
+          // provider's servers: its sign-in goes nowhere else.
+          : servers != null &&
+                servers.jmapUrl == null &&
+                widget.source.accountOAuth(_account.id) == null
           ? _TextLink(label: l.accountEditServers, onTap: _editServers)
           : null,
     );
@@ -844,6 +852,10 @@ class _ServersFormState extends State<_ServersForm> {
   /// The certificate a server showed, refused, for the person to trust.
   CertificateProblem? _certificate;
 
+  /// Certificates the person trusted for the new servers: kept by the
+  /// engine only once they check out.
+  final _trusted = <TrustedCertificate>[];
+
   @override
   void dispose() {
     for (final t in [_imapHost, _imapPort, _smtpHost, _smtpPort, _username]) {
@@ -874,7 +886,11 @@ class _ServersFormState extends State<_ServersForm> {
       _certificate = null;
     });
     try {
-      await widget.source.setAccountServers(widget.accountId, servers);
+      await widget.source.setAccountServers(
+        widget.accountId,
+        servers,
+        trusted: List.of(_trusted),
+      );
       if (mounted) Navigator.of(context).pop(servers);
     } on AddAccountException catch (e) {
       if (!mounted) return;
@@ -892,18 +908,14 @@ class _ServersFormState extends State<_ServersForm> {
     }
   }
 
-  /// Trusts the refused certificate for this account, and saves again.
+  /// Saves again trusting the refused certificate too. It is kept for
+  /// the account only if the new servers check out with it.
   Future<void> _trust() async {
     final cert = _certificate;
-    if (cert == null || _checking) return;
-    try {
-      await widget.source.trustCertificate(widget.accountId, cert.trusted);
-    } catch (_) {
-      if (mounted) {
-        setState(() => _error = AppLocalizations.of(context).errorOther);
-      }
-      return;
-    }
+    if (cert == null || !cert.canTrust || _checking) return;
+    _trusted
+      ..removeWhere((t) => t.host.toLowerCase() == cert.host.toLowerCase())
+      ..add(cert.trusted);
     await _save();
   }
 
@@ -964,7 +976,8 @@ class _ServersFormState extends State<_ServersForm> {
     }
 
     final error = _error;
-    return Padding(
+    // Scrolls when a refused certificate makes it taller than the screen.
+    return SingleChildScrollView(
       padding: EdgeInsets.symmetric(horizontal: widget.phone ? 20 : 0),
       child: Column(
         mainAxisSize: MainAxisSize.min,

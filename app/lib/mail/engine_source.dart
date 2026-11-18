@@ -107,6 +107,9 @@ class EngineMailSource extends MailSource {
   final _checkedAt = <int, DateTime>{};
   final _failedSince = <int, DateTime>{};
 
+  /// Of [_failed], the accounts whose server's certificate was refused.
+  final _certificateFailed = <int>{};
+
   @override
   List<MailAccount> get accounts => _accounts;
 
@@ -630,6 +633,11 @@ class EngineMailSource extends MailSource {
         _offline.remove(id);
         _failed.add(id);
         _failedSince.putIfAbsent(id, DateTime.now);
+        if (e.reason == 'certificate') {
+          _certificateFailed.add(id);
+        } else {
+          _certificateFailed.remove(id);
+        }
       case engine.SyncEventKind.secretsChanged:
         // A refresh token the provider replaced: into the Keystore now.
         _keepNewSecrets().ignore();
@@ -642,6 +650,7 @@ class EngineMailSource extends MailSource {
       _offline.remove(id);
       _failed.remove(id);
       _failedSince.remove(id);
+      _certificateFailed.remove(id);
       _checkedAt[id] = DateTime.now();
     }
     _updateStatus();
@@ -2173,7 +2182,11 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  Future<void> setAccountServers(int accountId, AccountServers servers) async {
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     engine.OutgoingServer server(MailServer m) => engine.OutgoingServer(
       host: m.host,
       port: m.port,
@@ -2187,12 +2200,17 @@ class EngineMailSource extends MailSource {
           smtp: server(servers.smtp),
           username: servers.username,
         ),
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
     } on engine.EngineError catch (e) {
       throw _signInError(e);
     }
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _updateStatus();
   }
 
@@ -2211,6 +2229,7 @@ class EngineMailSource extends MailSource {
     _offline.remove(accountId);
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _checkedAt.remove(accountId);
   }
 
@@ -2297,6 +2316,7 @@ class EngineMailSource extends MailSource {
   AccountHealth accountHealth(int accountId) => AccountHealth(
     checkedAt: _checkedAt[accountId],
     failedSince: _failedSince[accountId],
+    certificate: _certificateFailed.contains(accountId),
   );
 
   @override
@@ -2309,6 +2329,7 @@ class EngineMailSource extends MailSource {
     await AndroidPasswords.save(accountId, password);
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _updateStatus();
   }
 
@@ -2325,6 +2346,7 @@ class EngineMailSource extends MailSource {
             AddAccountError.signInUnavailable,
           engine.ErrorKind.signInCancelled => AddAccountError.signInCancelled,
           engine.ErrorKind.signInDenied => AddAccountError.signInDenied,
+          engine.ErrorKind.oAuthServers => AddAccountError.oauthServers,
           _ => AddAccountError.other,
         },
         e.detail,
@@ -2378,10 +2400,25 @@ class EngineMailSource extends MailSource {
     }
   }
 
-  /// Secrets the engine got itself, for the Android Keystore.
+  /// Secrets the engine got itself, for the Android Keystore. The engine
+  /// hands them to one writer at a time (this or the background service)
+  /// and drops each only once it is written, so a failed write is tried
+  /// again and the newest secret of an account always lands last.
   Future<void> _keepNewSecrets() async {
-    for (final k in oauth.takeNewSecrets()) {
-      await AndroidPasswords.saveKey(k.key, k.value);
+    final claim = oauth.claimNewSecrets();
+    if (claim == null) return;
+    final written = <oauth.NewSecret>[];
+    try {
+      for (final k in claim.secrets) {
+        try {
+          await AndroidPasswords.saveKey(k.key, k.value);
+          written.add(k);
+        } catch (_) {
+          // Stays in the engine for the next try.
+        }
+      }
+    } finally {
+      oauth.newSecretsWritten(claim: claim.claim, written: written);
     }
   }
 
@@ -2448,6 +2485,7 @@ class EngineMailSource extends MailSource {
     }
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _updateStatus();
   }
 

@@ -5206,6 +5206,12 @@ abstract class AppLocalizations {
   /// **'The server refused the password. Did it change?'**
   String get accountPasswordRefused;
 
+  /// No description provided for @accountCertificateRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The server’s certificate was refused. Sign in again to look at it.'**
+  String get accountCertificateRefused;
+
   /// No description provided for @accountEditServers.
   ///
   /// In en, this message translates to:
@@ -9148,6 +9154,12 @@ abstract class AppLocalizations {
   /// **'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.'**
   String get errorSignInDenied;
 
+  /// No description provided for @errorOAuthServers.
+  ///
+  /// In en, this message translates to:
+  /// **'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.'**
+  String get errorOAuthServers;
+
   /// No description provided for @errorPort.
   ///
   /// In en, this message translates to:
@@ -9183,6 +9195,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.'**
   String get certInvalid;
+
+  /// No description provided for @certProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.'**
+  String get certProvider;
 
   /// No description provided for @certIssuedTo.
   ///

@@ -732,7 +732,11 @@ class DemoMailSource extends MailSource {
   }
 
   @override
-  Future<void> setAccountServers(int accountId, AccountServers servers) async {
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (servers.imap.host.trim().isEmpty || servers.smtp.host.trim().isEmpty) {
       throw const AddAccountException(AddAccountError.unreachable, 'demo');
     }
@@ -764,7 +768,11 @@ class DemoMailSource extends MailSource {
     failedSince: status.value.failed.contains(accountId)
         ? DateTime(now.year, now.month, now.day, 9, 12)
         : null,
+    certificate: certificateFailed.contains(accountId),
   );
+
+  /// Accounts whose failure tests say was the server's certificate.
+  final certificateFailed = <int>{};
 
   final _changes = StreamController<void>.broadcast();
 

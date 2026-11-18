@@ -11,10 +11,15 @@ class CheckJob : JobService() {
                 Background.openEngine(applicationContext)
                 Background.show(applicationContext, MailNative.checkOnce(Background.minute()))
                 Background.showSignIn(applicationContext)
-                Background.keepSecrets(applicationContext)
                 Background.show(applicationContext, Background.reminders())
             } catch (e: Throwable) {
                 // Next time, then.
+            } finally {
+                // A sign-in renewed during the look, whatever went wrong after.
+                try {
+                    Background.keepSecrets(applicationContext)
+                } catch (e: Throwable) {
+                }
             }
             jobFinished(params, false)
         }, "piuma-check").start()

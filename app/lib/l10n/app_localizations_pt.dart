@@ -3376,6 +3376,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get accountPasswordRefused => 'O servidor recusou a senha. Ela mudou?';
 
   @override
+  String get accountCertificateRefused =>
+      'O certificado do servidor foi recusado. Entre de novo para conferi-lo.';
+
+  @override
   String get accountEditServers => 'Editar servidores';
 
   @override
@@ -6210,6 +6214,10 @@ class AppLocalizationsPt extends AppLocalizations {
       'O provedor não permitiu a entrada. Tente de novo ou confira o ID do cliente em Avançado.';
 
   @override
+  String get errorOAuthServers =>
+      'Esta conta entra pela página do provedor, então fica com os servidores do próprio provedor, com uma conexão segura.';
+
+  @override
   String get errorPort => 'Uma porta é um número de 1 a 65535.';
 
   @override
@@ -6230,6 +6238,10 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get certInvalid =>
       'Este certificado não é válido, e confiar nele não tornaria a conexão segura.';
+
+  @override
+  String get certProvider =>
+      'Este é o servidor de um grande provedor, e uma autoridade sempre garante os certificados dele. Talvez alguém esteja interceptando a conexão: tente outra rede e confira a data e a hora deste dispositivo.';
 
   @override
   String get certIssuedTo => 'Emitido para';

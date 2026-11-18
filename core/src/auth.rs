@@ -106,6 +106,31 @@ impl Login {
         }
     }
 
+    /// Whether this sign-in may be sent to `host`, over a connection that
+    /// is `secure` (TLS or STARTTLS) or not. A password goes where the
+    /// account's settings say; an OAuth token only to its provider's own
+    /// servers, and never in the clear: whoever reads it can read the
+    /// person's mail until it runs out.
+    pub fn may_send_to(&self, host: &str, secure: bool) -> Result<(), String> {
+        let Secret::OAuth(session) = &self.secret else {
+            return Ok(());
+        };
+        let provider = session.provider();
+        if !secure {
+            return Err(format!(
+                "a {} sign-in is never sent without a secure connection",
+                provider.name
+            ));
+        }
+        if !provider.serves(host) {
+            return Err(format!(
+                "a {} sign-in is only sent to {}'s own servers, not {host}",
+                provider.name, provider.name
+            ));
+        }
+        Ok(())
+    }
+
     /// What to send now: the password, or a token good for a while yet.
     pub async fn credential(&self) -> Result<Credential, TokenError> {
         match &self.secret {

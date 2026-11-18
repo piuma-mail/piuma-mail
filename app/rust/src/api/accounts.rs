@@ -6,8 +6,8 @@ use piuma_core::{AccountId, AccountKind, Server};
 
 use super::calendars::disconnect_calendar;
 use super::engine::{
-    engine, reader, stop_watching, store, watch_account, AccountInfo, ConnectionSecurity,
-    EngineError, ErrorKind, OutgoingServer,
+    engine, pins_of, reader, stop_watching, store, watch_account, AccountInfo, ConnectionSecurity,
+    EngineError, ErrorKind, OutgoingServer, TrustedCertificate,
 };
 use crate::credentials;
 use piuma_core::remote;
@@ -90,10 +90,16 @@ pub fn update_account(
 }
 
 /// Checks new servers with the account's password, keeps them, and
-/// follows the account through them from now on.
+/// follows the account through them from now on. `trusted` are
+/// certificates the person chose to trust for the new servers, after a
+/// [ErrorKind::Certificate]: kept only once the check went through.
+///
+/// An account that signs in with a provider's page keeps that provider's
+/// servers, over TLS: its token never goes anywhere else.
 pub async fn set_account_servers(
     account_id: i64,
     servers: AccountServers,
+    trusted: Vec<TrustedCertificate>,
 ) -> Result<(), EngineError> {
     let engine = engine()?;
     let mut a = account(account_id)?;
@@ -105,18 +111,54 @@ pub async fn set_account_servers(
         port: s.port,
         security: s.security.into(),
     };
+    let (imap, smtp) = (into(servers.imap), into(servers.smtp));
+    let login = crate::login::load(a.id)?;
+    if let Some(session) = login.session() {
+        let provider = session.provider();
+        for server in [&imap, &smtp] {
+            if !provider.serves(&server.host) || server.security == piuma_core::Security::None {
+                return Err(EngineError::new(
+                    ErrorKind::OAuthServers,
+                    format!(
+                        "an account that signs in with {} keeps its servers, over TLS",
+                        provider.name
+                    ),
+                ));
+            }
+        }
+    }
+    let hosts = [imap.host.clone(), smtp.host.clone()];
+    let mut pins = crate::login::pins_for(a.id, &hosts);
+    let new_pins: Vec<_> = pins_of(&trusted)
+        .into_iter()
+        .filter(|p| hosts.iter().any(|h| h.eq_ignore_ascii_case(&p.host)))
+        .collect();
+    pins.retain(|p| {
+        !new_pins
+            .iter()
+            .any(|n| n.host.eq_ignore_ascii_case(&p.host))
+    });
+    pins.extend(new_pins.iter().cloned());
     a.kind = AccountKind::Imap {
-        imap: into(servers.imap),
-        smtp: into(servers.smtp),
+        imap,
+        smtp,
         username: servers.username.trim().to_owned(),
     };
-    let password = crate::login::load(a.id)?;
+    let login = login.with_pins(pins);
     let checked = a.clone();
     engine
         .runtime
-        .spawn(async move { remote::check_login(&checked, &password).await })
+        .spawn(async move { remote::check_login(&checked, &login).await })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
+    // Only now, for servers the account uses.
+    for pin in &new_pins {
+        crate::login::trust(
+            a.id,
+            &pin.host,
+            &piuma_core::cert::fingerprint_text(&pin.sha256),
+        )?;
+    }
     store()?.update_account(&a)?;
     stop_watching(a.id);
     watch_account(a)
@@ -139,7 +181,6 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
         disconnect_calendar(source)?;
     }
     let removed = account(account_id)?;
-    let oauth = crate::login::stored(id);
     let store = store()?;
     store.remove_account(id)?;
     // An account added later may get the same id.
@@ -154,19 +195,15 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     drop(store);
     credentials::forget(id);
     crate::login::forget_session(id);
-    // Give the refresh token back where the provider takes it (Google);
-    // Microsoft's runs out on its own. Best effort: the account is gone
-    // from this device either way.
-    if let Some(stored) = oauth {
-        if let (Some(provider), Ok(engine)) =
-            (piuma_core::oauth::provider(&stored.provider), engine())
-        {
-            engine.runtime.spawn(async move {
-                let _ = piuma_core::oauth::revoke(provider, &stored.client, &stored.refresh_token)
-                    .await;
-            });
-        }
-    }
+    // The refresh token is not revoked: Google's revocation removes the
+    // whole grant of the app's project for the person ("Revocation removes
+    // all OAuth 2.0 scopes previously granted to a project, invalidating
+    // any issued access or refresh tokens", developers.google.com/identity/
+    // protocols/oauth2/native-app#tokenrevoke), which would sign out every
+    // other device of theirs, and Google documents no way to revoke only
+    // this device's token. Forgetting it here is enough: it never leaves
+    // the keychain, and the person can remove the app's access from their
+    // Google Account. Microsoft's run out on their own.
     Ok(())
 }
 

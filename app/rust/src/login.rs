@@ -100,7 +100,13 @@ pub(crate) fn pins(id: AccountId) -> Vec<Pin> {
     let Ok(Some(account)) = store.account(id) else {
         return Vec::new();
     };
-    let hosts = match &account.kind {
+    drop(store);
+    pins_for(id, &hosts_of(&account))
+}
+
+/// The hosts of an account's servers, as pins are kept.
+fn hosts_of(account: &piuma_core::Account) -> Vec<String> {
+    match &account.kind {
         AccountKind::Imap { imap, smtp, .. } => vec![imap.host.clone(), smtp.host.clone()],
         // The session's host. An API on another host with a certificate
         // nobody vouches for is refused (the session's settings name one).
@@ -110,14 +116,23 @@ pub(crate) fn pins(id: AccountId) -> Vec<Pin> {
             .and_then(|r| r.split(['/', ':']).next())
             .map(|h| vec![h.to_owned()])
             .unwrap_or_default(),
+    }
+}
+
+/// The certificates trusted for these hosts of the account. None for a
+/// big provider's server, whatever an older version kept.
+pub(crate) fn pins_for(id: AccountId, hosts: &[String]) -> Vec<Pin> {
+    let Ok(store) = reader() else {
+        return Vec::new();
     };
     hosts
-        .into_iter()
+        .iter()
+        .filter(|host| piuma_core::tls::can_pin(host))
         .filter_map(|host| {
-            let text = store.setting(&cert_key(id.0, &host)).ok()??;
+            let text = store.setting(&cert_key(id.0, host)).ok()??;
             Some(Pin {
                 sha256: cert::parse_fingerprint(&text)?,
-                host,
+                host: host.clone(),
             })
         })
         .collect()
@@ -128,6 +143,12 @@ pub(crate) fn pins(id: AccountId) -> Vec<Pin> {
 pub(crate) fn trust(id: AccountId, host: &str, fingerprint: &str) -> Result<(), EngineError> {
     let sha = cert::parse_fingerprint(fingerprint)
         .ok_or_else(|| EngineError::new(ErrorKind::Other, "not a SHA-256 fingerprint"))?;
+    if !piuma_core::tls::can_pin(host) {
+        return Err(EngineError::new(
+            ErrorKind::Other,
+            "a big provider's server is never trusted by hand",
+        ));
+    }
     store()?.set_setting(&cert_key(id.0, host), &cert::fingerprint_text(&sha))?;
     Ok(())
 }
@@ -145,9 +166,4 @@ pub(crate) fn load(id: AccountId) -> Result<Login, EngineError> {
 pub(crate) fn read(id: AccountId) -> Result<Login, Unreadable> {
     let secret = credentials::read(id)?;
     Ok(from_secret(id, &secret)?.with_pins(pins(id)))
-}
-
-/// The OAuth sign-in kept for an account, if it has one.
-pub(crate) fn stored(id: AccountId) -> Option<Stored> {
-    Stored::from_secret(&credentials::load(id).ok()?)
 }

@@ -3358,6 +3358,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server refused the password. Did it change?';
 
   @override
+  String get accountCertificateRefused =>
+      'The server’s certificate was refused. Sign in again to look at it.';
+
+  @override
   String get accountEditServers => 'Edit servers';
 
   @override
@@ -6181,6 +6185,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.';
 
   @override
+  String get errorOAuthServers =>
+      'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.';
+
+  @override
   String get errorPort => 'A port is a number from 1 to 65535.';
 
   @override
@@ -6201,6 +6209,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get certInvalid =>
       'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.';
+
+  @override
+  String get certProvider =>
+      'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.';
 
   @override
   String get certIssuedTo => 'Issued to';

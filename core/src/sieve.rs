@@ -388,6 +388,10 @@ impl Client {
                 }
             }
         }
+        // Never in the clear, and only to the provider's own servers.
+        cfg.login
+            .may_send_to(&cfg.host, cfg.security != Security::None)
+            .map_err(SieveError::Unsupported)?;
         use crate::auth::Credential;
         let credential = cfg.login.credential().await.map_err(|e| match e {
             crate::oauth::TokenError::Rejected(_) => SieveError::Auth,

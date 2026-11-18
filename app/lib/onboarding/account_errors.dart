@@ -22,6 +22,7 @@ String accountErrorText(AppLocalizations l, AddAccountError error) =>
       AddAccountError.signInUnavailable => l.errorSignInUnavailable,
       AddAccountError.signInCancelled => l.errorSignInCancelled,
       AddAccountError.signInDenied => l.errorSignInDenied,
+      AddAccountError.oauthServers => l.errorOAuthServers,
       AddAccountError.other => l.errorOther,
     };
 
@@ -53,6 +54,7 @@ class CertificateCard extends StatelessWidget {
       CertificateIssue.nameMismatch => l.certNameMismatch,
       CertificateIssue.changed => l.certChanged,
       CertificateIssue.invalid => l.certInvalid,
+      CertificateIssue.provider => l.certProvider,
     };
     final label = TextStyle(fontSize: 12, color: c.muted);
     final value = TextStyle(fontSize: 13, height: 1.35, color: c.fg);

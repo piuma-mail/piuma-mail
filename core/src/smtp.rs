@@ -923,6 +923,12 @@ impl fmt::Display for Line<'_> {
 /// Signs in with the password, or with an OAuth token: a refused token
 /// gets one new one and one more try, never more.
 async fn sign_in(conn: &mut AsyncSmtpConnection, cfg: &SmtpConfig) -> Result<()> {
+    cfg.login
+        .may_send_to(&cfg.host, cfg.security != Security::None)
+        .map_err(|detail| SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        })?;
     match cfg
         .login
         .credential()

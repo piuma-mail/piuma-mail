@@ -161,6 +161,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef dco_decode_box_autoadd_message_ref(dynamic raw);
 
   @protected
+  NewSecrets dco_decode_box_autoadd_new_secrets(dynamic raw);
+
+  @protected
   NoReplyInfo dco_decode_box_autoadd_no_reply_info(dynamic raw);
 
   @protected
@@ -419,6 +422,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<MessageRef> dco_decode_list_message_ref(dynamic raw);
 
   @protected
+  List<NewSecret> dco_decode_list_new_secret(dynamic raw);
+
+  @protected
   List<NewsletterRow> dco_decode_list_newsletter_row(dynamic raw);
 
   @protected
@@ -518,6 +524,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef dco_decode_message_ref(dynamic raw);
 
   @protected
+  NewSecret dco_decode_new_secret(dynamic raw);
+
+  @protected
+  NewSecrets dco_decode_new_secrets(dynamic raw);
+
+  @protected
   NewsletterRow dco_decode_newsletter_row(dynamic raw);
 
   @protected
@@ -579,6 +591,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageRef? dco_decode_opt_box_autoadd_message_ref(dynamic raw);
+
+  @protected
+  NewSecrets? dco_decode_opt_box_autoadd_new_secrets(dynamic raw);
 
   @protected
   NoReplyInfo? dco_decode_opt_box_autoadd_no_reply_info(dynamic raw);
@@ -966,6 +981,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef sse_decode_box_autoadd_message_ref(SseDeserializer deserializer);
 
   @protected
+  NewSecrets sse_decode_box_autoadd_new_secrets(SseDeserializer deserializer);
+
+  @protected
   NoReplyInfo sse_decode_box_autoadd_no_reply_info(
     SseDeserializer deserializer,
   );
@@ -1286,6 +1304,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<MessageRef> sse_decode_list_message_ref(SseDeserializer deserializer);
 
   @protected
+  List<NewSecret> sse_decode_list_new_secret(SseDeserializer deserializer);
+
+  @protected
   List<NewsletterRow> sse_decode_list_newsletter_row(
     SseDeserializer deserializer,
   );
@@ -1407,6 +1428,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   MessageRef sse_decode_message_ref(SseDeserializer deserializer);
 
   @protected
+  NewSecret sse_decode_new_secret(SseDeserializer deserializer);
+
+  @protected
+  NewSecrets sse_decode_new_secrets(SseDeserializer deserializer);
+
+  @protected
   NewsletterRow sse_decode_newsletter_row(SseDeserializer deserializer);
 
   @protected
@@ -1482,6 +1509,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   MessageRef? sse_decode_opt_box_autoadd_message_ref(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  NewSecrets? sse_decode_opt_box_autoadd_new_secrets(
     SseDeserializer deserializer,
   );
 
@@ -1959,6 +1991,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_new_secrets(
+    NewSecrets self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_no_reply_info(
     NoReplyInfo self,
     SseSerializer serializer,
@@ -2358,6 +2396,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_new_secret(
+    List<NewSecret> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_newsletter_row(
     List<NewsletterRow> self,
     SseSerializer serializer,
@@ -2526,6 +2570,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_message_ref(MessageRef self, SseSerializer serializer);
 
   @protected
+  void sse_encode_new_secret(NewSecret self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_new_secrets(NewSecrets self, SseSerializer serializer);
+
+  @protected
   void sse_encode_newsletter_row(NewsletterRow self, SseSerializer serializer);
 
   @protected
@@ -2627,6 +2677,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_message_ref(
     MessageRef? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_new_secrets(
+    NewSecrets? self,
     SseSerializer serializer,
   );
 

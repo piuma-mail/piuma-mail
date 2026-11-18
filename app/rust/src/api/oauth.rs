@@ -20,7 +20,6 @@ use tokio::sync::{mpsc, Notify};
 use super::engine::{
     engine, reader, stop_watching, store, watch_account, AccountInfo, EngineError, ErrorKind,
 };
-use super::sync::KeptSecret;
 use crate::credentials;
 
 /// A provider that signs in with its own page.
@@ -362,15 +361,49 @@ pub async fn sign_in_again_oauth(account_id: i64) -> Result<(), EngineError> {
     watch_account(account)
 }
 
-/// Android: secrets the engine got since the last call (an OAuth sign-in,
-/// a refresh token the provider replaced), for the Keystore. Elsewhere
-/// always empty: the system keychain already has them.
+/// Secrets for the Android Keystore that the engine got itself (an OAuth
+/// sign-in, a refresh token the provider replaced), with the claim to
+/// hand back to [`new_secrets_written`]. Each has its number: a newer one
+/// for the same key always comes with a higher one.
+#[derive(Debug, Clone)]
+pub struct NewSecrets {
+    pub claim: i64,
+    pub secrets: Vec<NewSecret>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewSecret {
+    /// As the keychain names it, like `account-3`.
+    pub key: String,
+    pub value: String,
+    pub seq: i64,
+}
+
+/// Android: the secrets the Keystore doesn't have yet. None when there
+/// are none, or the background service is writing them now. Elsewhere
+/// always None: the system keychain already has them.
 #[frb(sync)]
-pub fn take_new_secrets() -> Vec<KeptSecret> {
-    credentials::take_kept()
-        .into_iter()
-        .map(|(key, value)| KeptSecret { key, value })
-        .collect()
+pub fn claim_new_secrets() -> Option<NewSecrets> {
+    let (claim, entries) = credentials::claim_kept()?;
+    Some(NewSecrets {
+        claim,
+        secrets: entries
+            .into_iter()
+            .map(|e| NewSecret {
+                key: e.key,
+                value: e.value,
+                seq: e.seq,
+            })
+            .collect(),
+    })
+}
+
+/// The app wrote these of the secrets of `claim` to the Keystore; the
+/// others stay for the next try.
+#[frb(sync)]
+pub fn new_secrets_written(claim: i64, written: Vec<NewSecret>) {
+    let written: Vec<(String, i64)> = written.into_iter().map(|s| (s.key, s.seq)).collect();
+    credentials::release_kept(claim, &written);
 }
 
 #[cfg(test)]

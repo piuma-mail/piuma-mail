@@ -11,13 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use piuma_core::auth::Login;
+use piuma_core::cert;
 use piuma_core::imap::{check_login, ImapConfig, ImapError};
 use piuma_core::oauth::{
     challenge, Client, FlowError, Loopback, Mechanism, Request, Session, Stored, TokenError,
 };
 use piuma_core::smtp::{ready, send, Draft, SendError, SmtpConfig};
+use piuma_core::tls::Pin;
 use piuma_core::Security;
-use support::{imap_server, provider, smtp_server, token_server, Valid};
+use support::{imap_server, provider, smtp_server, token_server, Shown, Valid, FIRST_CERT};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -53,13 +55,26 @@ fn session(
     (Arc::new(s), kept)
 }
 
+/// The test servers' certificate, as the person would trust it: tokens
+/// only go over TLS.
+fn tls() -> Option<Shown> {
+    Some(Arc::new(Mutex::new(FIRST_CERT)))
+}
+
+fn trusted(login: Login) -> Login {
+    login.with_pins(vec![Pin {
+        host: "localhost".into(),
+        sha256: cert::sha256(FIRST_CERT),
+    }])
+}
+
 fn imap(port: u16, login: Login) -> ImapConfig {
     ImapConfig {
-        host: "127.0.0.1".into(),
+        host: "localhost".into(),
         port,
-        security: Security::None,
+        security: Security::Tls,
         username: "me@example.org".into(),
-        login,
+        login: trusted(login),
     }
 }
 
@@ -274,7 +289,7 @@ async fn a_revoked_sign_in_asks_to_sign_in_again() {
         s.access_token().await.unwrap_err(),
         TokenError::Rejected("invalid_grant: AADSTS70000: revoked".into())
     );
-    let (port, _) = imap_server(valid("access-1"), None).await;
+    let (port, _) = imap_server(valid("access-1"), tls()).await;
     let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
     assert!(matches!(err, ImapError::Auth), "{err:?}");
 }
@@ -285,7 +300,7 @@ async fn an_unreachable_provider_is_offline_not_a_refusal() {
     let base = format!("http://127.0.0.1:{}", closed.local_addr().unwrap().port());
     drop(closed);
     let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
-    let (port, _) = imap_server(valid("access-1"), None).await;
+    let (port, _) = imap_server(valid("access-1"), tls()).await;
     let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
     assert!(matches!(err, ImapError::TokenUnavailable(_)), "{err:?}");
     assert!(err.is_offline());
@@ -295,7 +310,7 @@ async fn an_unreachable_provider_is_offline_not_a_refusal() {
 async fn imap_signs_in_with_xoauth2() {
     let (base, _) = token_server(false).await;
     let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
-    let (port, seen) = imap_server(valid("access-1"), None).await;
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
     check_login(&imap(port, Login::oauth(s))).await.unwrap();
     assert_eq!(
         *seen.lock().unwrap(),
@@ -307,12 +322,12 @@ async fn imap_signs_in_with_xoauth2() {
 async fn imap_signs_in_with_oauthbearer() {
     let (base, _) = token_server(false).await;
     let (s, _) = session(&base, Mechanism::Oauthbearer, "refresh-0");
-    let (port, seen) = imap_server(valid("access-1"), None).await;
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
     check_login(&imap(port, Login::oauth(s))).await.unwrap();
     assert_eq!(
         *seen.lock().unwrap(),
         [format!(
-            "OAUTHBEARER n,a=me@example.org,\x01host=127.0.0.1\x01port={port}\x01auth=Bearer access-1\x01\x01"
+            "OAUTHBEARER n,a=me@example.org,\x01host=localhost\x01port={port}\x01auth=Bearer access-1\x01\x01"
         )]
     );
 }
@@ -324,7 +339,7 @@ async fn imap_renews_a_refused_token_once() {
     // The token in hand looks good for an hour, but the server says
     // AUTHENTICATIONFAILED (revoked early, a password change…).
     s.seed("stale".to_owned().into(), 3600).await;
-    let (port, seen) = imap_server(valid("access-1"), None).await;
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
     check_login(&imap(port, Login::oauth(s))).await.unwrap();
     let tried: Vec<_> = seen.lock().unwrap().clone();
     assert_eq!(tried.len(), 2);
@@ -337,7 +352,7 @@ async fn imap_renews_a_refused_token_once() {
 async fn imap_gives_up_after_the_second_refusal() {
     let (base, forms) = token_server(false).await;
     let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
-    let (port, seen) = imap_server(valid("nothing-works"), None).await;
+    let (port, seen) = imap_server(valid("nothing-works"), tls()).await;
     let err = check_login(&imap(port, Login::oauth(s))).await.unwrap_err();
     assert!(matches!(err, ImapError::Auth), "{err:?}");
     // One token, one renewal, one more try: no loop.
@@ -347,11 +362,11 @@ async fn imap_gives_up_after_the_second_refusal() {
 
 fn smtp(port: u16, login: Login) -> SmtpConfig {
     SmtpConfig {
-        host: "127.0.0.1".into(),
+        host: "localhost".into(),
         port,
-        security: Security::None,
+        security: Security::Tls,
         username: "me@example.org".into(),
-        login,
+        login: trusted(login),
     }
 }
 
@@ -373,7 +388,7 @@ async fn smtp_sends_with_xoauth2_and_oauthbearer() {
     ] {
         let (base, _) = token_server(false).await;
         let (s, _) = session(&base, mechanism, "refresh-0");
-        let (port, seen, delivered) = smtp_server(valid("access-1"), None).await;
+        let (port, seen, delivered) = smtp_server(valid("access-1"), tls()).await;
         send(&smtp(port, Login::oauth(s)), &ready(&draft()).unwrap())
             .await
             .unwrap();
@@ -390,7 +405,7 @@ async fn smtp_renews_a_refused_token_once_then_stops() {
     let (base, forms) = token_server(false).await;
     let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
     s.seed("stale".to_owned().into(), 3600).await;
-    let (port, seen, delivered) = smtp_server(valid("access-1"), None).await;
+    let (port, seen, delivered) = smtp_server(valid("access-1"), tls()).await;
     let login = Login::oauth(s);
     send(&smtp(port, login.clone()), &ready(&draft()).unwrap())
         .await
@@ -398,7 +413,7 @@ async fn smtp_renews_a_refused_token_once_then_stops() {
     assert_eq!(seen.lock().unwrap().len(), 2);
     assert_eq!(delivered.lock().unwrap().len(), 1);
 
-    let (port, seen, delivered) = smtp_server(valid("nothing-works"), None).await;
+    let (port, seen, delivered) = smtp_server(valid("nothing-works"), tls()).await;
     let err = send(&smtp(port, login), &ready(&draft()).unwrap())
         .await
         .unwrap_err();
@@ -411,13 +426,60 @@ async fn smtp_renews_a_refused_token_once_then_stops() {
 
 #[tokio::test]
 async fn passwords_still_sign_in() {
-    let (port, _) = imap_server(valid("unused"), None).await;
+    let (port, _) = imap_server(valid("unused"), tls()).await;
     check_login(&imap(port, "test".into())).await.unwrap();
     let err = check_login(&imap(port, "wrong".into())).await.unwrap_err();
     assert!(matches!(err, ImapError::Auth), "{err:?}");
-    let (port, _, delivered) = smtp_server(valid("unused"), None).await;
+    let (port, _, delivered) = smtp_server(valid("unused"), tls()).await;
     send(&smtp(port, "test".into()), &ready(&draft()).unwrap())
         .await
         .unwrap();
     assert_eq!(delivered.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_token_never_goes_in_the_clear_or_to_another_server() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "refresh-0");
+
+    // Without TLS: refused before anything is sent.
+    let (port, seen) = imap_server(valid("access-1"), None).await;
+    let clear = ImapConfig {
+        security: Security::None,
+        ..imap(port, Login::oauth(s.clone()))
+    };
+    let err = check_login(&clear).await.unwrap_err();
+    assert!(
+        matches!(&err, ImapError::Tls(why) if why.contains("secure")),
+        "{err:?}"
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    let (port, seen, delivered) = smtp_server(valid("access-1"), None).await;
+    let clear = SmtpConfig {
+        security: Security::None,
+        ..smtp(port, Login::oauth(s.clone()))
+    };
+    let err = send(&clear, &ready(&draft()).unwrap()).await.unwrap_err();
+    assert!(matches!(err, SendError::Tls { .. }), "{err:?}");
+    assert!(seen.lock().unwrap().is_empty());
+    assert!(delivered.lock().unwrap().is_empty());
+
+    // Over TLS, but to a server that isn't the provider's.
+    let (port, seen) = imap_server(valid("access-1"), tls()).await;
+    let elsewhere = ImapConfig {
+        host: "127.0.0.1".into(),
+        login: Login::oauth(s.clone()).with_pins(vec![Pin {
+            host: "127.0.0.1".into(),
+            sha256: cert::sha256(FIRST_CERT),
+        }]),
+        ..imap(port, Login::oauth(s))
+    };
+    let err = check_login(&elsewhere).await.unwrap_err();
+    assert!(
+        matches!(&err, ImapError::Tls(why) if why.contains("own servers")),
+        "{err:?}"
+    );
+    assert!(seen.lock().unwrap().is_empty());
+    // No token was even asked for.
+    assert!(forms.lock().unwrap().is_empty());
 }

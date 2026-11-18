@@ -13,6 +13,7 @@
     <string name="notice_failed">Non è stato possibile farlo dalla notifica. Apri Piuma Mail per riprovare.</string>
     <string name="notice_sign_in_title">%1$s non riesce ad accedere</string>
     <string name="notice_sign_in_body">Il server ha rifiutato la password. È cambiata?</string>
+    <string name="notice_sign_in_certificate">Il certificato del server è stato rifiutato. Accedi di nuovo per controllarlo.</string>
     <string name="vault_notice_label">Caveau</string>
     <string name="vault_notice_parcel">Il tuo pacco arriva oggi</string>
     <string name="vault_notice_due_today">Scade oggi</string>

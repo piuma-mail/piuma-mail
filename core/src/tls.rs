@@ -9,6 +9,12 @@
 //! pinned certificate only when it is byte for byte the one trusted; a
 //! different one is refused with [`Problem::Changed`], never let through.
 //! A certificate the system trusts on its own is always accepted.
+//!
+//! The servers of big providers (Microsoft, Google, the presets in
+//! [`crate::autoconfig`]) always have a certificate an authority vouches
+//! for: one that isn't means someone is in the way, so for them pins are
+//! ignored and the refusal is [`Problem::Provider`], which can't be
+//! trusted ([`can_pin`]).
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -129,15 +135,25 @@ pub enum Problem {
     NameMismatch,
     /// Not the certificate the person trusted for this server earlier.
     Changed,
-    /// Revoked, or wrong in a way that trusting it can't fix.
+    /// Revoked, or wrong in a way that trusting it can't fix. Also a
+    /// trusted certificate that was revoked since.
     Invalid,
+    /// Refused for a big provider's server, whose certificates authorities
+    /// always vouch for: never trusted by hand.
+    Provider,
 }
 
 impl Problem {
     /// Whether the person may choose to trust the certificate anyway.
     pub fn can_trust(self) -> bool {
-        !matches!(self, Problem::Invalid)
+        !matches!(self, Problem::Invalid | Problem::Provider)
     }
+}
+
+/// Whether a certificate may be trusted by hand for `host`: not for the
+/// servers of providers the engine knows.
+pub fn can_pin(host: &str) -> bool {
+    !crate::autoconfig::well_known_host(host)
 }
 
 /// A refused certificate: why, and what it says, for the person to decide.
@@ -150,8 +166,8 @@ pub struct Refused {
 
 impl Refused {
     /// As the app reads it: `host`, `problem` (untrusted, expired,
-    /// nameMismatch, changed, invalid), `fingerprint`, `subject`, `issuer`
-    /// and `notAfter`.
+    /// nameMismatch, changed, invalid, provider), `fingerprint`, `subject`,
+    /// `issuer` and `notAfter`.
     pub fn json(&self) -> String {
         let problem = match self.problem {
             Problem::Untrusted => "untrusted",
@@ -159,6 +175,7 @@ impl Refused {
             Problem::NameMismatch => "nameMismatch",
             Problem::Changed => "changed",
             Problem::Invalid => "invalid",
+            Problem::Provider => "provider",
         };
         serde_json::json!({
             "host": self.host,
@@ -180,6 +197,9 @@ impl fmt::Display for Refused {
             Problem::NameMismatch => "is for another server name",
             Problem::Changed => "is not the one trusted for this account",
             Problem::Invalid => "is not valid",
+            Problem::Provider => {
+                "is not vouched for, and a provider's server always has one that is"
+            }
         };
         write!(
             f,
@@ -292,18 +312,25 @@ impl ServerCertVerifier for Pinned {
             Err(e) => e,
         };
         let host = name_of(server_name);
-        let pin = Pin::for_host(&self.pins, &host).map(|p| p.sha256);
-        let seen = cert::sha256(end_entity.as_ref());
-        let problem = match (&error, pin) {
-            // The exact certificate the person trusted.
-            (TlsError::InvalidCertificate(c), Some(pin))
-                if crate::oauth::same(&pin, &seen) && problem_of(c).can_trust() =>
-            {
-                return Ok(ServerCertVerified::assertion());
+        let TlsError::InvalidCertificate(c) = &error else {
+            return Err(error);
+        };
+        let problem = if !can_pin(&host) {
+            // A big provider's server: pins don't count.
+            Problem::Provider
+        } else {
+            let seen = cert::sha256(end_entity.as_ref());
+            match (problem_of(c), Pin::for_host(&self.pins, &host)) {
+                // Revoked or broken: trusting it earlier doesn't help, and
+                // trusting it again wouldn't either.
+                (Problem::Invalid, _) => Problem::Invalid,
+                // The exact certificate the person trusted.
+                (_, Some(pin)) if crate::oauth::same(&pin.sha256, &seen) => {
+                    return Ok(ServerCertVerified::assertion());
+                }
+                (_, Some(_)) => Problem::Changed,
+                (problem, None) => problem,
             }
-            (TlsError::InvalidCertificate(_), Some(_)) => Problem::Changed,
-            (TlsError::InvalidCertificate(c), None) => problem_of(c),
-            _ => return Err(error),
         };
         self.refused.put(Refused {
             host,
@@ -412,7 +439,100 @@ mod tests {
         assert_eq!(problem_of(&C::NotValidForName), Problem::NameMismatch);
         assert_eq!(problem_of(&C::Revoked), Problem::Invalid);
         assert!(!Problem::Invalid.can_trust());
+        assert!(!Problem::Provider.can_trust());
         assert!(Problem::Changed.can_trust());
+    }
+
+    /// A system check that always says `no`.
+    #[derive(Debug)]
+    struct Refuses(CertificateError);
+
+    impl ServerCertVerifier for Refuses {
+        fn verify_server_cert(
+            &self,
+            _: &CertificateDer<'_>,
+            _: &[CertificateDer<'_>],
+            _: &ServerName<'_>,
+            _: &[u8],
+            _: UnixTime,
+        ) -> Result<ServerCertVerified, TlsError> {
+            Err(TlsError::InvalidCertificate(self.0.clone()))
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, TlsError> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, TlsError> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            Vec::new()
+        }
+    }
+
+    /// What the pinned check makes of `system`'s refusal of a certificate
+    /// trusted for `host`: accepted (None), or the problem shown.
+    fn verdict(system: CertificateError, host: &str) -> Option<Problem> {
+        let der = include_bytes!("../tests/fixtures/tls/first.der");
+        let refused = Refusals::default();
+        let pinned = Pinned {
+            system: Arc::new(Refuses(system)),
+            pins: vec![Pin {
+                host: host.into(),
+                sha256: cert::sha256(der),
+            }],
+            refused: refused.clone(),
+        };
+        let name = ServerName::try_from(host.to_owned()).unwrap();
+        match pinned.verify_server_cert(
+            &CertificateDer::from(der.to_vec()),
+            &[],
+            &name,
+            &[],
+            UnixTime::now(),
+        ) {
+            Ok(_) => None,
+            Err(_) => Some(refused.take().unwrap().problem),
+        }
+    }
+
+    #[test]
+    fn a_trusted_certificate_revoked_since_is_invalid_not_changed() {
+        // Self-signed and trusted: in.
+        assert_eq!(
+            verdict(CertificateError::UnknownIssuer, "mail.studio.it"),
+            None
+        );
+        // Revoked since: invalid, which can't be trusted again.
+        let revoked = verdict(CertificateError::Revoked, "mail.studio.it");
+        assert_eq!(revoked, Some(Problem::Invalid));
+        assert!(!revoked.unwrap().can_trust());
+        // A big provider's server: the pin doesn't count.
+        assert_eq!(
+            verdict(CertificateError::UnknownIssuer, "imap.gmail.com"),
+            Some(Problem::Provider)
+        );
+    }
+
+    #[test]
+    fn big_providers_servers_are_never_pinned() {
+        assert!(!can_pin("outlook.office365.com"));
+        assert!(!can_pin("imap.gmail.com"));
+        assert!(!can_pin("smtp.mail.me.com"));
+        assert!(can_pin("mail.studio.it"));
+        assert!(can_pin("localhost"));
     }
 
     #[test]

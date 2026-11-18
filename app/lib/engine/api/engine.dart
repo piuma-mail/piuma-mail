@@ -1510,6 +1510,10 @@ enum ErrorKind {
   /// forged, the client is wrong).
   signInDenied,
 
+  /// OAuth: new servers for an account that signs in with a provider's
+  /// page that aren't that provider's, or not over TLS.
+  oAuthServers,
+
   /// A recipient is not an email address; `detail` is the address.
   badAddress,
   noRecipients,

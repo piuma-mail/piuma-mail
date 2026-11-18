@@ -1886,6 +1886,9 @@ type Client = async_imap::Client<Box<dyn Io>>;
 /// refused token gets one new one and one more try on the same
 /// connection; a second refusal is [`ImapError::Auth`], never a loop.
 async fn sign_in(client: Client, cfg: &ImapConfig) -> Result<Session> {
+    cfg.login
+        .may_send_to(&cfg.host, cfg.security != Security::None)
+        .map_err(ImapError::Tls)?;
     let (mechanism, token) = match cfg.login.credential().await.map_err(token_error)? {
         Credential::Password(password) => {
             return client

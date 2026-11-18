@@ -8,11 +8,9 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-import 'sync.dart';
-
 // These functions are ignored because they are not marked as `pub`: `app_redirect`, `client_of`, `finish`, `flow_error`, `lock`, `token_error`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Pending`, `SignedIn`, `WayBack`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`
 
 List<OAuthProvider> oauthProviders() =>
     RustLib.instance.api.crateApiOauthOauthProviders();
@@ -70,11 +68,64 @@ Future<AccountInfo> addOauthAccount({
 Future<void> signInAgainOauth({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiOauthSignInAgainOauth(accountId: accountId);
 
-/// Android: secrets the engine got since the last call (an OAuth sign-in,
-/// a refresh token the provider replaced), for the Keystore. Elsewhere
-/// always empty: the system keychain already has them.
-List<KeptSecret> takeNewSecrets() =>
-    RustLib.instance.api.crateApiOauthTakeNewSecrets();
+/// Android: the secrets the Keystore doesn't have yet. None when there
+/// are none, or the background service is writing them now. Elsewhere
+/// always None: the system keychain already has them.
+NewSecrets? claimNewSecrets() =>
+    RustLib.instance.api.crateApiOauthClaimNewSecrets();
+
+/// The app wrote these of the secrets of `claim` to the Keystore; the
+/// others stay for the next try.
+void newSecretsWritten({
+  required PlatformInt64 claim,
+  required List<NewSecret> written,
+}) => RustLib.instance.api.crateApiOauthNewSecretsWritten(
+  claim: claim,
+  written: written,
+);
+
+class NewSecret {
+  /// As the keychain names it, like `account-3`.
+  final String key;
+  final String value;
+  final PlatformInt64 seq;
+
+  const NewSecret({required this.key, required this.value, required this.seq});
+
+  @override
+  int get hashCode => key.hashCode ^ value.hashCode ^ seq.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NewSecret &&
+          runtimeType == other.runtimeType &&
+          key == other.key &&
+          value == other.value &&
+          seq == other.seq;
+}
+
+/// Secrets for the Android Keystore that the engine got itself (an OAuth
+/// sign-in, a refresh token the provider replaced), with the claim to
+/// hand back to [`new_secrets_written`]. Each has its number: a newer one
+/// for the same key always comes with a higher one.
+class NewSecrets {
+  final PlatformInt64 claim;
+  final List<NewSecret> secrets;
+
+  const NewSecrets({required this.claim, required this.secrets});
+
+  @override
+  int get hashCode => claim.hashCode ^ secrets.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NewSecrets &&
+          runtimeType == other.runtimeType &&
+          claim == other.claim &&
+          secrets == other.secrets;
+}
 
 /// A registration of the person's own, from the account's advanced
 /// settings, in place of the one this build has.

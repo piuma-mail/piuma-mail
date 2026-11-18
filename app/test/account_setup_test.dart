@@ -7,6 +7,8 @@ import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/onboarding/account_errors.dart';
 import 'package:piuma_mail/onboarding/add_account_screen.dart';
+import 'package:piuma_mail/settings/account_page.dart';
+import 'package:piuma_mail/settings/settings_screen.dart';
 
 final _now = DateTime(2026, 10, 15, 10, 30);
 
@@ -83,13 +85,25 @@ class _Scripted extends DemoMailSource {
   }
 }
 
-Future<void> _pump(WidgetTester tester, MailSource source) async {
-  tester.view.physicalSize = const Size(1440, 900);
+const _desktop = Size(1440, 900);
+const _phone = Size(390, 844);
+
+Future<void> _pump(
+  WidgetTester tester,
+  MailSource source, {
+  Size size = _desktop,
+}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     PiumaApp(
-      home: (_, _) => AddAccountScreen(source: source, onDone: (_) {}),
+      // Not the first run: the phone skips its welcome page.
+      home: (_, _) => AddAccountScreen(
+        source: source,
+        onDone: (_) {},
+        onCancel: size == _phone ? () {} : null,
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -120,6 +134,8 @@ Future<void> _manual(WidgetTester tester, String email) async {
 }
 
 void main() {
+  _layouts();
+
   test('ports go from 1 to 65535, spaces aside', () {
     expect(validPort(' 993 '), 993);
     expect(validPort('1'), 1);
@@ -428,6 +444,323 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+const _microsoft = OAuthProviderInfo(
+  id: 'microsoft',
+  name: 'Microsoft',
+  builtIn: true,
+  appPasswords: false,
+  hasTenant: true,
+);
+
+/// The demo's Work account (id 2) signs in with Microsoft's page.
+class _OAuthAccount extends DemoMailSource {
+  _OAuthAccount({this.failWith}) : super(now: _now);
+
+  /// Thrown by signing in again, when set.
+  final AddAccountException? failWith;
+  int signIns = 0;
+
+  @override
+  List<OAuthProviderInfo> get oauthProviders => const [_microsoft];
+
+  @override
+  String? accountOAuth(int accountId) => accountId == 2 ? 'microsoft' : null;
+
+  @override
+  Future<void> signInAgainOAuth(
+    int accountId, {
+    OAuthClientConfig? client,
+  }) async {
+    signIns++;
+    if (failWith case final e?) throw e;
+    status.value = SyncStatus.idle;
+  }
+}
+
+/// Signing in again meets a certificate nobody vouches for, until it is
+/// trusted.
+class _SignInCert extends DemoMailSource {
+  _SignInCert() : super(now: _now);
+
+  final certs = <TrustedCertificate>[];
+
+  @override
+  Future<void> signInAgain(int accountId, String password) async {
+    if (certs.isEmpty) {
+      throw const AddAccountException(
+        AddAccountError.certificate,
+        '',
+        _selfSigned,
+      );
+    }
+    status.value = SyncStatus.idle;
+  }
+
+  @override
+  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
+    certs.add(cert);
+  }
+}
+
+/// Edit servers: the first save meets a certificate nobody vouches for.
+class _ServersCert extends DemoMailSource {
+  _ServersCert({this.thenFail = false}) : super(now: _now);
+
+  /// After trusting it, the check still fails (the server is down).
+  final bool thenFail;
+  final saves = <List<TrustedCertificate>>[];
+  int trustedDirectly = 0;
+
+  @override
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
+    saves.add(trusted);
+    if (trusted.isEmpty) {
+      throw const AddAccountException(
+        AddAccountError.certificate,
+        '',
+        _selfSigned,
+      );
+    }
+    if (thenFail) {
+      throw const AddAccountException(AddAccountError.unreachable);
+    }
+    await super.setAccountServers(accountId, servers, trusted: trusted);
+  }
+
+  @override
+  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
+    trustedDirectly++;
+  }
+}
+
+/// Closes the account page, whose "checked 2 min ago" clock ticks.
+Future<void> _closePage(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox());
+  await tester.pump(const Duration(seconds: 5));
+}
+
+/// The Work account's details, on a phone or a desktop.
+Future<void> _accountPage(
+  WidgetTester tester,
+  DemoMailSource source, {
+  Size size = _desktop,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    PiumaApp(
+      home: (_, _) => SettingsScreen(
+        source: source,
+        onBack: () {},
+        onAddAccount: () {},
+        now: () => _now,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Work'));
+  await tester.pumpAndSettle();
+  expect(find.byType(AccountPage), findsOneWidget);
+}
+
+void _layouts() {
+  for (final (where, size) in [('phone', _phone), ('desktop', _desktop)]) {
+    group(where, () {
+      testWidgets('Outlook signs in on Microsoft’s page', (tester) async {
+        final source = _Scripted(oauthProviders: const [_microsoft]);
+        await _pump(tester, source, size: size);
+        await tester.tap(find.text('Outlook'));
+        await tester.pumpAndSettle();
+        expect(find.text('Password'), findsNothing);
+        await tester.enterText(_field('Email address'), 'anna@outlook.com');
+        await tester.pump();
+        await _tap(tester, 'Sign in with Microsoft', last: true);
+        expect(source.oauthProvider, 'microsoft');
+        expect(find.text('Account connected'), findsOneWidget);
+      });
+
+      testWidgets('Gmail offers Google’s page and the app password', (
+        tester,
+      ) async {
+        final source = _Scripted(
+          oauthProviders: const [
+            OAuthProviderInfo(
+              id: 'google',
+              name: 'Google',
+              builtIn: true,
+              appPasswords: true,
+              hasTenant: false,
+              ownClient: false,
+            ),
+          ],
+        );
+        await _pump(tester, source, size: size);
+        await tester.tap(find.text('Gmail'));
+        await tester.pumpAndSettle();
+        expect(find.text('Sign in with Google'), findsWidgets);
+        expect(
+          find.textContaining('the client it was built with'),
+          findsOneWidget,
+        );
+        await _tap(tester, 'Use an app password instead');
+        expect(find.text('Gmail needs an app password'), findsOneWidget);
+      });
+
+      testWidgets('a self-signed certificate is shown and trusted', (
+        tester,
+      ) async {
+        final source = _Scripted(
+          fail: const AddAccountException(
+            AddAccountError.certificate,
+            '',
+            _selfSigned,
+          ),
+        );
+        await _pump(tester, source, size: size);
+        await _manual(tester, 'anna@example.org');
+        await _tap(tester, 'Verify and connect');
+        expect(find.text(_selfSigned.fingerprint), findsOneWidget);
+        await _tap(tester, 'Trust this certificate');
+        expect(source.gotTrusted.single.fingerprint, _selfSigned.fingerprint);
+        expect(find.text('Account connected'), findsOneWidget);
+      });
+
+      testWidgets('a big provider’s certificate is refused for good', (
+        tester,
+      ) async {
+        final source = _Scripted(
+          fail: const AddAccountException(
+            AddAccountError.certificate,
+            '',
+            CertificateProblem(
+              host: 'outlook.office365.com',
+              issue: CertificateIssue.provider,
+              fingerprint: 'AB:CD',
+              subject: 'CN=outlook.office365.com',
+            ),
+          ),
+        );
+        await _pump(tester, source, size: size);
+        await _manual(tester, 'anna@example.org');
+        await _tap(tester, 'Verify and connect');
+        expect(
+          find.textContaining('Someone may be in the way'),
+          findsOneWidget,
+        );
+        expect(find.text('Trust this certificate'), findsNothing);
+        expect(find.text('Trust the new certificate'), findsNothing);
+      });
+
+      testWidgets('an OAuth account signs in again on the provider’s page', (
+        tester,
+      ) async {
+        final source = _OAuthAccount()
+          ..status.value = const SyncStatus(
+            SyncPhase.signInFailed,
+            failed: [2],
+          );
+        await _accountPage(tester, source, size: size);
+        await _tap(tester, 'Sign in again');
+        expect(find.text('Password'), findsNothing);
+        await _tap(tester, 'Sign in with Microsoft', last: true);
+        expect(source.signIns, 1);
+        expect(find.text('Sign in to Work'), findsNothing);
+        await _closePage(tester);
+      });
+
+      testWidgets('a refused OAuth sign-in says so', (tester) async {
+        final source = _OAuthAccount(
+          failWith: const AddAccountException(AddAccountError.signInDenied),
+        )..status.value = const SyncStatus(SyncPhase.signInFailed, failed: [2]);
+        await _accountPage(tester, source, size: size);
+        await _tap(tester, 'Sign in again');
+        await _tap(tester, 'Sign in with Microsoft', last: true);
+        expect(find.textContaining('didn’t allow the sign-in'), findsOneWidget);
+        await _closePage(tester);
+      });
+
+      testWidgets('signing in again shows a refused certificate', (
+        tester,
+      ) async {
+        final source = _SignInCert()
+          ..status.value = const SyncStatus(
+            SyncPhase.signInFailed,
+            failed: [2],
+          );
+        await _accountPage(tester, source, size: size);
+        await _tap(tester, 'Sign in again');
+        await tester.enterText(_field('Password'), 'carta-120-opaca');
+        await tester.pump();
+        await _tap(tester, 'Sign in', last: true);
+        expect(find.text(_selfSigned.fingerprint), findsOneWidget);
+        await _tap(tester, 'Trust this certificate');
+        expect(source.certs.single.host, 'mail.studio.it');
+        await _closePage(tester);
+      });
+
+      testWidgets('an OAuth account has no Edit servers', (tester) async {
+        await _accountPage(tester, _OAuthAccount(), size: size);
+        expect(find.text('Edit servers'), findsNothing);
+        await _closePage(tester);
+      });
+
+      testWidgets('a refused certificate is not called a password', (
+        tester,
+      ) async {
+        final source = DemoMailSource(now: _now)
+          ..certificateFailed.add(2)
+          ..status.value = const SyncStatus(
+            SyncPhase.signInFailed,
+            failed: [2],
+          );
+        await _accountPage(tester, source, size: size);
+        expect(
+          find.text(
+            'The server’s certificate was refused. Sign in again to look at it.',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text('The server refused the password. Did it change?'),
+          findsNothing,
+        );
+        await _closePage(tester);
+      });
+
+      testWidgets('Edit servers keeps a trusted certificate only on success', (
+        tester,
+      ) async {
+        final source = _ServersCert(thenFail: true);
+        await _accountPage(tester, source, size: size);
+        await _tap(tester, 'Edit servers');
+        await tester.enterText(
+          find.widgetWithText(TextField, 'imap.studio.it'),
+          'mail.studio.it',
+        );
+        await _tap(tester, 'Save');
+        expect(find.text(_selfSigned.fingerprint), findsOneWidget);
+        await _tap(tester, 'Trust this certificate');
+        // Given with the servers, for the engine to keep once they check
+        // out; never trusted on its own beforehand.
+        expect(source.saves.length, 2);
+        expect(source.saves.last.single.host, 'mail.studio.it');
+        expect(source.trustedDirectly, 0);
+        expect(
+          find.textContaining('The server could not be reached'),
+          findsOneWidget,
+        );
+        expect(find.text('Save'), findsOneWidget, reason: 'still open');
+        await _closePage(tester);
+      });
+    });
+  }
 }
 
 class _CardOnly extends StatelessWidget {
