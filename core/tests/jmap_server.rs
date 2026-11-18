@@ -813,6 +813,22 @@ async fn keeps_drafts_and_sends() {
     assert!(!s.emails[email].keywords.contains("$draft"));
 }
 
+#[tokio::test]
+async fn an_email_file_is_imported_into_the_folder_picked() {
+    let (server, cfg) = start().await;
+    let mut client = Client::open(&cfg).await.unwrap();
+    let raw = "From: ada@example.com\r\nSubject: Notes\r\n\r\nHi.\r\n";
+    client.append_to("INBOX", raw.as_bytes()).await.unwrap();
+    {
+        let s = server.lock().unwrap();
+        let email = s.emails.values().find(|e| e.raw == raw.as_bytes()).unwrap();
+        assert_eq!(email.mailboxes.len(), 1);
+        assert!(email.keywords.contains("$seen"));
+    }
+    // A folder the account doesn't have is refused, not created.
+    assert!(client.append_to("no-such", raw.as_bytes()).await.is_err());
+}
+
 const ONCE: &str = "<once-1@example.com>";
 
 fn once() -> String {

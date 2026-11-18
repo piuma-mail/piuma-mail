@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'inbox/inbox_screen.dart';
 import 'mail/mail_source.dart';
+import 'outside/arrivals.dart';
 import 'onboarding/add_account_screen.dart';
 
 /// First run shows the account form; after that, the inbox.
@@ -13,8 +14,12 @@ class MailHome extends StatefulWidget {
     required this.source,
     this.onOpenWindow,
     this.replies,
+    this.arrivals,
   });
   final MailSource source;
+
+  /// What other apps and the system ask for, for the inbox.
+  final Arrivals? arrivals;
 
   /// Opens a message in a window of its own, on the desktop.
   final ValueChanged<MailRow>? onOpenWindow;
@@ -63,6 +68,7 @@ class _MailHomeState extends State<MailHome> {
       source: widget.source,
       onOpenWindow: widget.onOpenWindow,
       replies: widget.replies,
+      arrivals: widget.arrivals,
       onAddAccount: () => Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (route) => AddAccountScreen(

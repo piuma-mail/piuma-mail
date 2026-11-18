@@ -301,7 +301,9 @@ Future<void> openLink(
   String? shown,
 }) async {
   final uri = Uri.tryParse(link);
-  if (uri == null) return;
+  // Only web pages and addresses: nothing an email names opens another
+  // app on the device.
+  if (uri == null || !isMailLinkAllowed(uri)) return;
   if (shown != null || LinksAskFirst.of(context)) {
     final open = await showPiumaDialog<bool>(
       context,
@@ -310,7 +312,7 @@ Future<void> openLink(
     );
     if (open != true) return;
   }
-  await openExternalLink(uri);
+  await openMailLink(uri);
 }
 
 class _SuspiciousLink extends StatelessWidget {

@@ -3805,6 +3805,79 @@ class DemoMailSource extends MailSource {
   /// When set, the next save fails with it.
   Object? failNextSave;
 
+  /// Email files opened ([openEml]), and imports asked for: (file,
+  /// account, folder).
+  final openedEml = <String>[];
+  final importedEml = <(String, int, String)>[];
+
+  /// What Settings keeps for the desktop.
+  DesktopSettings desktop = const DesktopSettings();
+
+  @override
+  DesktopSettings get desktopSettings => desktop;
+
+  @override
+  set desktopSettings(DesktopSettings settings) => desktop = settings;
+
+  /// A demo email file: any path ending in "notes.eml"; anything else is
+  /// not mail, and "huge.eml" is too large.
+  @override
+  Future<EmlMessage> openEml(String path) async {
+    openedEml.add(path);
+    if (path.endsWith('huge.eml')) {
+      throw const EmlException(EmlProblem.tooLarge);
+    }
+    if (!path.endsWith('notes.eml')) {
+      throw const EmlException(EmlProblem.notMail);
+    }
+    return EmlMessage(
+      path: path,
+      fromName: 'Ada Lovelace',
+      fromEmail: 'ada@example.com',
+      to: const ['Bob Moore <bob@example.com>'],
+      cc: const ['carol@example.com'],
+      subject: 'Notes on the analytical engine',
+      date: now.subtract(const Duration(days: 3, hours: 2)),
+      readable: const Readable(
+        blocks: [
+          BodyBlock.text([BodySpan('Hi Bob,')]),
+          BodyBlock.text([
+            BodySpan(
+              'Here are my notes from Thursday. The engine can weave '
+              'algebraic patterns just as the loom weaves flowers and leaves.',
+            ),
+          ]),
+          BodyBlock.text([
+            BodySpan('The full table is in the attached file, and on '),
+            BodySpan('the project page', link: 'https://example.com/engine'),
+            BodySpan('.'),
+          ]),
+          BodyBlock.text([BodySpan('Ada')]),
+        ],
+        remoteImages: 2,
+        attachments: [
+          MailAttachment(
+            part: 3,
+            name: 'Note G.pdf',
+            mime: 'application/pdf',
+            size: 184000,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) async {
+    saved.add(a.name);
+    return '/demo/Downloads/${a.name}';
+  }
+
+  @override
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) async {
+    importedEml.add((m.path, accountId, mailbox));
+  }
+
   @override
   Future<String> saveAttachment(MailRow row, MailAttachment attachment) async {
     final failure = failNextSave;

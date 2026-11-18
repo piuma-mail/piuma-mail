@@ -6147,4 +6147,115 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante';
+
+  @override
+  String get deviceHeading => 'Este dispositivo';
+
+  @override
+  String get defaultMailTitle => 'Tornar o Piuma a sua app de e-mail padrão';
+
+  @override
+  String get defaultMailHint =>
+      'Os endereços de e-mail em que clica noutras apps e em sites abrem uma nova mensagem aqui.';
+
+  @override
+  String get defaultMailIsTitle => 'O Piuma é a sua app de e-mail padrão';
+
+  @override
+  String get defaultMailIs =>
+      'Os endereços de e-mail em que clica noutras apps e em sites abrem aqui.';
+
+  @override
+  String get defaultMailButton => 'Tornar padrão';
+
+  @override
+  String get defaultMailOtherAndroid =>
+      'Agora é outra app que abre os endereços de e-mail. Limpe as predefinições dela nas Informações da app; da próxima vez que o Android perguntar, escolha o Piuma e Sempre.';
+
+  @override
+  String get defaultMailAskAndroid =>
+      'O Android pergunta que app usar quando toca num endereço de e-mail: escolha o Piuma e depois Sempre.';
+
+  @override
+  String get defaultMailAppInfo => 'Abrir informações';
+
+  @override
+  String get keepRunningTitle => 'Continuar em segundo plano ao fechar';
+
+  @override
+  String get keepRunningHint =>
+      'O e-mail novo continua a notificá-lo. O Piuma fica na área de notificação; saia a partir daí.';
+
+  @override
+  String get startAtLoginTitle => 'Iniciar ao iniciar sessão';
+
+  @override
+  String get startAtLoginHint =>
+      'O Piuma inicia na área de notificação, pronto para e-mail novo.';
+
+  @override
+  String get trayOpen => 'Abrir o Piuma Mail';
+
+  @override
+  String get trayQuit => 'Sair do Piuma Mail';
+
+  @override
+  String trayTooltip(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail: $count por ler',
+      one: 'Piuma Mail: 1 por ler',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get arrivalWhichAccount => 'Escrever a partir de que conta?';
+
+  @override
+  String get arrivalWaits => 'A nova mensagem abre quando fechar esta.';
+
+  @override
+  String arrivalFilesLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count ficheiros eram demasiado grandes para anexar.',
+      one: '1 ficheiro era demasiado grande para anexar.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emlFromFile => 'Aberto a partir de um ficheiro';
+
+  @override
+  String get emlImport => 'Importar para uma pasta';
+
+  @override
+  String get emlImportWhichAccount => 'Importar para que conta?';
+
+  @override
+  String emlImportIn(String account) {
+    return 'Importar para uma pasta de $account';
+  }
+
+  @override
+  String emlImported(String folder) {
+    return 'Importado para $folder';
+  }
+
+  @override
+  String get emlNotImported =>
+      'Não foi possível importar. Verifique a ligação e tente novamente.';
+
+  @override
+  String get emlNotMail =>
+      'Este ficheiro não é um e-mail que o Piuma consiga ler.';
+
+  @override
+  String get emlTooLarge =>
+      'Este ficheiro de e-mail é demasiado grande para abrir.';
 }

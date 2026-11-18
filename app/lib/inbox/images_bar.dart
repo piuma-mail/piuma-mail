@@ -18,14 +18,17 @@ class ImagesBar extends StatelessWidget {
     required this.count,
     required this.sender,
     required this.onLoad,
-    required this.onTrust,
+    this.onTrust,
     this.phone = false,
   });
 
   final int count;
   final String sender;
   final VoidCallback onLoad;
-  final VoidCallback onTrust;
+
+  /// "Always for this sender"; null hides it (an email file, whose sender
+  /// can be anyone it claims).
+  final VoidCallback? onTrust;
   final bool phone;
 
   static double _buttonWidth(BuildContext context, String label) {
@@ -65,12 +68,14 @@ class ImagesBar extends StatelessWidget {
       size: phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
       onPressed: onLoad,
     );
-    final trust = PiumaButton(
-      label: l.alwaysForSender,
-      kind: phone ? PiumaButtonKind.secondary : PiumaButtonKind.tertiary,
-      size: phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
-      onPressed: onTrust,
-    );
+    final trust = onTrust == null
+        ? null
+        : PiumaButton(
+            label: l.alwaysForSender,
+            kind: phone ? PiumaButtonKind.secondary : PiumaButtonKind.tertiary,
+            size: phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
+            onPressed: onTrust,
+          );
     return Container(
       padding: phone
           ? const EdgeInsets.fromLTRB(12, 10, 12, 12)
@@ -86,32 +91,39 @@ class ImagesBar extends StatelessWidget {
                 note,
                 const SizedBox(height: PiumaSpace.s8),
                 // Side by side when both labels fit, else stacked.
-                LayoutBuilder(
-                  builder: (context, box) {
-                    final loadWidth = _buttonWidth(context, l.loadImages);
-                    final trustWidth = _buttonWidth(context, l.alwaysForSender);
-                    final fits =
-                        box.maxWidth >= 340 &&
-                        loadWidth + PiumaSpace.s8 + trustWidth <= box.maxWidth;
-                    if (!fits) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                if (trust == null)
+                  load
+                else
+                  LayoutBuilder(
+                    builder: (context, box) {
+                      final loadWidth = _buttonWidth(context, l.loadImages);
+                      final trustWidth = _buttonWidth(
+                        context,
+                        l.alwaysForSender,
+                      );
+                      final fits =
+                          box.maxWidth >= 340 &&
+                          loadWidth + PiumaSpace.s8 + trustWidth <=
+                              box.maxWidth;
+                      if (!fits) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            load,
+                            const SizedBox(height: PiumaSpace.s8),
+                            trust,
+                          ],
+                        );
+                      }
+                      return Row(
                         children: [
-                          load,
-                          const SizedBox(height: PiumaSpace.s8),
-                          trust,
+                          Expanded(flex: loadWidth.ceil(), child: load),
+                          const SizedBox(width: PiumaSpace.s8),
+                          Expanded(flex: trustWidth.ceil(), child: trust),
                         ],
                       );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(flex: loadWidth.ceil(), child: load),
-                        const SizedBox(width: PiumaSpace.s8),
-                        Expanded(flex: trustWidth.ceil(), child: trust),
-                      ],
-                    );
-                  },
-                ),
+                    },
+                  ),
               ],
             )
           : LayoutBuilder(
@@ -130,8 +142,10 @@ class ImagesBar extends StatelessWidget {
                           Expanded(child: note),
                           const SizedBox(width: PiumaSpace.s8),
                           load,
-                          const SizedBox(width: PiumaSpace.s4),
-                          trust,
+                          if (trust != null) ...[
+                            const SizedBox(width: PiumaSpace.s4),
+                            trust,
+                          ],
                         ],
                       ),
                     )
@@ -148,7 +162,7 @@ class ImagesBar extends StatelessWidget {
                           Wrap(
                             spacing: PiumaSpace.s4,
                             runSpacing: PiumaSpace.s4,
-                            children: [load, trust],
+                            children: [load, ?trust],
                           ),
                         ],
                       ),

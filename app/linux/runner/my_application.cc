@@ -9,12 +9,17 @@
 
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 #include "original_paper.h"
+#include "shell.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
   // The inbox's window, once made: a second launch brings it forward.
   GtkWindow* window;
+  // Later launches, the tray, closing to the tray (lib/outside/).
+  Shell* shell;
+  // Started at sign-in: the window waits for the tray or a launch.
+  gboolean start_hidden;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -28,6 +33,7 @@ static void register_app_plugins(FlPluginRegistry* registry) {
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
+  if (self->start_hidden) return;
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
 }
 
@@ -37,7 +43,7 @@ static void my_application_activate(GApplication* application) {
   // One Piuma per person: two would both sync, notify and send the outbox
   // on one database. Launched again, the open window comes forward.
   if (self->window != nullptr) {
-    gtk_window_present(self->window);
+    shell_present(self->shell);
     return;
   }
   GtkWindow* window =
@@ -98,6 +104,8 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
   register_app_plugins(FL_PLUGIN_REGISTRY(view));
+  // The inbox's window only: reader windows have no shell.
+  self->shell = shell_new(application, window, view);
 
   // A message opened in a window of its own gets the plugins too.
   desktop_multi_window_plugin_set_window_created_callback(
@@ -115,17 +123,26 @@ static void my_application_activate(GApplication* application) {
 static gint my_application_command_line(GApplication* application,
                                         GApplicationCommandLine* command_line) {
   MyApplication* self = MY_APPLICATION(application);
-  // The first launch's arguments start the app; later ones never
-  // replace them (nor leak).
-  if (self->dart_entrypoint_arguments == nullptr) {
-    gchar** arguments =
-        g_application_command_line_get_arguments(command_line, nullptr);
-    // Strip out the first argument as it is the binary name.
-    self->dart_entrypoint_arguments =
-        g_strdupv(arguments[0] != nullptr ? arguments + 1 : arguments);
-    g_strfreev(arguments);
+  g_auto(GStrv) arguments =
+      g_application_command_line_get_arguments(command_line, nullptr);
+  // Strip out the first argument as it is the binary name.
+  gchar** given = arguments[0] != nullptr ? arguments + 1 : arguments;
+  gboolean background = FALSE;
+  for (gchar** a = given; *a != nullptr; a++) {
+    if (g_strcmp0(*a, "--background") == 0) background = TRUE;
   }
-  // A later launch's arguments (a mailto: link, one day) arrive here.
+  // The first launch's arguments start the app, Dart reads them in
+  // main(); later ones never replace them (nor leak).
+  if (self->dart_entrypoint_arguments == nullptr) {
+    self->dart_entrypoint_arguments = g_strdupv(given);
+    self->start_hidden = background;
+    g_application_activate(application);
+    return 0;
+  }
+  // Signing in again has nothing to bring forward.
+  if (background) return 0;
+  // A later launch: a mailto: link, an .eml file, files to send.
+  shell_forward(self->shell, given);
   g_application_activate(application);
   return 0;
 }
@@ -165,6 +182,8 @@ static void my_application_class_init(MyApplicationClass* klass) {
 
 static void my_application_init(MyApplication* self) {
   self->window = nullptr;
+  self->shell = nullptr;
+  self->start_hidden = FALSE;
   self->dart_entrypoint_arguments = nullptr;
 }
 

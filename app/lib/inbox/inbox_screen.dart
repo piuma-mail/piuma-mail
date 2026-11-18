@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,10 @@ import '../mail/senders.dart';
 import '../notify/android_background.dart';
 import '../notify/background_sheet.dart';
 import '../notify/notifier.dart';
+import '../outside/arrivals.dart';
+import '../outside/arrive.dart';
+import '../outside/eml_reader.dart';
+import '../outside/shell.dart';
 import '../design/icons.dart';
 import '../feedback/crash_line.dart';
 import '../feedback/report_context.dart';
@@ -61,10 +66,16 @@ class InboxScreen extends StatefulWidget {
     this.initialSelection,
     this.onOpenWindow,
     this.replies,
+    this.arrivals,
   });
 
   final MailSource source;
   final VoidCallback onAddAccount;
+
+  /// What other apps and the system ask for (`mailto:` links, email
+  /// files, shares, files dropped on the window); null in tests that
+  /// don't need it.
+  final Arrivals? arrivals;
   final DateTime Function() now;
 
   /// Opens this row at start (used by screenshots).
@@ -271,6 +282,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void initState() {
     super.initState();
+    _stopArrivals = widget.arrivals?.listen(_arrive);
     _refreshUnread();
     _loadSignatures();
     _shake = ShakeWatch(
@@ -396,6 +408,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _applyShell();
     if (_notifierStarted) return;
     _notifierStarted = true;
     final l = AppLocalizations.of(context);
@@ -587,6 +600,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   void dispose() {
     _shake.dispose();
+    _stopArrivals?.call();
     _changes?.cancel();
     _notices?.cancel();
     _replies?.cancel();
@@ -601,6 +615,108 @@ class _InboxScreenState extends State<InboxScreen> {
       run(rows).ignore();
     }
     super.dispose();
+  }
+
+  // From outside the app (lib/outside/): links, files, shares.
+
+  VoidCallback? _stopArrivals;
+
+  /// Messages asked for while another was being written: each opens
+  /// when the one before is closed, so nothing written is replaced.
+  final _arrived = <ComposeArrival>[];
+
+  bool _shellSet = false;
+
+  /// Keeping running with the window closed, as set, with the tray's
+  /// words in the person's language.
+  void _applyShell() {
+    if (widget.arrivals == null || !Shell.canKeepRunning) return;
+    final l = AppLocalizations.of(context);
+    final d = widget.source.desktopSettings;
+    Shell.keepRunning(
+      d.keepRunning,
+      open: l.trayOpen,
+      compose: l.compose,
+      quit: l.trayQuit,
+    ).ignore();
+    if (!_shellSet) {
+      _shellSet = true;
+      // What sign-in starts follows the setting, wherever the app moved.
+      if (d.startAtLogin) Shell.startAtLogin(true).ignore();
+    }
+  }
+
+  void _arrive(Arrival arrival) {
+    if (!mounted) return;
+    switch (arrival) {
+      case EmlArrival(:final path):
+        _openEml(path).ignore();
+      case final ComposeArrival a:
+        if (_composing != null) {
+          _arrived.add(a);
+          _toast(AppLocalizations.of(context).arrivalWaits);
+          return;
+        }
+        _write(a).ignore();
+    }
+  }
+
+  Future<void> _write(ComposeArrival a) async {
+    final l = AppLocalizations.of(context);
+    if (widget.source.accounts.isEmpty) return;
+    final account = await pickAccount(
+      context,
+      widget.source.accounts,
+      title: l.arrivalWhichAccount,
+    );
+    if (account == null || !mounted) return;
+    final (draft, left) = await draftFor(a, account);
+    if (!mounted) return;
+    if (_composing != null) {
+      _arrived.add(a);
+      return;
+    }
+    _openCompose(draft);
+    if (left > 0) _toast(l.arrivalFilesLeft(left));
+  }
+
+  Future<void> _openEml(String path) async {
+    final l = AppLocalizations.of(context);
+    final EmlMessage message;
+    try {
+      message = await widget.source.openEml(path);
+    } on EmlException catch (e) {
+      if (mounted) {
+        _toast(e.problem == EmlProblem.tooLarge ? l.emlTooLarge : l.emlNotMail);
+      }
+      return;
+    } catch (_) {
+      if (mounted) _toast(l.emlNotMail);
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (route) => EmlReader(
+          source: widget.source,
+          message: message,
+          onClose: () => Navigator.of(route).pop(),
+        ),
+      ),
+    );
+  }
+
+  /// Files dropped on the window, while nothing is being written (compose
+  /// takes its own): an email file opens, others go in a new message.
+  Widget _dropFiles(Widget child) {
+    final arrivals = widget.arrivals;
+    if (arrivals == null || touchDevice) return child;
+    return DropTarget(
+      enable: _composing == null,
+      onDragDone: (detail) =>
+          arrivals.addArgs([for (final f in detail.files) f.path]),
+      child: child,
+    );
   }
 
   void _openCompose([Draft? draft, String? error]) {
@@ -1938,6 +2054,7 @@ class _InboxScreenState extends State<InboxScreen> {
         }
         _files = files;
         _unread = n;
+        _shellUnread(n);
         _drafts = drafts;
         _snoozed = snoozed;
         _waiting = waiting;
@@ -1960,6 +2077,11 @@ class _InboxScreenState extends State<InboxScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A message asked for from outside while another was being written.
+    if (_composing == null && _arrived.isNotEmpty) {
+      final next = _arrived.removeAt(0);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _arrive(next));
+    }
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
@@ -1979,7 +2101,10 @@ class _InboxScreenState extends State<InboxScreen> {
         onKeyEvent: _pickedKeys,
         child: PictureScope(
           pictures: widget.source.pictures,
-          child: LabelScope(labels: _labels, child: _layout(context)),
+          child: LabelScope(
+            labels: _labels,
+            child: _dropFiles(_layout(context)),
+          ),
         ),
       ),
     );
@@ -2041,6 +2166,15 @@ class _InboxScreenState extends State<InboxScreen> {
       // Still on: the line comes back with the next count.
     }
     _refreshUnread();
+  }
+
+  /// The unread count in the tray's tooltip and on the Linux launcher.
+  void _shellUnread(int n) {
+    if (widget.arrivals == null) return;
+    Shell.unread(
+      n,
+      tooltip: AppLocalizations.of(context).trayTooltip(n),
+    ).ignore();
   }
 
   /// Above the phone list, never folding: the offline strip, and the way

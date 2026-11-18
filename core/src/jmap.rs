@@ -1002,6 +1002,16 @@ impl Client {
         Ok(folder)
     }
 
+    /// Puts a whole message in one of the account's folders, as read: an
+    /// email file imported by the person.
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        if self.mailboxes.is_empty() {
+            self.refresh_mailboxes().await?;
+        }
+        self.import(raw, folder, &["$seen"]).await?;
+        Ok(())
+    }
+
     /// Sends a message from `from` to `recipients` and files it in Sent.
     /// Returns the Sent folder.
     ///

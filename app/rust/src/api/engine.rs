@@ -1866,7 +1866,7 @@ impl From<files::FileRisk> for FileRisk {
 }
 
 /// Why a file deserves a word before it opens, from its name.
-fn file_risk(name: &str) -> Option<FileRisk> {
+pub(crate) fn file_risk(name: &str) -> Option<FileRisk> {
     files::file_risk(name).map(Into::into)
 }
 
@@ -2597,7 +2597,7 @@ pub async fn save_attachment(
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn body_block(b: reading::Block) -> BodyBlock {
+pub(crate) fn body_block(b: reading::Block) -> BodyBlock {
     BodyBlock {
         kind: match b.kind {
             reading::BlockKind::Paragraph => BlockKind::Paragraph,

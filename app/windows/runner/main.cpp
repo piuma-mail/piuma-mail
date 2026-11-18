@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "flutter_window.h"
+#include "mail_handler.h"
 #include "start_menu.h"
 #include "utils.h"
 
@@ -34,15 +35,30 @@ bool HandToRunning(const wchar_t* title, const wchar_t* command_line) {
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // The installer's hooks (Velopack) register Piuma as a mail app, or
+  // remove it, and end: never a window, never handed to a running Piuma.
+  if (HandleInstallerHook(command_line)) {
+    return EXIT_SUCCESS;
+  }
   // One Piuma per person and session: two would both sync, notify and
   // send the outbox on one database (the outbox's claims keep a message
   // from going twice, but not the rest). Launched again, the open window
-  // comes forward with the new command line (a mailto: link, one day).
+  // comes forward with the new command line (a mailto: link, a file).
   const wchar_t* title = IsDevCopy() ? L"Piuma Mail (dev)" : L"Piuma Mail";
+  // Started at sign-in: only the tray until the person opens it.
+  bool background = false;
+  for (const auto& argument : GetCommandLineArguments()) {
+    if (argument == "--background") background = true;
+  }
   HANDLE single = ::CreateMutex(
       nullptr, TRUE,
       IsDevCopy() ? L"Local\\PiumaMail.Dev" : L"Local\\PiumaMail");
   if (single != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (background) {
+      // Already running: signing in has nothing to bring forward.
+      ::CloseHandle(single);
+      return EXIT_SUCCESS;
+    }
     // Another Piuma holds it. Hand over to its window as soon as it has
     // one (it may be starting), looking every 100 ms without waiting on
     // the mutex. Should its owner end meanwhile (an update restarts into
@@ -86,7 +102,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, background);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(title, origin, size)) {
