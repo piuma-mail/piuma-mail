@@ -100,6 +100,10 @@ pub enum ImapError {
     NoFolder,
     #[error("the message is larger than the app downloads")]
     TooLarge,
+    /// A folder that holds the inbox or a folder with a job (Trash,
+    /// spam, Sent…) is not deleted.
+    #[error("the folder holds the inbox or a folder with a job")]
+    Protected,
 }
 
 impl From<async_imap::error::Error> for ImapError {
@@ -1006,10 +1010,10 @@ impl Connection {
     ) -> Result<String> {
         self.learn_roles(store, account)?;
         let target = self.folder(role).await?;
-        // From Trash to Trash: the server would copy them in again under
-        // new numbers. Deleting there is for good.
-        if role == FolderRole::Trash && target == mailbox {
-            self.erase(store, account, mailbox, uids).await?;
+        // Already there: from Trash to Trash the server would copy them in
+        // again under new numbers. Nothing is done; deleting for good is
+        // only ever asked for by name (`erase`).
+        if target == mailbox {
             return Ok(target);
         }
         self.move_to(store, account, mailbox, uids, &target).await?;
@@ -1055,41 +1059,48 @@ impl Connection {
         store_checked(self.session()?, &uid_set(uids), op).await
     }
 
-    /// Deletes every message of `mailbox` for good (Empty Trash, Empty
-    /// spam) and forgets them here. Returns how many went.
+    /// Deletes the messages of `mailbox` for good (Empty Trash, Empty
+    /// spam) and forgets them here: those numbered below `below` (the
+    /// UIDNEXT the person was told the count with), so mail that came
+    /// after it stays; none with a change still waiting (a message put
+    /// back from Trash meanwhile). Returns how many went.
     pub async fn empty(
         &mut self,
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
+        below: Option<u32>,
     ) -> Result<usize> {
         let uidplus = self.uidplus;
         let selected = self.select_checked(store, account, mailbox).await?;
         if selected.exists == 0 {
-            lock(store).clear_mailbox(account, mailbox)?;
             return Ok(0);
         }
+        let waiting = lock(store).pending_uids(account, mailbox)?;
         let session = self.session()?;
-        let mut uids: Vec<u32> = session.uid_search("ALL").await?.into_iter().collect();
+        let mut uids: Vec<u32> = session
+            .uid_search("ALL")
+            .await?
+            .into_iter()
+            .filter(|u| below.is_none_or(|b| *u < b) && !waiting.contains(u))
+            .collect();
         uids.sort_unstable();
         if uids.is_empty() {
             return Ok(0);
         }
-        let set = uid_set(&uids);
-        store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
-        if uidplus {
-            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-        } else {
-            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-        }
+        expunge_only(session, &uids, uidplus).await?;
         lock(store).remove_messages(account, mailbox, &uids)?;
         Ok(uids.len())
     }
 
-    /// How many messages `mailbox` holds on the server.
-    pub async fn count(&mut self, mailbox: &str) -> Result<u32> {
-        let status = self.session()?.status(mailbox, "(MESSAGES)").await?;
-        Ok(status.exists)
+    /// How many messages `mailbox` holds on the server, and its UIDNEXT:
+    /// what [`Self::empty`] stops below.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Option<u32>)> {
+        let status = self
+            .session()?
+            .status(mailbox, "(MESSAGES UIDNEXT)")
+            .await?;
+        Ok((status.exists, status.uid_next))
     }
 
     /// Renames, deletes, subscribes to or unsubscribes from one of the
@@ -1108,9 +1119,20 @@ impl Connection {
                 if to == mailbox {
                     return Ok(());
                 }
+                // Subscriptions don't follow the name on every server: a
+                // shown folder stays shown, a hidden one hidden.
+                let subscribed = match self.session()?.lsub(Some(""), Some(mailbox)).await {
+                    Ok(stream) => stream
+                        .try_collect::<Vec<_>>()
+                        .await
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|n| n.name() == mailbox),
+                    Err(_) => false,
+                };
                 self.session()?.rename(mailbox, to).await?;
-                // Subscriptions don't follow the name on every server.
-                if let Ok(()) = self.session()?.unsubscribe(mailbox).await {
+                if subscribed {
+                    self.session()?.unsubscribe(mailbox).await.ok();
                     self.session()?.subscribe(to).await.ok();
                 }
                 Ok(())
@@ -1153,29 +1175,40 @@ impl Connection {
                     }),
             );
         }
+        // Never the inbox or a folder with a job, nor one holding them:
+        // their mail would go, Trash itself first.
+        let special: Vec<String> = [
+            FolderRole::Sent,
+            FolderRole::Archive,
+            FolderRole::Drafts,
+            FolderRole::Trash,
+            FolderRole::Junk,
+            FolderRole::Snoozed,
+        ]
+        .into_iter()
+        .filter_map(|r| self.pick(&names, r))
+        .collect();
+        if gone
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("INBOX") || special.contains(n))
+        {
+            return Err(ImapError::Protected);
+        }
         // Deepest first.
         gone.sort_by_key(|(n, _)| std::cmp::Reverse(n.len()));
         let trash = self.folder(FolderRole::Trash).await?;
         let (moves, uidplus) = (self.moves, self.uidplus);
         for (name, selectable) in &gone {
-            if *selectable && *name != trash {
+            if *selectable {
                 let session = self.session()?;
                 let selected = session.select(name).await?;
                 if selected.exists > 0 {
                     if moves {
                         session.uid_mv("1:*", &trash).await?;
                     } else {
-                        session.uid_copy("1:*", &trash).await?;
-                        let _: Vec<_> = session
-                            .uid_store("1:*", "+FLAGS.SILENT (\\Deleted)")
-                            .await?
-                            .try_collect()
-                            .await?;
-                        if uidplus {
-                            let _: Vec<_> = session.uid_expunge("1:*").await?.try_collect().await?;
-                        } else {
-                            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-                        }
+                        let uids: Vec<u32> = session.uid_search("ALL").await?.into_iter().collect();
+                        session.uid_copy(uid_set(&uids), &trash).await?;
+                        expunge_only(session, &uids, uidplus).await?;
                     }
                 }
                 session.close().await.ok();
@@ -1227,16 +1260,7 @@ impl Connection {
             session.uid_mv(&set, target).await?;
         } else {
             session.uid_copy(&set, target).await?;
-            let _: Vec<_> = session
-                .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-                .await?
-                .try_collect()
-                .await?;
-            if uidplus {
-                let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-            } else {
-                let _: Vec<_> = session.expunge().await?.try_collect().await?;
-            }
+            expunge_only(session, uids, uidplus).await?;
         }
         lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
@@ -1450,20 +1474,9 @@ impl Connection {
         }
         let uidplus = self.uidplus;
         self.select_checked(store, account, mailbox).await?;
-        let session = self.session()?;
-        let set = uids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
         // A refusal must say so: forgotten here while kept there, the
         // message would come back at the next sync.
-        store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
-        if uidplus {
-            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-        } else {
-            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-        }
+        expunge_only(self.session()?, uids, uidplus).await?;
         lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
     }
@@ -1541,22 +1554,7 @@ impl Connection {
         };
         let session = self.session()?;
         session.select(&folder).await?;
-        let set = uids
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let _: Vec<_> = session
-            .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-            .await?
-            .try_collect()
-            .await?;
-        if uidplus {
-            let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
-        } else {
-            let _: Vec<_> = session.expunge().await?.try_collect().await?;
-        }
-        Ok(())
+        expunge_only(session, uids, uidplus).await
     }
 
     /// Files a sent message, already marked as read. Returns the folder.
@@ -2266,6 +2264,39 @@ fn classify_login(e: async_imap::error::Error) -> ImapError {
 }
 
 /// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
+/// Deletes `uids` of the selected folder for good: `\Deleted`, then
+/// `UID EXPUNGE`. Without UIDPLUS only a plain EXPUNGE is there, which
+/// would also remove what another app marked `\Deleted` and meant to
+/// keep a while: those lose the mark for the moment and get it back.
+async fn expunge_only(session: &mut Session, uids: &[u32], uidplus: bool) -> Result<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let set = uid_set(uids);
+    store_checked(session, &set, "+FLAGS.SILENT (\\Deleted)").await?;
+    if uidplus {
+        let _: Vec<_> = session.uid_expunge(&set).await?.try_collect().await?;
+        return Ok(());
+    }
+    let ours: HashSet<u32> = uids.iter().copied().collect();
+    let mut others: Vec<u32> = session
+        .uid_search("DELETED")
+        .await?
+        .into_iter()
+        .filter(|u| !ours.contains(u))
+        .collect();
+    others.sort_unstable();
+    if !others.is_empty() {
+        store_checked(session, &uid_set(&others), "-FLAGS.SILENT (\\Deleted)").await?;
+    }
+    let expunged: std::result::Result<Vec<_>, _> = session.expunge().await?.try_collect().await;
+    if !others.is_empty() {
+        store_checked(session, &uid_set(&others), "+FLAGS.SILENT (\\Deleted)").await?;
+    }
+    expunged?;
+    Ok(())
+}
+
 /// `UID STORE` that fails when the server answers NO: async-imap's own
 /// `uid_store` stream ends on the tagged answer whatever it says.
 async fn store_checked(session: &mut Session, set: &str, op: &str) -> Result<()> {

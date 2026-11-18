@@ -8,12 +8,13 @@
 //! sync, and a change the server keeps refusing reaches the app as
 //! `ChangesDropped`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
 
 use flutter_rust_bridge::frb;
 use piuma_core::imap::FolderRole;
 use piuma_core::pending::Change;
-use piuma_core::remote::{Remote, RemoteError};
+use piuma_core::remote::{Remote, RemoteError, Snapshot};
 use piuma_core::store::{ListSettings as CoreListSettings, Quota, SwipeAction as CoreSwipe};
 use piuma_core::{AccountId, ListOrder as CoreOrder};
 
@@ -103,6 +104,7 @@ pub async fn folder_total(account_id: i64, mailbox: String) -> Result<u32, Engin
     let Ok((account, password)) = signed_in(id) else {
         return Ok(here);
     };
+    let key = (account_id, mailbox.clone());
     let counted = engine
         .runtime
         .spawn(async move {
@@ -113,8 +115,27 @@ pub async fn folder_total(account_id: i64, mailbox: String) -> Result<u32, Engin
         })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
-    Ok(counted.map_or(here, |n| n.max(here)))
+    let mut counts = COUNTED.lock().unwrap_or_else(|e| e.into_inner());
+    match counted {
+        Ok((n, snapshot)) => {
+            // What Empty, asked next, keeps to: mail that comes after
+            // the person read the count stays.
+            counts
+                .get_or_insert_with(HashMap::new)
+                .insert(key, snapshot);
+            Ok(n)
+        }
+        Err(_) => {
+            if let Some(counts) = counts.as_mut() {
+                counts.remove(&key);
+            }
+            Ok(here)
+        }
+    }
 }
+
+/// What each folder held when [`folder_total`] counted it last.
+static COUNTED: Mutex<Option<HashMap<(i64, String), Snapshot>>> = Mutex::new(None);
 
 /// Empty Trash, Empty spam: every email of the folder goes for good.
 /// Online, all of them on the server; offline, the ones here, at the next
@@ -131,11 +152,20 @@ pub async fn empty_folder(account_id: i64, mailbox: String) -> Result<u32, Engin
     let (account, password) = signed_in(id)?;
     let shared = engine.store.clone();
     let target = mailbox.clone();
+    let snapshot = COUNTED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+        .and_then(|c| c.remove(&(account_id, mailbox.clone())));
     let emptied = engine
         .runtime
         .spawn(async move {
             let mut conn = Remote::open(&account, &password).await?;
-            let n = conn.empty(&shared, id, &target).await?;
+            // What waits goes first: a message put back from Trash leaves
+            // it before Trash is emptied.
+            let dropped = conn.send_pending(&shared, id).await?;
+            crate::api::engine::changes_dropped(id, dropped);
+            let n = conn.empty(&shared, id, &target, snapshot.as_ref()).await?;
             conn.close().await;
             Ok::<_, RemoteError>(n as u32)
         })
@@ -146,7 +176,8 @@ pub async fn empty_folder(account_id: i64, mailbox: String) -> Result<u32, Engin
         // What is here goes when the server can be reached.
         Err(e) if e.is_offline() => {
             let store = store()?;
-            let uids = store.uids(id, &mailbox)?;
+            // Not one put back from Trash, or waiting for anything else.
+            let uids = store.erasable_uids(id, &mailbox)?;
             store.queue_erase(id, &mailbox, &uids)?;
             Ok(uids.len() as u32)
         }
@@ -195,18 +226,36 @@ pub async fn rename_folder(
 pub struct FolderContents {
     pub emails: u32,
     pub subfolders: u32,
+    /// The inbox or a folder with a job inside it (or the folder itself),
+    /// by the name people read: then it isn't deleted.
+    pub protected: Option<String>,
 }
 
 #[frb(sync)]
 pub fn folder_contents(account_id: i64, mailbox: String) -> Result<FolderContents, EngineError> {
-    let (emails, subfolders) = reader()?.folder_contents(AccountId(account_id), &mailbox)?;
-    Ok(FolderContents { emails, subfolders })
+    let store = reader()?;
+    let id = AccountId(account_id);
+    let (emails, subfolders) = store.folder_contents(id, &mailbox)?;
+    Ok(FolderContents {
+        emails,
+        subfolders,
+        protected: store.protected_inside(id, &mailbox)?,
+    })
 }
 
 /// Deletes one of the account's own folders and its subfolders; their
-/// emails go to Trash first.
+/// emails go to Trash first. Refused for one that is or holds the inbox
+/// or a folder with a job.
 pub async fn delete_folder(account_id: i64, mailbox: String) -> Result<(), EngineError> {
-    store()?.delete_folder(AccountId(account_id), &mailbox)?;
+    if store()?
+        .delete_folder(AccountId(account_id), &mailbox)?
+        .is_none()
+    {
+        return Err(EngineError::new(
+            ErrorKind::Other,
+            "the folder holds the inbox or a folder with a job",
+        ));
+    }
     send(vec![account_id]).await;
     Ok(())
 }
@@ -298,6 +347,24 @@ pub fn server_folders(account_id: i64) -> Result<Vec<ServerFolder>, EngineError>
         .collect())
 }
 
+/// The folders that may do `role`'s job: not the inbox, and not one doing
+/// another job when either is Trash or spam.
+#[frb(sync)]
+pub fn special_folder_options(
+    account_id: i64,
+    role: SpecialFolder,
+) -> Result<Vec<ServerFolder>, EngineError> {
+    let store = reader()?;
+    let id = AccountId(account_id);
+    let mut out = Vec::new();
+    for (mailbox, name) in store.server_folders(id)? {
+        if store.role_choice_allowed(id, role.into(), &mailbox)? {
+            out.push(ServerFolder { mailbox, name });
+        }
+    }
+    Ok(out)
+}
+
 /// Gives a job to a folder of the person's choice, or with None goes back
 /// to the one the server marks or names. It wins from now on; the
 /// account's folders are looked at again at once when the server can be
@@ -308,7 +375,12 @@ pub async fn set_special_folder(
     mailbox: Option<String>,
 ) -> Result<(), EngineError> {
     let id = AccountId(account_id);
-    store()?.set_role_choice(id, role.into(), mailbox.as_deref())?;
+    if !store()?.set_role_choice(id, role.into(), mailbox.as_deref())? {
+        return Err(EngineError::new(
+            ErrorKind::Other,
+            "that folder can't do this job",
+        ));
+    }
     let engine = engine()?;
     let Ok((account, password)) = signed_in(id) else {
         return Ok(());

@@ -216,6 +216,10 @@ pub enum JmapError {
     Insecure,
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A folder that holds the inbox or a folder with a job is not
+    /// deleted.
+    #[error("the folder holds the inbox or a folder with a job")]
+    Protected,
 }
 
 impl JmapError {
@@ -755,13 +759,14 @@ impl Client {
         let store = lock(store);
         store.set_junk_mailbox(account, junk.as_deref())?;
         store.set_trash_mailbox(account, trash.as_deref())?;
+        // By path ("Clients/Acme"), which also says what is inside what.
         store.set_server_folders(
             account,
             &self
                 .mailboxes
                 .iter()
                 .filter(|m| !is_space(m))
-                .map(|m| (m.local(), m.name.clone()))
+                .map(|m| (m.local(), path_of(&self.mailboxes, m)))
                 .collect::<Vec<_>>(),
         )?;
         store.set_account_folders(account, &own_folders(&self.mailboxes, &self.roles))?;
@@ -876,9 +881,9 @@ impl Client {
     ) -> Result<String> {
         self.learn_roles(store, account)?;
         let target = self.folder(role).await?;
-        // Already in Trash: deleting there is for good.
-        if role == FolderRole::Trash && target == mailbox {
-            self.erase(store, account, mailbox, uids).await?;
+        // Already there: nothing to do. Deleting for good is only ever
+        // asked for by name (`erase`).
+        if target == mailbox {
             return Ok(target);
         }
         self.move_to(store, account, mailbox, uids, &target).await?;
@@ -916,60 +921,109 @@ impl Client {
         self.update(store, account, mailbox, uids, patch).await
     }
 
-    /// Deletes every email of `mailbox` for good (Empty Trash, Empty
-    /// spam) and forgets them here. Returns how many went.
+    /// Deletes the emails of `mailbox` for good (Empty Trash, Empty spam)
+    /// and forgets them here: with `only`, those of the ids the person
+    /// was told the count with, so mail that came after stays; none with
+    /// a change still waiting. An email that is in another folder too
+    /// only leaves this one. Returns how many went.
     pub async fn empty(
         &mut self,
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
+        only: Option<&[String]>,
     ) -> Result<usize> {
         let remote = self.remote(mailbox)?;
-        let ids = self.query_ids(&remote).await?;
+        let waiting: HashSet<String> = {
+            let store = lock(store);
+            let mut ids = HashSet::new();
+            for uid in store.pending_uids(account, mailbox)? {
+                ids.extend(store.jmap_id(account, mailbox, uid)?);
+            }
+            ids
+        };
+        let ids: Vec<String> = self
+            .query_ids(&remote)
+            .await?
+            .into_iter()
+            .filter(|id| only.is_none_or(|o| o.contains(id)) && !waiting.contains(id))
+            .collect();
         for chunk in ids.chunks(self.max_get) {
-            // An email that is in another folder too only leaves this one.
-            let emails = self.get_emails(chunk, &["id", "mailboxIds"]).await?;
-            let (elsewhere, only_here): (Vec<&Value>, Vec<&Value>) = emails
-                .iter()
-                .partition(|e| e["mailboxIds"].as_object().is_some_and(|m| m.len() > 1));
-            let gone: Vec<String> = only_here.iter().filter_map(|e| email_id(e)).collect();
-            if !gone.is_empty() {
-                self.destroy(&gone).await?;
-            }
-            let patch = json!({ format!("mailboxIds/{remote}"): null });
-            let update: serde_json::Map<String, Value> = elsewhere
-                .iter()
-                .filter_map(|e| email_id(e))
-                .map(|id| (id, patch.clone()))
-                .collect();
-            if !update.is_empty() {
-                let [done] = self
-                    .call([(
-                        "Email/set",
-                        json!({ "accountId": self.account_id, "update": update }),
-                    )])
-                    .await?;
-                if done["notUpdated"]
-                    .as_object()
-                    .is_some_and(|f| !f.is_empty())
-                {
-                    return Err(not_done(&done, "notUpdated"));
-                }
-            }
+            self.leave_or_destroy(&remote, chunk).await?;
         }
-        lock(store).clear_mailbox(account, mailbox)?;
+        let gone: HashSet<&String> = ids.iter().collect();
+        let uids: Vec<u32> = lock(store)
+            .jmap_ids(account, mailbox)?
+            .into_iter()
+            .filter(|(id, _)| gone.contains(id))
+            .map(|(_, uid)| uid)
+            .collect();
+        lock(store).remove_messages(account, mailbox, &uids)?;
         Ok(ids.len())
     }
 
-    /// How many emails `mailbox` holds on the server.
-    pub async fn count(&mut self, mailbox: &str) -> Result<u32> {
+    /// Emails of folder `remote` deleted for good, except those also in
+    /// another folder: they only leave this one.
+    async fn leave_or_destroy(&mut self, remote: &str, ids: &[String]) -> Result<()> {
+        let (elsewhere, only_here) = self.split_elsewhere(ids).await?;
+        if !only_here.is_empty() {
+            self.destroy(&only_here).await?;
+        }
+        self.leave(remote, &elsewhere, None).await
+    }
+
+    /// `ids` split into those in more folders than one and the rest.
+    async fn split_elsewhere(&mut self, ids: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+        let mut elsewhere = Vec::new();
+        let mut only_here = Vec::new();
+        for chunk in ids.chunks(self.max_get) {
+            for e in self.get_emails(chunk, &["id", "mailboxIds"]).await? {
+                let Some(id) = email_id(&e) else { continue };
+                if e["mailboxIds"].as_object().is_some_and(|m| m.len() > 1) {
+                    elsewhere.push(id);
+                } else {
+                    only_here.push(id);
+                }
+            }
+        }
+        Ok((elsewhere, only_here))
+    }
+
+    /// Takes emails out of folder `remote`, and with `to` puts them there.
+    async fn leave(&mut self, remote: &str, ids: &[String], to: Option<&str>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let patch = match to {
+            Some(to) => {
+                json!({ format!("mailboxIds/{remote}"): null, format!("mailboxIds/{to}"): true })
+            }
+            None => json!({ format!("mailboxIds/{remote}"): null }),
+        };
+        let update: serde_json::Map<String, Value> =
+            ids.iter().map(|id| (id.clone(), patch.clone())).collect();
+        let [done] = self
+            .call([(
+                "Email/set",
+                json!({ "accountId": self.account_id, "update": update }),
+            )])
+            .await?;
+        if done["notUpdated"]
+            .as_object()
+            .is_some_and(|f| !f.is_empty())
+        {
+            return Err(not_done(&done, "notUpdated"));
+        }
+        Ok(())
+    }
+
+    /// How many emails `mailbox` holds on the server, and their ids: what
+    /// [`Self::empty`] keeps to.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Vec<String>)> {
         self.refresh_mailboxes().await?;
         let remote = self.remote(mailbox)?;
-        Ok(self
-            .mailboxes
-            .iter()
-            .find(|m| m.id == remote)
-            .map_or(0, |m| m.total_emails))
+        let ids = self.query_ids(&remote).await?;
+        Ok((ids.len() as u32, ids))
     }
 
     /// How full the account is, in bytes used and allowed, when the server
@@ -1059,27 +1113,31 @@ impl Client {
             );
             i += 1;
         }
+        // Never the inbox or a folder with a job (the server's or the
+        // person's), nor one holding them: refused for good, rather than
+        // tried again for a day.
+        let chosen: Vec<String> = self
+            .roles
+            .iter()
+            .filter_map(|(_, local)| self.remote(local).ok())
+            .collect();
+        if gone.iter().any(|g| {
+            chosen.contains(g)
+                || self
+                    .mailboxes
+                    .iter()
+                    .any(|m| m.id == *g && m.role.is_some())
+        }) {
+            return Err(JmapError::Protected);
+        }
         for folder in gone.iter().rev() {
-            if *folder == trash_id {
-                continue;
-            }
             let ids = self.query_ids(folder).await?;
-            for chunk in ids.chunks(self.max_get) {
-                let patch = json!({ format!("mailboxIds/{folder}"): null, format!("mailboxIds/{trash_id}"): true });
-                let update: serde_json::Map<String, Value> =
-                    chunk.iter().map(|e| (e.clone(), patch.clone())).collect();
-                let [done] = self
-                    .call([(
-                        "Email/set",
-                        json!({ "accountId": self.account_id, "update": update }),
-                    )])
-                    .await?;
-                if done["notUpdated"]
-                    .as_object()
-                    .is_some_and(|f| !f.is_empty())
-                {
-                    return Err(not_done(&done, "notUpdated"));
-                }
+            // An email that is in another folder too only leaves this one;
+            // the rest go to Trash.
+            let (elsewhere, only_here) = self.split_elsewhere(&ids).await?;
+            self.leave(folder, &elsewhere, None).await?;
+            for chunk in only_here.chunks(self.max_get) {
+                self.leave(folder, chunk, Some(&trash_id)).await?;
             }
             let [done] = self
                 .call([(
@@ -1171,7 +1229,9 @@ impl Client {
             return Ok(());
         }
         let ids = self.emails(store, account, mailbox, uids)?;
-        self.destroy(&ids).await?;
+        let remote = self.remote(mailbox)?;
+        // An email that is in another folder too only leaves this one.
+        self.leave_or_destroy(&remote, &ids).await?;
         lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
     }
@@ -1965,6 +2025,23 @@ pub(crate) fn own_folders(
         &mut out,
     );
     out
+}
+
+/// A folder's path from the top, its parents' names first ("Clients/Acme").
+fn path_of(mailboxes: &[Mailbox], m: &Mailbox) -> String {
+    let mut parts = vec![m.name.clone()];
+    let mut parent = m.parent_id.clone();
+    // A server that loops its parents still ends.
+    for _ in 0..16 {
+        let Some(id) = parent else { break };
+        let Some(p) = mailboxes.iter().find(|x| x.id == id) else {
+            break;
+        };
+        parts.push(p.name.clone());
+        parent = p.parent_id.clone();
+    }
+    parts.reverse();
+    parts.join("/")
 }
 
 /// The sync space's folder, which stays hidden.

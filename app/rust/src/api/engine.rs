@@ -4405,13 +4405,15 @@ pub async fn apply_message_action(
             on_server.push(m);
         }
     }
-    // Delete in Trash or spam is for good: moved to Trash it would only
-    // come back under a new number.
+    // Delete in Trash or spam is for good, and only ever after the person
+    // confirmed it, through `delete_forever`: here such messages are left
+    // where they are and shown again, never deleted silently.
     if action == MessageAction::Delete {
-        let forever;
-        (forever, on_server) = crate::api::mailbox::split_for_good(on_server)?;
-        if !forever.is_empty() {
-            crate::api::mailbox::delete_forever(forever).await?;
+        let kept;
+        (kept, on_server) = crate::api::mailbox::split_for_good(on_server)?;
+        let store = store()?;
+        for m in &kept {
+            store.set_hidden(AccountId(m.account_id), &m.mailbox, m.uid, false)?;
         }
     }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();

@@ -64,6 +64,14 @@ pub(crate) fn resolve_historical_attachment(
     }
 }
 
+/// What a folder held when it was counted, for Empty to keep to: the
+/// next UID then (IMAP), or the ids (JMAP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Snapshot {
+    Imap { uid_next: Option<u32> },
+    Jmap { ids: Vec<String> },
+}
+
 /// A logged-in connection to an account's server.
 pub enum Remote {
     Imap(imap::Connection),
@@ -399,25 +407,47 @@ impl Remote {
         Ok(())
     }
 
-    /// Deletes every message of a folder for good (Empty Trash, Empty
-    /// spam). Returns how many went.
+    /// Deletes the messages of a folder for good (Empty Trash, Empty
+    /// spam): with `upto`, only what was there when [`Self::count`] gave
+    /// it, so mail that came after stays; never one with a change still
+    /// waiting. Returns how many went.
     pub async fn empty(
         &mut self,
         store: &Mutex<Store>,
         account: AccountId,
         mailbox: &str,
+        upto: Option<&Snapshot>,
     ) -> Result<usize> {
         Ok(match self {
-            Remote::Imap(c) => c.empty(store, account, mailbox).await?,
-            Remote::Jmap(c) => c.empty(store, account, mailbox).await?,
+            Remote::Imap(c) => {
+                let below = match upto {
+                    Some(Snapshot::Imap { uid_next }) => *uid_next,
+                    _ => None,
+                };
+                c.empty(store, account, mailbox, below).await?
+            }
+            Remote::Jmap(c) => {
+                let only = match upto {
+                    Some(Snapshot::Jmap { ids }) => Some(ids.as_slice()),
+                    _ => None,
+                };
+                c.empty(store, account, mailbox, only).await?
+            }
         })
     }
 
-    /// How many messages a folder holds on the server.
-    pub async fn count(&mut self, mailbox: &str) -> Result<u32> {
+    /// How many messages a folder holds on the server, with what Empty
+    /// keeps to.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Snapshot)> {
         Ok(match self {
-            Remote::Imap(c) => c.count(mailbox).await?,
-            Remote::Jmap(c) => c.count(mailbox).await?,
+            Remote::Imap(c) => {
+                let (n, uid_next) = c.count(mailbox).await?;
+                (n, Snapshot::Imap { uid_next })
+            }
+            Remote::Jmap(c) => {
+                let (n, ids) = c.count(mailbox).await?;
+                (n, Snapshot::Jmap { ids })
+            }
         })
     }
 

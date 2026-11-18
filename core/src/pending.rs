@@ -2,7 +2,7 @@
 //! the store keeps them, and the watcher sends them when the connection
 //! is back, before it syncs, so the sync does not undo them.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 
 use crate::imap::{self, FolderRole};
@@ -140,6 +140,14 @@ impl Change {
         }
     }
 
+    /// It takes the message out of its folder.
+    fn moves_away(&self) -> bool {
+        matches!(
+            self,
+            Change::Move(_) | Change::MoveTo(_) | Change::Snooze(_) | Change::Wake(_)
+        )
+    }
+
     /// When it goes in a round: folders first, so the mail queued for a
     /// renamed folder finds it; then flags, read and labels; then what
     /// moves, copies or deletes mail.
@@ -223,9 +231,10 @@ const FOR_GOOD: &[&str] = &[
 pub fn imap_refusal(e: &imap::ImapError) -> Refusal {
     use async_imap::error::Error;
     match e {
-        imap::ImapError::NoFolder | imap::ImapError::Gone | imap::ImapError::TooLarge => {
-            Refusal::Permanent
-        }
+        imap::ImapError::NoFolder
+        | imap::ImapError::Gone
+        | imap::ImapError::TooLarge
+        | imap::ImapError::Protected => Refusal::Permanent,
         imap::ImapError::Protocol(Error::Bad(_)) => Refusal::Permanent,
         imap::ImapError::Protocol(Error::No(text)) => {
             let text = text.to_ascii_lowercase();
@@ -377,7 +386,9 @@ impl Server for jmap::Client {
     // JMAP names messages by ids that never change: nothing to renumber.
     fn refusal(e: &jmap::JmapError) -> Refusal {
         match e {
-            jmap::JmapError::Gone | jmap::JmapError::NoFolder => Refusal::Permanent,
+            jmap::JmapError::Gone | jmap::JmapError::NoFolder | jmap::JmapError::Protected => {
+                Refusal::Permanent
+            }
             _ => Refusal::Temporary,
         }
     }
@@ -490,11 +501,57 @@ pub(crate) async fn send<S: Server>(
             }
         }
     }
+    // Changes with nothing left to do, or that must not run.
+    let mut skip: HashSet<i64> = HashSet::new();
+    {
+        let store = lock(store);
+        // A message moved away before its deletion was queued (put back
+        // from Trash, then Trash emptied offline) leaves: it is never
+        // deleted for good.
+        let leaving: HashMap<(&str, u32), i64> = pending
+            .iter()
+            .filter(|p| p.change.moves_away())
+            .fold(HashMap::new(), |mut m, p| {
+                let e = m.entry((p.mailbox.as_str(), p.uid)).or_insert(p.id);
+                *e = (*e).min(p.id);
+                m
+            });
+        for p in pending.iter().filter(|p| p.change == Change::Erase) {
+            if leaving
+                .get(&(p.mailbox.as_str(), p.uid))
+                .is_some_and(|first| *first < p.id)
+            {
+                store.drop_changes(&[p.id])?;
+                skip.insert(p.id);
+            }
+        }
+        // A move to the folder it is in now (one chosen as Trash after
+        // the move was queued): nothing to do, and never a deletion.
+        for p in &pending {
+            let Change::Move(role) = &p.change else {
+                continue;
+            };
+            let there = match role {
+                FolderRole::Trash => store.trash_mailbox(account)?,
+                FolderRole::Junk => store.junk_mailbox(account)?,
+                FolderRole::Archive => store.folder_mailbox(account, crate::Folder::Archive)?,
+                _ => None,
+            };
+            if there.as_deref() == Some(p.mailbox.as_str()) {
+                store.drop_changes(&[p.id])?;
+                store.set_hidden(account, &p.mailbox, p.uid, false)?;
+                skip.insert(p.id);
+            }
+        }
+    }
     // Keyed by (phase, folder, kind, target): the change, its uids,
     // their ids.
     type Group = (Change, Vec<u32>, Vec<i64>);
     let mut groups: BTreeMap<(u8, String, &'static str, String), Group> = BTreeMap::new();
-    for p in pending.iter().filter(|p| p.change.phase() > 0) {
+    for p in pending
+        .iter()
+        .filter(|p| p.change.phase() > 0 && !skip.contains(&p.id))
+    {
         let key = (
             p.change.phase(),
             p.mailbox.clone(),
@@ -509,8 +566,7 @@ pub(crate) async fn send<S: Server>(
     }
     for ((_, mailbox, _, _), (change, uids, ids)) in groups {
         // Its numbers name other messages now: what waited is gone.
-        if renumbered.contains(&mailbox) || blocked.iter().any(|b| mailbox.starts_with(b.as_str()))
-        {
+        if renumbered.contains(&mailbox) || blocked.iter().any(|b| inside(&mailbox, b)) {
             continue;
         }
         let sent = match change {
@@ -533,6 +589,15 @@ pub(crate) async fn send<S: Server>(
         }
     }
     Ok(given_up)
+}
+
+/// Whether `mailbox` is `folder` or one of its subfolders ("Clients/Acme"
+/// in "Clients", not "Clientele").
+fn inside(mailbox: &str, folder: &str) -> bool {
+    mailbox == folder
+        || mailbox
+            .strip_prefix(folder)
+            .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('.'))
 }
 
 /// Queues the archiving of the read newsletters that are more than a
@@ -627,6 +692,15 @@ mod tests {
             imap_refusal(&imap::ImapError::Throttled("busy".into())),
             Refusal::Temporary
         );
+    }
+
+    #[test]
+    fn a_folder_holds_its_subfolders_not_its_namesakes() {
+        assert!(inside("Clients", "Clients"));
+        assert!(inside("Clients/Acme", "Clients"));
+        assert!(inside("INBOX.Clients.Acme", "INBOX.Clients"));
+        assert!(!inside("Clientele", "Clients"));
+        assert!(!inside("Clients2/Acme", "Clients"));
     }
 
     #[test]

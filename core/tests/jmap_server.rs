@@ -1644,11 +1644,12 @@ async fn manages_the_mailbox() {
         .is_empty());
 
     // Deleted with its subfolder: their email goes to Trash first.
-    store
+    assert!(store
         .lock()
         .unwrap()
         .delete_folder(account, "mb-misc")
-        .unwrap();
+        .unwrap()
+        .is_some());
     assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
     {
         let s = server.lock().unwrap();
@@ -1656,31 +1657,45 @@ async fn manages_the_mailbox() {
             .mailboxes
             .iter()
             .any(|(id, _, _)| id == "mb-misc" || id == "mb-sub"));
-        // Plans, and the copy of Lunch, which stays in the inbox too.
+        // Plans goes to Trash; the copy of Lunch only leaves the folder,
+        // as it is in the inbox too.
         assert_eq!(
             s.emails
                 .values()
                 .filter(|e| e.mailboxes.contains("mb-trash"))
                 .count(),
-            3
+            2
         );
-        assert!(s.emails["M5"].mailboxes.contains("mb-in"));
-    }
-
-    // Empty Trash: Lunch is in the inbox too, and stays there.
-    assert_eq!(remote.count("mb-trash").await.unwrap(), 3);
-    assert_eq!(remote.empty(&store, account, "mb-trash").await.unwrap(), 3);
-    {
-        let s = server.lock().unwrap();
-        assert!(!s.emails.values().any(|e| e.mailboxes.contains("mb-trash")));
         assert_eq!(s.emails["M5"].mailboxes, ["mb-in".to_owned()].into());
     }
 
-    // Delete in Trash is for good, even sent as a move there.
+    // Empty Trash keeps to what was counted: mail that came after stays.
+    let (n, upto) = remote.count("mb-trash").await.unwrap();
+    assert_eq!(n, 2);
+    let late = server
+        .lock()
+        .unwrap()
+        .add("mb-trash", "Ana <ana@example.org>", "Late", 3, true);
+    assert_eq!(
+        remote
+            .empty(&store, account, "mb-trash", Some(&upto))
+            .await
+            .unwrap(),
+        2
+    );
     {
-        let mut s = server.lock().unwrap();
-        s.add("mb-trash", "Ana <ana@example.org>", "Again", 2, true);
+        let s = server.lock().unwrap();
+        let left: Vec<&String> = s
+            .emails
+            .iter()
+            .filter(|(_, e)| e.mailboxes.contains("mb-trash"))
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(left, [&late]);
     }
+
+    // A move to Trash of mail already there does nothing: deleting for
+    // good is only ever asked for by name.
     remote
         .sync_mailbox(&store, account, "mb-trash")
         .await
@@ -1690,12 +1705,7 @@ async fn manages_the_mailbox() {
         .move_messages(&store, account, "mb-trash", &again, FolderRole::Trash)
         .await
         .unwrap();
-    assert!(!server
-        .lock()
-        .unwrap()
-        .emails
-        .values()
-        .any(|e| e.mailboxes.contains("mb-trash")));
+    assert!(server.lock().unwrap().emails.contains_key(&late));
 
     // A folder of the person's choice for Trash.
     store
@@ -1718,4 +1728,73 @@ async fn manages_the_mailbox() {
         .contains("mb-bin"));
 
     assert_eq!(remote.quota().await.unwrap(), Some((900, 1000)));
+}
+
+/// Deleting for good an email that is in another folder too only takes it
+/// out of Trash (review finding 5); a folder holding the folder chosen as
+/// Trash is refused for good, not tried again for a day (finding 3).
+#[tokio::test]
+async fn deleting_keeps_what_lives_elsewhere_and_trash_itself() {
+    let (server, cfg) = start().await;
+    let both = {
+        let mut s = server.lock().unwrap();
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.mailboxes.push(("mb-bin".into(), "Bin".into(), None));
+        s.parents.insert("mb-bin".into(), "mb-misc".into());
+        let id = s.add("mb-trash", "Ana <ana@example.org>", "Both", 1, true);
+        s.emails
+            .get_mut(&id)
+            .unwrap()
+            .mailboxes
+            .insert("mb-in".into());
+        id
+    };
+    let (store, account) = store_with_account(&cfg);
+    let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
+    remote.sync_folders(&store, account).await.unwrap();
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    let uids = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    store
+        .lock()
+        .unwrap()
+        .queue_erase(account, "mb-trash", &uids)
+        .unwrap();
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    assert_eq!(
+        server.lock().unwrap().emails[&both].mailboxes,
+        ["mb-in".to_owned()].into()
+    );
+
+    // Bin, inside Receipts, becomes Trash.
+    store
+        .lock()
+        .unwrap()
+        .set_role_choice(account, FolderRole::Trash, Some("mb-bin"))
+        .unwrap();
+    remote.sync_folders(&store, account).await.unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert!(s.protected_inside(account, "mb-misc").unwrap().is_some());
+        assert_eq!(s.delete_folder(account, "mb-misc").unwrap(), None);
+        s.queue_change(
+            account,
+            "mb-misc",
+            0,
+            piuma_core::pending::Change::Folder(piuma_core::pending::FolderChange::Delete),
+        )
+        .unwrap();
+    }
+    let mut dropped = 0;
+    for _ in 0..piuma_core::pending::REFUSED_ATTEMPTS {
+        dropped += remote.send_pending(&store, account).await.unwrap();
+        store.lock().unwrap().retry_changes_now(account).unwrap();
+    }
+    assert_eq!(dropped, 1);
+    let s = server.lock().unwrap();
+    assert!(s.mailboxes.iter().any(|(id, _, _)| id == "mb-misc"));
+    assert!(s.mailboxes.iter().any(|(id, _, _)| id == "mb-bin"));
 }

@@ -193,6 +193,34 @@ impl Store {
         Ok(())
     }
 
+    /// The messages of one folder that have a change still waiting.
+    pub fn pending_uids(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+    ) -> Result<std::collections::HashSet<u32>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT uid FROM pending_change WHERE account = ?1 AND mailbox = ?2",
+        )?;
+        let rows = stmt.query_map(params![account.0, mailbox], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// The messages of one folder Empty can delete while offline: those
+    /// shown, with nothing waiting for them. A message put back from Trash
+    /// (hidden, its move queued) is not one.
+    pub fn erasable_uids(&self, account: AccountId, mailbox: &str) -> Result<Vec<u32>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT m.uid FROM message m
+              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
+                AND NOT EXISTS (SELECT 1 FROM pending_change p
+                                 WHERE p.account = m.account AND p.mailbox = m.mailbox
+                                   AND p.uid = m.uid)",
+        )?;
+        let rows = stmt.query_map(params![account.0, mailbox], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// How many messages of one folder are here, shown or not.
     pub fn messages_in(&self, account: AccountId, mailbox: &str) -> Result<u32> {
         Ok(self.conn.query_row(
@@ -214,18 +242,78 @@ impl Store {
             .find(|f| f.mailbox == mailbox))
     }
 
-    /// [`Store::account_folder`]'s subfolders, at any depth: the folders
-    /// under it in tree order, down to the next one as high as it.
+    /// [`Store::account_folder`]'s subfolders, at any depth, among every
+    /// folder the server listed (those with a job too): by server name
+    /// and delimiter on IMAP, by path ("Clients/Acme") on JMAP.
     fn subfolders(&self, account: AccountId, folder: &AccountFolder) -> Result<Vec<String>> {
-        let list = self.account_folders(account)?;
-        let Some(at) = list.iter().position(|f| f.mailbox == folder.mailbox) else {
-            return Ok(Vec::new());
+        let listed = self.server_folders(account)?;
+        let mut under: Vec<String> = if folder.delimiter.is_empty() {
+            match listed.iter().find(|(m, _)| *m == folder.mailbox) {
+                Some((_, path)) => {
+                    let prefix = format!("{path}/");
+                    listed
+                        .iter()
+                        .filter(|(_, n)| n.starts_with(&prefix))
+                        .map(|(m, _)| m.clone())
+                        .collect()
+                }
+                None => Vec::new(),
+            }
+        } else {
+            let prefix = format!("{}{}", folder.mailbox, folder.delimiter);
+            listed
+                .iter()
+                .filter(|(m, _)| m.starts_with(&prefix))
+                .map(|(m, _)| m.clone())
+                .collect()
         };
-        Ok(list[at + 1..]
-            .iter()
-            .take_while(|f| f.depth > folder.depth)
-            .map(|f| f.mailbox.clone())
-            .collect())
+        // Before the server listed it, what the tree shows.
+        if !listed.iter().any(|(m, _)| *m == folder.mailbox) {
+            let list = self.account_folders(account)?;
+            if let Some(at) = list.iter().position(|f| f.mailbox == folder.mailbox) {
+                under = list[at + 1..]
+                    .iter()
+                    .take_while(|f| f.depth > folder.depth)
+                    .map(|f| f.mailbox.clone())
+                    .collect();
+            }
+        }
+        Ok(under)
+    }
+
+    /// The inbox and the folders with a job (the server's or the
+    /// person's), by server name.
+    fn special_mailboxes(&self, account: AccountId) -> Result<Vec<String>> {
+        let mut out = vec!["INBOX".to_owned()];
+        out.extend(self.roles(account)?.into_iter().filter_map(|r| r.mailbox));
+        out.extend(self.folder_mailbox(account, crate::Folder::Snoozed)?);
+        out.extend(self.trash_mailbox(account)?);
+        out.extend(self.junk_mailbox(account)?);
+        Ok(out)
+    }
+
+    /// The inbox or a folder with a job inside a folder (or the folder
+    /// itself): deleting it would delete that too, so it isn't offered.
+    /// Returns the name people read for it.
+    pub fn protected_inside(&self, account: AccountId, mailbox: &str) -> Result<Option<String>> {
+        let Some(folder) = self.account_folder(account, mailbox)? else {
+            return Ok(None);
+        };
+        let special = self.special_mailboxes(account)?;
+        let mut gone = self.subfolders(account, &folder)?;
+        gone.push(folder.mailbox.clone());
+        let Some(hit) = gone
+            .into_iter()
+            .find(|m| special.iter().any(|s| s.eq_ignore_ascii_case(m)))
+        else {
+            return Ok(None);
+        };
+        let shown = self
+            .server_folders(account)?
+            .into_iter()
+            .find(|(m, _)| *m == hit)
+            .map(|(_, n)| n);
+        Ok(Some(shown.unwrap_or(hit)))
     }
 
     /// Renames one of the account's own folders here and queues it for
@@ -316,6 +404,26 @@ impl Store {
         to: &str,
         delimiter: &str,
     ) -> Result<()> {
+        // The server's folder list follows, so what is inside it is
+        // still known.
+        let listed = self.server_folders(account)?;
+        if !listed.is_empty() {
+            let moved: Vec<(String, String)> = listed
+                .into_iter()
+                .map(|(m, n)| {
+                    let inside = m == from
+                        || (!delimiter.is_empty()
+                            && m.strip_prefix(from)
+                                .is_some_and(|rest| rest.starts_with(delimiter)));
+                    if inside {
+                        (format!("{to}{}", &m[from.len()..]), n)
+                    } else {
+                        (m, n)
+                    }
+                })
+                .collect();
+            self.set_server_folders(account, &moved)?;
+        }
         // `from`, and `from` + delimiter + anything when there is one.
         let under = |column: &str| {
             if delimiter.is_empty() {
@@ -379,10 +487,14 @@ impl Store {
     /// Deletes one of the account's own folders here (with its
     /// subfolders) and queues it for the server, where its mail goes to
     /// Trash first. Its mail is hidden meanwhile. Returns how many emails
-    /// go to Trash, as far as this device knows.
-    pub fn delete_folder(&self, account: AccountId, mailbox: &str) -> Result<u32> {
+    /// go to Trash, as far as this device knows; None, and nothing done,
+    /// for a folder that is or holds the inbox or a folder with a job.
+    pub fn delete_folder(&self, account: AccountId, mailbox: &str) -> Result<Option<u32>> {
+        if self.protected_inside(account, mailbox)?.is_some() {
+            return Ok(None);
+        }
         let Some(folder) = self.account_folder(account, mailbox)? else {
-            return Ok(0);
+            return Ok(Some(0));
         };
         let mut gone = self.subfolders(account, &folder)?;
         gone.push(folder.mailbox.clone());
@@ -400,7 +512,7 @@ impl Store {
         }
         self.queue_change(account, mailbox, 0, Change::Folder(FolderChange::Delete))?;
         tx.commit()?;
-        Ok(moved)
+        Ok(Some(moved))
     }
 
     /// The emails a folder and its subfolders hold, as far as the server
@@ -413,9 +525,8 @@ impl Store {
         let subfolders = self.subfolders(account, &folder)?;
         let mut total = folder.total.max(self.messages_in(account, mailbox)?);
         for m in &subfolders {
-            if let Some(f) = self.account_folder(account, m)? {
-                total += f.total.max(self.messages_in(account, m)?);
-            }
+            let listed = self.account_folder(account, m)?.map_or(0, |f| f.total);
+            total += listed.max(self.messages_in(account, m)?);
         }
         Ok((total, subfolders.len() as u32))
     }
@@ -465,16 +576,43 @@ impl Store {
     /// or with None goes back to what the server says. It wins over the
     /// server's marks and the usual names from the next look at the
     /// folders on.
+    ///
+    /// Refused (false, nothing kept) for the inbox, and for a folder that
+    /// already does another job when either job is Trash or spam: mail
+    /// deleted or reported there would be deleted for good, or vanish.
     pub fn set_role_choice(
         &self,
         account: AccountId,
         role: FolderRole,
         mailbox: Option<&str>,
-    ) -> Result<()> {
-        match mailbox {
-            Some(m) => self.set_setting(&role_key(account, role), m),
-            None => self.remove_setting(&role_key(account, role)),
+    ) -> Result<bool> {
+        let Some(m) = mailbox else {
+            self.remove_setting(&role_key(account, role))?;
+            return Ok(true);
+        };
+        if !self.role_choice_allowed(account, role, m)? {
+            return Ok(false);
         }
+        self.set_setting(&role_key(account, role), m)?;
+        Ok(true)
+    }
+
+    /// Whether `mailbox` may do `role`'s job (see [`Store::set_role_choice`]).
+    pub fn role_choice_allowed(
+        &self,
+        account: AccountId,
+        role: FolderRole,
+        mailbox: &str,
+    ) -> Result<bool> {
+        if mailbox.eq_ignore_ascii_case("INBOX") {
+            return Ok(false);
+        }
+        let deleting = |r: FolderRole| matches!(r, FolderRole::Trash | FolderRole::Junk);
+        Ok(!self.roles(account)?.into_iter().any(|r| {
+            r.role != role
+                && r.mailbox.as_deref() == Some(mailbox)
+                && (deleting(role) || deleting(r.role))
+        }))
     }
 
     /// Which folder does each job the person can choose, as the last look
@@ -886,5 +1024,89 @@ mod tests {
         };
         store.set_quota(a, Some(q)).unwrap();
         assert_eq!(store.quota(a).unwrap(), Some(q));
+    }
+
+    #[test]
+    fn a_folder_with_a_job_is_never_given_another_that_deletes() {
+        let store = Store::open_in_memory().unwrap();
+        let a = account(&store);
+        store.set_folder_role(a, Folder::Sent, "Sent").unwrap();
+        store.set_trash_mailbox(a, Some("Trash")).unwrap();
+        store.set_junk_mailbox(a, Some("Spam")).unwrap();
+        // Not the inbox, for any job.
+        assert!(!store
+            .set_role_choice(a, FolderRole::Archive, Some("INBOX"))
+            .unwrap());
+        // Not Sent as Trash, not Trash as spam, not Spam as Archive.
+        assert!(!store
+            .set_role_choice(a, FolderRole::Trash, Some("Sent"))
+            .unwrap());
+        assert!(!store
+            .set_role_choice(a, FolderRole::Junk, Some("Trash"))
+            .unwrap());
+        assert!(!store
+            .set_role_choice(a, FolderRole::Archive, Some("Spam"))
+            .unwrap());
+        assert!(store.role_choices(a).unwrap().is_empty());
+        // Two jobs that don't delete may share a folder.
+        assert!(store
+            .set_role_choice(a, FolderRole::Archive, Some("Sent"))
+            .unwrap());
+        assert!(store
+            .set_role_choice(a, FolderRole::Trash, Some("Papierkorb"))
+            .unwrap());
+    }
+
+    #[test]
+    fn a_folder_holding_a_folder_with_a_job_is_not_deleted() {
+        let store = Store::open_in_memory().unwrap();
+        let a = account(&store);
+        store
+            .set_account_folders(a, &[folder("Clients", 0), folder("Clients/Acme", 1)])
+            .unwrap();
+        store
+            .set_server_folders(
+                a,
+                &[
+                    ("Clients".into(), "Clients".into()),
+                    ("Clients/Acme".into(), "Clients/Acme".into()),
+                    ("Clients/Bin".into(), "Clients/Bin".into()),
+                ],
+            )
+            .unwrap();
+        store.set_trash_mailbox(a, Some("Clients/Bin")).unwrap();
+        // Two subfolders, the one with a job too.
+        assert_eq!(store.folder_contents(a, "Clients").unwrap().1, 2);
+        assert_eq!(
+            store.protected_inside(a, "Clients").unwrap().as_deref(),
+            Some("Clients/Bin")
+        );
+        assert_eq!(store.delete_folder(a, "Clients").unwrap(), None);
+        assert_eq!(store.account_folders(a).unwrap().len(), 2);
+        assert!(store.pending_changes(a).unwrap().is_empty());
+        assert!(store.protected_inside(a, "Clients/Acme").unwrap().is_none());
+    }
+
+    #[test]
+    fn empty_offline_takes_only_what_shows_with_nothing_waiting() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = account(&store);
+        store
+            .upsert_messages(&[
+                msg(a, "Trash", 1, 100),
+                msg(a, "Trash", 2, 200),
+                msg(a, "Trash", 3, 300),
+            ])
+            .unwrap();
+        store.set_hidden(a, "Trash", 1, true).unwrap();
+        store
+            .queue_change(a, "Trash", 1, Change::MoveTo("INBOX".into()))
+            .unwrap();
+        store.queue_flags(&[(a, "Trash".into(), 2)], true).unwrap();
+        assert_eq!(store.erasable_uids(a, "Trash").unwrap(), [3]);
+        assert_eq!(
+            store.pending_uids(a, "Trash").unwrap(),
+            [1, 2].into_iter().collect()
+        );
     }
 }

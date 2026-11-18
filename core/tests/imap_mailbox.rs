@@ -36,6 +36,9 @@ struct State {
     commands: Vec<String>,
     /// Answers to give a verb before it works, in turn.
     refuse: BTreeMap<&'static str, VecDeque<&'static str>>,
+    /// A server without UIDPLUS: only a plain EXPUNGE, of everything
+    /// marked `\Deleted`.
+    no_uidplus: bool,
 }
 
 impl State {
@@ -186,9 +189,13 @@ fn answer(
     let missing = format!("{tag} NO [NONEXISTENT] No such folder\r\n");
     let arg = |i: usize| args.get(i).cloned().unwrap_or_default();
     match verb {
+        "CAPABILITY" if s.no_uidplus => {
+            format!("* CAPABILITY IMAP4rev1 MOVE QUOTA\r\n{tag} OK done\r\n")
+        }
         "CAPABILITY" => {
             format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS QUOTA\r\n{tag} OK done\r\n")
         }
+        "UID EXPUNGE" if s.no_uidplus => format!("{tag} BAD Unknown command\r\n"),
         "LOGIN" => format!("{tag} OK logged in\r\n"),
         "LOGOUT" => format!("* BYE\r\n{tag} OK bye\r\n"),
         "LIST" | "LSUB" => {
@@ -233,12 +240,19 @@ fn answer(
                 .filter(|f| !f.contains("\\Seen"))
                 .count();
             format!(
-                "* STATUS \"{name}\" (MESSAGES {} UNSEEN {unseen})\r\n{ok}",
-                m.messages.len()
+                "* STATUS \"{name}\" (MESSAGES {} UIDNEXT {} UNSEEN {unseen})\r\n{ok}",
+                m.messages.len(),
+                m.next_uid
             )
         }
         "UID SEARCH" => {
-            let have = s.uids(selected.as_deref().unwrap_or("INBOX"));
+            let name = selected.clone().unwrap_or_else(|| "INBOX".into());
+            let deleted = args.iter().any(|a| a.eq_ignore_ascii_case("DELETED"));
+            let have: Vec<u32> = s
+                .uids(&name)
+                .into_iter()
+                .filter(|u| !deleted || s.flags(&name, *u).contains("\\Deleted"))
+                .collect();
             let list: Vec<String> = have.iter().map(u32::to_string).collect();
             format!("* SEARCH {}\r\n{ok}", list.join(" "))
         }
@@ -443,8 +457,9 @@ async fn delete_in_trash_and_spam_is_for_good_and_nothing_comes_back() {
     }
     stored(&store, a, "Trash", 1, &[1, 2]);
     stored(&store, a, "Spam", 1, &[1]);
-    // A Delete queued from Trash as a move (an older app, a rule) is a
-    // deletion too: Trash to Trash would copy it in again.
+    // A move to Trash of mail already in Trash (queued by an older app, a
+    // rule) does nothing: neither a copy under a new number nor a
+    // deletion, which is only ever asked for by name.
     let Remote::Imap(mut conn) = remote else {
         unreachable!()
     };
@@ -452,16 +467,21 @@ async fn delete_in_trash_and_spam_is_for_good_and_nothing_comes_back() {
         .await
         .unwrap();
     let mut remote = Remote::Imap(conn);
-    // Delete in spam, queued.
-    store.lock().unwrap().queue_erase(a, "Spam", &[1]).unwrap();
+    // Delete in Trash and in spam, queued.
+    {
+        let s = store.lock().unwrap();
+        s.queue_erase(a, "Trash", &[2]).unwrap();
+        s.queue_erase(a, "Spam", &[1]).unwrap();
+    }
     assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
     let s = state.lock().unwrap();
-    assert_eq!(s.uids("Trash"), [2]);
+    assert_eq!(s.uids("Trash"), [1]);
     assert_eq!(s.mailboxes["Trash"].next_uid, 3, "nothing copied in");
     assert!(s.uids("Spam").is_empty());
     assert_eq!(s.sent("UID MOVE") + s.sent("UID COPY"), 0);
     let st = store.lock().unwrap();
-    assert!(st.message(a, "Trash", 1).unwrap().is_none());
+    assert!(st.message(a, "Trash", 1).unwrap().is_some());
+    assert!(st.message(a, "Trash", 2).unwrap().is_none());
     assert!(st.message(a, "Spam", 1).unwrap().is_none());
     assert!(st.pending_changes(a).unwrap().is_empty());
 }
@@ -473,9 +493,13 @@ async fn empty_trash_deletes_all_of_it() {
     let (store, a) = store_with_account();
     stored(&store, a, "Trash", 1, &[1]);
     let mut remote = connect(&cfg).await;
-    assert_eq!(remote.count("Trash").await.unwrap(), 2);
+    let (n, upto) = remote.count("Trash").await.unwrap();
+    assert_eq!(n, 2);
     // One not here yet goes too.
-    assert_eq!(remote.empty(&store, a, "Trash").await.unwrap(), 2);
+    assert_eq!(
+        remote.empty(&store, a, "Trash", Some(&upto)).await.unwrap(),
+        2
+    );
     assert!(state.lock().unwrap().uids("Trash").is_empty());
     assert_eq!(store.lock().unwrap().messages_in(a, "Trash").unwrap(), 0);
 }
@@ -734,4 +758,197 @@ async fn the_server_says_how_full_the_mailbox_is() {
         remote.quota().await.unwrap(),
         Some((900 * 1024, 1000 * 1024))
     );
+}
+
+/// A message put back from Trash while offline, then Trash emptied
+/// offline: Empty only takes what is shown with nothing waiting, and even
+/// an erase queued for it never runs before its move (review finding 1).
+#[tokio::test]
+async fn emptying_trash_offline_spares_what_was_put_back() {
+    let state = mailbox();
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    stored(&store, a, "Trash", 1, &[1, 2]);
+    {
+        let s = store.lock().unwrap();
+        // Put back to the inbox: hidden here, its move waiting.
+        s.set_hidden(a, "Trash", 1, true).unwrap();
+        s.queue_change(a, "Trash", 1, Change::MoveTo("INBOX".into()))
+            .unwrap();
+        assert_eq!(s.erasable_uids(a, "Trash").unwrap(), [2]);
+        // An older app's queue: an erase for both, after the move.
+        s.queue_erase(a, "Trash", &[1, 2]).unwrap();
+    }
+    let mut remote = connect(&cfg).await;
+    assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
+    let s = state.lock().unwrap();
+    assert!(s.uids("Trash").is_empty());
+    // Back in the inbox, not deleted.
+    assert_eq!(s.uids("INBOX").len(), 4);
+    assert!(store.lock().unwrap().pending_changes(a).unwrap().is_empty());
+}
+
+/// Empty keeps to what was there when the person read the count: mail
+/// that came after stays, and so does a message whose move out of Trash
+/// is still waiting (review finding 2).
+#[tokio::test]
+async fn empty_trash_spares_new_mail_and_waiting_changes() {
+    let state = mailbox();
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    stored(&store, a, "Trash", 1, &[1, 2]);
+    let mut remote = connect(&cfg).await;
+    let (n, upto) = remote.count("Trash").await.unwrap();
+    assert_eq!(n, 2);
+    {
+        // Deleted elsewhere after the count: Trash gets uid 3.
+        let mut s = state.lock().unwrap();
+        let t = s.mailboxes.get_mut("Trash").unwrap();
+        t.messages.insert(3, Default::default());
+        t.next_uid = 4;
+    }
+    {
+        // Put back to the inbox here, not sent yet.
+        let s = store.lock().unwrap();
+        s.set_hidden(a, "Trash", 1, true).unwrap();
+        s.queue_change(a, "Trash", 1, Change::MoveTo("INBOX".into()))
+            .unwrap();
+    }
+    assert_eq!(
+        remote.empty(&store, a, "Trash", Some(&upto)).await.unwrap(),
+        1
+    );
+    assert_eq!(state.lock().unwrap().uids("Trash"), [1, 3]);
+    // The move then goes, as the bridge sends it first.
+    remote.send_pending(&store, a).await.unwrap();
+    let s = state.lock().unwrap();
+    assert_eq!(s.uids("Trash"), [3]);
+    assert_eq!(s.uids("INBOX").len(), 4);
+}
+
+/// A folder that holds the folder chosen as Trash is not deleted: not
+/// here, and not on the server if the change was queued anyway (review
+/// finding 3). Subfolders are counted from every folder listed.
+#[tokio::test]
+async fn a_folder_holding_trash_is_not_deleted() {
+    let state = mailbox();
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    store
+        .lock()
+        .unwrap()
+        .set_role_choice(a, FolderRole::Trash, Some("Projects/2026"))
+        .unwrap();
+    let mut remote = connect(&cfg).await;
+    remote.sync_folders(&store, a).await.unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(
+            s.trash_mailbox(a).unwrap().as_deref(),
+            Some("Projects/2026")
+        );
+        // Its one subfolder is counted though it isn't one of the
+        // person's own folders now.
+        assert_eq!(s.folder_contents(a, "Projects").unwrap().1, 1);
+        assert_eq!(
+            s.protected_inside(a, "Projects").unwrap().as_deref(),
+            Some("Projects/2026")
+        );
+        assert_eq!(s.delete_folder(a, "Projects").unwrap(), None);
+        assert!(s.pending_changes(a).unwrap().is_empty());
+        // Queued anyway (an older app): the server refuses it for good.
+        s.queue_change(a, "Projects", 0, Change::Folder(FolderChange::Delete))
+            .unwrap();
+    }
+    for _ in 0..piuma_core::pending::REFUSED_ATTEMPTS {
+        remote.send_pending(&store, a).await.unwrap();
+        store.lock().unwrap().retry_changes_now(a).unwrap();
+    }
+    let s = state.lock().unwrap();
+    assert!(s.mailboxes.contains_key("Projects"));
+    assert!(s.mailboxes.contains_key("Projects/2026"));
+    assert_eq!(s.sent("DELETE"), 0);
+    assert!(store.lock().unwrap().pending_changes(a).unwrap().is_empty());
+}
+
+/// Without UIDPLUS only a plain EXPUNGE is there: a message another app
+/// marked `\Deleted` keeps its mark and stays (review finding 7).
+#[tokio::test]
+async fn without_uidplus_other_deleted_mail_stays() {
+    let state = mailbox();
+    {
+        let mut s = state.lock().unwrap();
+        s.no_uidplus = true;
+        s.mailboxes
+            .get_mut("Trash")
+            .unwrap()
+            .messages
+            .get_mut(&2)
+            .unwrap()
+            .insert("\\Deleted".into());
+    }
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    stored(&store, a, "Trash", 1, &[1, 2]);
+    store.lock().unwrap().queue_erase(a, "Trash", &[1]).unwrap();
+    let mut remote = connect(&cfg).await;
+    assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
+    let s = state.lock().unwrap();
+    assert_eq!(s.uids("Trash"), [2]);
+    assert!(s.flags("Trash", 2).contains("\\Deleted"));
+    assert_eq!(s.sent("UID EXPUNGE"), 0);
+    assert_eq!(s.sent("EXPUNGE"), 1);
+}
+
+/// A move to Trash queued from a folder that was then chosen as Trash is
+/// dropped, its message shown again: it never becomes a deletion (review
+/// finding 8).
+#[tokio::test]
+async fn a_move_to_a_folder_now_trash_is_dropped() {
+    let state = mailbox();
+    {
+        let mut s = state.lock().unwrap();
+        s.add("Papierkorb", None, true, 1);
+    }
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    stored(&store, a, "Papierkorb", 1, &[1]);
+    {
+        let s = store.lock().unwrap();
+        s.set_hidden(a, "Papierkorb", 1, true).unwrap();
+        s.queue_change(a, "Papierkorb", 1, Change::Move(FolderRole::Trash))
+            .unwrap();
+        s.set_role_choice(a, FolderRole::Trash, Some("Papierkorb"))
+            .unwrap();
+    }
+    let mut remote = connect(&cfg).await;
+    remote.sync_folders(&store, a).await.unwrap();
+    assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
+    let s = state.lock().unwrap();
+    assert_eq!(s.uids("Papierkorb"), [1]);
+    for verb in ["UID STORE", "UID EXPUNGE", "EXPUNGE", "UID MOVE"] {
+        assert_eq!(s.sent(verb), 0, "{verb}: {:?}", s.commands);
+    }
+    let st = store.lock().unwrap();
+    assert!(st.pending_changes(a).unwrap().is_empty());
+    assert_eq!(st.messages_in(a, "Papierkorb").unwrap(), 1);
+}
+
+/// A hidden folder renamed stays hidden (review finding 9).
+#[tokio::test]
+async fn a_hidden_folder_renamed_stays_hidden() {
+    let state = mailbox();
+    let cfg = serve(state.clone()).await;
+    let (store, a) = store_with_account();
+    let mut remote = connect(&cfg).await;
+    remote.sync_folders(&store, a).await.unwrap();
+    store
+        .lock()
+        .unwrap()
+        .rename_folder(a, "Old", "Older")
+        .unwrap();
+    assert_eq!(remote.send_pending(&store, a).await.unwrap(), 0);
+    let s = state.lock().unwrap();
+    assert!(!s.mailboxes["Older"].subscribed);
+    assert_eq!(s.sent("SUBSCRIBE"), 0);
 }
