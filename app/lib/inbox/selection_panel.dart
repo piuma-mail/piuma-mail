@@ -22,7 +22,16 @@ class SelectionPanel extends StatelessWidget {
     this.onLabel,
     this.onSnooze,
     required this.onSeen,
+    this.onStar,
+    this.onCopy,
   });
+
+  /// Stars them all, or takes the stars off when all are starred.
+  final ValueChanged<bool>? onStar;
+
+  /// "Copy to…", opened under its button; null when the rows are of
+  /// several accounts.
+  final ValueChanged<Rect>? onCopy;
 
   /// "Find or create a label", opened under its button.
   final ValueChanged<Rect>? onLabel;
@@ -54,6 +63,7 @@ class SelectionPanel extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final count = rows.length;
     final allRead = rows.every((r) => r.seen);
+    final allStarred = rows.every((r) => r.starred);
     final lead = rows.first;
     return ColoredBox(
       color: c.bg,
@@ -126,6 +136,23 @@ class SelectionPanel extends StatelessWidget {
                             move(box.localToGlobal(Offset.zero) & box.size);
                           },
                         ),
+                      ),
+                    if (onCopy case final copy?)
+                      Builder(
+                        builder: (button) => _ActionButton(
+                          icon: PiumaIcon.copy,
+                          label: l.copyTo,
+                          onTap: () {
+                            final box = button.findRenderObject()! as RenderBox;
+                            copy(box.localToGlobal(Offset.zero) & box.size);
+                          },
+                        ),
+                      ),
+                    if (onStar case final star?)
+                      _ActionButton(
+                        icon: PiumaIcon.star,
+                        label: allStarred ? l.unstar : l.star,
+                        onTap: () => star(!allStarred),
                       ),
                     if (onLabel case final label?)
                       Builder(

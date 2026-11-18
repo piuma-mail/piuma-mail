@@ -1,11 +1,26 @@
 //! Sender pictures for companies: the verified logo a domain publishes
 //! (BIMI), or its website's icon, as in `PicturesToApprove`.
 //!
-//! A domain is looked up once and kept on the device; opening an email
-//! never fetches anything. The requests say as little as possible: no
-//! cookies, no referrer, a generic user agent. People's own addresses at
-//! mail providers (gmail.com, libero.it…) never get a picture from here:
-//! the provider's logo would stand for every one of them.
+//! A logo stands for one message, not for a domain: it shows only beside
+//! a message whose DMARC check passed (see `sender_auth::Checked`), from
+//! a domain whose DMARC policy rejects or quarantines what fails, and it
+//! is looked up only once such a message has been opened. The lookup is
+//! on the organization's domain, never the full sender domain, so a
+//! sender can't give each recipient a subdomain of their own and learn
+//! from the DNS query when that person's mail was shown.
+//!
+//! No Verified Mark Certificate is required: checking one needs the mark
+//! authorities' roots and their logotype extension, and what it adds (that
+//! a trademark office registered the picture) does not change what the
+//! logo can claim here, which is only "this message really comes from
+//! this domain". A look-alike domain is caught by the impostor check,
+//! and a message it flags never gets a logo.
+//!
+//! A domain is looked up once and kept on the device. The requests say as
+//! little as possible: no cookies, no referrer, a generic user agent.
+//! People's own addresses at mail providers (gmail.com, libero.it…) never
+//! get a picture from here: the provider's logo would stand for every one
+//! of them.
 
 use std::io::Cursor;
 use std::time::Duration;
@@ -277,12 +292,13 @@ async fn get(client: &reqwest::Client, url: url::Url, max: usize) -> Option<Vec<
     Some(bytes)
 }
 
-async fn bimi_record(domain: &str) -> Option<String> {
+/// The first TXT record at `name` that starts with `prefix`.
+async fn txt_record(name: &str, prefix: &str) -> Option<String> {
     let resolver = hickory_resolver::Resolver::builder_tokio()
         .ok()?
         .build()
         .ok()?;
-    let lookup = resolver.txt_lookup(format!("default._bimi.{domain}."));
+    let lookup = resolver.txt_lookup(format!("{name}."));
     let found = tokio::time::timeout(Duration::from_secs(4), lookup)
         .await
         .ok()?
@@ -294,21 +310,52 @@ async fn bimi_record(domain: &str) -> Option<String> {
                 .iter()
                 .map(|d| String::from_utf8_lossy(d).into_owned())
                 .collect();
-            text.trim_start().starts_with("v=BIMI1").then_some(text)
+            text.trim_start().starts_with(prefix).then_some(text)
         }
         _ => None,
     })
 }
 
-/// The domain's verified logo, from its BIMI record or its parent's.
+/// Whether a DMARC record (`v=DMARC1; p=reject; …`) keeps mail that fails
+/// it from being delivered as is: `p` (or `sp`, for a subdomain's mail)
+/// is quarantine or reject, for all of it (`pct` 100 or unset). BIMI asks
+/// the same before a logo is shown.
+pub fn dmarc_enforced(record: &str, subdomain: bool) -> bool {
+    let mut parts = record.split(';').map(str::trim);
+    if !parts
+        .next()
+        .is_some_and(|v| v.replace(' ', "").eq_ignore_ascii_case("v=DMARC1"))
+    {
+        return false;
+    }
+    let (mut p, mut sp, mut pct) = (None, None, 100u32);
+    for part in parts {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        let v = v.trim().to_ascii_lowercase();
+        match k.trim().to_ascii_lowercase().as_str() {
+            "p" => p = Some(v),
+            "sp" => sp = Some(v),
+            "pct" => pct = v.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    let policy = if subdomain { sp.or(p) } else { p };
+    pct == 100 && matches!(policy.as_deref(), Some("quarantine" | "reject"))
+}
+
+/// The logo of the organization `domain` belongs to, from its BIMI record,
+/// when its DMARC policy is enforced for `domain`'s mail.
 pub async fn logo(domain: &str) -> Option<Vec<u8>> {
     let client = client()?;
     let org = organizational(domain);
-    let mut record = bimi_record(domain).await;
-    if record.is_none() && org != domain {
-        record = bimi_record(&org).await;
+    let dmarc = txt_record(&format!("_dmarc.{org}"), "v=DMARC1").await?;
+    if !dmarc_enforced(&dmarc, org != domain) {
+        return None;
     }
-    let url = url::Url::parse(&bimi_logo(&record?)?).ok()?;
+    let record = txt_record(&format!("default._bimi.{org}"), "v=BIMI1").await?;
+    let url = url::Url::parse(&bimi_logo(&record)?).ok()?;
     let svg = get(&client, url, MAX_SVG).await?;
     svg_to_png(&svg)
 }
@@ -351,17 +398,8 @@ pub async fn icon(domain: &str) -> Option<Vec<u8>> {
     None
 }
 
-/// Looks the domain up: its logo when its mail was verified, else its
-/// website's icon when those are on.
-pub async fn look_up(domain: &str, verified: bool, icons: bool) -> Picture {
-    if verified {
-        if let Some(png) = logo(domain).await {
-            return Picture {
-                kind: Kind::Logo,
-                png,
-            };
-        }
-    }
+/// Looks the domain up for its website's icon (when those are on).
+pub async fn look_up_icon(domain: &str, icons: bool) -> Picture {
     if icons {
         if let Some(png) = icon(domain).await {
             return Picture {
@@ -371,6 +409,22 @@ pub async fn look_up(domain: &str, verified: bool, icons: bool) -> Picture {
         }
     }
     Picture::none()
+}
+
+/// Looks the organization of `domain` up for its logo (see [`logo`]).
+pub async fn look_up_logo(domain: &str) -> Picture {
+    match logo(domain).await {
+        Some(png) => Picture {
+            kind: Kind::Logo,
+            png,
+        },
+        None => Picture::none(),
+    }
+}
+
+/// The key a logo is kept under: one per organization, apart from icons.
+pub fn logo_key(domain: &str) -> String {
+    format!("bimi:{}", organizational(domain))
 }
 
 #[cfg(test)]
@@ -408,6 +462,25 @@ mod tests {
         assert_eq!(bimi_logo("v=BIMI1; l=http://example.com/logo.svg"), None);
         assert_eq!(bimi_logo("v=BIMI1; l="), None);
         assert_eq!(bimi_logo("v=spf1 include:x"), None);
+    }
+
+    #[test]
+    fn a_logo_needs_an_enforced_dmarc_policy() {
+        assert!(dmarc_enforced(
+            "v=DMARC1; p=reject; rua=mailto:d@shop.it",
+            false
+        ));
+        assert!(dmarc_enforced("v=DMARC1; p=quarantine", false));
+        assert!(!dmarc_enforced("v=DMARC1; p=none", false));
+        assert!(!dmarc_enforced("v=DMARC1; p=reject; pct=50", false));
+        assert!(!dmarc_enforced("v=spf1 -all", false));
+        // A subdomain follows sp when there is one.
+        assert!(!dmarc_enforced("v=DMARC1; p=reject; sp=none", true));
+        assert!(dmarc_enforced("v=DMARC1; p=reject; sp=none", false));
+        assert!(dmarc_enforced("v=DMARC1; p=none; sp=reject", true));
+        // One logo per organization, whatever subdomain sent.
+        assert_eq!(logo_key("x7f3.news.shop.it"), "bimi:shop.it");
+        assert_eq!(logo_key("shop.it"), "bimi:shop.it");
     }
 
     #[test]

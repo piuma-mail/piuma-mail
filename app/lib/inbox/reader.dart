@@ -32,6 +32,7 @@ import 'original_view.dart';
 import 'print.dart';
 import 'translate_parts.dart';
 import 'message_list.dart' show initials;
+import '../widgets/link_target.dart';
 import 'risky_file.dart';
 import 'sender_warning.dart';
 
@@ -68,8 +69,17 @@ class Reader extends StatefulWidget {
     this.onReportSpam,
     this.onNotSpam,
     this.onSide,
+    this.onStar,
+    this.onCopy,
     this.printer = printEmail,
   });
+
+  /// Star, or Remove star once starred: a button in the desktop's bar,
+  /// and in the phone's and tablet's More.
+  final void Function(MailRow row, bool starred)? onStar;
+
+  /// "Copy to…" in the More menus, with where More is on the desktop.
+  final void Function(MailRow row, Rect? anchor)? onCopy;
 
   /// "Mark as unread" (or read) in the desktop's More menu, and ⇧⌘U
   /// (Ctrl Shift U off Apple) while the message is shown.
@@ -460,6 +470,12 @@ class _ReaderState extends State<Reader> {
         ? null
         : (Rect? at) => widget.onSnooze!(row, at);
     final onWake = widget.onWake == null ? null : () => widget.onWake!(row);
+    final onStar = widget.onStar == null || row.folder == MailFolder.drafts
+        ? null
+        : () => widget.onStar!(row, !row.starred);
+    final onCopy = widget.onCopy == null || row.folder == MailFolder.drafts
+        ? null
+        : (Rect? at) => widget.onCopy!(row, at);
     final onReply = widget.onReply == null
         ? null
         : () async {
@@ -534,6 +550,9 @@ class _ReaderState extends State<Reader> {
             onNotSpam: onNotSpam,
             onSide: onSide,
             sideLabel: sideLabel,
+            onStar: onStar,
+            starred: row.starred,
+            onCopy: onCopy == null ? null : () => onCopy(null),
           )
         else if (tablet && widget.onBack != null)
           _PanelTop(onClose: widget.onBack!)
@@ -567,108 +586,114 @@ class _ReaderState extends State<Reader> {
             onSide: onSide,
             sideLabel: sideLabel,
             onUnsubscribe: onUnsubscribe,
+            onStar: onStar,
+            starred: row.starred,
+            onCopy: onCopy,
           ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = !phone && !tablet && constraints.maxWidth >= 1300;
-              return SingleChildScrollView(
-                key: ValueKey(row.key),
-                child: Align(
-                  alignment: wide ? Alignment.topCenter : Alignment.topLeft,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: wide
-                          ? 920
-                          : tablet
-                          ? 680
-                          : 780,
-                    ),
-                    child: Padding(
-                      padding: phone
-                          ? const EdgeInsets.fromLTRB(20, 4, 20, 24)
-                          // Room under the text for the floating bar; in the
-                          // upright panel, the panel's own margins.
-                          : tablet && widget.onBack != null
-                          ? const EdgeInsets.fromLTRB(32, 18, 32, 110)
-                          : tablet
-                          ? const EdgeInsets.fromLTRB(48, 36, 48, 120)
-                          : const EdgeInsets.fromLTRB(48, 32, 48, 28),
-                      child: PiumaEnter(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SelectableText(
-                              _subject ??
-                                  (row.subject.isEmpty
-                                      ? l.noSubject
-                                      : row.subject),
-                              style: TextStyle(
-                                fontSize: phone ? 26 : 30,
-                                height: 1.15,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: phone ? -0.65 : -0.9,
-                                color: c.fg,
-                              ),
-                            ),
-                            // The email's labels and "+ Label", as on
-                            // `LabelsToApprove`; the phone has Label… in More.
-                            if (!phone && row.folder != MailFolder.drafts)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 14),
-                                child: ReaderLabels(
-                                  source: widget.source,
-                                  row: row,
+          // The real address of the link under the pointer, at the foot.
+          child: LinkTarget(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = !phone && !tablet && constraints.maxWidth >= 1300;
+                return SingleChildScrollView(
+                  key: ValueKey(row.key),
+                  child: Align(
+                    alignment: wide ? Alignment.topCenter : Alignment.topLeft,
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: wide
+                            ? 920
+                            : tablet
+                            ? 680
+                            : 780,
+                      ),
+                      child: Padding(
+                        padding: phone
+                            ? const EdgeInsets.fromLTRB(20, 4, 20, 24)
+                            // Room under the text for the floating bar; in the
+                            // upright panel, the panel's own margins.
+                            : tablet && widget.onBack != null
+                            ? const EdgeInsets.fromLTRB(32, 18, 32, 110)
+                            : tablet
+                            ? const EdgeInsets.fromLTRB(48, 36, 48, 120)
+                            : const EdgeInsets.fromLTRB(48, 32, 48, 28),
+                        child: PiumaEnter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SelectableText(
+                                _subject ??
+                                    (row.subject.isEmpty
+                                        ? l.noSubject
+                                        : row.subject),
+                                style: TextStyle(
+                                  fontSize: phone ? 26 : 30,
+                                  height: 1.15,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: phone ? -0.65 : -0.9,
+                                  color: c.fg,
                                 ),
                               ),
-                            if (_thread case final thread?)
-                              FutureBuilder<List<MailRow>>(
-                                future: thread,
-                                builder: (context, snap) {
-                                  if (snap.hasError) {
-                                    return _single(row, account, locale);
-                                  }
-                                  // Read again as mail comes: the one shown
-                                  // stays until the new one is here.
-                                  final messages =
-                                      snap.data ??
-                                      (_threadShown?.$1 == row.key
-                                          ? _threadShown!.$2
-                                          : null);
-                                  if (messages == null) {
-                                    return const SizedBox.shrink();
-                                  }
-                                  _threadShown = (row.key, messages);
-                                  return _conversation(
-                                    messages,
-                                    account,
-                                    locale,
-                                  );
-                                },
-                              )
-                            else
-                              _single(row, account, locale),
-                            if (!phone && !tablet && _replies(row))
-                              Padding(
-                                padding: const EdgeInsets.only(top: 28),
-                                child: _QuickReply(
-                                  key: ValueKey(row.key),
-                                  controller: _replyText,
-                                  to: _firstName(row),
-                                  from: widget.replyFrom?.call(row),
-                                  machine: widget.source.noReplySender(row),
-                                  onSend: (text) => _quickReply(row, text),
-                                  onExpand: onReply,
+                              // The email's labels and "+ Label", as on
+                              // `LabelsToApprove`; the phone has Label… in More.
+                              if (!phone && row.folder != MailFolder.drafts)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 14),
+                                  child: ReaderLabels(
+                                    source: widget.source,
+                                    row: row,
+                                  ),
                                 ),
-                              ),
-                          ],
+                              if (_thread case final thread?)
+                                FutureBuilder<List<MailRow>>(
+                                  future: thread,
+                                  builder: (context, snap) {
+                                    if (snap.hasError) {
+                                      return _single(row, account, locale);
+                                    }
+                                    // Read again as mail comes: the one shown
+                                    // stays until the new one is here.
+                                    final messages =
+                                        snap.data ??
+                                        (_threadShown?.$1 == row.key
+                                            ? _threadShown!.$2
+                                            : null);
+                                    if (messages == null) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    _threadShown = (row.key, messages);
+                                    return _conversation(
+                                      messages,
+                                      account,
+                                      locale,
+                                    );
+                                  },
+                                )
+                              else
+                                _single(row, account, locale),
+                              if (!phone && !tablet && _replies(row))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 28),
+                                  child: _QuickReply(
+                                    key: ValueKey(row.key),
+                                    controller: _replyText,
+                                    to: _firstName(row),
+                                    from: widget.replyFrom?.call(row),
+                                    machine: widget.source.noReplySender(row),
+                                    onSend: (text) => _quickReply(row, text),
+                                    onExpand: onReply,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
         if (phone && _replies(row))
@@ -714,6 +739,9 @@ class _ReaderState extends State<Reader> {
               sideLabel: sideLabel,
               onUnsubscribe: onUnsubscribe,
               onDelete: onDelete,
+              onStar: onStar,
+              starred: row.starred,
+              onCopy: onCopy == null ? null : () => onCopy(null),
             ),
           ),
         ),
@@ -1231,14 +1259,15 @@ class _MessageViewState extends State<MessageView> {
 
   /// Tells the reader whether "Original layout" can show now.
   void _tellLayout(Readable r) => widget.onLayout?.call(
-    r.layout && originalPaper != null && _original == null
-        ? _showOriginal
-        : null,
+    r.layout && _paperWorks && _original == null ? _showOriginal : null,
   );
 
   /// An email built as a layout opens as it was sent
   /// (`ImagesToApprove`); the switch over it goes to the clean view.
-  bool _opensOriginal(Readable r) => r.layout && originalPaper != null;
+  bool _opensOriginal(Readable r) => r.layout && _paperWorks;
+
+  /// A web view to draw originals with, that hasn't failed to start.
+  bool get _paperWorks => originalPaper != null && !originalPaperFailed;
 
   /// The clean reading view in place of the original.
   void _showClean() {
@@ -1320,7 +1349,7 @@ class _MessageViewState extends State<MessageView> {
         widget.source.setBlockRemoteImages(block);
         change(() => current = current.copyWith(blockImages: block));
       },
-      onOriginal: r.layout && originalPaper != null
+      onOriginal: r.layout && _paperWorks
           ? () {
               setState(() {
                 _original = _originalOf(current);
@@ -1569,6 +1598,8 @@ class _MessageViewState extends State<MessageView> {
                 original: original,
                 phone: MediaQuery.sizeOf(context).width < phoneWidth,
                 onLink: (link, shown) => openLink(context, link, shown: shown),
+                // No web view on this device after all: the clean view.
+                onUnavailable: _showClean,
               )
             else ...[
               if (translation != null) ...[
@@ -1781,6 +1812,7 @@ class _ClosedMessage extends StatelessWidget {
               row.sender,
               size: avatar,
               email: row.fromEmail,
+              row: row,
               mine: name == AppLocalizations.of(context).youName,
             ),
             const SizedBox(width: 12),
@@ -2032,12 +2064,19 @@ class _Initials extends StatelessWidget {
     this.fontSize = 14,
     this.mine = false,
     this.email = '',
+    this.row,
+    this.opened = false,
   });
 
   final String name;
 
   /// Whose picture replaces the letters once it is on the device.
   final String email;
+
+  /// The message it stands beside, and whether it is the one being read
+  /// (see [SenderPicture]).
+  final MailRow? row;
+  final bool opened;
 
   /// Your own message: "ME", as in `FeatureThread`.
   final bool mine;
@@ -2062,7 +2101,13 @@ class _Initials extends StatelessWidget {
       ),
     );
     if (mine || email.isEmpty) return letter;
-    return SenderPicture(email: email, size: size, letter: letter);
+    return SenderPicture(
+      email: email,
+      size: size,
+      letter: letter,
+      row: row,
+      opened: opened,
+    );
   }
 }
 
@@ -2149,6 +2194,9 @@ extension on _SenderLine {
       row.sender,
       size: avatar,
       email: row.fromEmail,
+      row: row,
+      // The message is open: its own logo may be looked up.
+      opened: true,
       mine: name == AppLocalizations.of(context).youName,
     );
     final open = onSender;
@@ -2259,6 +2307,9 @@ class _Toolbar extends StatelessWidget {
     this.onSide,
     this.sideLabel = '',
     this.onUnsubscribe,
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
 
   /// More's "Move to Notifications" or "Move to People", as [sideLabel].
@@ -2267,6 +2318,13 @@ class _Toolbar extends StatelessWidget {
 
   /// More's "Unsubscribe", for mail whose list can be left.
   final VoidCallback? onUnsubscribe;
+
+  /// More's "Star", "Remove star" once [starred]; its key is S.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// More's "Copy to…", the folders hanging under More.
+  final ValueChanged<Rect>? onCopy;
 
   /// More's "Mark as unread", "Mark as read" once [unread], with
   /// [seenKeys].
@@ -2581,8 +2639,11 @@ class _Toolbar extends StatelessWidget {
       _MoreItem(l.stopWaiting, null, stop),
     if (onSeen case final seen?)
       _MoreItem(unread ? l.markRead : l.markUnread, seenKeys, seen),
+    if (onStar case final star?)
+      _MoreItem(starred ? l.unstar : l.star, 'S', star),
     if (onLabel case final label?)
       _MoreItem(l.labelMenu, 'L', null, onAt: label),
+    if (onCopy case final copy?) _MoreItem(l.copyTo, null, null, onAt: copy),
     if (onSide case final side?) _MoreItem(sideLabel, null, side),
     if (onUnsubscribe case final leave?) _MoreItem(l.unsubscribe, null, leave),
     if (onOriginal case final original?)
@@ -2851,11 +2912,21 @@ class _PhoneBar extends StatelessWidget {
     this.onNotSpam,
     this.onSide,
     this.sideLabel = '',
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
 
   final VoidCallback? onPrint;
   final VoidCallback? onReportSpam;
   final VoidCallback? onNotSpam;
+
+  /// Star, or Remove star once [starred], in More.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// "Copy to…", in More.
+  final VoidCallback? onCopy;
 
   /// "Move to Notifications" or "Move to People", as [sideLabel].
   final VoidCallback? onSide;
@@ -2972,7 +3043,10 @@ class _PhoneBar extends StatelessWidget {
                 item(PiumaIcon.reply, l.actionReply, onReply),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
+              if (onStar != null)
+                item(PiumaIcon.star, starred ? l.unstar : l.star, onStar),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
+              if (onCopy != null) item(PiumaIcon.copy, l.copyTo, onCopy),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
                 item(
@@ -3068,7 +3142,17 @@ class _TabletBar extends StatelessWidget {
     this.sideLabel = '',
     this.onUnsubscribe,
     this.onDelete,
+    this.onStar,
+    this.starred = false,
+    this.onCopy,
   });
+
+  /// Star, or Remove star once [starred], in More.
+  final VoidCallback? onStar;
+  final bool starred;
+
+  /// "Copy to…", in More.
+  final VoidCallback? onCopy;
 
   /// "Move to Notifications" or "Move to People", as [sideLabel].
   final VoidCallback? onSide;
@@ -3185,7 +3269,10 @@ class _TabletBar extends StatelessWidget {
                 item(PiumaIcon.reply, l.actionReply, onReply),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
+              if (onStar != null)
+                item(PiumaIcon.star, starred ? l.unstar : l.star, onStar),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
+              if (onCopy != null) item(PiumaIcon.copy, l.copyTo, onCopy),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
                 item(

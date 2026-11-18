@@ -649,6 +649,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get openAnyway => 'Open anyway';
 
   @override
+  String get linkTargetTitle => 'Where this link goes';
+
+  @override
+  String get linkOpen => 'Open link';
+
+  @override
+  String get linkCopy => 'Copy link';
+
+  @override
+  String get linkCopied => 'Link copied';
+
+  @override
   String get dontOpen => 'Don’t open';
 
   @override
@@ -1680,6 +1692,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'A message goes from your account to $address to ask. What already came stays here.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'To: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Subject: $subject';
   }
 
   @override
@@ -2969,6 +2991,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get pecNote =>
       'Receipts stay out of the inbox and gather on the message they belong to. Receipt saves the signed proof as a file.';
+
+  @override
+  String get pecUnverified => 'Unverified';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Says “$status”, but the provider’s signature couldn’t be checked: this isn’t proof.';
+  }
 
   @override
   String get pickDateTime => 'Pick date & time';
@@ -6343,4 +6373,327 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get star => 'Star';
+
+  @override
+  String get unstar => 'Remove star';
+
+  @override
+  String get folderStarred => 'Starred';
+
+  @override
+  String get messageStarred => 'Starred';
+
+  @override
+  String starredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations starred',
+      one: 'Starred',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String unstarredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Stars removed from $count conversations',
+      one: 'Star removed',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get starFailed => 'Couldn’t change the star. Try again in a moment.';
+
+  @override
+  String get trashFolder => 'Trash';
+
+  @override
+  String get deleteForever => 'Delete for good';
+
+  @override
+  String deleteForeverTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Delete $count emails for good?',
+      one: 'Delete this email for good?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deleteForeverNote =>
+      'They can’t be brought back, here or on the server.';
+
+  @override
+  String deletedForeverMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails deleted for good',
+      one: 'Deleted for good',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyTrash => 'Empty Trash';
+
+  @override
+  String get emptySpam => 'Empty spam';
+
+  @override
+  String emptyTitle(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Delete all $count emails in $folder for good?',
+      one: 'Delete the email in $folder for good?',
+      zero: '$folder is empty',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyConfirm => 'Empty';
+
+  @override
+  String get emptyFailed => 'Couldn’t empty it. Try again when you’re online.';
+
+  @override
+  String get copyTo => 'Copy to…';
+
+  @override
+  String copyToIn(String name) {
+    return 'Copy to folder in $name';
+  }
+
+  @override
+  String copiedMany(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations copied to $folder',
+      one: 'Copied to $folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderActions(String name) {
+    return 'More for “$name”';
+  }
+
+  @override
+  String get folderRename => 'Rename';
+
+  @override
+  String folderRenameTitle(String name) {
+    return 'Rename “$name”';
+  }
+
+  @override
+  String get folderNewName => 'New name';
+
+  @override
+  String get folderHide => 'Hide from lists';
+
+  @override
+  String get folderShow => 'Show in lists';
+
+  @override
+  String get folderHidden => 'Hidden';
+
+  @override
+  String get folderDelete => 'Delete folder';
+
+  @override
+  String folderDeleteTitle(String name) {
+    return 'Delete “$name”?';
+  }
+
+  @override
+  String folderDeleteEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Its $count emails go to Trash.',
+      one: 'Its email goes to Trash.',
+      zero: 'It holds no emails.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderDeleteSubfolders(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Its $count subfolders go with it.',
+      one: 'Its subfolder goes with it.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get folderDeleteEnd =>
+      'The folder can’t be brought back; its emails can, from Trash.';
+
+  @override
+  String get folderChangeFailed => 'Couldn’t change the folder.';
+
+  @override
+  String hiddenFoldersShow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Show $count hidden folders',
+      one: 'Show 1 hidden folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get hiddenFoldersHide => 'Hide hidden folders';
+
+  @override
+  String folderExpand(String name) {
+    return 'Show the folders in $name';
+  }
+
+  @override
+  String folderCollapse(String name) {
+    return 'Hide the folders in $name';
+  }
+
+  @override
+  String get specialFolders => 'Special folders';
+
+  @override
+  String get specialFoldersNote =>
+      'Piuma finds them from your server’s marks and their names. If one is wrong, pick the right folder.';
+
+  @override
+  String specialFoldersOf(String name) {
+    return 'Special folders of $name';
+  }
+
+  @override
+  String get specialAutomatic => 'As the server says';
+
+  @override
+  String get specialNone => 'None';
+
+  @override
+  String get specialChosen => 'Chosen by you';
+
+  @override
+  String get listsHeading => 'Lists';
+
+  @override
+  String get listOrder => 'Sort';
+
+  @override
+  String get orderNewest => 'Newest first';
+
+  @override
+  String get orderOldest => 'Oldest first';
+
+  @override
+  String get orderSender => 'By sender';
+
+  @override
+  String get listThreads => 'Group into conversations';
+
+  @override
+  String get listThreadsNote => 'Off, every email is a row of its own.';
+
+  @override
+  String get swipeRight => 'Swipe right';
+
+  @override
+  String get swipeLeft => 'Swipe left';
+
+  @override
+  String get swipeRead => 'Read or unread';
+
+  @override
+  String get swipeStar => 'Star';
+
+  @override
+  String get swipeMove => 'Move to…';
+
+  @override
+  String get swipeNothing => 'Nothing';
+
+  @override
+  String get quotaLabel => 'Storage';
+
+  @override
+  String quotaUsed(String used, String limit) {
+    return '$used of $limit';
+  }
+
+  @override
+  String get quotaNearlyFull =>
+      'Nearly full. Delete or archive some mail, or new mail may not arrive.';
+
+  @override
+  String draggedEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails',
+      one: '1 email',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutStar => 'Star or remove the star';
+
+  @override
+  String badgeTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail ($count)',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String badgeUnread(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count unread emails',
+      one: '1 unread email',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get moreShort => 'More';
+
+  @override
+  String get swipeNote =>
+      'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” can’t be deleted: $inside is inside it, and would go with it.';
+  }
+
+  @override
+  String get specialRefused =>
+      'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.';
 }

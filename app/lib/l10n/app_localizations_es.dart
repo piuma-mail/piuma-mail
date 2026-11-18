@@ -653,6 +653,18 @@ class AppLocalizationsEs extends AppLocalizations {
   String get openAnyway => 'Abrir de todos modos';
 
   @override
+  String get linkTargetTitle => 'Adónde lleva este enlace';
+
+  @override
+  String get linkOpen => 'Abrir enlace';
+
+  @override
+  String get linkCopy => 'Copiar enlace';
+
+  @override
+  String get linkCopied => 'Enlace copiado';
+
+  @override
   String get dontOpen => 'No abrir';
 
   @override
@@ -1690,6 +1702,16 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'Se envía un mensaje desde tu cuenta a $address para pedirlo. Lo que ya llegó se queda aquí.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'Para: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Asunto: $subject';
   }
 
   @override
@@ -2985,6 +3007,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get pecNote =>
       'Los recibos no entran en la bandeja y se agrupan en el mensaje al que pertenecen. Recibo guarda la prueba firmada como archivo.';
+
+  @override
+  String get pecUnverified => 'Sin verificar';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Indica «$status», pero no se pudo comprobar la firma del proveedor: no sirve como prueba.';
+  }
 
   @override
   String get pickDateTime => 'Elegir fecha y hora';
@@ -6378,4 +6408,330 @@ class AppLocalizationsEs extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get star => 'Destacar';
+
+  @override
+  String get unstar => 'Quitar destacado';
+
+  @override
+  String get folderStarred => 'Destacados';
+
+  @override
+  String get messageStarred => 'Destacado';
+
+  @override
+  String starredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversaciones destacadas',
+      one: 'Destacado',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String unstarredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Destacado quitado de $count conversaciones',
+      one: 'Destacado quitado',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get starFailed =>
+      'No se pudo cambiar el destacado. Vuelve a intentarlo en un momento.';
+
+  @override
+  String get trashFolder => 'Papelera';
+
+  @override
+  String get deleteForever => 'Eliminar para siempre';
+
+  @override
+  String deleteForeverTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '¿Eliminar $count correos para siempre?',
+      one: '¿Eliminar este correo para siempre?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deleteForeverNote =>
+      'No se podrán recuperar, ni aquí ni en el servidor.';
+
+  @override
+  String deletedForeverMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count correos eliminados para siempre',
+      one: 'Eliminado para siempre',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyTrash => 'Vaciar papelera';
+
+  @override
+  String get emptySpam => 'Vaciar spam';
+
+  @override
+  String emptyTitle(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '¿Eliminar para siempre los $count correos de $folder?',
+      one: '¿Eliminar para siempre el correo de $folder?',
+      zero: '$folder está vacío',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyConfirm => 'Vaciar';
+
+  @override
+  String get emptyFailed =>
+      'No se pudo vaciar. Vuelve a intentarlo cuando tengas conexión.';
+
+  @override
+  String get copyTo => 'Copiar a…';
+
+  @override
+  String copyToIn(String name) {
+    return 'Copiar a una carpeta de $name';
+  }
+
+  @override
+  String copiedMany(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversaciones copiadas a $folder',
+      one: 'Copiado a $folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderActions(String name) {
+    return 'Más para «$name»';
+  }
+
+  @override
+  String get folderRename => 'Cambiar nombre';
+
+  @override
+  String folderRenameTitle(String name) {
+    return 'Cambiar el nombre de «$name»';
+  }
+
+  @override
+  String get folderNewName => 'Nombre nuevo';
+
+  @override
+  String get folderHide => 'Ocultar de las listas';
+
+  @override
+  String get folderShow => 'Mostrar en las listas';
+
+  @override
+  String get folderHidden => 'Oculta';
+
+  @override
+  String get folderDelete => 'Eliminar carpeta';
+
+  @override
+  String folderDeleteTitle(String name) {
+    return '¿Eliminar «$name»?';
+  }
+
+  @override
+  String folderDeleteEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Sus $count correos van a la papelera.',
+      one: 'Su correo va a la papelera.',
+      zero: 'No contiene correos.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderDeleteSubfolders(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Sus $count subcarpetas se eliminan con ella.',
+      one: 'Su subcarpeta se elimina con ella.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get folderDeleteEnd =>
+      'La carpeta no se podrá recuperar; sus correos sí, desde la papelera.';
+
+  @override
+  String get folderChangeFailed => 'No se pudo cambiar la carpeta.';
+
+  @override
+  String hiddenFoldersShow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Mostrar $count carpetas ocultas',
+      one: 'Mostrar 1 carpeta oculta',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get hiddenFoldersHide => 'Ocultar las carpetas ocultas';
+
+  @override
+  String folderExpand(String name) {
+    return 'Mostrar las carpetas de $name';
+  }
+
+  @override
+  String folderCollapse(String name) {
+    return 'Ocultar las carpetas de $name';
+  }
+
+  @override
+  String get specialFolders => 'Carpetas especiales';
+
+  @override
+  String get specialFoldersNote =>
+      'Piuma las encuentra por las marcas de tu servidor y sus nombres. Si alguna es incorrecta, elige la carpeta correcta.';
+
+  @override
+  String specialFoldersOf(String name) {
+    return 'Carpetas especiales de $name';
+  }
+
+  @override
+  String get specialAutomatic => 'Según el servidor';
+
+  @override
+  String get specialNone => 'Ninguna';
+
+  @override
+  String get specialChosen => 'Elegida por ti';
+
+  @override
+  String get listsHeading => 'Listas';
+
+  @override
+  String get listOrder => 'Orden';
+
+  @override
+  String get orderNewest => 'Más recientes primero';
+
+  @override
+  String get orderOldest => 'Más antiguos primero';
+
+  @override
+  String get orderSender => 'Por remitente';
+
+  @override
+  String get listThreads => 'Agrupar en conversaciones';
+
+  @override
+  String get listThreadsNote =>
+      'Desactivado, cada correo tiene su propia fila.';
+
+  @override
+  String get swipeRight => 'Deslizar a la derecha';
+
+  @override
+  String get swipeLeft => 'Deslizar a la izquierda';
+
+  @override
+  String get swipeRead => 'Leído o no leído';
+
+  @override
+  String get swipeStar => 'Destacar';
+
+  @override
+  String get swipeMove => 'Mover a…';
+
+  @override
+  String get swipeNothing => 'Nada';
+
+  @override
+  String get quotaLabel => 'Almacenamiento';
+
+  @override
+  String quotaUsed(String used, String limit) {
+    return '$used de $limit';
+  }
+
+  @override
+  String get quotaNearlyFull =>
+      'Casi lleno. Elimina o archiva algunos correos, o puede que no lleguen los nuevos.';
+
+  @override
+  String draggedEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count correos',
+      one: '1 correo',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutStar => 'Destacar o quitar el destacado';
+
+  @override
+  String badgeTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail ($count)',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String badgeUnread(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count correos sin leer',
+      one: '1 correo sin leer',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get moreShort => 'Más';
+
+  @override
+  String get swipeNote =>
+      'Los deslizamientos funcionan en teléfonos y tabletas. En el ordenador, las mismas acciones están en la barra, los menús y los atajos de teclado.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '«$name» no se puede eliminar: contiene $inside, que se eliminaría con ella.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo.';
 }

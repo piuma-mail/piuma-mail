@@ -2911,6 +2911,7 @@ name = "piuma-core"
 version = "0.0.1"
 dependencies = [
  "async-imap",
+ "aws-lc-rs",
  "base64",
  "bip39",
  "chacha20poly1305",

@@ -248,7 +248,7 @@ object Background {
             val body = listOf(subject, preview).filter { it.isNotEmpty() }.joinToString("\n")
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(PAYLOAD, n.getString("payload"))
+                .putExtra(PAYLOAD, NoticeSeal.seal(context, n.getString("payload")))
             val tap = PendingIntent.getActivity(
                 context,
                 id,
@@ -329,7 +329,7 @@ object Background {
                 id,
                 Intent(context, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(PAYLOAD, n.getString("payload")),
+                    .putExtra(PAYLOAD, NoticeSeal.seal(context, n.getString("payload"))),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             val builder = if (Build.VERSION.SDK_INT >= 26) {
@@ -429,6 +429,10 @@ object Background {
         return format.format(cents / 100.0)
     }
 
-    /** The message a notice was opened for, if it was. */
-    fun payload(intent: Intent?): String? = intent?.getStringExtra(PAYLOAD)
+    /**
+     * The message a notice was opened for, if it was: only a payload this
+     * app sealed, never one another app put in an intent.
+     */
+    fun payload(context: Context, intent: Intent?): String? =
+        NoticeSeal.open(context, intent?.getStringExtra(PAYLOAD))
 }

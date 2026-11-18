@@ -43,6 +43,7 @@ pub mod search;
 pub mod sender_auth;
 pub mod sieve;
 pub mod signature;
+pub mod smime;
 pub mod smtp;
 pub mod space;
 pub mod space_log;
@@ -57,8 +58,8 @@ pub mod vault;
 mod watchdog;
 
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;

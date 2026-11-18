@@ -301,11 +301,15 @@ impl From<InboxTab> for Section {
 }
 
 /// What a list keeps: [tab], and with [unread] only the conversations
-/// with something unread.
-fn filter(tab: Option<InboxTab>, unread: bool) -> ListFilter {
+/// with something unread; sorted, and grouped in conversations or not, as
+/// the person set the lists (see [`crate::api::mailbox::list_settings`]).
+pub(crate) fn filter(store: &Store, tab: Option<InboxTab>, unread: bool) -> ListFilter {
+    let view = store.list_settings().unwrap_or_default();
     ListFilter {
         section: tab.map_or(Section::All, Section::from),
         unread,
+        order: view.order,
+        flat: !view.threads,
     }
 }
 
@@ -840,10 +844,11 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.conversation_count(
+    let store = store()?;
+    Ok(store.conversation_count(
         folder.into(),
         within(account, group, address),
-        filter(tab, unread),
+        filter(&store, tab, unread),
     )?)
 }
 
@@ -878,14 +883,9 @@ pub fn folder_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     let scope = within(account, group, address);
+    let view = filter(&store, tab, unread);
     store
-        .conversations_page(
-            folder.into(),
-            scope.clone(),
-            filter(tab, unread),
-            offset,
-            limit,
-        )?
+        .conversations_page(folder.into(), scope.clone(), view, offset, limit)?
         .into_iter()
         .map(|mut c| {
             let copies = store.combined_copies(&c.latest, folder.into(), &scope)?;
@@ -917,6 +917,10 @@ pub fn folder_page(
             );
             if !copies.is_empty() {
                 row.seen = seen;
+            }
+            if view.flat {
+                row.thread.clear();
+                row.messages = 1;
             }
             row.copies = refs;
             Ok(row)
@@ -1235,7 +1239,7 @@ pub fn folder_counts_between(
 ) -> Result<Vec<u32>, EngineError> {
     let store = store()?;
     let within = within(account, group, address);
-    let section = filter(tab, unread);
+    let section = filter(&store, tab, unread);
     edges
         .windows(2)
         .map(|w| {
@@ -1288,6 +1292,17 @@ fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
     // A watcher stopped meanwhile leaves nothing behind.
     if let Some(kind) = kind.filter(|_| watched.contains(&id)) {
         waiting.push((id, kind));
+    }
+}
+
+/// Changes a server kept refusing were given up while sent from the app:
+/// the app tells the person, as when the watcher gave them up.
+pub(crate) fn changes_dropped(id: AccountId, changes: usize) {
+    if changes > 0 {
+        emit(SyncEvent {
+            removed: changes as u32,
+            ..SyncEvent::new(SyncEventKind::ChangesDropped, id.0)
+        });
     }
 }
 
@@ -3012,64 +3027,105 @@ static PICTURES_LOOKING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// A few lookups at a time, so a full inbox doesn't flood the network.
 static PICTURES_AT_ONCE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(3);
 
-/// The picture of a company sender (`PicturesToApprove`): its verified
-/// logo, or its website's icon, as a square PNG; none for people at mail
+/// The picture of a company sender (`PicturesToApprove`): its brand logo,
+/// or its website's icon, as a square PNG; none for people at mail
 /// providers, while "Sender pictures" is off, or when there is nothing.
-/// Looked up once per domain and kept on the device.
-pub async fn sender_picture(email: String) -> Result<Option<Vec<u8>>, EngineError> {
+///
+/// A logo is only for the message [account_id], [mailbox], [uid], and only
+/// when that message's own DMARC check passed (`Store::logo_allowed`):
+/// never for a domain because some other message of it was verified. It
+/// is looked up only when [opened] (the person is reading that message),
+/// and kept per organization; a list shows it once it is kept. Icons are
+/// looked up once per domain, as before, when "Website icons" is on.
+pub async fn sender_picture(
+    email: String,
+    account_id: Option<i64>,
+    mailbox: Option<String>,
+    uid: Option<u32>,
+    opened: bool,
+) -> Result<Option<Vec<u8>>, EngineError> {
     use piuma_core::pictures::{self, Kind};
     let Some(domain) = pictures::domain_for(&email) else {
         return Ok(None);
     };
-    let (icons, verified) = {
-        let store = store()?;
-        if !switch(&store, SENDER_PICTURES)? {
-            return Ok(None);
-        }
-        let icons = switch(&store, WEBSITE_ICONS)?;
-        let shown = |p: pictures::Picture| match p.kind {
-            Kind::Logo => Some(p.png),
-            Kind::Icon if icons => Some(p.png),
-            _ => None,
-        };
-        let kept = store.sender_picture(&domain)?;
+    let fresh = |kept: &Option<(pictures::Picture, i64)>| {
         let now = now_secs();
-        let fresh = kept.as_ref().is_some_and(|(p, at)| {
+        kept.as_ref().is_some_and(|(p, at)| {
             let keep = if p.kind == Kind::None {
                 pictures::RETRY_SECS
             } else {
                 pictures::KEEP_SECS
             };
             now - at < keep
-        });
-        if fresh {
-            return Ok(kept.and_then(|(p, _)| shown(p)));
-        }
-        {
-            let mut looking = PICTURES_LOOKING.lock().unwrap_or_else(|e| e.into_inner());
-            if looking.contains(&domain) {
-                return Ok(kept.and_then(|(p, _)| shown(p)));
-            }
-            looking.push(domain.clone());
-        }
-        (icons, store.domain_verified(&domain)?)
+        })
     };
+    let logo_key = pictures::logo_key(&domain);
+    let (icons, look_for_logo) = {
+        let store = store()?;
+        if !switch(&store, SENDER_PICTURES)? {
+            return Ok(None);
+        }
+        let icons = switch(&store, WEBSITE_ICONS)?;
+        let proven = match (account_id, mailbox.as_deref(), uid) {
+            (Some(a), Some(m), Some(u)) => store.logo_allowed(AccountId(a), m, u, opened)?,
+            _ => false,
+        };
+        let mut look_for_logo = false;
+        if proven {
+            let kept = store.sender_picture(&logo_key)?;
+            if fresh(&kept) {
+                if let Some((p, _)) = &kept {
+                    if p.kind == Kind::Logo {
+                        return Ok(Some(p.png.clone()));
+                    }
+                }
+            } else if opened {
+                look_for_logo = true;
+            }
+        }
+        if !look_for_logo {
+            let kept = store.sender_picture(&domain)?;
+            // Only icons are kept under the domain itself.
+            let shown =
+                |p: &pictures::Picture| (p.kind == Kind::Icon && icons).then(|| p.png.clone());
+            if fresh(&kept) || !icons {
+                return Ok(kept.as_ref().and_then(|(p, _)| shown(p)));
+            }
+        }
+        (icons, look_for_logo)
+    };
+    let key = if look_for_logo {
+        logo_key
+    } else {
+        domain.clone()
+    };
+    {
+        let mut looking = PICTURES_LOOKING.lock().unwrap_or_else(|e| e.into_inner());
+        if looking.contains(&key) {
+            return Ok(None);
+        }
+        looking.push(key.clone());
+    }
     let looked = {
         let domain = domain.clone();
         engine()?
             .runtime
             .spawn(async move {
                 let _turn = PICTURES_AT_ONCE.acquire().await;
-                pictures::look_up(&domain, verified, icons).await
+                if look_for_logo {
+                    pictures::look_up_logo(&domain).await
+                } else {
+                    pictures::look_up_icon(&domain, icons).await
+                }
             })
             .await
     };
     PICTURES_LOOKING
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .retain(|d| d != &domain);
+        .retain(|d| d != &key);
     let picture = looked.map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
-    store()?.set_sender_picture(&domain, &picture, now_secs())?;
+    store()?.set_sender_picture(&key, &picture, now_secs())?;
     Ok(match picture.kind {
         Kind::None => None,
         _ => Some(picture.png),
@@ -3970,6 +4026,7 @@ pub async fn save_draft(message: OutgoingMessage) -> Result<MessageRef, EngineEr
         .runtime
         .spawn(async move {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let folder = conn.append_draft(&to_append).await?;
             if let Some(e) = &earlier_here {
                 conn.erase(&shared, id, &e.mailbox, &[e.uid]).await?;
@@ -4079,6 +4136,7 @@ fn save_waiting_drafts(account: Account, password: String) {
         let mut elsewhere = Vec::new();
         let saved = async {
             let mut conn = Remote::open(&account, &password).await?;
+            conn.learn_roles(&shared, id)?;
             let mut folder = None;
             for d in &waiting {
                 let into = conn.append_draft(&d.raw).await?;
@@ -4392,6 +4450,17 @@ pub async fn apply_message_action(
             on_server.push(m);
         }
     }
+    // Delete in Trash or spam is for good, and only ever after the person
+    // confirmed it, through `delete_forever`: here such messages are left
+    // where they are and shown again, never deleted silently.
+    if action == MessageAction::Delete {
+        let kept;
+        (kept, on_server) = crate::api::mailbox::split_for_good(on_server)?;
+        let store = store()?;
+        for m in &kept {
+            store.set_hidden(AccountId(m.account_id), &m.mailbox, m.uid, false)?;
+        }
+    }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();
     for m in on_server {
         by_account
@@ -4501,6 +4570,8 @@ pub struct AccountFolderInfo {
     pub unread: u32,
     /// How many emails it holds on the server.
     pub total: u32,
+    /// Subscribed: shown in the lists; the others show on demand.
+    pub subscribed: bool,
 }
 
 /// An account's own folders (not Inbox, Sent, Archive, Drafts, Trash or
@@ -4516,6 +4587,7 @@ pub fn account_folders(account_id: i64) -> Result<Vec<AccountFolderInfo>, Engine
             selectable: f.selectable,
             unread: f.unread,
             total: f.total,
+            subscribed: f.subscribed,
         })
         .collect())
 }
@@ -4555,7 +4627,9 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
 
 /// How many conversations one of an account's folders lists here.
 pub fn mailbox_count(account_id: i64, mailbox: String) -> Result<u32, EngineError> {
-    Ok(store()?.mailbox_count(AccountId(account_id), &mailbox)?)
+    let store = store()?;
+    let view = filter(&store, None, false);
+    Ok(store.mailbox_count(AccountId(account_id), &mailbox, view)?)
 }
 
 /// Rows `offset..offset+limit` of one of an account's folders, newest
@@ -4568,7 +4642,13 @@ pub fn mailbox_page(
 ) -> Result<Vec<InboxRow>, EngineError> {
     let store = store()?;
     Ok(store
-        .mailbox_page(AccountId(account_id), &mailbox, offset, limit)?
+        .mailbox_page(
+            AccountId(account_id),
+            &mailbox,
+            filter(&store, None, false),
+            offset,
+            limit,
+        )?
         .into_iter()
         .map(|c| {
             with_files(
@@ -4594,7 +4674,15 @@ pub fn mailbox_counts_between(
     let account = AccountId(account_id);
     edges
         .windows(2)
-        .map(|w| Ok(store.mailbox_count_between(account, &mailbox, w[1], w[0])?))
+        .map(|w| {
+            Ok(store.mailbox_count_between(
+                account,
+                &mailbox,
+                filter(&store, None, false),
+                w[1],
+                w[0],
+            )?)
+        })
         .collect()
 }
 
@@ -5187,6 +5275,27 @@ pub struct Unsubscribe {
     pub kind: UnsubscribeKind,
     /// The page, or the address the message goes to.
     pub address: String,
+    /// For [UnsubscribeKind::Mail]: the subject and text of the message
+    /// the list's header asks for, shown before it is sent from the
+    /// person's account.
+    pub subject: String,
+    pub body: String,
+}
+
+/// The list info of a message, with one-click left on only where a DKIM
+/// signature of the From domain covers its list headers (RFC 8058 section
+/// 4; a DMARC pass alone may rest on SPF or on a signature that leaves
+/// them out), as `newsletter::one_click_allowed` says.
+fn checked_list(
+    store: &piuma_core::store::Store,
+    account: AccountId,
+    mailbox: &str,
+    uid: u32,
+) -> Result<piuma_core::model::ListInfo, EngineError> {
+    let mut list = store.list_info(account, mailbox, uid)?;
+    let (_, list_signed) = store.sender_proofs(account, mailbox, uid)?;
+    list.one_click = newsletter::one_click_allowed(&list, list_signed);
+    Ok(list)
 }
 
 /// How the list a message came from can be left.
@@ -5195,35 +5304,35 @@ pub fn unsubscribe_info(
     mailbox: String,
     uid: u32,
 ) -> Result<Unsubscribe, EngineError> {
-    let list = store()?.list_info(AccountId(account_id), &mailbox, uid)?;
+    let list = checked_list(&*store()?, AccountId(account_id), &mailbox, uid)?;
     let link = list.unsubscribe;
+    let plain = |kind, address| Unsubscribe {
+        kind,
+        address,
+        subject: String::new(),
+        body: String::new(),
+    };
     Ok(if list.one_click {
-        Unsubscribe {
-            kind: UnsubscribeKind::OneClick,
-            address: link,
-        }
+        plain(UnsubscribeKind::OneClick, link)
     } else if let Some(mail) = newsletter::mailto(&link) {
         Unsubscribe {
             kind: UnsubscribeKind::Mail,
             address: mail.to,
+            subject: mail.subject,
+            body: mail.body,
         }
     } else if link.is_empty() {
-        Unsubscribe {
-            kind: UnsubscribeKind::None,
-            address: link,
-        }
+        plain(UnsubscribeKind::None, link)
     } else {
-        Unsubscribe {
-            kind: UnsubscribeKind::Page,
-            address: link,
-        }
+        plain(UnsubscribeKind::Page, link)
     })
 }
 
 /// Leaves the list a message came from, with one request or a message
-/// to its address. A page to open is the app's to open.
+/// to its address (the one [unsubscribe_info] showed). A page to open is
+/// the app's to open.
 pub async fn unsubscribe(account_id: i64, mailbox: String, uid: u32) -> Result<(), EngineError> {
-    let list = store()?.list_info(AccountId(account_id), &mailbox, uid)?;
+    let list = checked_list(&*store()?, AccountId(account_id), &mailbox, uid)?;
     if list.one_click {
         let link = list.unsubscribe.clone();
         return engine()?
@@ -5480,6 +5589,10 @@ pub struct PecMessage {
     pub proofs: Vec<u32>,
     /// The folder the proofs are in.
     pub proof_mailbox: String,
+    /// The receipts the stage rests on carry their provider's checked
+    /// signature. When false the stage is only what their headers claim,
+    /// and the Vault says so.
+    pub verified: bool,
 }
 
 /// The messages sent from PEC mailboxes, newest receipt first. [account]
@@ -5515,6 +5628,7 @@ pub fn pec_messages(account: Option<i64>) -> Result<Vec<PecMessage>, EngineError
                 .map(|(_, uid)| *uid)
                 .collect(),
             proof_mailbox: mailbox,
+            verified: sent.verified,
         });
     }
     Ok(out)

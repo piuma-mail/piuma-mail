@@ -22,6 +22,29 @@ import '../design/tokens.g.dart';
 /// to the finger there (with a tick on phones), lets go again if the
 /// finger goes back, and when released carries the finger's speed on a
 /// spring.
+/// The colour of a swipe's band, from the theme.
+enum SwipeTone { ok, warn, danger, accent }
+
+/// What one side of a row's swipe shows and does, as the person set it
+/// (Settings › Appearance › Lists): its band, and whether the row leaves
+/// or springs back ([stays], as for Star or Read). [off]: that side
+/// doesn't swipe.
+class SwipeSide {
+  const SwipeSide({
+    required this.icon,
+    required this.label,
+    this.tone = SwipeTone.ok,
+    this.stays = false,
+    this.off = false,
+  });
+
+  final PiumaIcon icon;
+  final String label;
+  final SwipeTone tone;
+  final bool stays;
+  final bool off;
+}
+
 class SwipeToArchive extends StatefulWidget {
   const SwipeToArchive({
     super.key,
@@ -34,7 +57,21 @@ class SwipeToArchive extends StatefulWidget {
     this.icon = PiumaIcon.archive,
     this.snoozeIcon = PiumaIcon.clock,
     this.snoozeStays = false,
+    this.archiveStays = false,
+    this.rightOff = false,
+    this.tone = SwipeTone.ok,
+    this.snoozeTone = SwipeTone.warn,
   });
+
+  /// The right swipe springs back in place, as the left one can.
+  final bool archiveStays;
+
+  /// The right swipe does nothing: the row doesn't move that way.
+  final bool rightOff;
+
+  /// The bands' colours.
+  final SwipeTone tone;
+  final SwipeTone snoozeTone;
 
   /// The right swipe's band: Archive, or Stop waiting in Waiting.
   final PiumaIcon icon;
@@ -141,7 +178,8 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
   void _follow() {
     if (!_dragging) return;
     final left = widget.onSnooze == null ? 0.0 : -1.0;
-    _offset.value = (_finger * _grip).clamp(left, 1);
+    final right = widget.rightOff ? 0.0 : 1.0;
+    _offset.value = (_finger * _grip).clamp(left, right);
   }
 
   void _start(DragStartDetails d) {
@@ -160,7 +198,8 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
   void _drag(DragUpdateDetails d) {
     if (_leaving || !_dragging) return;
     final left = widget.onSnooze == null ? 0.0 : -1.0;
-    _finger = (_finger + d.primaryDelta! / _width).clamp(left, 1);
+    final right = widget.rightOff ? 0.0 : 1.0;
+    _finger = (_finger + d.primaryDelta! / _width).clamp(left, right);
     // Snaps on past the point where letting go acts, and off a little
     // before it, so it does not chatter on the edge.
     final reach = _finger.abs();
@@ -208,7 +247,12 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
     final v = d.primaryVelocity ?? 0;
     // Leaving, the row never comes back past its edge: no overshoot.
     final away = (v / _width).abs().clamp(1.5, double.infinity);
-    if (_armed && _finger > 0) {
+    if (_armed && _finger > 0 && !widget.rightOff) {
+      if (widget.archiveStays) {
+        widget.onArchive();
+        await _settle(0, v / _width, ratio: PiumaMotion.spatialDamping);
+        return;
+      }
       _leaving = true;
       await _settle(1, away);
       widget.onArchive();
@@ -258,7 +302,8 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
         _width = box.maxWidth == 0 ? 1 : box.maxWidth;
         return Semantics(
           customSemanticsActions: {
-            CustomSemanticsAction(label: widget.label): widget.onArchive,
+            if (!widget.rightOff)
+              CustomSemanticsAction(label: widget.label): widget.onArchive,
             CustomSemanticsAction(label: widget.snoozeLabel ?? ''):
                 ?widget.onSnooze,
           },
@@ -283,7 +328,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                     if (dx > 0)
                       Positioned.fill(
                         child: ColoredBox(
-                          color: c.ok,
+                          color: _tone(c, widget.tone),
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: SizedBox(
@@ -303,7 +348,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                     if (dx < 0)
                       Positioned.fill(
                         child: ColoredBox(
-                          color: c.warn,
+                          color: _tone(c, widget.snoozeTone),
                           child: Align(
                             alignment: Alignment.centerRight,
                             child: SizedBox(
@@ -350,6 +395,13 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
     );
   }
 }
+
+Color _tone(PiumaColors c, SwipeTone tone) => switch (tone) {
+  SwipeTone.ok => c.ok,
+  SwipeTone.warn => c.warn,
+  SwipeTone.danger => c.danger,
+  SwipeTone.accent => c.accent,
+};
 
 /// The icon and word on the band a row slides off. The icon grows as the
 /// swipe snaps on ([pop] from 0 to 1, a touch past it on the spring).

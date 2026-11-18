@@ -20,6 +20,7 @@ class MainFlutterWindow: NSWindow {
     OnDeviceModel.listen(flutterViewController.engine.binaryMessenger)
     Translate.listen(flutterViewController.engine.binaryMessenger)
     DeviceName.listen(flutterViewController.engine.binaryMessenger)
+    UnreadBadge.listen(flutterViewController.engine.binaryMessenger)
 
     // A message opened in a window of its own gets the plugins too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
@@ -29,6 +30,23 @@ class MainFlutterWindow: NSWindow {
     }
 
     super.awakeFromNib()
+  }
+}
+
+/// How many emails are unread, on the app's icon in the Dock; nothing
+/// while none is.
+enum UnreadBadge {
+  static func listen(_ messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "piuma/badge", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "set" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
+      NSApp.dockTile.badgeLabel = count > 0 ? (count > 99 ? "99+" : String(count)) : nil
+      result(nil)
+    }
   }
 }
 

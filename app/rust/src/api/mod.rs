@@ -5,6 +5,7 @@ pub mod engine;
 pub mod feedback;
 pub mod groups;
 pub mod labels;
+pub mod mailbox;
 pub mod preview;
 pub mod sync;
 pub mod templates;

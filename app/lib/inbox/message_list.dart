@@ -19,6 +19,7 @@ import 'phone_parts.dart' show ComposeFab;
 import 'pictures.dart';
 import 'sections.dart';
 import 'snooze.dart';
+import 'mailbox_actions.dart';
 import 'swipe.dart';
 import 'waiting.dart';
 import '../widgets/button.dart';
@@ -90,7 +91,19 @@ class MessageList extends StatefulWidget {
     this.top = const [],
     this.swipeHint = false,
     this.onNoticeArchive,
+    this.rightSwipe,
+    this.leftSwipe,
+    this.dragRows,
   });
+
+  /// The swipes as the person set them, in place of [swipeAs] and
+  /// [leftSwipeAs] when given.
+  final SwipeSide? rightSwipe;
+  final SwipeSide? leftSwipe;
+
+  /// On the desktop, what dragging [row] carries to a folder: the picked
+  /// rows when it is one of them, else the row. Null: rows don't drag.
+  final List<MailRow> Function(MailRow row)? dragRows;
 
   /// Slivers above the rows that scroll with them: the phone's folding
   /// header and what sits under it (`HomeToApprove`, variant 2).
@@ -412,7 +425,9 @@ class MessageListState extends State<MessageList>
     final plan = SectionPlan(widget.now(), l, locale);
     final folder = widget.folder;
     final account = widget.account;
-    if (folder == MailFolder.waiting || folder == MailFolder.label) {
+    if (folder == MailFolder.waiting ||
+        folder == MailFolder.label ||
+        folder == MailFolder.starred) {
       // Newest first, in one list with no headers.
       final all = await widget.source.page(
         0,
@@ -561,7 +576,13 @@ class MessageListState extends State<MessageList>
       _snoozed = snoozed;
       _reminded = reminded;
       _remindedHeader = l.sectionToday;
-      _sections = plan.sections(counts);
+      // Sorted otherwise than newest first, dates don't head the rows.
+      _sections = widget.source.listPrefs.value.order == ListOrder.newest
+          ? plan.sections(counts)
+          : [
+              if (counts.isNotEmpty && counts.fold(0, (a, b) => a + b) > 0)
+                InboxSection('', counts.fold(0, (a, b) => a + b)),
+            ];
       _aliases.clear();
       _pages
         ..clear()
@@ -1074,24 +1095,42 @@ class MessageListState extends State<MessageList>
               );
               final swipe = widget.onSwipe;
               if (swipe != null) _askHint(row);
+              final right = widget.rightSwipe;
+              final left = widget.leftSwipe;
+              final drag = widget.dragRows;
               final Widget shown = swipe == null
-                  ? dimmed
+                  ? (drag == null || widget.phone
+                        ? dimmed
+                        : DraggableRows(rows: () => drag(row), child: dimmed))
                   : SwipeToArchive(
                       key: ValueKey(row.key),
                       label:
+                          right?.label ??
                           widget.swipeAs?.label ??
                           AppLocalizations.of(context).archive,
-                      icon: widget.swipeAs?.icon ?? PiumaIcon.archive,
+                      icon:
+                          right?.icon ??
+                          widget.swipeAs?.icon ??
+                          PiumaIcon.archive,
+                      tone: right?.tone ?? SwipeTone.ok,
+                      archiveStays: right?.stays ?? false,
+                      rightOff: right?.off ?? false,
                       onArchive: () => swipe(row),
                       snoozeLabel:
+                          left?.label ??
                           widget.leftSwipeAs?.label ??
                           AppLocalizations.of(context).actionSnooze,
-                      snoozeIcon: widget.leftSwipeAs?.icon ?? PiumaIcon.clock,
-                      snoozeStays: widget.leftSwipeAs != null,
-                      onSnooze: widget.onSnoozeSwipe == null
+                      snoozeIcon:
+                          left?.icon ??
+                          widget.leftSwipeAs?.icon ??
+                          PiumaIcon.clock,
+                      snoozeTone: left?.tone ?? SwipeTone.warn,
+                      snoozeStays: left?.stays ?? widget.leftSwipeAs != null,
+                      onSnooze:
+                          widget.onSnoozeSwipe == null || (left?.off ?? false)
                           ? null
                           : () => widget.onSnoozeSwipe!(row),
-                      hint: row.key == _hintRow,
+                      hint: row.key == _hintRow && !(right?.off ?? false),
                       child: dimmed,
                     );
               if (!_folding.contains(row.key)) return shown;
@@ -1666,7 +1705,12 @@ class _InboxRowTileState extends State<InboxRowTile> {
       child: Semantics(
         selected: selected,
         button: true,
-        label: unread ? l.messageUnread : null,
+        label: unread || row.starred
+            ? [
+                if (unread) l.messageUnread,
+                if (row.starred) l.messageStarred,
+              ].join(', ')
+            : null,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: (_) => _press(true),
@@ -1764,6 +1808,7 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                     initials: initials(row.listName),
                                     // Your own mail shows who it went to.
                                     email: outgoing ? '' : row.fromEmail,
+                                    row: row,
                                     dot: account?.color,
                                     dots: widget.accountColors,
                                     ring: selected ? c.sel : c.surface,
@@ -1849,6 +1894,15 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                       ),
                                     ),
                                   const SizedBox(width: 8),
+                                  // Starred: the star before the time.
+                                  if (row.starred) ...[
+                                    PiumaIconView(
+                                      PiumaIcon.star,
+                                      size: phone ? 14 : 13,
+                                      color: c.warn,
+                                    ),
+                                    const SizedBox(width: 6),
+                                  ],
                                   Text(
                                     time,
                                     style: TextStyle(
@@ -2130,6 +2184,7 @@ class _Avatar extends StatelessWidget {
   const _Avatar({
     required this.initials,
     this.email = '',
+    this.row,
     this.dot,
     this.dots = const [],
     required this.ring,
@@ -2139,6 +2194,9 @@ class _Avatar extends StatelessWidget {
 
   /// Whose picture replaces the letters once it is on the device.
   final String email;
+
+  /// The message the row is: a brand logo is only ever its own.
+  final MailRow? row;
   final List<Color> dots;
   final Color? dot;
   final Color ring;
@@ -2155,6 +2213,7 @@ class _Avatar extends StatelessWidget {
         children: [
           SenderPicture(
             email: email,
+            row: row,
             size: size,
             letter: Container(
               width: size,
