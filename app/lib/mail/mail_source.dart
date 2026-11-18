@@ -5,12 +5,14 @@ import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
 
 import 'calendars.dart';
+import 'compose_extras.dart';
 import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
 
 export 'calendars.dart';
+export 'compose_extras.dart';
 export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
@@ -1389,6 +1391,10 @@ class Draft {
     this.forward = false,
     this.remindAt,
     this.marks = const [],
+    this.images = const [],
+    this.plainText = false,
+    this.readReceipt = false,
+    this.highPriority = false,
   });
 
   /// The account it goes out from.
@@ -1435,6 +1441,19 @@ class Draft {
   /// Bold, italic and links over [body] (`FormattingToApprove`).
   final List<BodyMark> marks;
 
+  /// Pictures inside the text: one for each [imagePlaceholder] in [body],
+  /// in order.
+  final List<DraftImage> images;
+
+  /// Goes as plain text only (`format=flowed`), without formatting.
+  final bool plainText;
+
+  /// Asks for a read receipt (`Disposition-Notification-To`).
+  final bool readReceipt;
+
+  /// Marked important (`Importance: high`).
+  final bool highPriority;
+
   Draft withCopy(DraftCopy? copy) => Draft(
     accountId: accountId,
     fromEmail: fromEmail,
@@ -1452,10 +1471,17 @@ class Draft {
     forward: forward,
     remindAt: remindAt,
     marks: marks,
+    images: images,
+    plainText: plainText,
+    readReceipt: readReceipt,
+    highPriority: highPriority,
   );
 
-  /// Total size of the attached files, in bytes.
-  int get filesSize => files.fold(0, (sum, f) => sum + f.data.length);
+  /// Total size of the attached files and the pictures inside the text,
+  /// in bytes.
+  int get filesSize =>
+      files.fold(0, (sum, f) => sum + f.data.length) +
+      images.fold(0, (sum, i) => sum + i.data.length);
 
   bool get isReply => inReplyTo != null;
 
@@ -1464,8 +1490,9 @@ class Draft {
       cc.isEmpty &&
       bcc.isEmpty &&
       subject.trim().isEmpty &&
-      body.trim().isEmpty &&
-      files.isEmpty;
+      body.replaceAll(imagePlaceholder, '').trim().isEmpty &&
+      files.isEmpty &&
+      images.isEmpty;
 
   List<String> get recipients => [...to, ...cc, ...bcc];
 }
@@ -2407,7 +2434,7 @@ class ReportEmail {
   final List<DraftFile> files;
 }
 
-abstract class MailSource {
+abstract class MailSource with ComposeExtras {
   List<MailAccount> get accounts;
 
   /// Fires whenever the inbox changed and should be redrawn.

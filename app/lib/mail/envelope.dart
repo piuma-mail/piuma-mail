@@ -124,37 +124,52 @@ String bareAddress(String address) {
 /// The addresses typed in one field: split at commas, semicolons and
 /// line breaks outside quotes and angle brackets, a name with a comma in
 /// it kept whole (`Rossi, Mario <m@x.it>`: a piece with no address joins
-/// the one after it).
+/// the one after it on the same line). A line break always ends an
+/// address, so a line that is not one stays on its own.
 List<String> splitAddresses(String text) {
-  final pieces = <String>[];
+  // Pieces, each marked when a line break ends it.
+  final pieces = <(String, bool)>[];
   final b = StringBuffer();
-  var quoted = false;
+  var quoted = false, escaped = false;
   var angle = 0;
   for (final ch in text.split('')) {
-    if (ch == '"') quoted = !quoted;
-    if (!quoted && ch == '<') angle++;
-    if (!quoted && ch == '>' && angle > 0) angle--;
-    if (!quoted && angle == 0 && (ch == ',' || ch == ';' || ch == '\n')) {
-      pieces.add(b.toString());
+    if (ch == '\n') {
+      pieces.add((b.toString(), true));
+      b.clear();
+      quoted = escaped = false;
+      angle = 0;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+    } else if (ch == r'\' && quoted) {
+      escaped = true;
+    } else if (ch == '"') {
+      quoted = !quoted;
+    } else if (!quoted && ch == '<') {
+      angle++;
+    } else if (!quoted && ch == '>' && angle > 0) {
+      angle--;
+    }
+    if (!quoted && angle == 0 && (ch == ',' || ch == ';')) {
+      pieces.add((b.toString(), false));
       b.clear();
     } else {
       b.write(ch);
     }
   }
-  pieces.add(b.toString());
+  pieces.add((b.toString(), true));
   final out = <String>[];
   var pending = '';
-  for (final p in pieces) {
+  for (final (p, lineEnd) in pieces) {
     final joined = pending.isEmpty ? p.trim() : '$pending,${p.trimRight()}';
-    if (joined.trim().isEmpty) continue;
-    if (joined.contains('@')) {
+    if (joined.trim().isNotEmpty && (joined.contains('@') || lineEnd)) {
       out.add(joined.trim());
       pending = '';
     } else {
-      pending = joined;
+      pending = joined.trim().isEmpty ? '' : joined;
     }
   }
-  if (pending.trim().isNotEmpty) out.add(pending.trim());
   return out;
 }
 

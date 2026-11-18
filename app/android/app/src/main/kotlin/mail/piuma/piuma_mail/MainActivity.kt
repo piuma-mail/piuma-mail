@@ -22,6 +22,7 @@ class MainActivity : FlutterActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
     private var shared: Shared? = null
+    private var clipboard: Clipboard? = null
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
@@ -93,6 +94,7 @@ class MainActivity : FlutterActivity() {
             }
         Model(flutterEngine.dartExecutor.binaryMessenger)
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
+        clipboard = Clipboard(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
         val context = applicationContext
@@ -173,6 +175,8 @@ class MainActivity : FlutterActivity() {
         shake = null
         shared?.stop()
         shared = null
+        clipboard?.stop()
+        clipboard = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
