@@ -7156,9 +7156,19 @@ mod tests {
             }
         }
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
+        // Back to just before the attachment ids changed: what came after
+        // is taken out, to run again as on a database of then.
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("attachment_unavailable"))
+            .unwrap();
         store
             .conn
-            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .execute_batch("ALTER TABLE message DROP COLUMN envelope; DROP TABLE muted_thread;")
+            .unwrap();
+        store
+            .conn
+            .pragma_update(None, "user_version", at as i64)
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
