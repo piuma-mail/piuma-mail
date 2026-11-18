@@ -229,7 +229,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(LinkTargetLine),
-          matching: find.text('bottegalume.example'),
+          matching: find.textContaining('bottegalume.example'),
         ),
         findsOneWidget,
       );
@@ -473,7 +473,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(LinkTargetLine),
-          matching: find.text('lume-login.example'),
+          matching: find.textContaining('lume-login.example'),
         ),
         findsOneWidget,
       );

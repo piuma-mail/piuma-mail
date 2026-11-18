@@ -436,29 +436,95 @@ pub fn verify_detached(
         return None;
     }
     let anchors: Vec<Cert<'_>> = anchors.iter().filter_map(|a| cert(a)).collect();
-    let mut at_cert = signer;
-    for _ in 0..5 {
-        if !valid(at_cert, now, at) {
-            return None;
+    let mut search = Chain {
+        certs: &certs,
+        anchors: &anchors,
+        now,
+        at,
+        path: Vec::new(),
+        checks: MAX_CHECKS,
+    };
+    search.leads_to_anchor(signer).then(|| Signer {
+        emails: signer.emails.clone(),
+        organization: signer.organization.clone(),
+    })
+}
+
+/// The most certificates from the signer to one an anchor issued, both
+/// included.
+const MAX_CHAIN: usize = 5;
+
+/// The most certificate signatures one chain search checks: the
+/// candidates are tried one after the other (backtracking), and this
+/// keeps a signature carrying many look-alike CAs from making that
+/// expensive.
+const MAX_CHECKS: usize = 32;
+
+/// A search for a path from a certificate to an anchor, through the
+/// certificates a signature carries.
+struct Chain<'s, 'a> {
+    certs: &'s [Cert<'a>],
+    anchors: &'s [Cert<'a>],
+    now: i64,
+    at: Option<i64>,
+    /// The certificates from the signer to the one being looked at,
+    /// which can't appear again (no loops).
+    path: Vec<&'a [u8]>,
+    /// Signature checks left.
+    checks: usize,
+}
+
+impl<'a> Chain<'_, 'a> {
+    /// Whether `issuer` signed `subject`, spending one check when the
+    /// names match; false once none are left.
+    fn issued(&mut self, issuer: &Cert<'_>, subject: &Cert<'_>) -> bool {
+        if issuer.subject != subject.issuer || self.checks == 0 {
+            return false;
         }
-        if anchors.iter().any(|a| a.raw == at_cert.raw)
-            || anchors
-                .iter()
-                .any(|a| valid(a, now, at) && issued(a, at_cert))
-        {
-            return Some(Signer {
-                emails: signer.emails.clone(),
-                organization: signer.organization.clone(),
-            });
-        }
-        // The issuer among the certificates carried: a renewed CA keeps
-        // its name, so an expired copy may come first; only a valid one
-        // that signed this certificate counts.
-        at_cert = certs.iter().find(|c| {
-            may_issue(c) && valid(c, now, at) && c.raw != at_cert.raw && issued(c, at_cert)
-        })?;
+        self.checks -= 1;
+        issued(issuer, subject)
     }
-    None
+
+    /// Whether `c`, valid, is an anchor or leads to one: issued by an
+    /// anchor, or by a carried CA that does. Every candidate issuer is
+    /// tried, not only the first (a renewed or cross-certified CA keeps
+    /// its name), within MAX_CHAIN and MAX_CHECKS.
+    fn leads_to_anchor(&mut self, c: &Cert<'a>) -> bool {
+        if !valid(c, self.now, self.at) {
+            return false;
+        }
+        let anchors = self.anchors;
+        if anchors.iter().any(|a| a.raw == c.raw) {
+            return true;
+        }
+        for a in anchors {
+            if valid(a, self.now, self.at) && self.issued(a, c) {
+                return true;
+            }
+        }
+        if self.path.len() + 1 >= MAX_CHAIN {
+            return false;
+        }
+        self.path.push(c.raw);
+        let certs = self.certs;
+        for candidate in certs {
+            if self.checks == 0 {
+                break;
+            }
+            if candidate.raw == c.raw
+                || self.path.contains(&candidate.raw)
+                || !may_issue(candidate)
+                || !valid(candidate, self.now, self.at)
+            {
+                continue;
+            }
+            if self.issued(candidate, c) && self.leads_to_anchor(candidate) {
+                return true;
+            }
+        }
+        self.path.pop();
+        false
+    }
 }
 
 /// The organization (O) a certificate is issued to, if it reads.
@@ -524,6 +590,67 @@ mod tests {
             None
         );
         assert_eq!(verify_detached(b"other", P7S, &anchors, NOW), None);
+    }
+
+    /// Whether `chain[0]` leads to the test root through the rest of
+    /// `chain`, and how many signature checks that took.
+    fn search(chain: &[Vec<u8>], checks: usize) -> (bool, usize) {
+        let certs: Vec<Cert<'_>> = chain.iter().map(|d| cert(d).unwrap()).collect();
+        let roots = pem(ROOT);
+        let anchors: Vec<Cert<'_>> = roots.iter().map(|d| cert(d).unwrap()).collect();
+        let mut c = Chain {
+            certs: &certs[1..],
+            anchors: &anchors,
+            now: NOW,
+            at: None,
+            path: Vec::new(),
+            checks,
+        };
+        let found = c.leads_to_anchor(&certs[0]);
+        (found, checks - c.checks)
+    }
+
+    #[test]
+    fn a_dead_end_issuer_is_left_for_the_next_candidate() {
+        // The signer's CA is carried twice with the same name and key:
+        // first certified by a CA under another root, then by the test
+        // root. The first leads nowhere; the second is tried after it.
+        let chain = pem(include_str!("../tests/fixtures/pec/cross-chain.pem"));
+        assert_eq!(chain.len(), 4);
+        let (found, spent) = search(&chain, MAX_CHECKS);
+        assert!(found);
+        // The signer, the dead end, its issuer, then the good copy.
+        assert!(spent >= 3, "{spent}");
+        // Either order.
+        let swapped = [
+            chain[0].clone(),
+            chain[3].clone(),
+            chain[1].clone(),
+            chain[2].clone(),
+        ];
+        assert!(search(&swapped, MAX_CHECKS).0);
+        // Only the dead end: no path.
+        assert!(!search(&chain[..3], MAX_CHECKS).0);
+        // Out of checks before the good copy: no path, and no more spent.
+        assert_eq!(search(&chain, 2), (false, 2));
+    }
+
+    #[test]
+    fn a_loop_of_cas_ends() {
+        // Two CAs certifying each other, neither an anchor.
+        let chain = pem(include_str!("../tests/fixtures/pec/loop-chain.pem"));
+        assert_eq!(chain.len(), 3);
+        let (found, spent) = search(&chain, MAX_CHECKS);
+        assert!(!found);
+        assert!(spent <= 3, "{spent}");
+        // Many copies of the loop: still bounded.
+        let mut many = vec![chain[0].clone()];
+        for _ in 0..50 {
+            many.extend(chain[1..].iter().cloned());
+        }
+        let (found, spent) = search(&many, MAX_CHECKS);
+        assert!(!found);
+        assert!(spent <= MAX_CHECKS);
     }
 
     #[test]

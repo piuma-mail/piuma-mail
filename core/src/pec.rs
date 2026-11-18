@@ -593,6 +593,7 @@ mod tests {
     const PECNET: &str = include_str!("../tests/fixtures/pec/pecnet.eml");
     const ROOTONLY: &str = include_str!("../tests/fixtures/pec/rootonly.eml");
     const RENEWED: &str = include_str!("../tests/fixtures/pec/renewed.eml");
+    const CROSS: &str = include_str!("../tests/fixtures/pec/cross.eml");
     /// 29 November 2026: after the fixtures were made, and after the old
     /// copy of the renewed CA expired.
     const NOW: i64 = 1_796_000_000;
@@ -721,6 +722,15 @@ mod tests {
         // The signature carries the CA twice, same name and key: first a
         // copy that has expired by now, then the renewed one.
         assert!(signed_by(RENEWED, &both()));
+    }
+
+    #[test]
+    fn a_ca_certified_twice_leads_to_the_anchor_through_either() {
+        // The signature carries the CA certified first under another
+        // root (a dead end), then by the test CA: the second is tried.
+        assert!(signed_by(CROSS, &both()));
+        // Without the test CA among the anchors, neither path ends.
+        assert!(!signed_by(CROSS, &crate::smime::pem(AGID_PEC_CA)));
     }
 
     #[test]

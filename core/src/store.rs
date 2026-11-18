@@ -10370,7 +10370,7 @@ From: <help@bank.example>\r\n\r\nHi";
                  ALTER TABLE outbox DROP COLUMN undo;
                  UPDATE outbox SET error = '550 no' WHERE id = {refused};
                  PRAGMA user_version = {};",
-                MIGRATIONS.len() - 1
+                OUTBOX_STATES - 1
             ))
             .unwrap();
         let mut store = store;

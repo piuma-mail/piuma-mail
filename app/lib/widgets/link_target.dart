@@ -127,7 +127,7 @@ class _LinkTargetText extends StatelessWidget {
     final quiet = PiumaType.mono.copyWith(color: c.muted, fontSize: size);
     if (parts == null) {
       return Text(
-        elideMiddle(url, oneLine ? 72 : 240),
+        elideMiddle(url, oneLine ? _oneLineChars : 240),
         maxLines: oneLine ? 1 : 6,
         style: quiet,
       );
@@ -136,53 +136,62 @@ class _LinkTargetText extends StatelessWidget {
     final sub = parts.host.endsWith(parts.registrable)
         ? parts.host.substring(0, parts.host.length - parts.registrable.length)
         : '';
-    final host = Text.rich(
+    // The host is never cut away: only a long run of labels in front of
+    // its registrable part is cut (in the middle), and on one line the
+    // rest of the address gets what room the host leaves.
+    final shownSub = elideMiddle(sub, oneLine ? 28 : 64);
+    final hostSpans = [
       TextSpan(
-        children: [
-          // A long run of labels in front can only push the registrable
-          // part away: it is cut in the middle too.
-          TextSpan(
-            text: elideMiddle(sub, oneLine ? 28 : 64),
-            style: quiet.copyWith(color: c.fg),
-          ),
-          TextSpan(
-            text: sub.isEmpty ? parts.host : parts.registrable,
-            style: strong,
-          ),
-          if (parts.ascii case final ascii?)
-            TextSpan(text: '  $ascii', style: quiet),
-        ],
+        text: shownSub,
+        style: quiet.copyWith(color: c.fg),
       ),
-      softWrap: !oneLine,
-    );
-    final rest = Text(
-      elideMiddle(parts.rest, oneLine ? 56 : 240),
-      maxLines: oneLine ? 1 : 6,
-      overflow: TextOverflow.clip,
-      style: quiet,
-    );
+      TextSpan(
+        text: sub.isEmpty ? parts.host : parts.registrable,
+        style: strong,
+      ),
+      if (parts.ascii case final ascii?)
+        TextSpan(text: '  $ascii', style: quiet),
+    ];
     if (oneLine) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          host,
-          if (parts.rest.isNotEmpty) Flexible(child: rest),
-        ],
+      final hostLength = hostSpans.fold<int>(
+        0,
+        (n, span) => n + span.text!.runes.length,
+      );
+      final room = (_oneLineChars - hostLength).clamp(16, _oneLineChars);
+      // One paragraph, so a host longer than the line wraps rather than
+      // being clipped.
+      return Text.rich(
+        TextSpan(
+          children: [
+            ...hostSpans,
+            if (parts.rest.isNotEmpty)
+              TextSpan(text: elideMiddle(parts.rest, room), style: quiet),
+          ],
+        ),
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        host,
+        Text.rich(TextSpan(children: hostSpans)),
         if (parts.rest.isNotEmpty) ...[
           const SizedBox(height: PiumaSpace.s4),
-          rest,
+          Text(
+            elideMiddle(parts.rest, 240),
+            maxLines: 6,
+            overflow: TextOverflow.clip,
+            style: quiet,
+          ),
         ],
       ],
     );
   }
 }
+
+/// How many characters the status line holds (its width at the mono
+/// size it uses).
+const _oneLineChars = 72;
 
 /// Where a link goes, for a touch screen, which has no hover: a long press
 /// on a link shows its real address, to open or copy (and does the same

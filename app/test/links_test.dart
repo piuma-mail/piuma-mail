@@ -1,5 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:piuma_mail/design/theme.dart';
 import 'package:piuma_mail/inbox/original_view.dart';
+import 'package:piuma_mail/widgets/link_target.dart';
 import 'package:piuma_mail/widgets/links.dart';
 
 void main() {
@@ -96,7 +99,10 @@ void main() {
     expect(shown.runes.length, 56);
     expect(shown, contains('…'));
     expect(shown, endsWith('finish?id=7'));
-    expect(describeLink('https://login.bank.co.uk/x')!.registrable, 'bank.co.uk');
+    expect(
+      describeLink('https://login.bank.co.uk/x')!.registrable,
+      'bank.co.uk',
+    );
   });
 
   test('a host with other letters shows its ASCII form too', () {
@@ -115,5 +121,79 @@ void main() {
       normalizeLink('https://a.example/x/../y'),
       normalizeLink('https://a.example/y'),
     );
+  });
+
+  test('an IDN host compares in the ASCII form the browser hands back', () {
+    expect(
+      normalizeLink('https://Bücher.de/x'),
+      normalizeLink('https://xn--bcher-kva.de/x'),
+    );
+    expect(
+      normalizeLink('https://раураl.com/login'),
+      normalizeLink('https://xn--l-7sba6dbr.com/login'),
+    );
+  });
+
+  test('a link written in punycode shows both forms of its host', () {
+    for (final url in [
+      'https://xn--l-7sba6dbr.com/login',
+      'https://раураl.com/login',
+    ]) {
+      final parts = describeLink(url)!;
+      expect(parts.host, 'раураl.com', reason: url);
+      expect(parts.ascii, 'xn--l-7sba6dbr.com', reason: url);
+      expect(parts.rest, '/login', reason: url);
+    }
+    expect(unicodeHost('xn--bcher-kva.de'), 'bücher.de');
+    // Not really punycode, or ASCII only: left as it is.
+    expect(unicodeHost('xn--zz.example'), 'xn--zz.example');
+    expect(unicodeHost('xn--abc-.example'), 'xn--abc-.example');
+    expect(describeLink('https://shop.example/')!.ascii, isNull);
+  });
+
+  test('a user name before the host never takes the host\'s place', () {
+    final parts = describeLink('https://bank.it@evil.example/login')!;
+    expect(parts.host, 'evil.example');
+    expect(parts.registrable, 'evil.example');
+    expect(parts.rest, '/login');
+  });
+
+  testWidgets('the status line keeps the whole host, whatever the path', (
+    tester,
+  ) async {
+    Future<String> shown(String url) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildPiumaTheme(Brightness.light),
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomLeft,
+              child: LinkTargetLine(url: url),
+            ),
+          ),
+        ),
+      );
+      final text = tester.widget<RichText>(
+        find.descendant(
+          of: find.byType(LinkTargetLine),
+          matching: find.byType(RichText),
+        ),
+      );
+      expect(tester.takeException(), isNull, reason: url);
+      return text.text.toPlainText();
+    }
+
+    final padded = await shown(
+      'https://bank.it@evil.example/${'bank.it/login/' * 40}end',
+    );
+    expect(padded, startsWith('evil.example/'));
+    expect(padded, endsWith('end'));
+    expect(padded.runes.length, lessThanOrEqualTo(72));
+    // A host longer than the line: all of it, the path cut instead.
+    final label = 'secure-login-${'a' * 50}';
+    final long = await shown('https://$label.example/${'x/' * 60}');
+    expect(long, startsWith('$label.example'));
+    final idn = await shown('https://xn--l-7sba6dbr.com/${'p/' * 60}');
+    expect(idn, startsWith('раураl.com  xn--l-7sba6dbr.com/'));
   });
 }

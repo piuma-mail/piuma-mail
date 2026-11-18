@@ -57,13 +57,18 @@ Future<void> Function(String path) openLocalFile = (path) async {
 /// empty path as `/`, dot segments resolved, percent-encoding the way
 /// [Uri] writes it. An email's own `href` and the web view's `a.href` of
 /// it compare equal once both go through here.
+///
+/// A host with letters outside ASCII is compared in its ASCII form, as
+/// browsers hand it back (`bücher.de` is `xn--bcher-kva.de`).
 String normalizeLink(String link) {
   final uri = Uri.tryParse(link.trim());
   if (uri == null || !uri.hasScheme) return link.trim();
-  var out = uri.replace(
-    scheme: uri.scheme.toLowerCase(),
-    host: uri.host.toLowerCase(),
-  );
+  var host = uri.host.toLowerCase();
+  if (host.contains('%')) {
+    final decoded = _decodeHost(host);
+    host = punycodeHost(decoded) ?? decoded;
+  }
+  var out = uri.replace(scheme: uri.scheme.toLowerCase(), host: host);
   if ((out.scheme == 'http' || out.scheme == 'https') && out.path.isEmpty) {
     out = out.replace(path: '/');
   }
@@ -79,15 +84,17 @@ class LinkParts {
     required this.rest,
   });
 
-  /// The host as people read it (Unicode).
+  /// The host as people read it (Unicode, also when the link wrote it in
+  /// punycode).
   final String host;
 
   /// The part of [host] an organization registers: `bank.example` of
   /// `login.bank.example`.
   final String registrable;
 
-  /// The host in ASCII (punycode) when it has letters outside ASCII,
-  /// which can imitate others (`раураl.com`); null otherwise.
+  /// The host in ASCII (punycode, the form the browser goes to) when its
+  /// Unicode form differs: letters outside ASCII can imitate others
+  /// (`раураl.com`). Null otherwise.
   final String? ascii;
 
   /// Everything after the host: path, query, fragment (or a mailto's
@@ -102,16 +109,18 @@ LinkParts? describeLink(String url) {
   if (uri.scheme.toLowerCase() == 'mailto') {
     final to = Uri.decodeComponent(uri.path);
     final at = to.lastIndexOf('@');
-    final host = at < 0 ? to : to.substring(at + 1).toLowerCase();
+    final (host, ascii) = _readableHost(
+      at < 0 ? to : to.substring(at + 1).toLowerCase(),
+    );
     return LinkParts(
       host: host,
       registrable: registrableDomain(host),
-      ascii: punycodeHost(host),
+      ascii: ascii,
       rest: to,
     );
   }
   if (uri.host.isEmpty) return null;
-  final host = Uri.decodeComponent(uri.host).toLowerCase();
+  final (host, ascii) = _readableHost(_decodeHost(uri.host).toLowerCase());
   final rest = StringBuffer()
     ..write(uri.hasPort ? ':${uri.port}' : '')
     ..write(uri.path)
@@ -120,9 +129,91 @@ LinkParts? describeLink(String url) {
   return LinkParts(
     host: host,
     registrable: registrableDomain(host),
-    ascii: punycodeHost(host),
+    ascii: ascii,
     rest: rest.toString(),
   );
+}
+
+/// A host's percent-encoding undone, or the host as it is when that
+/// doesn't read.
+String _decodeHost(String host) {
+  try {
+    return Uri.decodeComponent(host);
+  } on ArgumentError {
+    return host;
+  }
+}
+
+/// [host] as people read it (Unicode) and its ASCII form when the two
+/// differ, whichever of them the link wrote.
+(String, String?) _readableHost(String host) {
+  if (punycodeHost(host) case final ascii?) return (host, ascii);
+  final unicode = unicodeHost(host);
+  return unicode == host ? (host, null) : (unicode, host);
+}
+
+/// [host] with its punycode (`xn--`) labels in Unicode; a label that
+/// doesn't decode stays as it is.
+String unicodeHost(String host) =>
+    host.split('.').map((l) => _unpunycodeLabel(l) ?? l).join('.');
+
+/// RFC 3492 decoding of an `xn--` label; null when it isn't one or
+/// doesn't decode.
+String? _unpunycodeLabel(String label) {
+  if (!label.toLowerCase().startsWith('xn--')) return null;
+  final input = label.substring(4).toLowerCase();
+  // A DNS label is at most 63 characters.
+  if (input.isEmpty || input.length > 59) return null;
+  const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+  int adapt(int delta, int points, bool first) {
+    delta = first ? delta ~/ damp : delta ~/ 2;
+    delta += delta ~/ points;
+    var k = 0;
+    while (delta > ((base - tMin) * tMax) ~/ 2) {
+      delta ~/= base - tMin;
+      k += base;
+    }
+    return k + (base - tMin + 1) * delta ~/ (delta + skew);
+  }
+
+  int? value(int c) {
+    if (c >= 0x61 && c <= 0x7A) return c - 0x61;
+    if (c >= 0x30 && c <= 0x39) return c - 0x30 + 26;
+    return null;
+  }
+
+  final dash = input.lastIndexOf('-');
+  final out = <int>[];
+  if (dash > 0) {
+    final basic = input.substring(0, dash).codeUnits;
+    if (basic.any((c) => c >= 0x80)) return null;
+    out.addAll(basic);
+  }
+  var pos = dash > 0 ? dash + 1 : 0;
+  var n = 0x80, i = 0, bias = 72;
+  while (pos < input.length) {
+    final old = i;
+    var w = 1;
+    for (var k = base; ; k += base) {
+      if (pos >= input.length) return null;
+      final digit = value(input.codeUnitAt(pos++));
+      if (digit == null) return null;
+      i += digit * w;
+      final t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+      if (digit < t) break;
+      w *= base - t;
+      if (i > 0x10FFFF * 64) return null;
+    }
+    bias = adapt(i - old, out.length + 1, old == 0);
+    n += i ~/ (out.length + 1);
+    if (n > 0x10FFFF) return null;
+    i %= out.length + 1;
+    out.insert(i, n);
+    i++;
+  }
+  // Only a label that is really punycode of letters outside ASCII.
+  if (out.every((r) => r < 0x80)) return null;
+  return String.fromCharCodes(out);
 }
 
 /// The registrable domain of [host]: its last two labels, or three under a
