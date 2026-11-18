@@ -911,7 +911,7 @@ Future<void> unsubscribeFrom(
       onToast(l.alwaysInInboxDone(row.sender));
     case _Choice.leave when info.kind == UnsubscribeKind.page:
       final uri = Uri.tryParse(info.address);
-      if (uri != null) await openExternalLink(uri);
+      if (uri != null) await openMailLink(uri);
     case _Choice.leave:
       try {
         await source.unsubscribe(row);
@@ -950,6 +950,10 @@ class _Unsubscribe extends StatelessWidget {
         ),
         const SizedBox(height: PiumaSpace.s12),
         Text(body, style: PiumaType.body.copyWith(color: c.fg)),
+        if (info.kind == UnsubscribeKind.mail) ...[
+          const SizedBox(height: PiumaSpace.s12),
+          UnsubscribeMailPreview(info: info),
+        ],
         const SizedBox(height: PiumaSpace.s24),
         Wrap(
           alignment: WrapAlignment.end,
@@ -979,6 +983,98 @@ class _Unsubscribe extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The message a `mailto:` unsubscribe sends from the person's account,
+/// as the list's header wrote it: address, subject and text, shown in
+/// full before anything goes out.
+class UnsubscribeMailPreview extends StatelessWidget {
+  const UnsubscribeMailPreview({super.key, required this.info});
+
+  final UnsubscribeInfo info;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final mono = PiumaType.mono.copyWith(color: c.muted, fontSize: 12);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(PiumaSpace.s12),
+      decoration: BoxDecoration(
+        color: c.soft,
+        borderRadius: BorderRadius.circular(PiumaRadius.field),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l.unsubscribeMailTo(info.address), style: mono),
+          const SizedBox(height: PiumaSpace.s4),
+          Text(l.unsubscribeMailSubject(info.subject), style: mono),
+          if (info.body.trim().isNotEmpty) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            Text(
+              info.body.trim(),
+              maxLines: 8,
+              overflow: TextOverflow.ellipsis,
+              style: mono,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Asks before a `mailto:` unsubscribe goes out, showing the message
+/// ([UnsubscribeMailPreview]). True when the person sends it.
+Future<bool> confirmUnsubscribeMail(
+  BuildContext context,
+  MailRow row,
+  UnsubscribeInfo info,
+) async {
+  final l = AppLocalizations.of(context);
+  final send = await showPiumaDialog<bool>(
+    context,
+    label: l.unsubscribeTitle(row.sender),
+    builder: (context) {
+      final c = PiumaTheme.of(context);
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l.unsubscribeTitle(row.sender),
+            style: PiumaType.subtitle.copyWith(color: c.fg),
+          ),
+          const SizedBox(height: PiumaSpace.s12),
+          Text(
+            l.unsubscribeMail(info.address),
+            style: PiumaType.body.copyWith(color: c.fg),
+          ),
+          const SizedBox(height: PiumaSpace.s12),
+          UnsubscribeMailPreview(info: info),
+          const SizedBox(height: PiumaSpace.s24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              PiumaButton(
+                label: l.cancel,
+                kind: PiumaButtonKind.secondary,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: PiumaSpace.s8),
+              PiumaButton(
+                label: l.unsubscribeConfirm,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        ],
+      );
+    },
+  );
+  return send ?? false;
 }
 
 /// An issue's cover picture (`ImagesToApprove` section 3): its first

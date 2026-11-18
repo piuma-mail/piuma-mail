@@ -8,6 +8,7 @@ import 'package:piuma_mail/inbox/newsletters.dart';
 import 'package:piuma_mail/inbox/reader.dart';
 import 'package:piuma_mail/inbox/sender_card.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/search/search_panel.dart';
 
@@ -175,6 +176,25 @@ void main() {
     await tester.tap(_inCard(find.text('Blocked')));
     await tester.pumpAndSettle();
     expect(source.blocked, isEmpty);
+  });
+
+  testWidgets('a mailto unsubscribe from the card asks with its message', (
+    tester,
+  ) async {
+    final source = await _pump(tester, phone: true);
+    source.leaveBy = const UnsubscribeInfo(
+      UnsubscribeKind.mail,
+      'leave@forma.example',
+      'stop',
+    );
+    await _openForma(tester);
+    await tester.tap(_inCard(find.text('Unsubscribe')));
+    await tester.pumpAndSettle();
+    expect(find.text('To: leave@forma.example'), findsOneWidget);
+    expect(find.text('Subject: stop'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(source.unsubscribed, isEmpty);
   });
 
   testWidgets('a newsletter’s card: how often, Unsubscribe, clear', (
