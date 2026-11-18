@@ -231,7 +231,9 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
 
     // Offline: the send can't reach the server, so it waits.
     let offline = account(id, down, no_imap);
-    let err = remote::send(&offline, &"test".into(), &draft()).await.unwrap_err();
+    let err = remote::send(&offline, &"test".into(), &draft())
+        .await
+        .unwrap_err();
     assert!(err.is_offline(), "{err:?}");
     let out = Outgoing {
         account: id,

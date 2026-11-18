@@ -189,9 +189,10 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   };
 
   /// A port field holds something that isn't a port.
-  bool get _badPort => [_imapPort, _smtpPort].any(
-    (c) => c.text.trim().isNotEmpty && validPort(c.text) == null,
-  );
+  bool get _badPort => [
+    _imapPort,
+    _smtpPort,
+  ].any((c) => c.text.trim().isNotEmpty && validPort(c.text) == null);
 
   OAuthProviderInfo? _oauthInfo(String id) =>
       widget.source.oauthProviders.where((p) => p.id == id).firstOrNull;
@@ -1778,7 +1779,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       ),
     );
   }
-
 }
 
 /// A grouped card of the phone's manual form: one setting per row.

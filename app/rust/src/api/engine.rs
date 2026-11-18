@@ -26,8 +26,8 @@ use piuma_core::signature::{self, Accent, Signature, Template};
 use piuma_core::smtp::{self, Draft, SendError};
 use piuma_core::store::WaitingDraft;
 use piuma_core::{
-    images, reading, Account, AccountId, AccountKind, Body, Folder, ListFilter, MessageSummary,
-    Login, PrivacyCounts, Query, Section, Security, Server, Store,
+    images, reading, Account, AccountId, AccountKind, Body, Folder, ListFilter, Login,
+    MessageSummary, PrivacyCounts, Query, Section, Security, Server, Store,
 };
 
 use crate::credentials;
@@ -848,7 +848,11 @@ pub(crate) async fn add_checked_account(
         return Err(e);
     }
     for pin in pins_of(&trusted) {
-        crate::login::trust(id, &pin.host, &piuma_core::cert::fingerprint_text(&pin.sha256))?;
+        crate::login::trust(
+            id,
+            &pin.host,
+            &piuma_core::cert::fingerprint_text(&pin.sha256),
+        )?;
     }
     let added = store()?.account(id)?.expect("just added");
     Ok(AccountInfo::from(&added))

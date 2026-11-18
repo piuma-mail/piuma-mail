@@ -51,11 +51,11 @@ mod tokens_g;
 pub mod translate;
 pub mod vault;
 
+pub use auth::Login;
 pub use model::{
     Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
     Security, Server,
 };
-pub use auth::Login;
 pub use reading::Readable;
 pub use search::Query;
 pub use store::{

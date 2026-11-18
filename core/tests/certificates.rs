@@ -52,7 +52,9 @@ async fn a_self_signed_certificate_is_trusted_only_as_it_was() {
     assert!(!err_is_offline(&ImapError::Certificate(refused.clone())));
 
     // Trusted, by its fingerprint: in.
-    check_login(&imap(port, vec![pin(FIRST_CERT)])).await.unwrap();
+    check_login(&imap(port, vec![pin(FIRST_CERT)]))
+        .await
+        .unwrap();
 
     // A pin for another server changes nothing here.
     let elsewhere = Pin {
@@ -63,12 +65,17 @@ async fn a_self_signed_certificate_is_trusted_only_as_it_was() {
 
     // The server now shows another certificate: refused, said so.
     *showing.lock().unwrap() = SECOND_CERT;
-    let err = check_login(&imap(port, vec![pin(FIRST_CERT)])).await.unwrap_err();
+    let err = check_login(&imap(port, vec![pin(FIRST_CERT)]))
+        .await
+        .unwrap_err();
     let ImapError::Certificate(refused) = err else {
         panic!("{err:?}");
     };
     assert_eq!(refused.problem, Problem::Changed);
-    assert_eq!(refused.cert.fingerprint, CertInfo::read(SECOND_CERT).fingerprint);
+    assert_eq!(
+        refused.cert.fingerprint,
+        CertInfo::read(SECOND_CERT).fingerprint
+    );
     assert!(refused.to_string().contains("not the one trusted"));
 }
 
@@ -105,7 +112,9 @@ async fn smtp_follows_the_same_trust() {
     assert_eq!(refused.problem, Problem::Untrusted);
     assert!(delivered.lock().unwrap().is_empty());
 
-    send(&smtp(port, vec![pin(FIRST_CERT)]), &message).await.unwrap();
+    send(&smtp(port, vec![pin(FIRST_CERT)]), &message)
+        .await
+        .unwrap();
     assert_eq!(delivered.lock().unwrap().len(), 1);
 
     *showing.lock().unwrap() = SECOND_CERT;

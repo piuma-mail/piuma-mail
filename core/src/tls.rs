@@ -101,7 +101,12 @@ pub struct Pin {
 
 impl fmt::Debug for Pin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pin({}, {})", self.host, cert::fingerprint_text(&self.sha256))
+        write!(
+            f,
+            "Pin({}, {})",
+            self.host,
+            cert::fingerprint_text(&self.sha256)
+        )
     }
 }
 
@@ -321,8 +326,7 @@ where
         .dangerous()
         .with_custom_certificate_verifier(verifier.clone())
         .with_no_client_auth();
-    let name =
-        ServerName::try_from(host.to_owned()).map_err(|e| Failure::Other(e.to_string()))?;
+    let name = ServerName::try_from(host.to_owned()).map_err(|e| Failure::Other(e.to_string()))?;
     TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await

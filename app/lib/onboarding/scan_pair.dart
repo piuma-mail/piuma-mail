@@ -103,9 +103,7 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
       if (mounted) widget.onJoined(account);
     } on AddAccountException catch (e) {
       if (!mounted) return;
-      setState(
-        () => _error = accountErrorText(l, e.error),
-      );
+      setState(() => _error = accountErrorText(l, e.error));
     } on SyncFailure catch (e) {
       if (!mounted) return;
       setState(

@@ -185,7 +185,10 @@ async fn imap_session<S: AsyncRead + AsyncWrite + Unpin>(stream: S, valid: Valid
     let (r, mut w) = tokio::io::split(stream);
     let mut lines = BufReader::new(r).lines();
     let caps = "IMAP4rev1 AUTH=XOAUTH2 AUTH=OAUTHBEARER";
-    if w.write_all(format!("* OK [CAPABILITY {caps}] ready\r\n").as_bytes()).await.is_err() {
+    if w.write_all(format!("* OK [CAPABILITY {caps}] ready\r\n").as_bytes())
+        .await
+        .is_err()
+    {
         return;
     }
     while let Ok(Some(line)) = lines.next_line().await {
@@ -208,7 +211,9 @@ async fn imap_session<S: AsyncRead + AsyncWrite + Unpin>(stream: S, valid: Valid
                     return;
                 };
                 let decoded = unb64(&answer);
-                seen.lock().unwrap().push(format!("{} {decoded}", rest.trim()));
+                seen.lock()
+                    .unwrap()
+                    .push(format!("{} {decoded}", rest.trim()));
                 let token = valid.lock().unwrap().clone();
                 if decoded.contains(&format!("auth=Bearer {token}\x01")) {
                     format!("{tag} OK authenticated\r\n")
@@ -220,7 +225,9 @@ async fn imap_session<S: AsyncRead + AsyncWrite + Unpin>(stream: S, valid: Valid
                 }
             }
             "LOGOUT" => {
-                let _ = w.write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes()).await;
+                let _ = w
+                    .write_all(format!("* BYE\r\n{tag} OK bye\r\n").as_bytes())
+                    .await;
                 return;
             }
             _ => format!("{tag} OK\r\n"),
@@ -242,7 +249,8 @@ pub async fn smtp_server(valid: Valid, tls: Option<Shown>) -> (u16, Seen, Seen) 
     let (record, mail) = (seen.clone(), delivered.clone());
     tokio::spawn(async move {
         while let Ok((tcp, _)) = listener.accept().await {
-            let (valid, record, mail, tls) = (valid.clone(), record.clone(), mail.clone(), tls.clone());
+            let (valid, record, mail, tls) =
+                (valid.clone(), record.clone(), mail.clone(), tls.clone());
             tokio::spawn(async move {
                 match tls {
                     Some(shown) => {
@@ -278,7 +286,12 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
         } else if upper.starts_with("AUTH PLAIN") {
             // base64("\0user\0test") ends with "AHRlc3Q=" for any user.
             authed = line.ends_with("AHRlc3Q=");
-            if authed { "235 ok\r\n" } else { "535 5.7.8 bad credentials\r\n" }.into()
+            if authed {
+                "235 ok\r\n"
+            } else {
+                "535 5.7.8 bad credentials\r\n"
+            }
+            .into()
         } else if upper.starts_with("AUTH XOAUTH2 ") || upper.starts_with("AUTH OAUTHBEARER ") {
             let mut words = line.split(' ');
             let mechanism = words.nth(1).unwrap_or("").to_owned();
@@ -295,7 +308,12 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                 "535 5.7.8 Username and Password not accepted\r\n".into()
             }
         } else if upper.starts_with("MAIL FROM") {
-            if authed { "250 ok\r\n" } else { "530 5.7.0 authentication required\r\n" }.into()
+            if authed {
+                "250 ok\r\n"
+            } else {
+                "530 5.7.0 authentication required\r\n"
+            }
+            .into()
         } else if upper == "DATA" {
             let _ = w.write_all(b"354 go on\r\n").await;
             let mut data = String::new();

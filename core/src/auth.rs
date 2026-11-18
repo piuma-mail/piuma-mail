@@ -205,7 +205,13 @@ mod tests {
 
     #[test]
     fn xoauth2_matches_the_documented_form() {
-        let raw = sasl_initial(Mechanism::Xoauth2, "someone@example.com", "ya29.vF9dft4", "", 0);
+        let raw = sasl_initial(
+            Mechanism::Xoauth2,
+            "someone@example.com",
+            "ya29.vF9dft4",
+            "",
+            0,
+        );
         assert_eq!(
             raw.as_str(),
             "user=someone@example.com\x01auth=Bearer ya29.vF9dft4\x01\x01"

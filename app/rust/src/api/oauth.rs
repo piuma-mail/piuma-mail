@@ -132,7 +132,10 @@ fn client_of(provider: &oauth::Provider, own: Option<OAuthClient>) -> Result<Cli
                 .client_secret
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty()),
-            tenant: c.tenant.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()),
+            tenant: c
+                .tenant
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty()),
         }),
         None => oauth::built_in_client(&provider.id).ok_or_else(|| {
             EngineError::new(
@@ -244,7 +247,10 @@ async fn finish(account: Account, email: &str) -> Result<SignedIn, EngineError> 
             .map_err(flow_error)?;
             let grant = request.exchange(&code).await.map_err(token_error)?;
             let refresh = grant.refresh_token.as_ref().ok_or_else(|| {
-                EngineError::new(ErrorKind::SignInDenied, "the provider gave no refresh token")
+                EngineError::new(
+                    ErrorKind::SignInDenied,
+                    "the provider gave no refresh token",
+                )
             })?;
             let stored = Stored {
                 provider: request.provider.id.clone(),
@@ -259,7 +265,11 @@ async fn finish(account: Account, email: &str) -> Result<SignedIn, EngineError> 
                 .await;
             let login = Login::oauth(session.clone()).with_pins(pins);
             remote::check_login(&account, &login).await?;
-            Ok(SignedIn { stored, session, id })
+            Ok(SignedIn {
+                stored,
+                session,
+                id,
+            })
         })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?

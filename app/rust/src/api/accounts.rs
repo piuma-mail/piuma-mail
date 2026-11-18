@@ -162,12 +162,8 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
             (piuma_core::oauth::provider(&stored.provider), engine())
         {
             engine.runtime.spawn(async move {
-                let _ = piuma_core::oauth::revoke(
-                    provider,
-                    &stored.client,
-                    &stored.refresh_token,
-                )
-                .await;
+                let _ = piuma_core::oauth::revoke(provider, &stored.client, &stored.refresh_token)
+                    .await;
             });
         }
     }

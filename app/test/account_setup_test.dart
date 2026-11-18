@@ -251,7 +251,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining('isn’t the certificate you trusted'), findsOneWidget);
+    expect(
+      find.textContaining('isn’t the certificate you trusted'),
+      findsOneWidget,
+    );
     expect(find.text('Trust the new certificate'), findsOneWidget);
   });
 
@@ -271,7 +274,10 @@ void main() {
     await tester.tap(find.text('Outlook'));
     await tester.pumpAndSettle();
     expect(find.text('Sign in with Microsoft'), findsWidgets);
-    expect(find.textContaining('your password stays with Microsoft'), findsOneWidget);
+    expect(
+      find.textContaining('your password stays with Microsoft'),
+      findsOneWidget,
+    );
     expect(find.text('Password'), findsNothing);
     await tester.enterText(_field('Email address'), 'anna@outlook.com');
     await tester.pump();
@@ -381,7 +387,10 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Sign in with Microsoft').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('was closed before it finished'), findsOneWidget);
+    expect(
+      find.textContaining('was closed before it finished'),
+      findsOneWidget,
+    );
   });
 }
 

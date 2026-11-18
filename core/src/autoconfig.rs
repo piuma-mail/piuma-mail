@@ -460,7 +460,10 @@ mod tests {
             outlook.smtp,
             server("smtp.office365.com", 587, Security::StartTls)
         );
-        assert_eq!(known("a@gmail.com").unwrap().oauth.as_deref(), Some("google"));
+        assert_eq!(
+            known("a@gmail.com").unwrap().oauth.as_deref(),
+            Some("google")
+        );
         assert_eq!(known("a@libero.it").unwrap().oauth, None);
         // A custom domain on Microsoft 365, by its MX.
         let (imap, smtp) = by_mx("studio-it.mail.protection.outlook.com").unwrap();

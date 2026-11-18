@@ -39,7 +39,11 @@ fn stored(refresh: &str) -> Stored {
 
 /// A sign-in against the test's token endpoint; `kept` gets every new
 /// refresh token the provider sends.
-fn session(base: &str, mechanism: Mechanism, refresh: &str) -> (Arc<Session>, Arc<Mutex<Vec<String>>>) {
+fn session(
+    base: &str,
+    mechanism: Mechanism,
+    refresh: &str,
+) -> (Arc<Session>, Arc<Mutex<Vec<String>>>) {
     let kept: Arc<Mutex<Vec<String>>> = Arc::default();
     let keep = kept.clone();
     let s = Session::with_provider(provider(base, mechanism), stored(refresh), move |s| {
@@ -76,7 +80,11 @@ async fn browser(redirect: &str, target: &str) -> String {
 }
 
 fn query(url: &str) -> HashMap<String, String> {
-    url::Url::parse(url).unwrap().query_pairs().into_owned().collect()
+    url::Url::parse(url)
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect()
 }
 
 #[tokio::test]
@@ -103,7 +111,10 @@ async fn the_browser_comes_back_with_a_code_for_tokens() {
 
     let grant = request.exchange("the-code").await.unwrap();
     assert_eq!(grant.access_token.as_str(), "access-code");
-    assert_eq!(grant.refresh_token.as_deref().map(|s| s.as_str()), Some("refresh-0"));
+    assert_eq!(
+        grant.refresh_token.as_deref().map(|s| s.as_str()),
+        Some("refresh-0")
+    );
     let form = forms.lock().unwrap()[0].clone();
     assert_eq!(form["grant_type"], "authorization_code");
     assert_eq!(form["code"], "the-code");

@@ -202,7 +202,11 @@ pub fn kept_secrets<'caller>(
             let items: Vec<String> = crate::credentials::take_kept()
                 .into_iter()
                 .map(|(key, value)| {
-                    format!(r#"{{"key":{},"value":{}}}"#, json_string(&key), json_string(&value))
+                    format!(
+                        r#"{{"key":{},"value":{}}}"#,
+                        json_string(&key),
+                        json_string(&value)
+                    )
                 })
                 .collect();
             JString::from_str(env, format!("[{}]", items.join(",")))

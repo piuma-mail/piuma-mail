@@ -168,8 +168,7 @@ pub fn for_domain(domain: &str) -> Option<&'static Provider> {
 pub fn for_mx(host: &str) -> Option<&'static Provider> {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     providers().iter().find(|p| {
-        p.mx
-            .iter()
+        p.mx.iter()
             .any(|s| host == *s || host.ends_with(&format!(".{s}")))
     })
 }
@@ -213,7 +212,11 @@ const BUILD_CLIENTS: Option<&str> = option_env!("PIUMA_OAUTH_CLIENTS");
 
 /// The client this build has for a provider, if any.
 pub fn built_in_client(provider: &str) -> Option<Client> {
-    clients_from(BUILD_CLIENTS.unwrap_or(""), provider, cfg!(target_os = "android"))
+    clients_from(
+        BUILD_CLIENTS.unwrap_or(""),
+        provider,
+        cfg!(target_os = "android"),
+    )
 }
 
 fn clients_from(config: &str, provider: &str, android: bool) -> Option<Client> {
@@ -450,13 +453,18 @@ impl Loopback {
             // Browsers also ask for /favicon.ico.
             if !(target == "/" || target.starts_with("/?")) {
                 let _ = tcp
-                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
                     .await;
                 continue;
             }
             let result = request.code_from_redirect(&format!("{}{target}", self.redirect_uri()));
             let (status, text) = match &result {
-                Ok(_) => ("200 OK", "Signed in. You can close this page and go back to Piuma Mail."),
+                Ok(_) => (
+                    "200 OK",
+                    "Signed in. You can close this page and go back to Piuma Mail.",
+                ),
                 Err(_) => (
                     "400 Bad Request",
                     "Piuma Mail could not sign in. Close this page and try again from the app.",
@@ -595,7 +603,10 @@ pub async fn revoke(provider: &Provider, client: &Client, token: &str) -> Result
     let response = http()?
         .post(url)
         .header("Content-Type", "application/x-www-form-urlencoded")
-        .body(form_body(&[("token", token), ("client_id", &client.client_id)]))
+        .body(form_body(&[
+            ("token", token),
+            ("client_id", &client.client_id),
+        ]))
         .send()
         .await
         .map_err(|e| TokenError::Offline(e.without_url().to_string()))?;
@@ -675,7 +686,10 @@ impl fmt::Debug for Session {
 
 impl Session {
     /// None for a provider this build doesn't know.
-    pub fn new(stored: Stored, on_change: impl Fn(&Stored) + Send + Sync + 'static) -> Option<Self> {
+    pub fn new(
+        stored: Stored,
+        on_change: impl Fn(&Stored) + Send + Sync + 'static,
+    ) -> Option<Self> {
         let provider = provider(&stored.provider)?.clone();
         Some(Self::with_provider(provider, stored, on_change))
     }
@@ -761,11 +775,14 @@ mod tests {
     fn the_providers_are_valid_data() {
         let ms = provider("microsoft").unwrap();
         assert_eq!(ms.imap().host, "outlook.office365.com");
-        assert_eq!(ms.smtp(), Server {
-            host: "smtp.office365.com".into(),
-            port: 587,
-            security: Security::StartTls,
-        });
+        assert_eq!(
+            ms.smtp(),
+            Server {
+                host: "smtp.office365.com".into(),
+                port: 587,
+                security: Security::StartTls,
+            }
+        );
         assert!(ms.scopes.iter().any(|s| s == "offline_access"));
         let google = provider("google").unwrap();
         assert_eq!(google.scopes, ["https://mail.google.com/"]);

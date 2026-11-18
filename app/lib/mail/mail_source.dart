@@ -2536,13 +2536,15 @@ abstract class MailSource {
     String senderName = '',
     required Color color,
     OAuthClientConfig? client,
-  }) async => throw const AddAccountException(AddAccountError.signInUnavailable);
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
 
   /// As [addOAuthAccount], for an account whose sign-in stopped working.
   Future<void> signInAgainOAuth(
     int accountId, {
     OAuthClientConfig? client,
-  }) async => throw const AddAccountException(AddAccountError.signInUnavailable);
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
 
   /// Stops waiting for the provider's page.
   void cancelOAuth() {}

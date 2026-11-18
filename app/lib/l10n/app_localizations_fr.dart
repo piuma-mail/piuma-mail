@@ -6152,4 +6152,111 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand';
+
+  @override
+  String get errorNoKeyring =>
+      'Piuma garde les mots de passe dans le trousseau du système, et aucun n’est lancé. Installez-en un et démarrez-le, comme GNOME Keyring ou KWallet, puis réessayez. Les mots de passe ne sont jamais enregistrés dans un simple fichier.';
+
+  @override
+  String get errorCertificate =>
+      'Le certificat du serveur n’est pas digne de confiance.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'Cette copie de Piuma Mail ne peut pas se connecter à ce fournisseur. Saisissez votre propre ID client dans Avancé, ou utilisez un mot de passe d’application si le fournisseur le permet.';
+
+  @override
+  String get errorSignInCancelled =>
+      'La page de connexion a été fermée avant la fin. Réessayez.';
+
+  @override
+  String get errorSignInDenied =>
+      'Le fournisseur n’a pas autorisé la connexion. Réessayez, ou vérifiez l’ID client dans Avancé.';
+
+  @override
+  String get errorPort => 'Un port est un nombre de 1 à 65535.';
+
+  @override
+  String get certUntrusted =>
+      'Aucune autorité reconnue par votre système ne garantit ce certificat. C’est le cas des serveurs qui créent leur propre certificat.';
+
+  @override
+  String get certExpired =>
+      'Ce certificat a expiré, ou n’est pas encore valide.';
+
+  @override
+  String get certNameMismatch =>
+      'Ce certificat a été fait pour un autre nom de serveur.';
+
+  @override
+  String get certChanged =>
+      'Ce n’est pas le certificat auquel vous faisiez confiance pour ce serveur. Il a peut-être été renouvelé, ou quelqu’un écoute peut-être entre les deux. Faites-lui confiance seulement si vous savez pourquoi il a changé.';
+
+  @override
+  String get certInvalid =>
+      'Ce certificat n’est pas valide, et lui faire confiance ne rendrait pas la connexion sûre.';
+
+  @override
+  String get certIssuedTo => 'Délivré à';
+
+  @override
+  String get certIssuedBy => 'Délivré par';
+
+  @override
+  String get certValidUntil => 'Valide jusqu’au';
+
+  @override
+  String get certFingerprint => 'Empreinte SHA-256';
+
+  @override
+  String get certTrust => 'Faire confiance à ce certificat';
+
+  @override
+  String get certTrustNew => 'Faire confiance au nouveau certificat';
+
+  @override
+  String get certCopyFingerprint => 'Copier l’empreinte';
+
+  @override
+  String get certTrustHint =>
+      'Seulement pour ce compte et ce certificat précis. Comparez d’abord l’empreinte avec celle que vous donne votre fournisseur ou administrateur.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Se connecter avec $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail ouvre la page de $provider dans votre navigateur. Connectez-vous là-bas, puis revenez ici : votre mot de passe reste chez $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'En attente du navigateur…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft ne permet plus aux applications de messagerie de se connecter avec un mot de passe, et cette copie de Piuma Mail n’a pas de connexion Microsoft configurée. Utilisez une version officielle, ou saisissez l’ID client de votre propre application dans Avancé.';
+
+  @override
+  String get oauthUseAppPassword =>
+      'Utiliser plutôt un mot de passe d’application';
+
+  @override
+  String get oauthAdvanced => 'Avancé : votre propre ID client';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'Pour votre propre enregistrement d’application chez $provider. Laissez vide pour utiliser celui de cette version.';
+  }
+
+  @override
+  String get oauthClientId => 'ID client';
+
+  @override
+  String get oauthTenant => 'Locataire (facultatif)';
+
+  @override
+  String get oauthClientSecret =>
+      'Secret client (applications de bureau Google seulement)';
 }

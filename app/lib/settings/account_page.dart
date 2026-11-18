@@ -899,7 +899,8 @@ class _ServersFormState extends State<_ServersForm> {
     try {
       await widget.source.trustCertificate(widget.accountId, cert.trusted);
     } catch (_) {
-      if (mounted) setState(() => _error = AppLocalizations.of(context).errorOther);
+      if (mounted)
+        setState(() => _error = AppLocalizations.of(context).errorOther);
       return;
     }
     await _save();
@@ -1006,10 +1007,7 @@ class _ServersFormState extends State<_ServersForm> {
           ],
           if (_certificate case final cert?) ...[
             const SizedBox(height: 12),
-            CertificateCard(
-              problem: cert,
-              onTrust: _checking ? null : _trust,
-            ),
+            CertificateCard(problem: cert, onTrust: _checking ? null : _trust),
           ],
           const SizedBox(height: 20),
           Row(

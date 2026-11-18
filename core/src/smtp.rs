@@ -465,14 +465,12 @@ async fn within<T>(
     host: &str,
     work: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
-    tokio::time::timeout(limit, work)
-        .await
-        .unwrap_or_else(|_| {
-            Err(SendError::Connect {
-                host: host.to_owned(),
-                detail: "the server took too long to answer".into(),
-            })
+    tokio::time::timeout(limit, work).await.unwrap_or_else(|_| {
+        Err(SendError::Connect {
+            host: host.to_owned(),
+            detail: "the server took too long to answer".into(),
         })
+    })
 }
 
 /// A secure stream lettre can drive. The TLS is ours, as for IMAP, so a
@@ -569,10 +567,10 @@ async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
             // The plain part by hand, then TLS of our own (RFC 3207).
             expect(&mut tcp, &cfg.host, None, "220").await?;
             let ehlo = expect(&mut tcp, &cfg.host, Some(&format!("EHLO {hello}")), "250").await?;
-            if !ehlo
-                .lines()
-                .any(|l| l.get(4..).is_some_and(|w| w.trim().eq_ignore_ascii_case("STARTTLS")))
-            {
+            if !ehlo.lines().any(|l| {
+                l.get(4..)
+                    .is_some_and(|w| w.trim().eq_ignore_ascii_case("STARTTLS"))
+            }) {
                 // Never a password in the clear.
                 return Err(unreachable(&cfg.host, "the server does not offer STARTTLS"));
             }
@@ -644,7 +642,12 @@ impl fmt::Display for Line<'_> {
 /// Signs in with the password, or with an OAuth token: a refused token
 /// gets one new one and one more try, never more.
 async fn sign_in(conn: &mut AsyncSmtpConnection, cfg: &SmtpConfig) -> Result<()> {
-    match cfg.login.credential().await.map_err(|e| token_error(cfg, e))? {
+    match cfg
+        .login
+        .credential()
+        .await
+        .map_err(|e| token_error(cfg, e))?
+    {
         Credential::Password(password) => conn
             .auth(
                 &[LettreMechanism::Plain, LettreMechanism::Login],
@@ -689,7 +692,11 @@ async fn authenticate(
 ) -> Result<()> {
     use base64::Engine;
     let initial = sasl_initial_base64(mechanism, &cfg.username, token, &cfg.host, cfg.port);
-    let command = zeroize::Zeroizing::new(format!("AUTH {} {}", sasl_name(mechanism), initial.as_str()));
+    let command = zeroize::Zeroizing::new(format!(
+        "AUTH {} {}",
+        sasl_name(mechanism),
+        initial.as_str()
+    ));
     let reply = conn
         .command(Line(&command))
         .await

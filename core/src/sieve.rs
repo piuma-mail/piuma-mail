@@ -385,16 +385,25 @@ impl Client {
         })?;
         let (mechanism, initial) = match credential {
             Credential::Password(password) => {
-                let pair = zeroize::Zeroizing::new(format!("\0{}\0{}", cfg.username, password.as_str()));
+                let pair =
+                    zeroize::Zeroizing::new(format!("\0{}\0{}", cfg.username, password.as_str()));
                 use base64::Engine;
                 (
                     "PLAIN",
-                    zeroize::Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(pair.as_bytes())),
+                    zeroize::Zeroizing::new(
+                        base64::engine::general_purpose::STANDARD.encode(pair.as_bytes()),
+                    ),
                 )
             }
             Credential::Token { mechanism, token } => (
                 crate::auth::sasl_name(mechanism),
-                crate::auth::sasl_initial_base64(mechanism, &cfg.username, &token, &cfg.host, cfg.port),
+                crate::auth::sasl_initial_base64(
+                    mechanism,
+                    &cfg.username,
+                    &token,
+                    &cfg.host,
+                    cfg.port,
+                ),
             ),
         };
         if !client.caps.sasl.iter().any(|m| m == mechanism) {

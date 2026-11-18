@@ -43,10 +43,7 @@ pub fn fingerprint_text(hash: &[u8; 32]) -> String {
 
 /// Reads a fingerprint back, with or without colons, in any case.
 pub fn parse_fingerprint(text: &str) -> Option<[u8; 32]> {
-    let hex: String = text
-        .chars()
-        .filter(|c| !matches!(c, ':' | ' '))
-        .collect();
+    let hex: String = text.chars().filter(|c| !matches!(c, ':' | ' ')).collect();
     if hex.len() != 64 {
         return None;
     }

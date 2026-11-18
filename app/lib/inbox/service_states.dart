@@ -746,8 +746,7 @@ class _SignInFormState extends State<_SignInForm> {
               size: widget.phone
                   ? PiumaButtonSize.large
                   : PiumaButtonSize.touch,
-              onPressed:
-                  (_oauth != null || _password.text.isNotEmpty) && !_busy
+              onPressed: (_oauth != null || _password.text.isNotEmpty) && !_busy
                   ? _submit
                   : null,
             ),

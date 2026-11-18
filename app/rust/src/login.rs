@@ -32,7 +32,10 @@ pub(crate) fn oauth_key(account: i64) -> String {
 
 /// The setting that keeps the certificate trusted for one of its servers.
 pub(crate) fn cert_key(account: i64, host: &str) -> String {
-    format!("account.{account}.cert.{}", host.trim().to_ascii_lowercase())
+    format!(
+        "account.{account}.cert.{}",
+        host.trim().to_ascii_lowercase()
+    )
 }
 
 /// A new session for an OAuth sign-in, keeping new refresh tokens for
@@ -117,9 +120,8 @@ pub(crate) fn trust(id: AccountId, host: &str, fingerprint: &str) -> Result<(), 
 /// What the account signs in with now.
 pub(crate) fn load(id: AccountId) -> Result<Login, EngineError> {
     let secret = credentials::load(id)?;
-    let login = from_secret(id, &secret).map_err(|_| {
-        EngineError::new(ErrorKind::Keychain, "sign-in of an unknown provider")
-    })?;
+    let login = from_secret(id, &secret)
+        .map_err(|_| EngineError::new(ErrorKind::Keychain, "sign-in of an unknown provider"))?;
     Ok(login.with_pins(pins(id)))
 }
 
