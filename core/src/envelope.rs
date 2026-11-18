@@ -165,7 +165,9 @@ impl Envelope {
                 .as_str()
                 .and_then(list_post_address)
                 .unwrap_or_default(),
-            list: e["header:List-Id"].as_str().is_some_and(|v| !v.trim().is_empty()),
+            list: e["header:List-Id"]
+                .as_str()
+                .is_some_and(|v| !v.trim().is_empty()),
         }
     }
 
@@ -485,7 +487,10 @@ mod tests {
              List-Id: Dev <dev.lists.example.org>\r\n\
              List-Post: <mailto:dev@lists.example.org?subject=hi>\r\nSubject: s\r\n\r\nbody",
         );
-        assert_eq!(emails(&e.followup_to), ["dev@lists.example.org", "me@studio.it"]);
+        assert_eq!(
+            emails(&e.followup_to),
+            ["dev@lists.example.org", "me@studio.it"]
+        );
         assert_eq!(e.list_post, "dev@lists.example.org");
         assert!(e.list);
         let all = reply_recipients(&e, &a("Anna", "anna@x.it"), &own(), ReplyMode::All);
@@ -586,7 +591,13 @@ mod tests {
     fn resend_adds_resent_headers_and_keeps_the_message() {
         let raw = b"Delivered-To: me@studio.it\nFrom: anna@x.it\nTo: me@studio.it\n\
                     Return-Path: <anna@x.it>\nSubject: s\nX-Folded: a\n b\n\nbody\nline\n";
-        let out = resend(raw, "me@studio.it", &["carla@x.it".into()], 0, "<r1@studio.it>");
+        let out = resend(
+            raw,
+            "me@studio.it",
+            &["carla@x.it".into()],
+            0,
+            "<r1@studio.it>",
+        );
         let text = String::from_utf8(out).unwrap();
         assert!(text.starts_with(
             "Resent-From: me@studio.it\r\nResent-Date: Thu, 1 Jan 1970 00:00:00 +0000\r\n\
@@ -597,8 +608,14 @@ mod tests {
         assert!(text.contains("X-Folded: a\r\n b\r\n"));
         assert!(text.ends_with("\r\n\r\nbody\r\nline\r\n"));
         let m = MessageParser::default().parse(text.as_bytes()).unwrap();
-        assert_eq!(m.headers().resent_to().unwrap().first().unwrap().address(), Some("carla@x.it"));
-        assert_eq!(m.from().unwrap().first().unwrap().address(), Some("anna@x.it"));
+        assert_eq!(
+            m.headers().resent_to().unwrap().first().unwrap().address(),
+            Some("carla@x.it")
+        );
+        assert_eq!(
+            m.from().unwrap().first().unwrap().address(),
+            Some("anna@x.it")
+        );
     }
 
     #[test]

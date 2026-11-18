@@ -826,7 +826,10 @@ async fn keeps_every_recipient_and_redirects() {
     let (email, rcpt) = s.sent.last().unwrap();
     assert_eq!(rcpt, &to);
     let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
-    assert!(sent.starts_with(&format!("Resent-From: {USER}\r\n")), "{sent}");
+    assert!(
+        sent.starts_with(&format!("Resent-From: {USER}\r\n")),
+        "{sent}"
+    );
     assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
     assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
     assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");

@@ -630,7 +630,9 @@ See you at 20:30.
 #[tokio::test]
 async fn sync_keeps_every_recipient_for_reply_all() {
     use piuma_core::envelope::{reply_recipients, Address, ReplyMode};
-    let Some(cfg) = config("envelope") else { return };
+    let Some(cfg) = config("envelope") else {
+        return;
+    };
     let mut outside = Outside::open(&cfg).await;
     outside.deliver(TO_MANY, "16-Oct-2026 09:00:00 +0200").await;
 
@@ -668,7 +670,9 @@ async fn sync_keeps_every_recipient_for_reply_all() {
     let text = String::from_utf8_lossy(&raw);
     assert!(text.contains("Mail-Followup-To: dev@lists.example.org"));
     let lines = piuma_core::envelope::header_lines(&raw);
-    assert!(lines.iter().any(|h| h.name == "Subject" && h.value == "Plan for Friday"));
+    assert!(lines
+        .iter()
+        .any(|h| h.name == "Subject" && h.value == "Plan for Friday"));
 }
 
 #[tokio::test]
@@ -681,7 +685,12 @@ async fn new_mail_in_a_muted_conversation_arrives_read_on_the_server_too() {
     conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
         .await
         .unwrap();
-    let first = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap()[0].uid;
+    let first = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap()[0]
+        .uid;
     store
         .lock()
         .unwrap()
@@ -706,8 +715,15 @@ Count me in.
         .await
         .unwrap();
     assert_eq!(report.arrived.len(), 1);
-    let rows = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap();
-    let new = rows.iter().find(|r| r.subject == "Re: Plan for Friday").unwrap();
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
+    let new = rows
+        .iter()
+        .find(|r| r.subject == "Re: Plan for Friday")
+        .unwrap();
     assert!(new.flags.seen, "muted mail arrives read");
     let uid = new.uid;
     // It stays in the inbox, and the server is told it is read before the
@@ -724,7 +740,11 @@ Count me in.
     ));
     next_sync(&mut rx).await;
     task.abort();
-    let rows = store.lock().unwrap().unified(Folder::Inbox, None, 10).unwrap();
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
     assert!(rows.iter().find(|r| r.uid == uid).unwrap().flags.seen);
     let mut flags: Vec<_> = outside
         .0
@@ -735,7 +755,9 @@ Count me in.
         .await
         .unwrap();
     let f = flags.pop().unwrap();
-    assert!(f.flags().any(|f| matches!(f, async_imap::types::Flag::Seen)));
+    assert!(f
+        .flags()
+        .any(|f| matches!(f, async_imap::types::Flag::Seen)));
 }
 
 async fn folder_count(outside: &mut Outside, folder: &str) -> u32 {

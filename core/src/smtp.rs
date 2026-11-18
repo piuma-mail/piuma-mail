@@ -324,10 +324,14 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
 /// base64, which every server takes (8bit needs the server's 8BITMIME,
 /// and lettre refuses it without) and mail apps still open.
 fn message_body(data: &[u8]) -> Body {
-    let seven_bit =
-        data.is_ascii() && !data.contains(&0) && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
+    let seven_bit = data.is_ascii()
+        && !data.contains(&0)
+        && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
     if seven_bit {
-        Body::dangerous_pre_encoded(crate::envelope::to_crlf(data), ContentTransferEncoding::SevenBit)
+        Body::dangerous_pre_encoded(
+            crate::envelope::to_crlf(data),
+            ContentTransferEncoding::SevenBit,
+        )
     } else {
         Body::new(data.to_vec())
     }

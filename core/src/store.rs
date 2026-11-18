@@ -1793,7 +1793,10 @@ impl Store {
                     m.list.receipt.is_some(),
                     m.reply.recipients,
                     m.list.bulk,
-                    m.reply.envelope.as_ref().map(crate::envelope::Envelope::to_json)
+                    m.reply
+                        .envelope
+                        .as_ref()
+                        .map(crate::envelope::Envelope::to_json)
                 ])?;
                 if quiet {
                     quieted.execute(params![m.account.0, m.mailbox, m.uid])?;
@@ -10017,7 +10020,10 @@ From: <help@bank.example>\r\n\r\nHi";
             .add_account(&imap_account("Work", "w@example.org", "#2F8F83"))
             .unwrap();
         let envelope = Envelope {
-            to: vec![Address::new("", "w@example.org"), Address::new("Bo", "bo@x.it")],
+            to: vec![
+                Address::new("", "w@example.org"),
+                Address::new("Bo", "bo@x.it"),
+            ],
             cc: vec![Address::new("", "carla@x.it")],
             reply_to: vec![Address::new("", "desk@x.it"), Address::new("", "help@x.it")],
             ..Envelope::default()
@@ -10025,7 +10031,10 @@ From: <help@bank.example>\r\n\r\nHi";
         let mut m = msg(a, 1, 100, false);
         m.reply.envelope = Some(envelope.clone());
         store.upsert_messages(&[m]).unwrap();
-        assert_eq!(store.envelope(a, "INBOX", 1).unwrap(), Some(envelope.clone()));
+        assert_eq!(
+            store.envelope(a, "INBOX", 1).unwrap(),
+            Some(envelope.clone())
+        );
         // A row seen again without its headers keeps what was read.
         store.upsert_messages(&[msg(a, 1, 100, true)]).unwrap();
         assert_eq!(store.envelope(a, "INBOX", 1).unwrap(), Some(envelope));
