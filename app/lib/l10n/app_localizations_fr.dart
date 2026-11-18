@@ -738,7 +738,7 @@ class AppLocalizationsFr extends AppLocalizations {
       'IMAP et SMTP. Gmail, iCloud et Fastmail se configurent tout seuls.';
 
   @override
-  String get privacyTitle => 'Signalements et confidentialité';
+  String get privacyTitle => 'Confidentialité et sécurité';
 
   @override
   String get privacySubtitle =>
@@ -5695,11 +5695,14 @@ class AppLocalizationsFr extends AppLocalizations {
   String get reportPrivacyLink => 'Comment les signalements sont traités';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Signalements et confidentialité';
+
+  @override
+  String get reportPrivacyWhat =>
       'Ce qui est envoyé : seulement ce que montre « Voir ce qui est envoyé ». Vos mots, les informations sur l’appareil et l’app, et la capture, le journal et les fichiers que vous laissez activés. Le journal est nettoyé des adresses, des noms et des objets, mais le nettoyage peut en oublier : vérifiez-le avant l’envoi.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5710,26 +5713,26 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Où ça va : par e-mail depuis votre propre compte à $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Qui le voit : $controller, les personnes qui aident à maintenir Piuma Mail, et les outils qu’elles utilisent pour trier les signalements, assistants IA compris. Les signalements ne sont jamais vendus ni utilisés pour la publicité.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'Combien de temps : le ticket est gardé tant qu’il aide à corriger le problème. Supprimer un signalement dans Vos signalements n’efface que la copie sur cet appareil.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'Pour savoir ce qui est conservé ou le faire effacer, écrivez à $contact avec le numéro du signalement.';
   }
 
   @override
-  String get privacyFull => 'Politique de confidentialité complète';
+  String get reportPrivacyFull => 'Politique de confidentialité complète';
 
   @override
   String get reportDeleteTitle => 'Supprimer ce signalement ?';

@@ -737,7 +737,7 @@ class AppLocalizationsDe extends AppLocalizations {
       'IMAP und SMTP. Gmail, iCloud und Fastmail richten sich selbst ein.';
 
   @override
-  String get privacyTitle => 'Meldungen und Datenschutz';
+  String get privacyTitle => 'Datenschutz und Sicherheit';
 
   @override
   String get privacySubtitle =>
@@ -5692,11 +5692,14 @@ class AppLocalizationsDe extends AppLocalizations {
   String get reportPrivacyLink => 'Wie Meldungen behandelt werden';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Meldungen und Datenschutz';
+
+  @override
+  String get reportPrivacyWhat =>
       'Was gesendet wird: nur, was „Sehen, was gesendet wird“ zeigt. Deine Worte, Angaben zu Gerät und App sowie Screenshot, Protokoll und Dateien, die du eingeschaltet lässt. Aus dem Protokoll werden Adressen, Namen und Betreffzeilen entfernt, aber dabei kann etwas übersehen werden: prüfe es vor dem Senden.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5707,26 +5710,26 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Wohin es geht: per E-Mail von deinem eigenen Konto an $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Wer es sieht: $controller, die Menschen, die Piuma Mail mitpflegen, und die Werkzeuge, mit denen sie Meldungen sortieren, KI-Assistenten eingeschlossen. Meldungen werden nie verkauft oder für Werbung genutzt.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'Wie lange: Das Issue bleibt, solange es bei der Lösung hilft. Eine Meldung in „Deine Meldungen“ zu löschen, entfernt nur die Kopie auf diesem Gerät.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'Um zu erfahren, was gespeichert ist, oder es löschen zu lassen, schreib an $contact mit der Nummer der Meldung.';
   }
 
   @override
-  String get privacyFull => 'Vollständige Datenschutzerklärung';
+  String get reportPrivacyFull => 'Vollständige Datenschutzerklärung';
 
   @override
   String get reportDeleteTitle => 'Diese Meldung löschen?';

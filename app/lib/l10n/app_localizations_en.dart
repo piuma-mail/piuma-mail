@@ -732,7 +732,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'IMAP and SMTP. Gmail, iCloud and Fastmail set themselves up.';
 
   @override
-  String get privacyTitle => 'Reports and privacy';
+  String get privacyTitle => 'Privacy & security';
 
   @override
   String get privacySubtitle =>
@@ -5653,11 +5653,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportPrivacyLink => 'How reports are handled';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Reports and privacy';
+
+  @override
+  String get reportPrivacyWhat =>
       'What is sent: only what “See what\'s sent” shows. Your words, device and app details, and the screenshot, log and files you leave on. The log is scrubbed of addresses, names and subjects, but scrubbing can miss something: check it before sending.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5668,26 +5671,26 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Where it goes: by email from your own account to $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Who sees it: $controller, the people who help maintain Piuma Mail, and the tools they use to sort reports, AI assistants included. Reports are never sold or used for advertising.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'How long: the issue is kept while it helps fix the problem. Deleting a report in Your reports removes only the copy on this device.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'To see what is kept or have it erased, write to $contact with the report number.';
   }
 
   @override
-  String get privacyFull => 'Full privacy notice';
+  String get reportPrivacyFull => 'Full privacy notice';
 
   @override
   String get reportDeleteTitle => 'Delete this report?';

@@ -734,7 +734,7 @@ class AppLocalizationsIt extends AppLocalizations {
       'IMAP e SMTP. Gmail, iCloud e Fastmail si configurano da soli.';
 
   @override
-  String get privacyTitle => 'Report e privacy';
+  String get privacyTitle => 'Privacy e sicurezza';
 
   @override
   String get privacySubtitle =>
@@ -5707,11 +5707,14 @@ class AppLocalizationsIt extends AppLocalizations {
   String get reportPrivacyLink => 'Come vengono trattati i report';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Report e privacy';
+
+  @override
+  String get reportPrivacyWhat =>
       'Cosa viene inviato: solo ciò che mostra “Vedi cosa viene inviato”. Le tue parole, i dati del dispositivo e dell\'app, e lo screenshot, il log e i file che lasci attivi. Dal log vengono tolti indirizzi, nomi e oggetti, ma qualcosa può sfuggire: controllalo prima di inviare.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5722,26 +5725,26 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Dove va: per email dal tuo account a $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Chi lo vede: $controller, le persone che aiutano a mantenere Piuma Mail e gli strumenti che usano per smistare i report, assistenti IA compresi. I report non vengono mai venduti né usati per pubblicità.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'Per quanto: la issue resta finché serve a risolvere il problema. Eliminare un report in I tuoi report toglie solo la copia su questo dispositivo.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'Per sapere cosa viene conservato o farlo cancellare, scrivi a $contact con il numero del report.';
   }
 
   @override
-  String get privacyFull => 'Informativa completa';
+  String get reportPrivacyFull => 'Informativa completa';
 
   @override
   String get reportDeleteTitle => 'Eliminare questo report?';

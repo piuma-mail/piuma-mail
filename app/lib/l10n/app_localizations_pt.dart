@@ -735,7 +735,7 @@ class AppLocalizationsPt extends AppLocalizations {
       'IMAP e SMTP. Gmail, iCloud e Fastmail se configuram sozinhos.';
 
   @override
-  String get privacyTitle => 'Relatos e privacidade';
+  String get privacyTitle => 'Privacidade e segurança';
 
   @override
   String get privacySubtitle =>
@@ -5676,11 +5676,14 @@ class AppLocalizationsPt extends AppLocalizations {
   String get reportPrivacyLink => 'Como os relatos são tratados';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Relatos e privacidade';
+
+  @override
+  String get reportPrivacyWhat =>
       'O que é enviado: só o que “Ver o que é enviado” mostra. Suas palavras, os dados do dispositivo e do app, e a captura, o registro e os arquivos que você deixar ativados. Endereços, nomes e assuntos são tirados do registro, mas algo pode escapar: confira antes de enviar.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5691,26 +5694,26 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Para onde vai: por e-mail da sua própria conta para $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Quem vê: $controller, as pessoas que ajudam a manter o Piuma Mail e as ferramentas que usam para organizar os relatos, assistentes de IA incluídos. Os relatos nunca são vendidos nem usados para publicidade.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'Por quanto tempo: a issue fica enquanto ajudar a resolver o problema. Excluir um relato em Seus relatos remove só a cópia deste dispositivo.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'Para saber o que é guardado ou pedir que seja apagado, escreva para $contact com o número do relato.';
   }
 
   @override
-  String get privacyFull => 'Aviso de privacidade completo';
+  String get reportPrivacyFull => 'Aviso de privacidade completo';
 
   @override
   String get reportDeleteTitle => 'Excluir este relato?';

@@ -23,7 +23,11 @@ Future<void> showPrivacyNotice(BuildContext context, MailSource source) {
     byRelay: source.reportsByRelay,
   );
   return phone
-      ? showPiumaSheet<void>(context, label: l.reportPrivacyTitle, builder: panel)
+      ? showPiumaSheet<void>(
+          context,
+          label: l.reportPrivacyTitle,
+          builder: panel,
+        )
       : showPiumaDialog<void>(
           context,
           label: l.reportPrivacyTitle,

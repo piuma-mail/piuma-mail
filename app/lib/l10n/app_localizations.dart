@@ -1267,7 +1267,7 @@ abstract class AppLocalizations {
   /// No description provided for @privacyTitle.
   ///
   /// In en, this message translates to:
-  /// **'Reports and privacy'**
+  /// **'Privacy & security'**
   String get privacyTitle;
 
   /// No description provided for @privacySubtitle.
@@ -8320,47 +8320,53 @@ abstract class AppLocalizations {
   /// **'How reports are handled'**
   String get reportPrivacyLink;
 
-  /// No description provided for @privacyWhat.
+  /// No description provided for @reportPrivacyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports and privacy'**
+  String get reportPrivacyTitle;
+
+  /// No description provided for @reportPrivacyWhat.
   ///
   /// In en, this message translates to:
   /// **'What is sent: only what “See what\'s sent” shows. Your words, device and app details, and the screenshot, log and files you leave on. The log is scrubbed of addresses, names and subjects, but scrubbing can miss something: check it before sending.'**
-  String get privacyWhat;
+  String get reportPrivacyWhat;
 
-  /// No description provided for @privacyWhere.
+  /// No description provided for @reportPrivacyWhere.
   ///
   /// In en, this message translates to:
   /// **'Where it goes: through the project\'s relay on Cloudflare ({relay}) to a private issue on GitHub, in the United States. Attachments stay in Cloudflare storage in the EU and are deleted after {days, plural, =1{1 day} other{{days} days}}.'**
-  String privacyWhere(String relay, int days);
+  String reportPrivacyWhere(String relay, int days);
 
-  /// No description provided for @privacyWhereEmail.
+  /// No description provided for @reportPrivacyWhereEmail.
   ///
   /// In en, this message translates to:
   /// **'Where it goes: by email from your own account to {contact}.'**
-  String privacyWhereEmail(String contact);
+  String reportPrivacyWhereEmail(String contact);
 
-  /// No description provided for @privacyWho.
+  /// No description provided for @reportPrivacyWho.
   ///
   /// In en, this message translates to:
   /// **'Who sees it: {controller}, the people who help maintain Piuma Mail, and the tools they use to sort reports, AI assistants included. Reports are never sold or used for advertising.'**
-  String privacyWho(String controller);
+  String reportPrivacyWho(String controller);
 
-  /// No description provided for @privacyKeep.
+  /// No description provided for @reportPrivacyKeep.
   ///
   /// In en, this message translates to:
   /// **'How long: the issue is kept while it helps fix the problem. Deleting a report in Your reports removes only the copy on this device.'**
-  String get privacyKeep;
+  String get reportPrivacyKeep;
 
-  /// No description provided for @privacyErase.
+  /// No description provided for @reportPrivacyErase.
   ///
   /// In en, this message translates to:
   /// **'To see what is kept or have it erased, write to {contact} with the report number.'**
-  String privacyErase(String contact);
+  String reportPrivacyErase(String contact);
 
-  /// No description provided for @privacyFull.
+  /// No description provided for @reportPrivacyFull.
   ///
   /// In en, this message translates to:
   /// **'Full privacy notice'**
-  String get privacyFull;
+  String get reportPrivacyFull;
 
   /// No description provided for @reportDeleteTitle.
   ///

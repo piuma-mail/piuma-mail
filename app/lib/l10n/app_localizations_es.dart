@@ -736,7 +736,7 @@ class AppLocalizationsEs extends AppLocalizations {
       'IMAP y SMTP. Gmail, iCloud y Fastmail se configuran solos.';
 
   @override
-  String get privacyTitle => 'Informes y privacidad';
+  String get privacyTitle => 'Privacidad y seguridad';
 
   @override
   String get privacySubtitle =>
@@ -5680,11 +5680,14 @@ class AppLocalizationsEs extends AppLocalizations {
   String get reportPrivacyLink => 'Cómo se tratan los informes';
 
   @override
-  String get privacyWhat =>
+  String get reportPrivacyTitle => 'Informes y privacidad';
+
+  @override
+  String get reportPrivacyWhat =>
       'Qué se envía: solo lo que muestra «Ver qué se envía». Tus palabras, los datos del dispositivo y de la app, y la captura, el registro y los archivos que dejes activados. Del registro se quitan direcciones, nombres y asuntos, pero algo puede escaparse: revísalo antes de enviar.';
 
   @override
-  String privacyWhere(String relay, int days) {
+  String reportPrivacyWhere(String relay, int days) {
     String _temp0 = intl.Intl.pluralLogic(
       days,
       locale: localeName,
@@ -5695,26 +5698,26 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
-  String privacyWhereEmail(String contact) {
+  String reportPrivacyWhereEmail(String contact) {
     return 'Adónde va: por correo desde tu propia cuenta a $contact.';
   }
 
   @override
-  String privacyWho(String controller) {
+  String reportPrivacyWho(String controller) {
     return 'Quién lo ve: $controller, las personas que ayudan a mantener Piuma Mail y las herramientas que usan para ordenar los informes, asistentes de IA incluidos. Los informes nunca se venden ni se usan para publicidad.';
   }
 
   @override
-  String get privacyKeep =>
+  String get reportPrivacyKeep =>
       'Cuánto tiempo: la incidencia se guarda mientras ayude a resolver el problema. Eliminar un informe en Tus informes solo quita la copia de este dispositivo.';
 
   @override
-  String privacyErase(String contact) {
+  String reportPrivacyErase(String contact) {
     return 'Para saber qué se guarda o pedir que se borre, escribe a $contact con el número del informe.';
   }
 
   @override
-  String get privacyFull => 'Aviso de privacidad completo';
+  String get reportPrivacyFull => 'Aviso de privacidad completo';
 
   @override
   String get reportDeleteTitle => '¿Eliminar este informe?';
