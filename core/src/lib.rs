@@ -56,8 +56,8 @@ pub mod vault;
 mod watchdog;
 
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;

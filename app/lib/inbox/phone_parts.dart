@@ -281,7 +281,12 @@ class PhoneAccountsSheet extends StatelessWidget {
     this.labels = const [],
     this.label,
     this.onLabel,
+    this.starred = 0,
   });
+
+  /// How many emails are starred; their tile shows only when there are
+  /// some.
+  final int starred;
 
   /// The labels under the folders (`LabelsToApprove`, section 2); a tap
   /// shows that label's mail. [label] is the keyword of the one shown.
@@ -393,32 +398,35 @@ class PhoneAccountsSheet extends StatelessWidget {
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-            child: Row(
-              children: [
-                for (final (i, (f, icon)) in [
-                  (MailFolder.inbox, PiumaIcon.inbox),
-                  if (drafts > 0 || folder == MailFolder.drafts)
-                    (MailFolder.drafts, PiumaIcon.pen),
-                  if (snoozed > 0 || folder == MailFolder.snoozed)
-                    (MailFolder.snoozed, PiumaIcon.clock),
-                  (MailFolder.sent, PiumaIcon.send),
-                  (MailFolder.archive, PiumaIcon.archive),
-                ].indexed) ...[
-                  if (i > 0) const SizedBox(width: 8),
-                  Expanded(
-                    child: _FolderTile(
-                      icon: icon,
-                      label: folderName(l, f),
-                      on: folder == f,
-                      onTap: () => pick(f),
+          for (final tiles in _tileRows([
+            (MailFolder.inbox, PiumaIcon.inbox),
+            if (drafts > 0 || folder == MailFolder.drafts)
+              (MailFolder.drafts, PiumaIcon.pen),
+            if (snoozed > 0 || folder == MailFolder.snoozed)
+              (MailFolder.snoozed, PiumaIcon.clock),
+            (MailFolder.sent, PiumaIcon.send),
+            (MailFolder.archive, PiumaIcon.archive),
+            if (starred > 0 || folder == MailFolder.starred)
+              (MailFolder.starred, PiumaIcon.star),
+          ]))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+              child: Row(
+                children: [
+                  for (final (i, (f, icon)) in tiles.indexed) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    Expanded(
+                      child: _FolderTile(
+                        icon: icon,
+                        label: folderName(l, f),
+                        on: folder == f,
+                        onTap: () => pick(f),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
           if (onOwnFolders case final open?
               when ownFolders > 0 && _picked != null)
             PiumaPressable(
@@ -574,7 +582,18 @@ String folderName(AppLocalizations l, MailFolder folder) => switch (folder) {
   MailFolder.vault => l.folderVault,
   MailFolder.attachments => l.folderAttachments,
   MailFolder.label => l.labelsHeading,
+  MailFolder.starred => l.folderStarred,
 };
+
+/// The folder tiles of [PhoneAccountsSheet] in rows: one row of up to
+/// five, two even rows past that.
+List<List<(MailFolder, PiumaIcon)>> _tileRows(
+  List<(MailFolder, PiumaIcon)> tiles,
+) {
+  if (tiles.length <= 5) return [tiles];
+  final half = (tiles.length + 1) ~/ 2;
+  return [tiles.sublist(0, half), tiles.sublist(half)];
+}
 
 /// One of the folder tiles at the top of [PhoneAccountsSheet].
 class _FolderTile extends StatelessWidget {
@@ -985,7 +1004,11 @@ class PhoneSelectBar extends StatelessWidget {
     this.onMove,
     this.onSnooze,
     this.onNotSpam,
+    this.onMore,
   });
+
+  /// More: Star (or Remove star) and Copy to…, in a sheet.
+  final VoidCallback? onMore;
 
   /// In the spam folder, in Archive's place: back to the inbox.
   final VoidCallback? onNotSpam;
@@ -1011,11 +1034,12 @@ class PhoneSelectBar extends StatelessWidget {
       PiumaIcon icon,
       String label,
       VoidCallback onTap,
-      Color color,
-    ) => Expanded(
+      Color color, {
+      String? semanticLabel,
+    }) => Expanded(
       child: PiumaPressable(
         onTap: onTap,
-        semanticLabel: label,
+        semanticLabel: semanticLabel ?? label,
         child: SizedBox(
           height: 56,
           child: Column(
@@ -1026,6 +1050,8 @@ class PhoneSelectBar extends StatelessWidget {
               ExcludeSemantics(
                 child: Text(
                   label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: PiumaFonts.sans,
                     fontSize: 11.5,
@@ -1076,6 +1102,14 @@ class PhoneSelectBar extends StatelessWidget {
                   ),
             if (onMove case final move?)
               action(PiumaIcon.folder, l.moveShort, move, c.fg),
+            if (onMore case final more?)
+              action(
+                PiumaIcon.more,
+                l.moreShort,
+                more,
+                c.fg,
+                semanticLabel: l.moreActions,
+              ),
             if (onSnooze case final snooze?)
               action(PiumaIcon.clock, l.actionSnooze, snooze, c.fg),
             action(PiumaIcon.trash, l.actionDelete, onDelete, c.danger),

@@ -29,6 +29,8 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   shell_ = std::make_unique<Shell>(flutter_controller_->engine()->messenger(),
                                    GetHandle());
+  unread_badge_ = std::make_unique<UnreadBadge>(
+      flutter_controller_->engine()->messenger(), GetHandle());
   // A message opened in a window of its own gets the plugins too.
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* view_controller =
@@ -53,6 +55,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   shell_ = nullptr;
+  unread_badge_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

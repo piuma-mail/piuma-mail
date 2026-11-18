@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "shell.h"
+#include "unread_badge.h"
 #include "win32_window.h"
 
 // A window that does nothing but host a Flutter view.
@@ -40,6 +41,8 @@ class FlutterWindow : public Win32Window {
 
   // Later launches, the tray, closing to the tray (lib/outside/).
   std::unique_ptr<Shell> shell_;
+  // The unread count on the taskbar button.
+  std::unique_ptr<UnreadBadge> unread_badge_;
 
   bool start_hidden_;
 };

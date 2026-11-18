@@ -22,6 +22,9 @@ use crate::search::Query;
 use crate::signature::{Accent, Logo, Signature, Template};
 use crate::smtp::{Draft, OutgoingFile, Ready};
 
+mod mailbox;
+pub use mailbox::{ListSettings, Quota, RoleChoice, SwipeAction};
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("database: {0}")]
@@ -90,11 +93,32 @@ fn section_sql(filter: impl Into<ListFilter>) -> String {
         Section::People => format!(" AND {PEOPLE}"),
         Section::Notifications => format!(" AND NOT {PEOPLE}"),
     };
-    if filter.unread {
-        section + UNREAD_IN_THREAD
-    } else {
-        section
+    match (filter.unread, filter.flat) {
+        (true, false) => section + UNREAD_IN_THREAD,
+        (true, true) => section + " AND (m.flags & 1) = 0",
+        _ => section,
     }
+}
+
+/// Keeps one row per conversation, its newest message, or with `flat`
+/// every message.
+fn newest_sql(filter: &ListFilter) -> &'static str {
+    if filter.flat {
+        "1"
+    } else {
+        NEWEST_IN_THREAD
+    }
+}
+
+/// Rows as the list shows them: with `flat`, each message on its own.
+fn as_listed(filter: &ListFilter, mut rows: Vec<Conversation>) -> Vec<Conversation> {
+    if filter.flat {
+        for c in &mut rows {
+            c.thread.clear();
+            c.messages = 1;
+        }
+    }
+    rows
 }
 
 /// Keeps conversations with an unread message in the folder of `m`.
@@ -104,11 +128,11 @@ const UNREAD_IN_THREAD: &str = " AND EXISTS (SELECT 1 FROM message u
 
 /// An indexed anti-join before pagination; never merges copies within
 /// one account. Candidate eligibility is identical to the outer list.
-fn cross_account_sql(within: &Within, section: &str) -> String {
+fn cross_account_sql(within: &Within, section: &str, filter: &ListFilter) -> String {
     if within.account().is_some() {
         return String::new();
     }
-    let newest = NEWEST_IN_THREAD.replace("m.", "d.");
+    let newest = newest_sql(filter).replace("m.", "d.");
     // Group/address SQL contains quoted user addresses; change only SQL
     // identifiers, never a substring of an address such as team.example.
     let section = section
@@ -1300,6 +1324,12 @@ pub struct AccountFolder {
     pub unread: u32,
     /// How many emails it holds on the server.
     pub total: u32,
+    /// Subscribed (IMAP LSUB, JMAP `isSubscribed`): shown in the lists.
+    /// Hidden ones show on demand.
+    pub subscribed: bool,
+    /// What separates its name from its parent's ("/", "."), empty when
+    /// the server names folders by id (JMAP).
+    pub delimiter: String,
 }
 
 /// What the engine remembers about a server folder between syncs.
@@ -1561,6 +1591,21 @@ impl Store {
             tx.execute_batch(
                 "ALTER TABLE pending_change ADD COLUMN next_try_at INTEGER NOT NULL DEFAULT 0;
                  ALTER TABLE pending_change ADD COLUMN failing_since INTEGER;",
+            )?;
+        }
+        // Whether each of an account's folders is subscribed, and what
+        // separates its name from its parent's, to rename it (mailbox.rs).
+        // Here rather than in MIGRATIONS, like the ones above.
+        let subscribed: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('account_folder')
+                             WHERE name = 'subscribed')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !subscribed {
+            tx.execute_batch(
+                "ALTER TABLE account_folder ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE account_folder ADD COLUMN delimiter TEXT NOT NULL DEFAULT '';",
             )?;
         }
         if current < CLEAN_PREVIEWS {
@@ -1929,8 +1974,9 @@ impl Store {
         {
             let mut stmt = tx.prepare(
                 "INSERT OR REPLACE INTO account_folder
-                    (account, mailbox, name, depth, position, selectable, unread, total)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    (account, mailbox, name, depth, position, selectable, unread, total,
+                     subscribed, delimiter)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for (i, f) in folders.iter().enumerate() {
                 stmt.execute(params![
@@ -1941,15 +1987,24 @@ impl Store {
                     i as u32,
                     f.selectable,
                     f.unread,
-                    f.total
+                    f.total,
+                    f.subscribed,
+                    f.delimiter
                 ])?;
             }
         }
+        // Trash and spam are no own folders, but their mail shows when
+        // they are opened.
         tx.execute(
             "DELETE FROM message WHERE account = ?1 AND folder = '' AND mailbox <> 'INBOX'
                AND mailbox NOT IN (SELECT mailbox FROM account_folder WHERE account = ?1)
-               AND mailbox NOT IN (SELECT mailbox FROM folder_role WHERE account = ?1)",
-            params![account.0],
+               AND mailbox NOT IN (SELECT mailbox FROM folder_role WHERE account = ?1)
+               AND mailbox NOT IN (SELECT value FROM setting WHERE key IN (?2, ?3))",
+            params![
+                account.0,
+                format!("account.{}.junk", account.0),
+                format!("account.{}.trash", account.0)
+            ],
         )?;
         tx.commit()?;
         Ok(())
@@ -1960,10 +2015,11 @@ impl Store {
     pub fn add_account_folder(&self, account: AccountId, folder: &AccountFolder) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO account_folder
-                (account, mailbox, name, depth, position, selectable, unread, total)
+                (account, mailbox, name, depth, position, selectable, unread, total,
+                 subscribed, delimiter)
              VALUES (?1, ?2, ?3, ?4,
                      (SELECT COALESCE(MAX(position) + 1, 0) FROM account_folder WHERE account = ?1),
-                     ?5, ?6, ?7)",
+                     ?5, ?6, ?7, ?8, ?9)",
             params![
                 account.0,
                 folder.mailbox,
@@ -1971,7 +2027,9 @@ impl Store {
                 folder.depth,
                 folder.selectable,
                 folder.unread,
-                folder.total
+                folder.total,
+                folder.subscribed,
+                folder.delimiter
             ],
         )?;
         Ok(())
@@ -1982,7 +2040,8 @@ impl Store {
     /// person dragged them into.
     pub fn account_folders(&self, account: AccountId) -> Result<Vec<AccountFolder>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.mailbox, f.name, f.depth, f.selectable, f.unread, f.total, o.rank
+            "SELECT f.mailbox, f.name, f.depth, f.selectable, f.unread, f.total, o.rank,
+                    f.subscribed, f.delimiter
                FROM account_folder f
                LEFT JOIN folder_order o ON o.account = f.account AND o.mailbox = f.mailbox
               WHERE f.account = ?1 ORDER BY f.position",
@@ -1996,6 +2055,8 @@ impl Store {
                     selectable: r.get(3)?,
                     unread: r.get(4)?,
                     total: r.get(5)?,
+                    subscribed: r.get(7)?,
+                    delimiter: r.get(8)?,
                 },
                 r.get::<_, Option<i64>>(6)?,
             ))
@@ -2025,9 +2086,12 @@ impl Store {
         &self,
         account: AccountId,
         mailbox: &str,
+        filter: ListFilter,
         offset: u32,
         limit: u32,
     ) -> Result<Vec<Conversation>> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
+        let order = filter.order.sql();
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -2039,8 +2103,8 @@ impl Store {
                        AND t.folder <> 'drafts')
              FROM message m
              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
-               AND {NEWEST_IN_MAILBOX}
-             ORDER BY m.received_at DESC, m.uid DESC
+               AND {newest}
+             ORDER BY {order}
              LIMIT ?3 OFFSET ?4"
         ))?;
         let rows = stmt.query_map(params![account.0, mailbox, limit, offset], |r| {
@@ -2050,7 +2114,10 @@ impl Store {
                 messages: r.get(14)?,
             })
         })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        Ok(as_listed(
+            &filter,
+            rows.collect::<std::result::Result<_, _>>()?,
+        ))
     }
 
     /// How many conversations of one account's folder had their newest
@@ -2059,15 +2126,17 @@ impl Store {
         &self,
         account: AccountId,
         mailbox: &str,
+        filter: ListFilter,
         from: i64,
         to: i64,
     ) -> Result<u32> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
                    AND m.received_at >= ?3 AND m.received_at < ?4
-                   AND {NEWEST_IN_MAILBOX}"
+                   AND {newest}"
             ),
             params![account.0, mailbox, from, to],
             |r| r.get(0),
@@ -2075,12 +2144,18 @@ impl Store {
     }
 
     /// How many conversations [`Store::mailbox_page`] lists.
-    pub fn mailbox_count(&self, account: AccountId, mailbox: &str) -> Result<u32> {
+    pub fn mailbox_count(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        filter: ListFilter,
+    ) -> Result<u32> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
-                   AND {NEWEST_IN_MAILBOX}"
+                   AND {newest}"
             ),
             params![account.0, mailbox],
             |r| r.get(0),
@@ -2458,6 +2533,13 @@ impl Store {
                 params![account.0, mailbox, uid],
             )?;
         }
+        if let Change::Flag(_) = &change {
+            self.conn.execute(
+                "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2 AND uid = ?3
+                   AND change IN ('flag', 'unflag')",
+                params![account.0, mailbox, uid],
+            )?;
+        }
         if let Change::Label { keyword, .. } = &change {
             self.conn.execute(
                 "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2 AND uid = ?3
@@ -2796,8 +2878,11 @@ impl Store {
         limit: u32,
     ) -> Result<Vec<Conversation>> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
+        let order = filter.order.sql();
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -2809,8 +2894,8 @@ impl Store {
                        AND t.folder <> 'drafts')
              FROM message m
              WHERE m.folder = ?1 AND m.hidden = 0 AND (?4 IS NULL OR m.account = ?4)
-               AND {NEWEST_IN_THREAD}{section}{dedupe}
-             ORDER BY m.received_at DESC, m.account, m.uid DESC
+               AND {newest}{section}{dedupe}
+             ORDER BY {order}
              LIMIT ?2 OFFSET ?3"
         ))?;
         let account = within.account();
@@ -2821,7 +2906,10 @@ impl Store {
                 messages: r.get(14)?,
             })
         })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        Ok(as_listed(
+            &filter,
+            rows.collect::<std::result::Result<_, _>>()?,
+        ))
     }
 
     /// The visible server copies of a combined row. Single-account lists
@@ -2903,13 +2991,15 @@ impl Store {
         section: impl Into<ListFilter>,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.account = ?2)
-                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
+                   AND {newest}{section}{dedupe}"
             ),
             params![folder.tag(), within.account()],
             |r| r.get(0),
@@ -2927,14 +3017,16 @@ impl Store {
         to: i64,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND m.received_at >= ?2
                    AND m.received_at < ?3 AND (?4 IS NULL OR m.account = ?4)
-                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
+                   AND {newest}{section}{dedupe}"
             ),
             params![folder.tag(), from, to, within.account()],
             |r| r.get(0),
@@ -3186,6 +3278,13 @@ impl Store {
                   WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('seen', 'unseen')
                   ORDER BY id DESC LIMIT 1",
             )?;
+            // A star or unstar still on its way wins over the server's,
+            // like read and unread.
+            let mut starring = tx.prepare(
+                "SELECT change FROM pending_change
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('flag', 'unflag')
+                  ORDER BY id DESC LIMIT 1",
+            )?;
             for (uid, flags) in changes {
                 let mut flags = *flags;
                 let local: Option<String> = waiting
@@ -3193,6 +3292,12 @@ impl Store {
                     .optional()?;
                 if let Some(local) = local {
                     flags.seen = local == "seen";
+                }
+                let star: Option<String> = starring
+                    .query_row(params![account.0, mailbox, uid], |r| r.get(0))
+                    .optional()?;
+                if let Some(star) = star {
+                    flags.flagged = star == "flag";
                 }
                 changed += stmt.execute(params![account.0, mailbox, uid, flags.to_bits()])?;
             }
@@ -5164,8 +5269,13 @@ impl Store {
         section: impl Into<ListFilter>,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &(section.clone() + " AND (m.flags & 1) = 0"));
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(
+            &within,
+            &(section.clone() + " AND (m.flags & 1) = 0"),
+            &filter,
+        );
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
@@ -11594,6 +11704,7 @@ From: <help@bank.example>\r\n\r\nHi";
         let unread = |section| ListFilter {
             section,
             unread: true,
+            ..ListFilter::default()
         };
         let uids = |filter: ListFilter| -> Vec<u32> {
             store
@@ -12295,6 +12406,8 @@ From: <help@bank.example>\r\n\r\nHi";
             selectable,
             unread: 0,
             total: 0,
+            subscribed: true,
+            delimiter: "/".into(),
         };
         store
             .set_account_folders(
@@ -12330,6 +12443,8 @@ From: <help@bank.example>\r\n\r\nHi";
             selectable: true,
             unread: 0,
             total: 0,
+            subscribed: true,
+            delimiter: "/".into(),
         };
         let names = |store: &Store| -> Vec<String> {
             store

@@ -10,6 +10,7 @@
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 #include "original_paper.h"
 #include "shell.h"
+#include "unread_badge.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -29,6 +30,9 @@ static void register_app_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) paper =
       fl_plugin_registry_get_registrar_for_plugin(registry, "OriginalPaper");
   original_paper_register(paper);
+  g_autoptr(FlPluginRegistrar) badge =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "UnreadBadge");
+  unread_badge_register(badge);
 }
 
 // Called when first Flutter frame received.
