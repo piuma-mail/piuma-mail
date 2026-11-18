@@ -1489,5 +1489,8 @@
   "calGoogleLabel": "iCal-Adresse von Google Kalender",
   "calGoogleHint": "In Google Kalender am Computer: Einstellungen › dein Kalender › Kalender integrieren › Privatadresse im iCal-Format. Schreibgeschützt; verbindet sich direkt.",
   "bundledReleaseNotes": "## E-Mail, leicht gemacht\n- Original-Layouts mit durchgehendem Scrollen und Bildsteuerung\n- Formatierungsleiste und Wechsel zum vollständigen Editor beim Antworten\n- Bewusstere horizontale Wischgesten\n- Absenderwarnungen bei Markenimitation und ähnlichen Domains\n- Monatlicher Tresor-CSV-Export mit USt-IdNr. des Händlers",
-  "notificationNotices": "{count, plural, =1{1 Hinweis} other{{count} Hinweise}}"
+  "notificationNotices": "{count, plural, =1{1 Hinweis} other{{count} Hinweise}}",
+  "listFailed": "Diese E-Mails konnten nicht angezeigt werden.",
+  "folderRefreshFailed": "Dieser Ordner konnte nicht vom Server aktualisiert werden.",
+  "changesDropped": "{count, plural, =1{Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.} other{Der Server hat {count} Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.}}"
 }

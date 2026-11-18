@@ -1436,14 +1436,35 @@ pub async fn watch(
     account: AccountId,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    let mut pause = Duration::from_secs(2);
+    watch_timed(cfg, store, account, events, crate::backoff::FIRST).await
+}
+
+/// [`watch`] with another first wait after a failure, for tests.
+#[doc(hidden)]
+pub async fn watch_timed(
+    cfg: JmapConfig,
+    store: Arc<Mutex<Store>>,
+    account: AccountId,
+    events: impl Fn(WatchEvent),
+    retry_first: Duration,
+) -> Result<()> {
+    // The same waits as IMAP's (see crate::backoff): they start over only
+    // after a whole round.
+    let mut backoff = crate::backoff::Backoff::new(retry_first);
+    let mut answered;
     loop {
+        answered = false;
         let result: Result<()> = async {
             let mut client = Client::open(&cfg).await?;
-            pause = Duration::from_secs(2);
+            answered = true;
             let mut folders_synced: Option<std::time::Instant> = None;
+            let dropped = |changes: usize| {
+                if changes > 0 {
+                    events(WatchEvent::Dropped { account, changes });
+                }
+            };
             loop {
-                crate::pending::send(&mut client, &store, account).await?;
+                dropped(crate::pending::send(&mut client, &store, account).await?);
                 if folders_synced.is_none_or(|t| t.elapsed() >= crate::imap::FOLDERS_EVERY) {
                     client.sync_folders(&store, account).await?;
                     folders_synced = Some(std::time::Instant::now());
@@ -1458,11 +1479,12 @@ pub async fn watch(
                     })
                     .await?;
                 if crate::rules::after_sync(&store, account, &mut report)? {
-                    crate::pending::send(&mut client, &store, account).await?;
+                    dropped(crate::pending::send(&mut client, &store, account).await?);
                 }
                 events(WatchEvent::Synced { account, report });
-                // Snoozed mail comes back, and mail sent later goes, on
-                // time.
+                backoff.reset();
+                // Snoozed mail comes back, mail sent later goes, and a
+                // refused change is tried again, on time.
                 let due = lock(&store)
                     .next_due(account, crate::pending::now())?
                     .map(|at| Duration::from_secs((at - crate::pending::now()).max(1) as u64));
@@ -1472,16 +1494,18 @@ pub async fn watch(
             }
         }
         .await;
-        match result {
+        let most = match &result {
             Err(JmapError::Auth) => return Err(JmapError::Auth),
-            Err(e) => events(WatchEvent::Offline {
+            Err(e) if answered && !e.is_offline() => crate::backoff::ANSWERED_MOST,
+            _ => crate::backoff::OFFLINE_MOST,
+        };
+        if let Err(e) = result {
+            events(WatchEvent::Offline {
                 account,
                 reason: e.to_string(),
-            }),
-            Ok(()) => {}
+            });
         }
-        tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(Duration::from_secs(60));
+        tokio::time::sleep(backoff.fail(most)).await;
     }
 }
 
