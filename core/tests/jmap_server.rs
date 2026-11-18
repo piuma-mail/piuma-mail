@@ -46,6 +46,8 @@ struct Server {
     headers: bool,
     /// The away message (RFC 8621 section 8), on servers that keep one.
     vacation: Option<Value>,
+    /// The filters of the searches asked (queries not of one folder).
+    searches: Vec<Value>,
     /// Folders inside others: child id to parent id.
     parents: BTreeMap<String, String>,
     /// Folders not subscribed to; the rest are.
@@ -277,7 +279,11 @@ impl Server {
                     { "id": "q1", "resourceType": "octets", "scope": "account", "used": used, "hardLimit": limit },
                 ] }))
             }
-            "Email/query" if args["filter"]["operator"].is_string() => {
+            // The outbox's look-up by Message-ID (no sort); searches,
+            // sorted, take the arm below.
+            "Email/query"
+                if args["filter"]["operator"].is_string() && args.get("sort").is_none() =>
+            {
                 let ids: Vec<&String> = self
                     .emails
                     .iter()
@@ -299,16 +305,21 @@ impl Server {
                 one(json!({ "ids": ids }))
             }
             "Email/query" => {
-                let mailbox = args["filter"]["inMailbox"].as_str().unwrap();
+                let filter = &args["filter"];
+                let search = filter.get("inMailbox").is_none();
+                if search {
+                    self.searches.push(filter.clone());
+                }
                 let mut ids: Vec<(&String, &Email)> = self
                     .emails
                     .iter()
-                    .filter(|(_, e)| e.mailboxes.contains(mailbox))
+                    .filter(|(_, e)| matches(e, filter))
                     .collect();
                 ids.sort_by(|a, b| b.1.received.cmp(&a.1.received));
                 let total = ids.len();
-                let position = args["position"].as_u64().unwrap() as usize;
-                let limit = (args["limit"].as_u64().unwrap() as usize).min(QUERY_CAP);
+                let position = args["position"].as_u64().unwrap_or(0) as usize;
+                let limit = args["limit"].as_u64().unwrap() as usize;
+                let limit = if search { limit } else { limit.min(QUERY_CAP) };
                 let page: Vec<&String> = ids
                     .iter()
                     .skip(position)
@@ -669,6 +680,48 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
             _ => respond(&mut tcp, "404 Not Found", "text/plain", b"").await,
         }
     }
+}
+
+/// Enough of RFC 8621's Email/query filter for the engine's searches:
+/// operators, folders, keywords, and text in the message, its From, To
+/// or Subject (any case). Other conditions hold.
+fn matches(e: &Email, filter: &Value) -> bool {
+    if let Some(op) = filter["operator"].as_str() {
+        let mut each = filter["conditions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| matches(e, c));
+        return match op {
+            "AND" => each.all(|m| m),
+            "OR" => each.any(|m| m),
+            _ => !each.any(|m| m),
+        };
+    }
+    let raw = String::from_utf8_lossy(&e.raw).to_lowercase();
+    let header = |name: &str| {
+        raw.lines()
+            .find(|l| l.starts_with(&format!("{name}:")))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    filter.as_object().unwrap().iter().all(|(key, v)| {
+        let text = v.as_str().unwrap_or_default().to_lowercase();
+        match key.as_str() {
+            "inMailbox" => e.mailboxes.contains(v.as_str().unwrap()),
+            "inMailboxOtherThan" => e.mailboxes.iter().any(|m| {
+                !v.as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|x| x.as_str() == Some(m.as_str()))
+            }),
+            "hasKeyword" => e.keywords.contains(v.as_str().unwrap()),
+            "notKeyword" => !e.keywords.contains(v.as_str().unwrap()),
+            "text" => raw.contains(&text),
+            "from" | "to" | "subject" => header(key).contains(&text),
+            _ => true,
+        }
+    })
 }
 
 async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
@@ -1859,6 +1912,102 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn searches_on_the_server_and_keeps_what_it_finds() {
+    use piuma_core::Query;
+    let (server, cfg) = start().await;
+    let (store, id) = store_with_account(&cfg);
+    {
+        let mut s = server.lock().unwrap();
+        // Old mail never synced: in the Receipts folder, and in the trash.
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.add("mb-misc", "Shop <orders@shop.it>", "Invoice March", 1, true);
+        s.add(
+            "mb-trash",
+            "Shop <orders@shop.it>",
+            "Invoice April",
+            1,
+            true,
+        );
+    }
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::open(&account, &PASSWORD.into()).await.unwrap();
+    async fn ask(
+        remote: &mut Remote,
+        store: &Mutex<Store>,
+        account: &Account,
+        q: &str,
+    ) -> piuma_core::remote::ServerFound {
+        remote
+            .search_server(store, account, &Query::parse(q), 100)
+            .await
+            .unwrap()
+    }
+
+    // Operators become a filter; the trash is left out unless named.
+    let found = ask(
+        &mut remote,
+        &store,
+        &account,
+        "invoice OR receipt -from:julia",
+    )
+    .await;
+    assert!(found.asked);
+    assert_eq!(found.at.len(), 1);
+    assert_eq!(
+        server.lock().unwrap().searches.last().unwrap(),
+        &json!({ "operator": "AND", "conditions": [
+            { "operator": "AND", "conditions": [
+                { "operator": "OR", "conditions": [{ "text": "invoice" }, { "text": "receipt" }] },
+                { "operator": "NOT", "conditions": [{ "from": "julia" }] },
+            ]},
+            { "inMailboxOtherThan": ["mb-trash"] },
+        ]})
+    );
+    // Kept here in its folder, searchable and openable like synced mail.
+    let (mailbox, uid) = found.at[0].clone();
+    assert_eq!(mailbox, "mb-misc");
+    {
+        let s = store.lock().unwrap();
+        let hits = s.search(&Query::parse("invoice"), 10).unwrap();
+        assert_eq!(hits.hits[0].message.subject, "Invoice March");
+        assert_eq!(
+            s.jmap_email_at(id, "M7").unwrap(),
+            Some((mailbox.clone(), uid))
+        );
+    }
+    let body = remote.full_body(&store, id, &mailbox, uid).await.unwrap();
+    assert!(body.text.contains("Invoice March"));
+
+    // Asked again, nothing is fetched twice; the trash when named.
+    let found = ask(&mut remote, &store, &account, "in:trash invoice").await;
+    assert_eq!(found.at.len(), 1);
+    assert_eq!(found.at[0].0, "mb-trash");
+    assert_eq!(
+        server.lock().unwrap().searches.last().unwrap(),
+        &json!({ "operator": "AND", "conditions": [
+            { "inMailbox": "mb-trash" }, { "text": "invoice" },
+        ]})
+    );
+    let found = ask(&mut remote, &store, &account, "subject:invoice in:receipts").await;
+    assert_eq!(found.at, [("mb-misc".to_owned(), uid)]);
+
+    // Terms only this device knows are never asked.
+    let asked = server.lock().unwrap().searches.len();
+    assert!(
+        !ask(&mut remote, &store, &account, "in:vault invoice")
+            .await
+            .asked
+    );
+    assert!(
+        !ask(&mut remote, &store, &account, "in:nowhere invoice")
+            .await
+            .asked
+    );
+    assert_eq!(server.lock().unwrap().searches.len(), asked);
 }
 
 /// Managing the mailbox over JMAP: stars, copies, deleting for good in

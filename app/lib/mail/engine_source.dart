@@ -23,6 +23,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/search.dart' as srch;
 import '../engine/api/mailbox.dart' as mbx;
 import '../engine/api/oauth.dart' as oauth;
 import '../engine/api/outside.dart' as outside;
@@ -1658,6 +1659,51 @@ class EngineMailSource extends MailSource with EngineCompose {
       limit: limit,
       frequent: (await searchStart()).frequent,
     );
+  }
+
+  @override
+  Future<ServerResults> searchServer(String query, {int limit = 50}) async {
+    final r = await srch.searchServer(query: query, limit: limit);
+    return ServerResults(
+      hits: [
+        for (final h in r.hits)
+          SearchHit(_row(h.row), snippet: h.snippet, files: h.files),
+      ],
+      asked: r.asked,
+      failed: r.failed,
+      partial: r.partial,
+      partialAccounts: r.partialAccounts,
+      textRefused: r.textRefused,
+    );
+  }
+
+  @override
+  void cancelServerSearch() => srch.cancelServerSearch();
+
+  @override
+  Future<List<SavedSearch>> savedSearches() async => [
+    for (final s in await srch.savedSearches())
+      SavedSearch(id: s.id, name: s.name, query: s.query),
+  ];
+
+  @override
+  Future<int> saveSearch(String name, String query) async {
+    final id = await srch.saveSearch(name: name, query: query);
+    _changes.add(null);
+    return id;
+  }
+
+  @override
+  Future<bool> renameSavedSearch(int id, String name) async {
+    final done = await srch.renameSavedSearch(id: id, name: name);
+    if (done) _changes.add(null);
+    return done;
+  }
+
+  @override
+  Future<void> deleteSavedSearch(int id) async {
+    await srch.deleteSavedSearch(id: id);
+    _changes.add(null);
   }
 
   @override

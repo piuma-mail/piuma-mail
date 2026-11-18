@@ -76,7 +76,7 @@ pub use reading::Readable;
 pub use search::Query;
 pub use store::{
     AccountFolder, Attachment, Body, Conversation, Found, Hit, MailboxState, MessageTemplate,
-    Person, PrivacyCounts, Restored, SenderAddress, Store, StoreError, TrustedSender,
+    Person, PrivacyCounts, Restored, SavedSearch, SenderAddress, Store, StoreError, TrustedSender,
 };
 
 /// Engine version, shown in the app's settings.

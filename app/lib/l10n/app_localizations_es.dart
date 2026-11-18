@@ -6534,6 +6534,113 @@ class AppLocalizationsEs extends AppLocalizations {
       'Tu espacio tiene una clave y una frase de recuperación nuevas, porque un dispositivo salió o se desvincularon dos a la vez. La que apuntaste ya no sirve.';
 
   @override
+  String get saveSearch => 'Guardar búsqueda';
+
+  @override
+  String get savedSearchEdit => 'Editar búsqueda guardada';
+
+  @override
+  String get savedSearchName => 'Nombre';
+
+  @override
+  String get savedSearchSave => 'Guardar';
+
+  @override
+  String get savedSearchDelete => 'Eliminar búsqueda';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Solo se elimina la búsqueda guardada: los correos se quedan donde están.';
+
+  @override
+  String get savedSearchNameTaken =>
+      'Otra búsqueda guardada ya tiene este nombre.';
+
+  @override
+  String get savedSearchesSection => 'BÚSQUEDAS GUARDADAS';
+
+  @override
+  String get savedSearches => 'Búsquedas guardadas';
+
+  @override
+  String get searchSuggestions => 'Sugerencias';
+
+  @override
+  String get searchOnServer => 'Buscar en el servidor';
+
+  @override
+  String get searchOnServerHeading => 'En el servidor';
+
+  @override
+  String get searchingServers => 'Buscando en el servidor…';
+
+  @override
+  String get searchServerError => 'No se ha podido buscar en el servidor.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'Esta búsqueda solo puede mirar en este dispositivo.';
+
+  @override
+  String get searchServerNothing => 'No hay nada más en el servidor.';
+
+  @override
+  String get searchFromServer => 'Encontrado en el servidor';
+
+  @override
+  String get searchServerPartial =>
+      'Algunas carpetas no se han podido buscar por completo.';
+
+  @override
+  String get searchServerMaybe =>
+      'Los correos más antiguos, y el texto que este dispositivo no ha guardado, pueden seguir en el servidor.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Los servidores de $count cuentas solo buscan letras simples (A–Z), así que no se les preguntó por este texto.',
+      one: 'El servidor de 1 cuenta solo busca letras simples (A–Z), así que no se le preguntó por este texto.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Buscado solo en parte: $accounts. Aquí está lo que se encontró antes de parar.';
+  }
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count correos más encontrados en el servidor, ahora en este dispositivo.',
+      one: '1 correo más encontrado en el servidor, ahora en este dispositivo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'No se ha podido contactar con los servidores de $count cuentas.',
+      one: 'No se ha podido contactar con el servidor de 1 cuenta.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Cambiar el nombre o eliminar $name';
+  }
+
+  @override
   String get errorNoKeyring =>
       'Piuma guarda las contraseñas en el llavero del sistema y no hay ninguno en marcha. Instala e inicia uno, como GNOME Keyring o KWallet, y vuelve a intentarlo. Las contraseñas nunca se guardan en un archivo sin cifrar.';
 
