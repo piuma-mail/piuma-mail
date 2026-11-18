@@ -14,7 +14,7 @@ futures = "0.3.34"
 hickory-resolver = "0.26.3"
 hayro = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "ico", "gif", "webp", "bmp", "tiff"] }
-lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1-rustls", "aws-lc-rs"] }
+lettre = { version = "0.11.24", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1-rustls", "aws-lc-rs"] }
 mail-parser = "1.0.1"
 encodify = "1.0"
 regex = "1.13.1"
@@ -52,14 +52,14 @@ rqrr = "0.11.0"
 # The system's certificate check everywhere but Android, where lettre can't
 # use it yet (no `new_with_extra_roots` there): Mozilla's roots instead.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-lettre = { version = "0.11.23", default-features = false, features = ["rustls-platform-verifier"] }
+lettre = { version = "0.11.24", default-features = false, features = ["rustls-platform-verifier"] }
 
 # The quarantine flag on attachments saved on macOS (files.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-lettre = { version = "0.11.23", default-features = false, features = ["webpki-roots"] }
+lettre = { version = "0.11.24", default-features = false, features = ["webpki-roots"] }
 webpki-roots = "1.0.9"
 
 [dev-dependencies]
