@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 220901496;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -705800555;
 
 // Section: executor
 
@@ -6431,6 +6431,38 @@ fn wire__crate__api__engine__snoozed_impl(
         },
     )
 }
+fn wire__crate__api__mailbox__special_folder_options_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "special_folder_options",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_account_id = <i64>::sse_decode(&mut deserializer);
+            let api_role = <crate::api::mailbox::SpecialFolder>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, crate::api::engine::EngineError>((move || {
+                let output_ok =
+                    crate::api::mailbox::special_folder_options(api_account_id, api_role)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__mailbox__special_folders_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -9187,9 +9219,11 @@ impl SseDecode for crate::api::mailbox::FolderContents {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_emails = <u32>::sse_decode(deserializer);
         let mut var_subfolders = <u32>::sse_decode(deserializer);
+        let mut var_protected = <Option<String>>::sse_decode(deserializer);
         return crate::api::mailbox::FolderContents {
             emails: var_emails,
             subfolders: var_subfolders,
+            protected: var_protected,
         };
     }
 }
@@ -12034,65 +12068,65 @@ fn pde_ffi_dispatcher_primary_impl(
         180 => wire__crate__api__engine__sign_in_again_impl(port, ptr, rust_vec_len, data_len),
         185 => wire__crate__api__engine__snooze_messages_impl(port, ptr, rust_vec_len, data_len),
         186 => wire__crate__api__engine__snoozed_impl(port, ptr, rust_vec_len, data_len),
-        188 => wire__crate__api__mailbox__starred_impl(port, ptr, rust_vec_len, data_len),
-        189 => wire__crate__api__engine__start_sync_impl(port, ptr, rust_vec_len, data_len),
-        190 => wire__crate__api__engine__stop_waiting_impl(port, ptr, rust_vec_len, data_len),
-        191 => {
+        189 => wire__crate__api__mailbox__starred_impl(port, ptr, rust_vec_len, data_len),
+        190 => wire__crate__api__engine__start_sync_impl(port, ptr, rust_vec_len, data_len),
+        191 => wire__crate__api__engine__stop_waiting_impl(port, ptr, rust_vec_len, data_len),
+        192 => {
             wire__crate__api__calendars__subscribe_calendar_impl(port, ptr, rust_vec_len, data_len)
         }
-        192 => wire__crate__api__engine__suggest_recipients_impl(port, ptr, rust_vec_len, data_len),
-        193 => {
+        193 => wire__crate__api__engine__suggest_recipients_impl(port, ptr, rust_vec_len, data_len),
+        194 => {
             wire__crate__api__sync__sync_add_invite_account_impl(port, ptr, rust_vec_len, data_len)
         }
-        194 => wire__crate__api__sync__sync_answer_invite_impl(port, ptr, rust_vec_len, data_len),
-        195 => wire__crate__api__sync__sync_approve_impl(port, ptr, rust_vec_len, data_len),
-        197 => wire__crate__api__sync__sync_found_impl(port, ptr, rust_vec_len, data_len),
-        203 => wire__crate__api__sync__sync_join_impl(port, ptr, rust_vec_len, data_len),
-        205 => wire__crate__api__sync__sync_join_invite_impl(port, ptr, rust_vec_len, data_len),
-        206 => wire__crate__api__engine__sync_mailbox_now_impl(port, ptr, rust_vec_len, data_len),
-        207 => wire__crate__api__sync__sync_move_impl(port, ptr, rust_vec_len, data_len),
-        208 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        210 => wire__crate__api__sync__sync_phrase_impl(port, ptr, rust_vec_len, data_len),
-        213 => wire__crate__api__sync__sync_recover_impl(port, ptr, rust_vec_len, data_len),
-        214 => wire__crate__api__sync__sync_refuse_impl(port, ptr, rust_vec_len, data_len),
-        215 => wire__crate__api__sync__sync_requests_impl(port, ptr, rust_vec_len, data_len),
-        216 => wire__crate__api__sync__sync_turn_off_impl(port, ptr, rust_vec_len, data_len),
-        217 => wire__crate__api__sync__sync_turn_on_impl(port, ptr, rust_vec_len, data_len),
-        218 => wire__crate__api__sync__sync_unlink_impl(port, ptr, rust_vec_len, data_len),
-        222 => wire__crate__api__engine__thread_brief_impl(port, ptr, rust_vec_len, data_len),
-        223 => wire__crate__api__engine__translate_download_size_impl(
+        195 => wire__crate__api__sync__sync_answer_invite_impl(port, ptr, rust_vec_len, data_len),
+        196 => wire__crate__api__sync__sync_approve_impl(port, ptr, rust_vec_len, data_len),
+        198 => wire__crate__api__sync__sync_found_impl(port, ptr, rust_vec_len, data_len),
+        204 => wire__crate__api__sync__sync_join_impl(port, ptr, rust_vec_len, data_len),
+        206 => wire__crate__api__sync__sync_join_invite_impl(port, ptr, rust_vec_len, data_len),
+        207 => wire__crate__api__engine__sync_mailbox_now_impl(port, ptr, rust_vec_len, data_len),
+        208 => wire__crate__api__sync__sync_move_impl(port, ptr, rust_vec_len, data_len),
+        209 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        211 => wire__crate__api__sync__sync_phrase_impl(port, ptr, rust_vec_len, data_len),
+        214 => wire__crate__api__sync__sync_recover_impl(port, ptr, rust_vec_len, data_len),
+        215 => wire__crate__api__sync__sync_refuse_impl(port, ptr, rust_vec_len, data_len),
+        216 => wire__crate__api__sync__sync_requests_impl(port, ptr, rust_vec_len, data_len),
+        217 => wire__crate__api__sync__sync_turn_off_impl(port, ptr, rust_vec_len, data_len),
+        218 => wire__crate__api__sync__sync_turn_on_impl(port, ptr, rust_vec_len, data_len),
+        219 => wire__crate__api__sync__sync_unlink_impl(port, ptr, rust_vec_len, data_len),
+        223 => wire__crate__api__engine__thread_brief_impl(port, ptr, rust_vec_len, data_len),
+        224 => wire__crate__api__engine__translate_download_size_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        224 => wire__crate__api__engine__translate_pairs_impl(port, ptr, rust_vec_len, data_len),
-        225 => wire__crate__api__engine__translate_status_impl(port, ptr, rust_vec_len, data_len),
-        226 => wire__crate__api__engine__translate_texts_impl(port, ptr, rust_vec_len, data_len),
-        228 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
-        229 => {
+        225 => wire__crate__api__engine__translate_pairs_impl(port, ptr, rust_vec_len, data_len),
+        226 => wire__crate__api__engine__translate_status_impl(port, ptr, rust_vec_len, data_len),
+        227 => wire__crate__api__engine__translate_texts_impl(port, ptr, rust_vec_len, data_len),
+        229 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
+        230 => {
             wire__crate__api__away__turn_off_away_message_impl(port, ptr, rust_vec_len, data_len)
         }
-        230 => {
+        231 => {
             wire__crate__api__engine__unopened_newsletters_impl(port, ptr, rust_vec_len, data_len)
         }
-        231 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
-        232 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
-        234 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
-        235 => wire__crate__api__updates__update_startup_default_impl(
+        232 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
+        233 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
+        235 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
+        236 => wire__crate__api__updates__update_startup_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        236 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
-        237 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
-        239 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
-        241 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
-        242 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
-        243 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
-        244 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
-        245 => wire__crate__api__engine__watch_translate_progress_impl(
+        237 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
+        238 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
+        240 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
+        242 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
+        243 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
+        244 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
+        245 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
+        246 => wire__crate__api__engine__watch_translate_progress_impl(
             port,
             ptr,
             rust_vec_len,
@@ -12186,26 +12220,27 @@ fn pde_ffi_dispatcher_sync_impl(
         182 => wire__crate__api__engine__signature_lines_impl(ptr, rust_vec_len, data_len),
         183 => wire__crate__api__engine__signature_text_impl(ptr, rust_vec_len, data_len),
         184 => wire__crate__api__engine__signatures_impl(ptr, rust_vec_len, data_len),
-        187 => wire__crate__api__mailbox__special_folders_impl(ptr, rust_vec_len, data_len),
-        196 => wire__crate__api__sync__sync_dirty_impl(ptr, rust_vec_len, data_len),
-        198 => wire__crate__api__sync__sync_homes_impl(ptr, rust_vec_len, data_len),
-        199 => wire__crate__api__sync__sync_identity_impl(ptr, rust_vec_len, data_len),
-        200 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
-        201 => wire__crate__api__sync__sync_invite_impl(ptr, rust_vec_len, data_len),
-        202 => wire__crate__api__sync__sync_invite_end_impl(ptr, rust_vec_len, data_len),
-        204 => wire__crate__api__sync__sync_join_cancel_impl(ptr, rust_vec_len, data_len),
-        209 => wire__crate__api__sync__sync_pair_code_impl(ptr, rust_vec_len, data_len),
-        211 => wire__crate__api__sync__sync_phrase_valid_impl(ptr, rust_vec_len, data_len),
-        212 => wire__crate__api__sync__sync_read_code_impl(ptr, rust_vec_len, data_len),
-        219 => wire__crate__api__engine__take_swipe_hint_impl(ptr, rust_vec_len, data_len),
-        220 => wire__crate__api__templates__template_used_impl(ptr, rust_vec_len, data_len),
-        221 => wire__crate__api__templates__templates_impl(ptr, rust_vec_len, data_len),
-        227 => wire__crate__api__mailbox__trash_mailbox_impl(ptr, rust_vec_len, data_len),
-        233 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
-        238 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
-        240 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
-        246 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
-        247 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
+        187 => wire__crate__api__mailbox__special_folder_options_impl(ptr, rust_vec_len, data_len),
+        188 => wire__crate__api__mailbox__special_folders_impl(ptr, rust_vec_len, data_len),
+        197 => wire__crate__api__sync__sync_dirty_impl(ptr, rust_vec_len, data_len),
+        199 => wire__crate__api__sync__sync_homes_impl(ptr, rust_vec_len, data_len),
+        200 => wire__crate__api__sync__sync_identity_impl(ptr, rust_vec_len, data_len),
+        201 => wire__crate__api__sync__sync_info_impl(ptr, rust_vec_len, data_len),
+        202 => wire__crate__api__sync__sync_invite_impl(ptr, rust_vec_len, data_len),
+        203 => wire__crate__api__sync__sync_invite_end_impl(ptr, rust_vec_len, data_len),
+        205 => wire__crate__api__sync__sync_join_cancel_impl(ptr, rust_vec_len, data_len),
+        210 => wire__crate__api__sync__sync_pair_code_impl(ptr, rust_vec_len, data_len),
+        212 => wire__crate__api__sync__sync_phrase_valid_impl(ptr, rust_vec_len, data_len),
+        213 => wire__crate__api__sync__sync_read_code_impl(ptr, rust_vec_len, data_len),
+        220 => wire__crate__api__engine__take_swipe_hint_impl(ptr, rust_vec_len, data_len),
+        221 => wire__crate__api__templates__template_used_impl(ptr, rust_vec_len, data_len),
+        222 => wire__crate__api__templates__templates_impl(ptr, rust_vec_len, data_len),
+        228 => wire__crate__api__mailbox__trash_mailbox_impl(ptr, rust_vec_len, data_len),
+        234 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
+        239 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
+        241 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
+        247 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
+        248 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -13063,6 +13098,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::mailbox::FolderContents {
         [
             self.emails.into_into_dart().into_dart(),
             self.subfolders.into_into_dart().into_dart(),
+            self.protected.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -15702,6 +15738,7 @@ impl SseEncode for crate::api::mailbox::FolderContents {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <u32>::sse_encode(self.emails, serializer);
         <u32>::sse_encode(self.subfolders, serializer);
+        <Option<String>>::sse_encode(self.protected, serializer);
     }
 }
 

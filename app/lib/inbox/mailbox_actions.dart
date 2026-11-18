@@ -19,12 +19,13 @@ import '../widgets/text_field.dart';
 
 /// A question before something that can't be undone: [title], [note]
 /// under it, Cancel and [confirm] in danger red. A sheet on the phone, a
-/// dialog elsewhere. True when confirmed.
+/// dialog elsewhere. True when confirmed. Without [confirm] it only says
+/// why something can't be done, with Close.
 Future<bool> askToConfirm(
   BuildContext context, {
   required String title,
   required String note,
-  required String confirm,
+  String? confirm,
   bool phone = false,
 }) async {
   final c = PiumaTheme.of(context);
@@ -57,16 +58,24 @@ Future<bool> askToConfirm(
             spacing: PiumaSpace.s8,
             runSpacing: PiumaSpace.s8,
             children: [
-              PiumaButton(
-                label: l.cancel,
-                kind: PiumaButtonKind.tertiary,
-                onPressed: () => Navigator.of(context).pop(false),
-              ),
-              PiumaButton(
-                label: confirm,
-                kind: PiumaButtonKind.danger,
-                onPressed: () => Navigator.of(context).pop(true),
-              ),
+              if (confirm == null)
+                PiumaButton(
+                  label: l.close,
+                  kind: PiumaButtonKind.secondary,
+                  onPressed: () => Navigator.of(context).pop(false),
+                )
+              else ...[
+                PiumaButton(
+                  label: l.cancel,
+                  kind: PiumaButtonKind.tertiary,
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+                PiumaButton(
+                  label: confirm,
+                  kind: PiumaButtonKind.danger,
+                  onPressed: () => Navigator.of(context).pop(true),
+                ),
+              ],
             ],
           ),
         ),
@@ -113,15 +122,26 @@ Future<bool> confirmEmpty(
 }
 
 /// "Delete “Clients”?": where its emails go, whether its subfolders go
-/// too, and that the folder can't come back.
+/// too, and that the folder can't come back. A folder that holds the
+/// inbox or a folder with a job ([protected]) is not deleted: that is
+/// said instead, and this returns false.
 Future<bool> confirmDeleteFolder(
   BuildContext context, {
   required String name,
   required int emails,
   required int subfolders,
+  String? protected,
   bool phone = false,
 }) {
   final l = AppLocalizations.of(context);
+  if (protected != null) {
+    return askToConfirm(
+      context,
+      title: l.folderDeleteTitle(name),
+      note: l.folderDeleteProtected(name, protected),
+      phone: phone,
+    ).then((_) => false);
+  }
   return askToConfirm(
     context,
     title: l.folderDeleteTitle(name),
@@ -416,7 +436,11 @@ class _SpecialFoldersState extends State<SpecialFolders> {
     final c = PiumaTheme.of(context);
     final box = button.findRenderObject()! as RenderBox;
     final at = box.localToGlobal(Offset.zero) & box.size;
-    final folders = widget.source.serverFolders(widget.account.id);
+    // Never the inbox, nor a folder whose other job would delete mail.
+    final folders = widget.source.specialFolderOptions(
+      widget.account.id,
+      role.role,
+    );
     // Null: back to the server's; a record: that folder.
     final picked = await showPiumaPopover<({String? mailbox})>(
       button,
@@ -475,11 +499,21 @@ class _SpecialFoldersState extends State<SpecialFolders> {
       ),
     );
     if (picked == null || !mounted) return;
-    await widget.source.setSpecialFolder(
-      widget.account.id,
-      role.role,
-      picked.mailbox,
-    );
+    try {
+      await widget.source.setSpecialFolder(
+        widget.account.id,
+        role.role,
+        picked.mailbox,
+      );
+    } catch (_) {
+      if (mounted) {
+        await askToConfirm(
+          context,
+          title: _roleName(l, role.role),
+          note: l.specialRefused,
+        );
+      }
+    }
     if (mounted) {
       setState(() => _roles = widget.source.specialFolders(widget.account.id));
     }

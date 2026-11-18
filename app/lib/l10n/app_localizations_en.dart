@@ -6463,4 +6463,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get swipeNote =>
       'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” can’t be deleted: $inside is inside it, and would go with it.';
+  }
+
+  @override
+  String get specialRefused =>
+      'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.';
 }

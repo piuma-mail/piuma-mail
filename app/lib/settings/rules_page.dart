@@ -1557,6 +1557,7 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
             name: f.name,
             emails: contents.emails,
             subfolders: contents.subfolders,
+            protected: contents.protected,
             phone: phone,
           );
           if (!yes) return;

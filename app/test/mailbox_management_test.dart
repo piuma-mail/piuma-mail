@@ -536,6 +536,127 @@ void main() {
     );
   });
 
+  testWidgets('a mixed selection deletes for good only what it confirmed', (
+    tester,
+  ) async {
+    final source = _OneForGood(now: _now);
+    await _pump(tester, source: source);
+    final rows = _rows(tester).toList();
+    expect(rows.first.mailbox, 'Junk');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+    await tester.pumpAndSettle();
+    expect(find.text('Delete this email for good?'), findsOneWidget);
+    // Cancelled: nothing at all goes.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(source.erased, isEmpty);
+    await tester.pump(const Duration(seconds: 11));
+    expect(source.applied, isEmpty);
+    // Confirmed: one for good, the other to Trash with Undo.
+    await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete for good'));
+    await tester.pumpAndSettle();
+    expect(source.erased.map((r) => r.key), [rows.first.key]);
+    expect(
+      find.textContaining('moved to Trash', findRichText: true),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    final trashed = source.applied
+        .where((a) => a.$2 == MessageAction.delete)
+        .map((a) => a.$1.key)
+        .toSet();
+    expect(trashed.contains(rows.first.key), isFalse);
+    expect(trashed, containsAll(rows.skip(1).map((r) => r.key)));
+  });
+
+  testWidgets('a folder holding Trash says it can’t be deleted', (
+    tester,
+  ) async {
+    final source = DemoMailSource(now: _now, mailbox: true);
+    final work = source.accounts.firstWhere((a) => a.name == 'Work');
+    await source.setSpecialFolder(work.id, SpecialRole.trash, 'Clients/Acme');
+    tester.view.physicalSize = const Size(1200, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final folders = {
+      for (final a in source.accounts) a.id: await source.folders(a.id),
+    };
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) => Scaffold(
+          body: SingleChildScrollView(
+            child: FoldersAndLabels(
+              source: source,
+              folders: folders,
+              labels: const [],
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('More for “Clients”'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete folder'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        '“Clients” can’t be deleted: Clients/Acme is inside it, '
+        'and would go with it.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Delete folder'), findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.text('Clients'), findsOneWidget);
+  });
+
+  testWidgets('Trash can’t be the inbox or a folder with another job', (
+    tester,
+  ) async {
+    final source = DemoMailSource(now: _now, mailbox: true);
+    final work = source.accounts.firstWhere((a) => a.name == 'Work');
+    final offered = source
+        .specialFolderOptions(work.id, SpecialRole.trash)
+        .map((f) => f.mailbox)
+        .toList();
+    expect(offered, isNot(contains('INBOX')));
+    for (final taken in ['Sent', 'Drafts', 'Junk', 'Archive']) {
+      expect(offered, isNot(contains(taken)), reason: taken);
+    }
+    expect(offered, contains('Invoices'));
+    // Archive may share with Sent, never with Trash or spam.
+    final archive = source
+        .specialFolderOptions(work.id, SpecialRole.archive)
+        .map((f) => f.mailbox)
+        .toList();
+    expect(archive, contains('Sent'));
+    expect(archive, isNot(contains('Trash')));
+    expect(archive, isNot(contains('Junk')));
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) => Scaffold(
+          body: SpecialFolders(source: source, account: work),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Trash: Trash'));
+    await tester.pumpAndSettle();
+    expect(find.text('INBOX'), findsNothing);
+    // Spam's folder is only on its own row.
+    expect(find.text('Junk'), findsOneWidget);
+  });
+
   test('hidden folders and closed parents leave the sidebar', () {
     const list = [
       AccountFolder(mailbox: 'A', name: 'A'),
@@ -560,4 +681,39 @@ void main() {
       expect(l.starredMany(1), isNotEmpty);
     }
   });
+}
+
+/// The demo, with the inbox's first row shown as one from spam: a list
+/// with mail of both kinds, as a label's or a search's can be.
+class _OneForGood extends DemoMailSource {
+  _OneForGood({super.now}) : super(mailbox: true);
+
+  @override
+  Future<List<MailRow>> page(
+    int offset,
+    int limit, {
+    MailFolder folder = MailFolder.inbox,
+    int? account,
+    String? mailbox,
+    InboxTab? tab,
+    bool unread = false,
+    GroupScope? group,
+  }) async {
+    final rows = await super.page(
+      offset,
+      limit,
+      folder: folder,
+      account: account,
+      mailbox: mailbox,
+      tab: tab,
+      unread: unread,
+      group: group,
+    );
+    return [
+      for (final (i, r) in rows.indexed)
+        offset + i == 0 && folder == MailFolder.inbox && mailbox == null
+            ? r.copyWith(mailbox: 'Junk')
+            : r,
+    ];
+  }
 }

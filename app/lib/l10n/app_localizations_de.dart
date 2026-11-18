@@ -6515,4 +6515,13 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get swipeNote =>
       'Wischen funktioniert auf Telefonen und Tablets. Am Computer findest du dieselben Aktionen in der Leiste, in den Menüs und als Tastenkürzel.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '„$name“ lässt sich nicht löschen: $inside liegt darin und würde mitgelöscht.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Dieser Ordner kann diese Aufgabe nicht übernehmen: Er ist der Posteingang oder hat schon eine andere Aufgabe, bei der Post gelöscht würde.';
 }

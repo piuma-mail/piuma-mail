@@ -840,13 +840,27 @@ class _InboxScreenState extends State<InboxScreen> {
         picked.every((r) => r.folder == MailFolder.drafts)) {
       action = MessageAction.delete;
     }
-    // In Trash and spam, Delete is for good: asked first, no Undo.
-    if (action == MessageAction.delete &&
-        picked.every(
-          (r) => widget.source.deletesForGood(r.accountId, r.mailbox),
-        )) {
-      await _deleteForever(picked);
-      return;
+    // In Trash and spam, Delete is for good: asked first, no Undo. A
+    // selection with mail from elsewhere too splits: that mail goes to
+    // Trash with Undo, the rest only once confirmed.
+    if (action == MessageAction.delete) {
+      bool forGood(MailRow r) =>
+          widget.source.deletesForGood(r.accountId, r.mailbox);
+      final forever = [
+        for (final r in picked)
+          if (forGood(r)) r,
+      ];
+      if (forever.isNotEmpty) {
+        final rest = [
+          for (final r in picked)
+            if (!forGood(r)) r,
+        ];
+        // Cancelled: nothing of the selection is deleted.
+        if (!await _deleteForever(forever) || rest.isEmpty || !mounted) {
+          return;
+        }
+        picked = rest;
+      }
     }
     final l = AppLocalizations.of(context);
     final n = picked.length;
@@ -3479,8 +3493,9 @@ class _InboxScreenState extends State<InboxScreen> {
     _countUnread();
   }
 
-  /// Delete in Trash or spam: asked first, then gone for good.
-  Future<void> _deleteForever(List<MailRow> rows) async {
+  /// Delete in Trash or spam: asked first, then gone for good. False when
+  /// the person said no.
+  Future<bool> _deleteForever(List<MailRow> rows) async {
     final phone = MediaQuery.sizeOf(context).width < phoneWidth;
     if (!await confirmDeleteForever(
           context,
@@ -3488,11 +3503,11 @@ class _InboxScreenState extends State<InboxScreen> {
           phone: phone,
         ) ||
         !mounted) {
-      return;
+      return false;
     }
     final keys = {for (final r in rows) r.key};
     await _list.currentState?.fold(keys);
-    if (!mounted) return;
+    if (!mounted) return true;
     for (final r in rows) {
       widget.source.setHidden(r, true);
     }
@@ -3510,6 +3525,7 @@ class _InboxScreenState extends State<InboxScreen> {
       }
       if (mounted) _toast(l.actionFailed);
     }
+    return true;
   }
 
   /// "Empty Trash" or "Empty spam" at the head of that folder's list.

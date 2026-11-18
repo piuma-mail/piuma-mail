@@ -1562,5 +1562,7 @@
   "badgeTitle": "{count, plural, =0{Piuma Mail} other{Piuma Mail ({count})}}",
   "badgeUnread": "{count, plural, =1{1 e-mail non lu} other{{count} e-mails non lus}}",
   "moreShort": "Plus",
-  "swipeNote": "Les balayages fonctionnent sur téléphone et tablette. Sur ordinateur, les mêmes actions sont dans la barre, les menus et les raccourcis clavier."
+  "swipeNote": "Les balayages fonctionnent sur téléphone et tablette. Sur ordinateur, les mêmes actions sont dans la barre, les menus et les raccourcis clavier.",
+  "folderDeleteProtected": "« {name} » ne peut pas être supprimé : il contient {inside}, qui partirait avec lui.",
+  "specialRefused": "Ce dossier ne peut pas faire ce travail : c’est la boîte de réception, ou il en fait déjà un autre qui supprimerait des e-mails."
 }

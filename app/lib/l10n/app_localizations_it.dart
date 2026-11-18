@@ -6526,4 +6526,13 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get swipeNote =>
       'Gli scorrimenti funzionano su telefoni e tablet. Sul computer le stesse azioni sono nella barra, nei menu e nelle scorciatoie da tastiera.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” non si può eliminare: contiene $inside, che verrebbe eliminata con lei.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.';
 }

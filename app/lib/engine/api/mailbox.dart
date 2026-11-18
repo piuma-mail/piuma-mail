@@ -99,7 +99,8 @@ FolderContents folderContents({
 );
 
 /// Deletes one of the account's own folders and its subfolders; their
-/// emails go to Trash first.
+/// emails go to Trash first. Refused for one that is or holds the inbox
+/// or a folder with a job.
 Future<void> deleteFolder({
   required PlatformInt64 accountId,
   required String mailbox,
@@ -128,6 +129,16 @@ List<SpecialFolderInfo> specialFolders({required PlatformInt64 accountId}) =>
 /// Every folder the server last listed.
 List<ServerFolder> serverFolders({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiMailboxServerFolders(accountId: accountId);
+
+/// The folders that may do `role`'s job: not the inbox, and not one doing
+/// another job when either is Trash or spam.
+List<ServerFolder> specialFolderOptions({
+  required PlatformInt64 accountId,
+  required SpecialFolder role,
+}) => RustLib.instance.api.crateApiMailboxSpecialFolderOptions(
+  accountId: accountId,
+  role: role,
+);
 
 /// Gives a job to a folder of the person's choice, or with None goes back
 /// to the one the server marks or names. It wins from now on; the
@@ -165,10 +176,19 @@ class FolderContents {
   final int emails;
   final int subfolders;
 
-  const FolderContents({required this.emails, required this.subfolders});
+  /// The inbox or a folder with a job inside it (or the folder itself),
+  /// by the name people read: then it isn't deleted.
+  final String? protected;
+
+  const FolderContents({
+    required this.emails,
+    required this.subfolders,
+    this.protected,
+  });
 
   @override
-  int get hashCode => emails.hashCode ^ subfolders.hashCode;
+  int get hashCode =>
+      emails.hashCode ^ subfolders.hashCode ^ protected.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -176,7 +196,8 @@ class FolderContents {
       other is FolderContents &&
           runtimeType == other.runtimeType &&
           emails == other.emails &&
-          subfolders == other.subfolders;
+          subfolders == other.subfolders &&
+          protected == other.protected;
 }
 
 /// How a list is sorted.

@@ -6498,4 +6498,13 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get swipeNote =>
       'Los deslizamientos funcionan en teléfonos y tabletas. En el ordenador, las mismas acciones están en la barra, los menús y los atajos de teclado.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '«$name» no se puede eliminar: contiene $inside, que se eliminaría con ella.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo.';
 }

@@ -2129,5 +2129,8 @@
   "badgeUnread": "{count, plural, =1{1 unread email} other{{count} unread emails}}",
   "@badgeUnread": {"placeholders": {"count": {"type": "int"}}},
   "moreShort": "More",
-  "swipeNote": "Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts."
+  "swipeNote": "Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.",
+  "folderDeleteProtected": "“{name}” can’t be deleted: {inside} is inside it, and would go with it.",
+  "@folderDeleteProtected": {"placeholders": {"name": {"type": "String"}, "inside": {"type": "String"}}},
+  "specialRefused": "That folder can’t do this job: it’s the inbox, or already does another job that would delete mail."
 }

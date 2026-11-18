@@ -9477,6 +9477,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.'**
   String get swipeNote;
+
+  /// No description provided for @folderDeleteProtected.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” can’t be deleted: {inside} is inside it, and would go with it.'**
+  String folderDeleteProtected(String name, String inside);
+
+  /// No description provided for @specialRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.'**
+  String get specialRefused;
 }
 
 class _AppLocalizationsDelegate

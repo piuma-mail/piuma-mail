@@ -6516,4 +6516,13 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get swipeNote =>
       'Les balayages fonctionnent sur téléphone et tablette. Sur ordinateur, les mêmes actions sont dans la barre, les menus et les raccourcis clavier.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '« $name » ne peut pas être supprimé : il contient $inside, qui partirait avec lui.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Ce dossier ne peut pas faire ce travail : c’est la boîte de réception, ou il en fait déjà un autre qui supprimerait des e-mails.';
 }

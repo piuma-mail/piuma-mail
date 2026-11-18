@@ -6493,4 +6493,13 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get swipeNote =>
       'Os deslizes funcionam em telefones e tablets. No computador, as mesmas ações estão na barra, nos menus e nos atalhos de teclado.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” não pode ser excluída: contém $inside, que seria excluída junto.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Essa pasta não pode fazer esse trabalho: é a caixa de entrada ou já faz outro que apagaria e-mails.';
 }

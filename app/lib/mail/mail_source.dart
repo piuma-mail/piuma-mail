@@ -2623,11 +2623,13 @@ abstract class MailSource {
   Future<void> renameFolder(int accountId, String mailbox, String name) async {}
 
   /// What deleting a folder takes with it: its emails and its
-  /// subfolders' (they go to Trash), and how many subfolders.
-  ({int emails, int subfolders}) folderContents(
+  /// subfolders' (they go to Trash), and how many subfolders. [protected]
+  /// names the inbox or a folder with a job inside it: then it isn't
+  /// deleted.
+  ({int emails, int subfolders, String? protected}) folderContents(
     int accountId,
     String mailbox,
-  ) => (emails: 0, subfolders: 0);
+  ) => (emails: 0, subfolders: 0, protected: null);
 
   /// Deletes one of the account's own folders with its subfolders; their
   /// emails go to Trash first.
@@ -2647,6 +2649,16 @@ abstract class MailSource {
   /// name and its whole path as people read it.
   List<({String mailbox, String name})> serverFolders(int accountId) =>
       const [];
+
+  /// The folders that may do [role]'s job: never the inbox, nor one doing
+  /// another job when either job is Trash or spam.
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in serverFolders(accountId))
+      if (f.mailbox.toUpperCase() != 'INBOX') f,
+  ];
 
   /// Gives a job to a folder of the person's choice; null goes back to
   /// the one the server marks or names.

@@ -1093,9 +1093,12 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  ({int emails, int subfolders}) folderContents(int accountId, String mailbox) {
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
     final c = mbx.folderContents(accountId: accountId, mailbox: mailbox);
-    return (emails: c.emails, subfolders: c.subfolders);
+    return (emails: c.emails, subfolders: c.subfolders, protected: c.protected);
   }
 
   @override
@@ -1131,6 +1134,18 @@ class EngineMailSource extends MailSource {
   @override
   List<({String mailbox, String name})> serverFolders(int accountId) => [
     for (final f in mbx.serverFolders(accountId: accountId))
+      (mailbox: f.mailbox, name: f.name),
+  ];
+
+  @override
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in mbx.specialFolderOptions(
+      accountId: accountId,
+      role: mbx.SpecialFolder.values.byName(role.name),
+    ))
       (mailbox: f.mailbox, name: f.name),
   ];
 

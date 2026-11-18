@@ -1006,7 +1006,10 @@ class DemoMailSource extends MailSource {
   }
 
   @override
-  ({int emails, int subfolders}) folderContents(int accountId, String mailbox) {
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
     var emails = 0, subfolders = 0;
     for (final f in _workFolders) {
       if (f.mailbox == mailbox) emails += f.total;
@@ -1015,11 +1018,27 @@ class DemoMailSource extends MailSource {
         subfolders++;
       }
     }
-    return (emails: emails, subfolders: subfolders);
+    return (
+      emails: emails,
+      subfolders: subfolders,
+      protected: _protectedIn(accountId, mailbox),
+    );
+  }
+
+  /// A folder with a job the person put inside [mailbox], if any.
+  String? _protectedIn(int accountId, String mailbox) {
+    for (final f in specialFolders(accountId)) {
+      final m = f.mailbox;
+      if (m != null && (m == mailbox || m.startsWith('$mailbox/'))) return m;
+    }
+    return null;
   }
 
   @override
   Future<void> deleteFolder(int accountId, String mailbox) async {
+    if (_protectedIn(accountId, mailbox) != null) {
+      throw StateError('protected');
+    }
     _deletedFolders.add(mailbox);
     _changes.add(null);
   }
@@ -1054,11 +1073,31 @@ class DemoMailSource extends MailSource {
 
   @override
   List<({String mailbox, String name})> serverFolders(int accountId) => [
-    for (final name in ['Archive', 'Drafts', 'Junk', 'Sent', 'Trash'])
+    for (final name in ['INBOX', 'Archive', 'Drafts', 'Junk', 'Sent', 'Trash'])
       (mailbox: name, name: name),
     if (accountId == _work.id)
       for (final f in _workFolders) (mailbox: f.mailbox, name: f.mailbox),
   ];
+
+  @override
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) {
+    bool deletes(SpecialRole r) =>
+        r == SpecialRole.trash || r == SpecialRole.junk;
+    return [
+      for (final f in serverFolders(accountId))
+        if (f.mailbox != 'INBOX' &&
+            !specialFolders(accountId).any(
+              (o) =>
+                  o.role != role &&
+                  o.mailbox == f.mailbox &&
+                  (deletes(role) || deletes(o.role)),
+            ))
+          f,
+    ];
+  }
 
   @override
   Future<void> setSpecialFolder(
