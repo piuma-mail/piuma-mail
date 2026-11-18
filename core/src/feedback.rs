@@ -2400,11 +2400,11 @@ mod tests {
             "StateError: one\n\nStateError: two"
         );
         for i in 0..2000 {
-            record_crash(&dir, &format!("StateError: number {i} {}", "x".repeat(40)));
+            record_crash(&dir, &format!("StateError: number {i} {}", "x ".repeat(20).trim_end()));
         }
         let all = pending_crash(&dir).unwrap();
         assert!(all.len() <= CRASH_MAX);
-        assert!(all.ends_with(&format!("number 1999 {}", "x".repeat(40))));
+        assert!(all.ends_with(&format!("number 1999 {}", "x ".repeat(20).trim_end())));
         let _ = std::fs::remove_dir_all(dir);
     }
 
