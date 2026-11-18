@@ -180,6 +180,7 @@ impl From<SendError> for EngineError {
             // user action is implied.
             SendError::Deferred(_) => EngineError::new(ErrorKind::Other, e.to_string()),
             SendError::Build(_) => EngineError::new(ErrorKind::Other, e.to_string()),
+            SendError::Protocol(_) => EngineError::new(ErrorKind::Other, e.to_string()),
         }
     }
 }
