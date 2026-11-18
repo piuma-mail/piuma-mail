@@ -933,12 +933,8 @@ const MIGRATIONS: &[&str] = &[
     );
 "#,
     r#"
-    -- To, Cc, every Reply-To, Mail-Followup-To and List-Post, as JSON
-    -- (`envelope::Envelope`), for Reply all and the reader; NULL until the
-    -- headers are read, for mail kept before.
-    ALTER TABLE message ADD COLUMN envelope TEXT;
     -- Muted conversations: new mail in them arrives read and silent.
-    CREATE TABLE muted_thread (
+    CREATE TABLE IF NOT EXISTS muted_thread (
         account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
         thread  TEXT NOT NULL,
         PRIMARY KEY (account, thread)
@@ -1463,6 +1459,17 @@ impl Store {
         )?;
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
+        }
+        // To, Cc, every Reply-To, Mail-Followup-To and List-Post, as JSON
+        // (`envelope::Envelope`), for Reply all and the reader; NULL until
+        // the headers are read, for mail kept before.
+        let envelope: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('message') WHERE name = 'envelope')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !envelope {
+            tx.execute_batch("ALTER TABLE message ADD COLUMN envelope TEXT")?;
         }
         if current < CLEAN_PREVIEWS {
             clean_previews(&tx)?;
@@ -7156,15 +7163,10 @@ mod tests {
             }
         }
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
-        // Back to just before the attachment ids changed: what came after
-        // is taken out, to run again as on a database of then.
+        // Back to just before the attachment ids changed.
         let at = MIGRATIONS
             .iter()
             .position(|m| m.contains("attachment_unavailable"))
-            .unwrap();
-        store
-            .conn
-            .execute_batch("ALTER TABLE message DROP COLUMN envelope; DROP TABLE muted_thread;")
             .unwrap();
         store
             .conn
