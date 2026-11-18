@@ -563,6 +563,23 @@ void main() {
       );
     });
 
+    testWidgets('crash line goldens $name', (tester) async {
+      // The line the inbox shows after a crash, on the phone and the
+      // desktop.
+      await _inbox(tester, phone: true, dark: dark, crashed: true);
+      expect(find.byType(CrashLine), findsOneWidget);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/feedback_crash_line_phone_$name.png'),
+      );
+      await _inbox(tester, dark: dark, crashed: true);
+      expect(find.byType(CrashLine), findsOneWidget);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/feedback_crash_line_desktop_$name.png'),
+      );
+    });
+
     testWidgets('feedback desktop goldens $name', (tester) async {
       await _help(tester, phone: false, dark: dark);
       await expectLater(

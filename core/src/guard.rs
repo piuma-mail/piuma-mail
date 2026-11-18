@@ -187,7 +187,16 @@ mod tests {
     fn the_log_never_carries_the_panic_message() {
         install();
         shielded("secret step", || (), || panic!("mail text: hunter2"));
-        assert!(!crate::feedback::recent_log().contains("hunter2"));
+        // The guard's own line names the step, never the message. (When a
+        // test elsewhere installed feedback's panic hook in this process,
+        // its "Rust panic at" entry keeps the first line scrubbed of
+        // quoted text: tested there, in `panics_leave_the_place_and_never_the_mail`.)
+        let log = crate::feedback::recent_log();
+        assert!(log.contains("panic in secret step"));
+        assert!(!log
+            .lines()
+            .filter(|l| !l.contains("Rust panic at"))
+            .any(|l| l.contains("hunter2")));
     }
 
     #[test]
