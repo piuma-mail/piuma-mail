@@ -173,8 +173,9 @@ class ReplyBuilder {
         forward: true,
       );
 
-  /// Edit as new: a new email with the message's recipients, subject,
-  /// text (with its formatting) and files, answering nothing.
+  /// Edit as new: a new email with the message's recipients (not the
+  /// person's own addresses), subject, text (with its formatting) and
+  /// files, answering nothing.
   Draft editAsNew(
     MailRow row, {
     List<BodyBlock>? blocks,
@@ -195,12 +196,18 @@ class ReplyBuilder {
             if (row.waitingFor.isEmpty && row.to.contains('@'))
               ...row.to.split(',').map((a) => a.trim()),
           ]
-        : [for (final p in envelope.to) p.address];
+        : [
+            for (final p in envelope.to)
+              if (!p.you) p.address,
+          ];
     return Draft(
       accountId: row.accountId,
       fromEmail: fromEmail,
       to: to,
-      cc: [for (final p in envelope?.cc ?? const <MailPerson>[]) p.address],
+      cc: [
+        for (final p in envelope?.cc ?? const <MailPerson>[])
+          if (!p.you) p.address,
+      ],
       subject: row.subject,
       body: content.text,
       marks: content.marks,
