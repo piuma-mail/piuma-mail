@@ -105,7 +105,9 @@ class MailEnvelope {
 String bareAddress(String address) {
   final open = address.lastIndexOf('<');
   final close = address.lastIndexOf('>');
-  if (open >= 0 && close > open) return address.substring(open + 1, close).trim();
+  if (open >= 0 && close > open) {
+    return address.substring(open + 1, close).trim();
+  }
   return address.trim();
 }
 

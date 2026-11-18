@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
@@ -352,7 +351,9 @@ class _FetchPanelState extends State<_FetchPanel> {
                 i.data = d;
               }
             })
-            .catchError((Object _) => i.failed = true)
+            .catchError((Object _) {
+              i.failed = true;
+            })
             .whenComplete(() {
               if (mounted) setState(() {});
             }),

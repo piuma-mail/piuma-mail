@@ -113,7 +113,8 @@ class _RecipientsLineState extends State<RecipientsLine> {
     );
   }
 
-  /// "Cc  Dan <dan@x.it>, Eve <eve@x.it>": selectable, every address whole.
+  /// "Cc  Dan `<dan@x.it>`, Eve `<eve@x.it>`": selectable, every address
+  /// whole.
   Widget _list(String label, List<MailPerson> people, PiumaColors c) {
     final size = widget.fontSize;
     return Padding(

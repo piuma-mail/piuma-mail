@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart' show NumberFormat;
 
 import '../compose/compose_pane.dart';
 import '../compose/remind_me.dart';

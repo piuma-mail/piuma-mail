@@ -144,7 +144,10 @@ class ReplyBuilder {
     final head = '\n\n${l.forwardBlock(from, date, to, row.subject)}\n\n';
     final content = blocks != null && blocks.isNotEmpty
         ? formatted(blocks)
-        : (text: text.replaceAll('\r\n', '\n').trimRight(), marks: const []);
+        : (
+            text: text.replaceAll('\r\n', '\n').trimRight(),
+            marks: const <BodyMark>[],
+          );
     return Draft(
       accountId: row.accountId,
       fromEmail: fromEmail,
@@ -185,7 +188,10 @@ class ReplyBuilder {
   }) {
     final content = blocks != null && blocks.isNotEmpty
         ? formatted(blocks)
-        : (text: text.replaceAll('\r\n', '\n').trimRight(), marks: const []);
+        : (
+            text: text.replaceAll('\r\n', '\n').trimRight(),
+            marks: const <BodyMark>[],
+          );
     final to = envelope == null
         ? [
             for (final a in row.waitingFor) a,
