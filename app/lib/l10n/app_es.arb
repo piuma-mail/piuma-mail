@@ -1521,5 +1521,6 @@
   "oauthClientSecret": "Secreto de cliente (solo apps de escritorio de Google)",
   "listFailed": "No se pudieron mostrar estos correos.",
   "folderRefreshFailed": "No se pudo actualizar esta carpeta desde el servidor.",
-  "changesDropped": "{count, plural, =1{El servidor no aceptó un cambio que hiciste: ese correo vuelve a estar como antes.} other{El servidor no aceptó {count} cambios que hiciste: esos correos vuelven a estar como antes.}}"
+  "changesDropped": "{count, plural, =1{El servidor no aceptó un cambio que hiciste: ese correo vuelve a estar como antes.} other{El servidor no aceptó {count} cambios que hiciste: esos correos vuelven a estar como antes.}}",
+  "oauthOwnClientNotHere": "En Android esta app solo puede iniciar sesión en {provider} con el cliente con el que se compiló. Usa una contraseña de aplicación o una versión hecha con tu cliente."
 }

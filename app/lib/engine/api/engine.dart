@@ -8,9 +8,9 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `certificate_error`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `pins_of`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
 /// Opens (or creates) the local database. Call once at startup.
@@ -62,7 +62,8 @@ Future<FoundSettings?> discoverSettings({required String email}) =>
     RustLib.instance.api.crateApiEngineDiscoverSettings(email: email);
 
 /// Checks the settings against the server, saves the password in the
-/// system keychain and adds the account.
+/// system keychain and adds the account. `trusted` are certificates the
+/// person chose to trust for its servers, after a [ErrorKind::Certificate].
 Future<AccountInfo> addImapAccount({
   required String name,
   required String email,
@@ -74,6 +75,7 @@ Future<AccountInfo> addImapAccount({
   required String username,
   required String password,
   OutgoingServer? smtp,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiEngineAddImapAccount(
   name: name,
   email: email,
@@ -85,6 +87,7 @@ Future<AccountInfo> addImapAccount({
   username: username,
   password: password,
   smtp: smtp,
+  trusted: trusted,
 );
 
 /// Checks the login against a JMAP server, saves the password in the
@@ -97,6 +100,7 @@ Future<AccountInfo> addJmapAccount({
   required String sessionUrl,
   required String password,
   required bool apiToken,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiEngineAddJmapAccount(
   name: name,
   email: email,
@@ -105,6 +109,7 @@ Future<AccountInfo> addJmapAccount({
   sessionUrl: sessionUrl,
   password: password,
   apiToken: apiToken,
+  trusted: trusted,
 );
 
 /// How many conversations a unified folder lists; [account] keeps one
@@ -261,6 +266,19 @@ Future<void> signInAgain({
 }) => RustLib.instance.api.crateApiEngineSignInAgain(
   accountId: accountId,
   password: password,
+);
+
+/// Trusts a server certificate for an account, in place of any trusted
+/// before for that server: after a [ErrorKind::Certificate], before
+/// signing in again or saving its servers again.
+void trustCertificate({
+  required PlatformInt64 accountId,
+  required String host,
+  required String fingerprint,
+}) => RustLib.instance.api.crateApiEngineTrustCertificate(
+  accountId: accountId,
+  host: host,
+  fingerprint: fingerprint,
 );
 
 /// The readable text of a message. Downloads it the first time.
@@ -1380,6 +1398,24 @@ enum ErrorKind {
   insecureConnection,
   keychain,
 
+  /// Linux with no Secret Service running: nowhere safe for passwords.
+  noKeyring,
+
+  /// The server's certificate was refused; `detail` is the certificate
+  /// as JSON ([`certificate_error`]), for the person to decide.
+  certificate,
+
+  /// OAuth: this build has no client for the provider, and none was
+  /// given.
+  signInUnavailable,
+
+  /// OAuth: the person closed or cancelled the provider's page.
+  signInCancelled,
+
+  /// OAuth: the provider refused (the person said no, the answer was
+  /// forged, the client is wrong).
+  signInDenied,
+
   /// A recipient is not an email address; `detail` is the address.
   badAddress,
   noRecipients,
@@ -1493,6 +1529,10 @@ class FoundSettings {
   /// uses it in place of IMAP and SMTP.
   final String? jmapUrl;
 
+  /// The provider (`microsoft`, `google`) whose own sign-in page these
+  /// servers want, in place of a password.
+  final String? oauth;
+
   const FoundSettings({
     required this.imapHost,
     required this.imapPort,
@@ -1503,6 +1543,7 @@ class FoundSettings {
     required this.username,
     required this.source,
     this.jmapUrl,
+    this.oauth,
   });
 
   @override
@@ -1515,7 +1556,8 @@ class FoundSettings {
       smtpSecurity.hashCode ^
       username.hashCode ^
       source.hashCode ^
-      jmapUrl.hashCode;
+      jmapUrl.hashCode ^
+      oauth.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1530,7 +1572,8 @@ class FoundSettings {
           smtpSecurity == other.smtpSecurity &&
           username == other.username &&
           source == other.source &&
-          jmapUrl == other.jmapUrl;
+          jmapUrl == other.jmapUrl &&
+          oauth == other.oauth;
 }
 
 /// Someone who writes often, for "Frequent contacts".
@@ -3148,6 +3191,10 @@ enum SyncEventKind {
   /// kept refusing were given up; `removed` says how many. Their
   /// messages are back as the server has them.
   changesDropped,
+
+  /// Android: the engine got a secret for the Keystore (a renewed
+  /// sign-in): `take_new_secrets` has it, to keep at once.
+  secretsChanged,
 }
 
 /// A run of text with one look.
@@ -3256,6 +3303,26 @@ class TranslatePair {
           runtimeType == other.runtimeType &&
           name == other.name &&
           bytes == other.bytes;
+}
+
+/// A server certificate the person chose to trust, by its SHA-256
+/// fingerprint (`AB:CD:…`), for the server `host`.
+class TrustedCertificate {
+  final String host;
+  final String fingerprint;
+
+  const TrustedCertificate({required this.host, required this.fingerprint});
+
+  @override
+  int get hashCode => host.hashCode ^ fingerprint.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TrustedCertificate &&
+          runtimeType == other.runtimeType &&
+          host == other.host &&
+          fingerprint == other.fingerprint;
 }
 
 class TrustedSenderInfo {

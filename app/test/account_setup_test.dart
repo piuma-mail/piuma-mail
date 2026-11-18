@@ -371,6 +371,39 @@ void main() {
     expect(find.text('Gmail needs an app password'), findsOneWidget);
   });
 
+  testWidgets(
+    'a Google client of one’s own is not offered where it can’t work',
+    (tester) async {
+      // Google on Android: the redirect comes from the client ID, which the
+      // app can't answer for another client.
+      final source = _Scripted(
+        oauthProviders: const [
+          OAuthProviderInfo(
+            id: 'google',
+            name: 'Google',
+            builtIn: true,
+            appPasswords: true,
+            hasTenant: false,
+            ownClient: false,
+          ),
+        ],
+      );
+      await _pump(tester, source);
+      await tester.tap(find.text('Gmail'));
+      await tester.pumpAndSettle();
+      expect(find.text('Advanced: your own client ID'), findsNothing);
+      expect(
+        find.textContaining('the client it was built with'),
+        findsOneWidget,
+      );
+      await tester.enterText(_field('Email address'), 'anna@gmail.com');
+      await tester.pump();
+      await _tap(tester, 'Sign in with Google', last: true);
+      expect(source.oauthProvider, 'google');
+      expect(source.oauthClient, isNull);
+    },
+  );
+
   testWidgets('a cancelled sign-in is said', (tester) async {
     final source = _Scripted(
       fail: const AddAccountException(AddAccountError.signInCancelled),

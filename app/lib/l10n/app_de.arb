@@ -1521,5 +1521,6 @@
   "oauthClientSecret": "Client-Geheimnis (nur Google-Desktop-Apps)",
   "listFailed": "Diese E-Mails konnten nicht angezeigt werden.",
   "folderRefreshFailed": "Dieser Ordner konnte nicht vom Server aktualisiert werden.",
-  "changesDropped": "{count, plural, =1{Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.} other{Der Server hat {count} Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.}}"
+  "changesDropped": "{count, plural, =1{Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.} other{Der Server hat {count} Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.}}",
+  "oauthOwnClientNotHere": "Auf Android kann sich diese App bei {provider} nur mit dem Client anmelden, mit dem sie gebaut wurde. Nutze ein App-Passwort oder einen Build mit deinem Client."
 }

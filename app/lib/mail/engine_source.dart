@@ -630,8 +630,12 @@ class EngineMailSource extends MailSource {
         _offline.remove(id);
         _failed.add(id);
         _failedSince.putIfAbsent(id, DateTime.now);
+      case engine.SyncEventKind.secretsChanged:
+        // A refresh token the provider replaced: into the Keystore now.
+        _keepNewSecrets().ignore();
+        return;
     }
-    // A refresh token the provider replaced, for the Android Keystore.
+    // Anything missed (the app started after the change).
     if (e.kind == engine.SyncEventKind.synced) _keepNewSecrets().ignore();
     if (e.kind == engine.SyncEventKind.progress ||
         e.kind == engine.SyncEventKind.synced) {
@@ -2085,6 +2089,7 @@ class EngineMailSource extends MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     try {
       final a = await engine.addJmapAccount(
@@ -2095,6 +2100,10 @@ class EngineMailSource extends MailSource {
         sessionUrl: sessionUrl,
         password: password,
         apiToken: apiToken,
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
       return await _added(a, password);
     } on engine.EngineError catch (e) {
@@ -2320,6 +2329,7 @@ class EngineMailSource extends MailSource {
         builtIn: p.builtIn,
         appPasswords: p.appPasswords,
         hasTenant: p.hasTenant,
+        ownClient: p.ownClient,
       ),
   ];
 

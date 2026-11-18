@@ -48,6 +48,7 @@ class _Recording extends DemoMailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     this.name = name;
     this.sessionUrl = sessionUrl;

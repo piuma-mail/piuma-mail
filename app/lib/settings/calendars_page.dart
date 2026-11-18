@@ -772,6 +772,8 @@ class _FormState extends State<_Form> {
         _error = switch (e.error) {
           AddAccountError.wrongPassword => l.calWrongPassword,
           AddAccountError.unreachable => l.calUnreachable,
+          // Trusted by hand only for a mail account's own servers.
+          AddAccountError.certificate => l.errorCertificate,
           _ => l.calFailed,
         };
       });

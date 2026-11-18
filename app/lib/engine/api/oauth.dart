@@ -10,7 +10,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 import 'sync.dart';
 
-// These functions are ignored because they are not marked as `pub`: `client_of`, `finish`, `flow_error`, `lock`, `token_error`
+// These functions are ignored because they are not marked as `pub`: `app_redirect`, `client_of`, `finish`, `flow_error`, `lock`, `token_error`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Pending`, `SignedIn`, `WayBack`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
@@ -122,6 +122,11 @@ class OAuthProvider {
   /// may name one.
   final bool hasTenant;
 
+  /// A client of the person's own works on this device. Not Google's on
+  /// Android: its redirect scheme comes from the client ID, and the app
+  /// only answers the one it was built with.
+  final bool ownClient;
+
   /// Its servers, for the summary.
   final String imapHost;
   final String smtpHost;
@@ -132,6 +137,7 @@ class OAuthProvider {
     required this.builtIn,
     required this.appPasswords,
     required this.hasTenant,
+    required this.ownClient,
     required this.imapHost,
     required this.smtpHost,
   });
@@ -143,6 +149,7 @@ class OAuthProvider {
       builtIn.hashCode ^
       appPasswords.hashCode ^
       hasTenant.hashCode ^
+      ownClient.hashCode ^
       imapHost.hashCode ^
       smtpHost.hashCode;
 
@@ -156,6 +163,7 @@ class OAuthProvider {
           builtIn == other.builtIn &&
           appPasswords == other.appPasswords &&
           hasTenant == other.hasTenant &&
+          ownClient == other.ownClient &&
           imapHost == other.imapHost &&
           smtpHost == other.smtpHost;
 }

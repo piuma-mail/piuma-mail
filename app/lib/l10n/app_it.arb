@@ -1531,5 +1531,6 @@
   "oauthClientSecret": "Client secret (solo app desktop Google)",
   "listFailed": "Impossibile mostrare queste email.",
   "folderRefreshFailed": "Impossibile aggiornare questa cartella dal server.",
-  "changesDropped": "{count, plural, =1{Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.} other{Il server non ha accettato {count} modifiche fatte da te: quelle email sono tornate com’erano.}}"
+  "changesDropped": "{count, plural, =1{Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.} other{Il server non ha accettato {count} modifiche fatte da te: quelle email sono tornate com’erano.}}",
+  "oauthOwnClientNotHere": "Su Android quest’app può accedere a {provider} solo con il client con cui è stata compilata. Usa una password per le app, o una build fatta con il tuo client."
 }

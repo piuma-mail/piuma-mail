@@ -209,7 +209,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   /// The client of the person's own, from Advanced; null for the build's.
   OAuthClientConfig? get _ownClient {
     final id = _clientId.text.trim();
-    if (id.isEmpty) return null;
+    if (id.isEmpty || !(_oauthInfo(_oauth ?? '')?.ownClient ?? true)) {
+      return null;
+    }
     String? opt(TextEditingController c) =>
         c.text.trim().isEmpty ? null : c.text.trim();
     return OAuthClientConfig(
@@ -221,8 +223,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   /// This build signs in with the provider, or a client ID was given.
   bool get _oauthAvailable =>
-      (_oauthInfo(_oauth ?? '')?.builtIn ?? false) ||
-      _clientId.text.trim().isNotEmpty;
+      (_oauthInfo(_oauth ?? '')?.builtIn ?? false) || _ownClient != null;
 
   void _go(_Step step) => setState(() {
     _step = step;
@@ -430,6 +431,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               color: _color,
               sessionUrl: jmapUrl.trim(),
               password: _password.text,
+              trusted: List.of(_trusted),
             )
           : await widget.source.addImapAccount(
               name: _name.text.trim().isEmpty
@@ -808,6 +810,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final name = _oauthName(id);
     final info = _oauthInfo(id);
     final builtIn = info?.builtIn ?? false;
+    final ownClient = info?.ownClient ?? true;
     final muted = TextStyle(fontSize: 13, height: 1.4, color: c.muted);
     return [
       Text(
@@ -842,19 +845,22 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 ),
               ),
             ),
-          SizedBox(
-            height: 44,
-            child: Align(
-              widthFactor: 1,
-              child: _TextLink(
-                label: l.oauthAdvanced,
-                onTap: () => setState(() => _advanced = !_advanced),
+          if (ownClient)
+            SizedBox(
+              height: 44,
+              child: Align(
+                widthFactor: 1,
+                child: _TextLink(
+                  label: l.oauthAdvanced,
+                  onTap: () => setState(() => _advanced = !_advanced),
+                ),
               ),
             ),
-          ),
         ],
       ),
-      if (_advanced || (!builtIn && _clientId.text.isNotEmpty)) ...[
+      if (!ownClient) Text(l.oauthOwnClientNotHere(name), style: muted),
+      if (ownClient &&
+          (_advanced || (!builtIn && _clientId.text.isNotEmpty))) ...[
         PiumaEnter(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

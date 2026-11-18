@@ -1521,5 +1521,6 @@
   "oauthClientSecret": "Secret client (applications de bureau Google seulement)",
   "listFailed": "Impossible d’afficher ces e-mails.",
   "folderRefreshFailed": "Impossible d’actualiser ce dossier depuis le serveur.",
-  "changesDropped": "{count, plural, =1{Le serveur n’a pas accepté une modification que vous avez faite : cet e-mail est revenu comme avant.} other{Le serveur n’a pas accepté {count} modifications que vous avez faites : ces e-mails sont revenus comme avant.}}"
+  "changesDropped": "{count, plural, =1{Le serveur n’a pas accepté une modification que vous avez faite : cet e-mail est revenu comme avant.} other{Le serveur n’a pas accepté {count} modifications que vous avez faites : ces e-mails sont revenus comme avant.}}",
+  "oauthOwnClientNotHere": "Sur Android, cette application ne peut se connecter à {provider} qu’avec le client avec lequel elle a été compilée. Utilisez un mot de passe d’application, ou une version compilée avec votre client."
 }

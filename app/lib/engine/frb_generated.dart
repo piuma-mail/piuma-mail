@@ -137,6 +137,7 @@ abstract class RustLibApi extends BaseApi {
     required String sessionUrl,
     required String password,
     required bool apiToken,
+    required List<TrustedCertificate> trusted,
   });
 
   Future<LabelInfo> crateApiLabelsAddLabel({
@@ -1227,6 +1228,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required String sessionUrl,
     required String password,
     required bool apiToken,
+    required List<TrustedCertificate> trusted,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -1239,6 +1241,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(sessionUrl, serializer);
           sse_encode_String(password, serializer);
           sse_encode_bool(apiToken, serializer);
+          sse_encode_list_trusted_certificate(trusted, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -1259,6 +1262,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sessionUrl,
           password,
           apiToken,
+          trusted,
         ],
         apiImpl: this,
       ),
@@ -1276,6 +1280,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "sessionUrl",
           "password",
           "apiToken",
+          "trusted",
         ],
       );
 
@@ -9604,16 +9609,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   OAuthProvider dco_decode_o_auth_provider(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return OAuthProvider(
       id: dco_decode_String(arr[0]),
       name: dco_decode_String(arr[1]),
       builtIn: dco_decode_bool(arr[2]),
       appPasswords: dco_decode_bool(arr[3]),
       hasTenant: dco_decode_bool(arr[4]),
-      imapHost: dco_decode_String(arr[5]),
-      smtpHost: dco_decode_String(arr[6]),
+      ownClient: dco_decode_bool(arr[5]),
+      imapHost: dco_decode_String(arr[6]),
+      smtpHost: dco_decode_String(arr[7]),
     );
   }
 
@@ -12468,6 +12474,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_builtIn = sse_decode_bool(deserializer);
     var var_appPasswords = sse_decode_bool(deserializer);
     var var_hasTenant = sse_decode_bool(deserializer);
+    var var_ownClient = sse_decode_bool(deserializer);
     var var_imapHost = sse_decode_String(deserializer);
     var var_smtpHost = sse_decode_String(deserializer);
     return OAuthProvider(
@@ -12476,6 +12483,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       builtIn: var_builtIn,
       appPasswords: var_appPasswords,
       hasTenant: var_hasTenant,
+      ownClient: var_ownClient,
       imapHost: var_imapHost,
       smtpHost: var_smtpHost,
     );
@@ -15394,6 +15402,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.builtIn, serializer);
     sse_encode_bool(self.appPasswords, serializer);
     sse_encode_bool(self.hasTenant, serializer);
+    sse_encode_bool(self.ownClient, serializer);
     sse_encode_String(self.imapHost, serializer);
     sse_encode_String(self.smtpHost, serializer);
   }

@@ -331,6 +331,8 @@ fn wire__crate__api__engine__add_jmap_account_impl(
             let api_session_url = <String>::sse_decode(&mut deserializer);
             let api_password = <String>::sse_decode(&mut deserializer);
             let api_api_token = <bool>::sse_decode(&mut deserializer);
+            let api_trusted =
+                <Vec<crate::api::engine::TrustedCertificate>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, crate::api::engine::EngineError>(
@@ -343,6 +345,7 @@ fn wire__crate__api__engine__add_jmap_account_impl(
                             api_session_url,
                             api_password,
                             api_api_token,
+                            api_trusted,
                         )
                         .await?;
                         std::result::Result::Ok(output_ok)
@@ -9935,6 +9938,7 @@ impl SseDecode for crate::api::oauth::OAuthProvider {
         let mut var_builtIn = <bool>::sse_decode(deserializer);
         let mut var_appPasswords = <bool>::sse_decode(deserializer);
         let mut var_hasTenant = <bool>::sse_decode(deserializer);
+        let mut var_ownClient = <bool>::sse_decode(deserializer);
         let mut var_imapHost = <String>::sse_decode(deserializer);
         let mut var_smtpHost = <String>::sse_decode(deserializer);
         return crate::api::oauth::OAuthProvider {
@@ -9943,6 +9947,7 @@ impl SseDecode for crate::api::oauth::OAuthProvider {
             built_in: var_builtIn,
             app_passwords: var_appPasswords,
             has_tenant: var_hasTenant,
+            own_client: var_ownClient,
             imap_host: var_imapHost,
             smtp_host: var_smtpHost,
         };
@@ -10966,6 +10971,7 @@ impl SseDecode for crate::api::engine::SyncEventKind {
             3 => crate::api::engine::SyncEventKind::SignInFailed,
             4 => crate::api::engine::SyncEventKind::OutboxSent,
             5 => crate::api::engine::SyncEventKind::ChangesDropped,
+            6 => crate::api::engine::SyncEventKind::SecretsChanged,
             _ => unreachable!("Invalid variant for SyncEventKind: {}", inner),
         };
     }
@@ -13109,6 +13115,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::oauth::OAuthProvider {
             self.built_in.into_into_dart().into_dart(),
             self.app_passwords.into_into_dart().into_dart(),
             self.has_tenant.into_into_dart().into_dart(),
+            self.own_client.into_into_dart().into_dart(),
             self.imap_host.into_into_dart().into_dart(),
             self.smtp_host.into_into_dart().into_dart(),
         ]
@@ -14012,6 +14019,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::SyncEventKind {
             Self::SignInFailed => 3.into_dart(),
             Self::OutboxSent => 4.into_dart(),
             Self::ChangesDropped => 5.into_dart(),
+            Self::SecretsChanged => 6.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -15866,6 +15874,7 @@ impl SseEncode for crate::api::oauth::OAuthProvider {
         <bool>::sse_encode(self.built_in, serializer);
         <bool>::sse_encode(self.app_passwords, serializer);
         <bool>::sse_encode(self.has_tenant, serializer);
+        <bool>::sse_encode(self.own_client, serializer);
         <String>::sse_encode(self.imap_host, serializer);
         <String>::sse_encode(self.smtp_host, serializer);
     }
@@ -16662,6 +16671,7 @@ impl SseEncode for crate::api::engine::SyncEventKind {
                 crate::api::engine::SyncEventKind::SignInFailed => 3,
                 crate::api::engine::SyncEventKind::OutboxSent => 4,
                 crate::api::engine::SyncEventKind::ChangesDropped => 5,
+                crate::api::engine::SyncEventKind::SecretsChanged => 6,
                 _ => {
                     unimplemented!("");
                 }

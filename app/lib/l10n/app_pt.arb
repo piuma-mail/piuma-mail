@@ -1521,5 +1521,6 @@
   "oauthClientSecret": "Segredo do cliente (só apps para computador do Google)",
   "listFailed": "Não foi possível mostrar estes e-mails.",
   "folderRefreshFailed": "Não foi possível atualizar esta pasta pelo servidor.",
-  "changesDropped": "{count, plural, =1{O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.} other{O servidor não aceitou {count} alterações que você fez: esses e-mails voltaram a ser como eram.}}"
+  "changesDropped": "{count, plural, =1{O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.} other{O servidor não aceitou {count} alterações que você fez: esses e-mails voltaram a ser como eram.}}",
+  "oauthOwnClientNotHere": "No Android, este app só consegue entrar na {provider} com o cliente com que foi compilado. Use uma senha de app ou uma versão feita com o seu cliente."
 }

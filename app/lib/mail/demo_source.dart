@@ -3719,6 +3719,7 @@ class DemoMailSource extends MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.other, 'demo');
 
   /// Finds settings for the mockup's studio.it, and JMAP for

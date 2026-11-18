@@ -1076,6 +1076,7 @@ class OAuthProviderInfo {
     required this.builtIn,
     required this.appPasswords,
     required this.hasTenant,
+    this.ownClient = true,
   });
 
   /// `microsoft`, `google`.
@@ -1092,6 +1093,10 @@ class OAuthProviderInfo {
 
   /// A client of the person's own may name a tenant (Microsoft).
   final bool hasTenant;
+
+  /// A client of the person's own works on this device: not Google's on
+  /// Android, whose redirect the app can't answer for another client.
+  final bool ownClient;
 }
 
 /// The person's own app registration with a provider, from Advanced.
@@ -2586,6 +2591,7 @@ abstract class MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   });
 
   /// Hides a message from the lists while its action can be undone, or

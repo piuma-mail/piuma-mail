@@ -2071,5 +2071,7 @@
   "listFailed": "Couldn’t show these emails.",
   "folderRefreshFailed": "Couldn’t refresh this folder from the server.",
   "changesDropped": "{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}",
-  "@changesDropped": {"placeholders": {"count": {"type": "int"}}}
+  "@changesDropped": {"placeholders": {"count": {"type": "int"}}},
+  "oauthOwnClientNotHere": "On Android this app can only sign in to {provider} with the client it was built with. Use an app password, or a build made with your client.",
+  "@oauthOwnClientNotHere": {"placeholders": {"provider": {"type": "String"}}}
 }
