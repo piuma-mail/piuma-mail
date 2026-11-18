@@ -184,6 +184,9 @@
   "riskBodyDisguised": "{name} parece um {kind}, mas é um programa. Programas recebidos por e-mail podem tomar conta do seu dispositivo. Abra só se estava esperando.",
   "riskBodyMacros": "{name} tem macros, que podem ser executadas ao abrir. Abra só se estava esperando.",
   "riskBodyLocked": "{name} está protegido por senha, então ninguém pode olhar dentro. Abra só se estava esperando.",
+  "riskWeb": "Uma página web",
+  "riskOpenWeb": "Abrir esta página web?",
+  "riskBodyWeb": "{name} é uma página web: abre no seu navegador. Nunca digite uma senha nela: uma página enviada por e-mail pode parecer qualquer login.",
   "riskFileFrom": "{name} · {size} · de {email}",
   "settings": "Configurações",
   "backToMail": "Voltar aos e-mails",
@@ -1515,5 +1518,8 @@
   "oauthAdvancedHint": "Para o seu próprio registro de app na {provider}. Deixe vazio para usar o desta versão.",
   "oauthClientId": "ID do cliente",
   "oauthTenant": "Locatário (opcional)",
-  "oauthClientSecret": "Segredo do cliente (só apps para computador do Google)"
+  "oauthClientSecret": "Segredo do cliente (só apps para computador do Google)",
+  "listFailed": "Não foi possível mostrar estes e-mails.",
+  "folderRefreshFailed": "Não foi possível atualizar esta pasta pelo servidor.",
+  "changesDropped": "{count, plural, =1{O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.} other{O servidor não aceitou {count} alterações que você fez: esses e-mails voltaram a ser como eram.}}"
 }

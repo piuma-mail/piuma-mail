@@ -503,6 +503,9 @@ enum FileRisk {
 
   /// An archive locked with a password, known once it is saved.
   locked,
+
+  /// A web page (HTML, SVG, MHT), which opens in the browser.
+  web,
 }
 
 class MailAttachment {

@@ -698,6 +698,17 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Uma página web';
+
+  @override
+  String get riskOpenWeb => 'Abrir esta página web?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name é uma página web: abre no seu navegador. Nunca digite uma senha nela: uma página enviada por e-mail pode parecer qualquer login.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · de $email';
   }
@@ -6131,107 +6142,21 @@ class AppLocalizationsPt extends AppLocalizations {
       '## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante';
 
   @override
-  String get errorNoKeyring =>
-      'O Piuma guarda as senhas no chaveiro do sistema e nenhum está em execução. Instale e inicie um, como o GNOME Keyring ou o KWallet, e tente de novo. As senhas nunca ficam num arquivo sem proteção.';
+  String get listFailed => 'Não foi possível mostrar estes e-mails.';
 
   @override
-  String get errorCertificate =>
-      'Não é possível confiar no certificado do servidor.';
+  String get folderRefreshFailed =>
+      'Não foi possível atualizar esta pasta pelo servidor.';
 
   @override
-  String get errorSignInUnavailable =>
-      'Esta cópia do Piuma Mail não consegue entrar neste provedor. Informe seu próprio ID do cliente em Avançado ou use uma senha de app, se o provedor permitir.';
-
-  @override
-  String get errorSignInCancelled =>
-      'A página de entrada foi fechada antes de terminar. Tente de novo.';
-
-  @override
-  String get errorSignInDenied =>
-      'O provedor não permitiu a entrada. Tente de novo ou confira o ID do cliente em Avançado.';
-
-  @override
-  String get errorPort => 'Uma porta é um número de 1 a 65535.';
-
-  @override
-  String get certUntrusted =>
-      'Nenhuma autoridade em que o sistema confia garante este certificado. É assim com servidores que criam o próprio certificado.';
-
-  @override
-  String get certExpired => 'Este certificado expirou ou ainda não é válido.';
-
-  @override
-  String get certNameMismatch =>
-      'Este certificado foi feito para outro nome de servidor.';
-
-  @override
-  String get certChanged =>
-      'Este não é o certificado em que você confiou para este servidor. Ele pode ter sido renovado, ou alguém pode estar escutando no meio. Confie apenas se souber por que mudou.';
-
-  @override
-  String get certInvalid =>
-      'Este certificado não é válido, e confiar nele não tornaria a conexão segura.';
-
-  @override
-  String get certIssuedTo => 'Emitido para';
-
-  @override
-  String get certIssuedBy => 'Emitido por';
-
-  @override
-  String get certValidUntil => 'Válido até';
-
-  @override
-  String get certFingerprint => 'Impressão digital SHA-256';
-
-  @override
-  String get certTrust => 'Confiar neste certificado';
-
-  @override
-  String get certTrustNew => 'Confiar no novo certificado';
-
-  @override
-  String get certCopyFingerprint => 'Copiar impressão digital';
-
-  @override
-  String get certTrustHint =>
-      'Só para esta conta e exatamente este certificado. Antes, compare a impressão digital com a que seu provedor ou administrador informa.';
-
-  @override
-  String oauthSignInWith(String provider) {
-    return 'Entrar com $provider';
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'O servidor não aceitou $count alterações que você fez: esses e-mails voltaram a ser como eram.',
+      one: 'O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.',
+    );
+    return '$_temp0';
   }
-
-  @override
-  String oauthLead(String provider) {
-    return 'O Piuma Mail abre a página da $provider no navegador. Entre por lá e volte aqui: sua senha fica com a $provider.';
-  }
-
-  @override
-  String get oauthWaiting => 'Aguardando o navegador…';
-
-  @override
-  String get oauthMicrosoftNoClient =>
-      'A Microsoft não permite mais que apps de e-mail entrem com senha, e esta cópia do Piuma Mail não tem a entrada da Microsoft configurada. Use uma versão oficial ou informe o ID do cliente do seu próprio app em Avançado.';
-
-  @override
-  String get oauthUseAppPassword => 'Usar uma senha de app';
-
-  @override
-  String get oauthAdvanced => 'Avançado: seu próprio ID do cliente';
-
-  @override
-  String oauthAdvancedHint(String provider) {
-    return 'Para o seu próprio registro de app na $provider. Deixe vazio para usar o desta versão.';
-  }
-
-  @override
-  String get oauthClientId => 'ID do cliente';
-
-  @override
-  String get oauthTenant => 'Locatário (opcional)';
-
-  @override
-  String get oauthClientSecret =>
-      'Segredo do cliente (só apps para computador do Google)';
 }

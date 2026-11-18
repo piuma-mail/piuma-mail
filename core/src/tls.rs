@@ -194,6 +194,8 @@ impl fmt::Display for Refused {
 pub enum Failure {
     /// The certificate was refused: the person can look at it.
     Certificate(Box<Refused>),
+    /// The server never finished the handshake (the watchdog's timeout).
+    Stalled,
     /// Anything else: the connection broke, no common cipher…
     Other(String),
 }
@@ -202,6 +204,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Failure::Certificate(r) => r.fmt(f),
+            Failure::Stalled => f.write_str("the server did not finish the secure handshake"),
             Failure::Other(e) => f.write_str(e),
         }
     }
@@ -338,6 +341,9 @@ where
                 .take()
             {
                 Some(refused) => Failure::Certificate(Box::new(refused)),
+                // A handshake the server never finished is no certificate
+                // problem.
+                None if crate::watchdog::stalled(&e) => Failure::Stalled,
                 None => Failure::Other(e.to_string()),
             }
         })
