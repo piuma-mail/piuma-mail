@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../design/icons.dart';
@@ -263,14 +264,8 @@ class DraggableRows extends StatelessWidget {
     return Builder(
       builder: (context) {
         final carried = rows();
-        return Draggable<MailDrag>(
+        return _PointerDraggable<MailDrag>(
           data: MailDrag(carried),
-          // A mouse drags rows to a folder; a finger on a touch screen
-          // keeps scrolling the list.
-          supportedDevices: const {
-            PointerDeviceKind.mouse,
-            PointerDeviceKind.trackpad,
-          },
           dragAnchorStrategy: pointerDragAnchorStrategy,
           feedback: Material(
             type: MaterialType.transparency,
@@ -308,6 +303,28 @@ class DraggableRows extends StatelessWidget {
       },
     );
   }
+}
+
+/// A [Draggable] that a mouse or trackpad starts: a finger on a touch
+/// screen keeps scrolling the list under it.
+class _PointerDraggable<T extends Object> extends Draggable<T> {
+  const _PointerDraggable({
+    required super.data,
+    required super.feedback,
+    required super.child,
+    super.childWhenDragging,
+    super.dragAnchorStrategy,
+  });
+
+  @override
+  MultiDragGestureRecognizer createRecognizer(
+    GestureMultiDragStartCallback onStart,
+  ) => ImmediateMultiDragGestureRecognizer(
+    supportedDevices: const {
+      PointerDeviceKind.mouse,
+      PointerDeviceKind.trackpad,
+    },
+  )..onStart = onStart;
 }
 
 /// A folder of the sidebar that takes emails dragged onto it: [builder]
