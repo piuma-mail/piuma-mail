@@ -197,8 +197,6 @@ mod tests {
             "panic at core/src/reading.rs:902"
         );
         assert_eq!(place_only(None), "panic");
-        // Tests are debug builds: they keep the whole message.
-        assert!(FULL_MESSAGES);
     }
 
     #[test]

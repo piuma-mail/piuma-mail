@@ -291,7 +291,11 @@ impl Writer<'_> {
                 Some((function_end(&lower, i + len), "none".to_owned()))
             } else if lower[i..].starts_with("url(") {
                 let end = function_end(&lower, i + 4);
-                let inside_end = if lower[..end].ends_with(')') { end - 1 } else { end };
+                let inside_end = if lower[..end].ends_with(')') {
+                    end - 1
+                } else {
+                    end
+                };
                 let inner = decoded[i + 4..inside_end.max(i + 4)]
                     .trim()
                     .trim_matches(['"', '\''])
@@ -658,11 +662,17 @@ mod tests {
         let css = ".hover\\:text-blue:hover{color:#00f}.w-1\\/2{width:50%}\
                    .\\!block{display:block}.\\32 xl\\:p-4{padding:1rem}\
                    .a{content:\"\\201C\"}";
-        let o = plain(&format!("<html><head><style>{css}</style></head><body><p>x</p></body></html>"));
+        let o = plain(&format!(
+            "<html><head><style>{css}</style></head><body><p>x</p></body></html>"
+        ));
         assert!(o.html.contains(css), "{}", o.html);
         assert!(o.remote.is_empty());
         let o = plain("<p style=\"margin:0\\!important;color:red\">x</p>");
-        assert!(o.html.contains("margin:0\\!important;color:red"), "{}", o.html);
+        assert!(
+            o.html.contains("margin:0\\!important;color:red"),
+            "{}",
+            o.html
+        );
     }
 
     #[test]
@@ -674,7 +684,9 @@ mod tests {
         assert!(o.remote.is_empty(), "{:?}", o.remote);
         assert!(!o.html.contains("tracker.example"), "{}", o.html);
         assert!(o.html.contains("color:red"), "{}", o.html);
-        let o = plain("<div style='background:url(\"https://x.example/a.png?q=(1)\") no-repeat'>x</div>");
+        let o = plain(
+            "<div style='background:url(\"https://x.example/a.png?q=(1)\") no-repeat'>x</div>",
+        );
         assert_eq!(o.remote, ["https://x.example/a.png?q=(1)"]);
         assert!(o.html.contains("none no-repeat"), "{}", o.html);
         let o = plain("<style>@import \"https://x.example/a;b.css\"; p{color:red}</style><p>y</p>");
