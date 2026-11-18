@@ -271,26 +271,28 @@ impl Writer<'_> {
     /// only as a `data:` picture or font. A remote one is noted, and comes
     /// in as `data:` once loaded; until then it is `none`.
     fn css(&mut self, css: &str) -> String {
-        // `u\72l(` is `url(` to a browser: read escapes first.
-        let decoded = unescape_css(css);
-        let css: &str = &decoded;
+        // `u\72l(` is `url(` to a browser: escapes are read to find what
+        // loads, but only what is found is rewritten. The rest is copied
+        // as written, so escaped selectors (`.w-1\/2`) keep working.
+        let (decoded, at) = unescape_css(css);
+        let lower = decoded.to_ascii_lowercase();
         let mut out = String::with_capacity(css.len());
-        let lower = css.to_ascii_lowercase();
+        // How far the original text is already in `out`.
+        let mut copied = 0;
         let mut i = 0;
-        while i < css.len() {
-            if let Some(len) = IMAGE_FUNCTIONS
+        while i < decoded.len() {
+            let found = if let Some(len) = IMAGE_FUNCTIONS
                 .iter()
                 .find(|f| lower[i..].starts_with(*f))
                 .map(|f| f.len())
             {
                 // `image-set("a.png" 1x)` and the like load addresses
                 // without `url(`: the whole function goes.
-                out.push_str("none");
-                i = closing_paren(&lower, i + len);
+                Some((function_end(&lower, i + len), "none".to_owned()))
             } else if lower[i..].starts_with("url(") {
-                let close = lower[i..].find(')').map(|e| i + e);
-                let end = close.map_or(css.len(), |c| c + 1);
-                let inner = css[i + 4..close.unwrap_or(css.len())]
+                let end = function_end(&lower, i + 4);
+                let inside_end = if lower[..end].ends_with(')') { end - 1 } else { end };
+                let inner = decoded[i + 4..inside_end.max(i + 4)]
                     .trim()
                     .trim_matches(['"', '\''])
                     .trim();
@@ -298,26 +300,33 @@ impl Writer<'_> {
                 let keep = (low.starts_with("data:image/") && !low.starts_with("data:image/svg"))
                     || low.starts_with("data:font/")
                     || low.starts_with("data:application/font");
-                if keep {
-                    out.push_str(&css[i..end]);
+                let replacement = if keep {
+                    css[at[i]..at[end]].to_owned()
                 } else if let Some(data) = self.remote(inner) {
                     // Base64 needs no quotes, which an attribute would escape.
-                    let _ = write!(out, "url({data})");
+                    format!("url({data})")
                 } else {
-                    out.push_str("none");
-                }
-                i = end;
+                    "none".to_owned()
+                };
+                Some((end, replacement))
             } else if lower[i..].starts_with("@import") {
-                i = lower[i..].find(';').map_or(css.len(), |e| i + e + 1);
+                Some((statement_end(&lower, i), String::new()))
             } else if lower[i..].starts_with("expression(") {
-                out.push_str("none");
-                i += "expression(".len();
+                Some((i + "expression(".len(), "none".to_owned()))
             } else {
-                let c = css[i..].chars().next().unwrap_or(' ');
-                out.push(c);
-                i += c.len_utf8();
+                None
+            };
+            match found {
+                Some((end, replacement)) => {
+                    out.push_str(&css[copied..at[i]]);
+                    out.push_str(&replacement);
+                    copied = at[end];
+                    i = end;
+                }
+                None => i += decoded[i..].chars().next().map_or(1, char::len_utf8),
             }
         }
+        out.push_str(&css[copied..]);
         out
     }
 
@@ -450,13 +459,22 @@ const IMAGE_FUNCTIONS: &[&str] = &[
 ];
 
 /// The index after the `)` that closes a function whose arguments start at
-/// `from`, counting nested parentheses; the end when it never closes.
-fn closing_paren(lower: &str, from: usize) -> usize {
+/// `from`, counting nested parentheses and skipping quoted strings and
+/// escaped characters; the end when it never closes.
+fn function_end(lower: &str, from: usize) -> usize {
+    let bytes = lower.as_bytes();
     let mut depth = 1usize;
-    for (i, b) in lower.bytes().enumerate().skip(from) {
-        match b {
-            b'(' => depth += 1,
-            b')' => {
+    let mut quote: Option<u8> = None;
+    let mut i = from;
+    while i < bytes.len() {
+        match (bytes[i], quote) {
+            // An escaped character is never a quote or a parenthesis.
+            (b'\\', _) => i += 1,
+            (b, Some(q)) if b == q => quote = None,
+            (_, Some(_)) => {}
+            (b'"' | b'\'', None) => quote = Some(bytes[i]),
+            (b'(', None) => depth += 1,
+            (b')', None) => {
                 depth -= 1;
                 if depth == 0 {
                     return i + 1;
@@ -464,23 +482,48 @@ fn closing_paren(lower: &str, from: usize) -> usize {
             }
             _ => {}
         }
+        i += 1;
+    }
+    lower.len()
+}
+
+/// The index after the `;` that ends an `@import` starting at `from`,
+/// skipping quoted strings; the end when nothing ends it.
+fn statement_end(lower: &str, from: usize) -> usize {
+    let bytes = lower.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = from;
+    while i < bytes.len() {
+        match (bytes[i], quote) {
+            (b'\\', _) => i += 1,
+            (b, Some(q)) if b == q => quote = None,
+            (_, Some(_)) => {}
+            (b'"' | b'\'', None) => quote = Some(bytes[i]),
+            (b';', None) => return i + 1,
+            _ => {}
+        }
+        i += 1;
     }
     lower.len()
 }
 
 /// CSS with its escapes read (`\72` is "r", `\@` is "@"), so a keyword
-/// spelled with escapes is seen. Escapes that stand for a quote, a
-/// backslash, a line break or a control character stay escaped: written
-/// out they would change where a string ends.
-fn unescape_css(css: &str) -> std::borrow::Cow<'_, str> {
-    if !css.contains('\\') {
-        return std::borrow::Cow::Borrowed(css);
-    }
+/// spelled with escapes is seen, and where in `css` each byte of it came
+/// from (one more entry, for the end). Escapes that stand for a quote,
+/// a backslash, a parenthesis, a line break or a control character stay
+/// as written: read, they would change where a string or a function
+/// ends. The decoded text is only searched, never written out.
+fn unescape_css(css: &str) -> (String, Vec<usize>) {
     let mut out = String::with_capacity(css.len());
+    let mut at = Vec::with_capacity(css.len() + 1);
+    let push = |out: &mut String, at: &mut Vec<usize>, text: &str, from: usize| {
+        out.push_str(text);
+        at.extend(std::iter::repeat_n(from, text.len()));
+    };
     let mut chars = css.char_indices().peekable();
-    while let Some((at, c)) = chars.next() {
+    while let Some((start, c)) = chars.next() {
         if c != '\\' {
-            out.push(c);
+            push(&mut out, &mut at, &css[start..start + c.len_utf8()], start);
             continue;
         }
         let mut hex = String::new();
@@ -497,7 +540,7 @@ fn unescape_css(css: &str) -> std::borrow::Cow<'_, str> {
             match chars.peek() {
                 // A backslash before a line break, or at the end, stays.
                 None | Some((_, '\n' | '\r' | '\u{c}')) => {
-                    out.push('\\');
+                    push(&mut out, &mut at, "\\", start);
                     continue;
                 }
                 Some(&(i, n)) => {
@@ -519,13 +562,17 @@ fn unescape_css(css: &str) -> std::borrow::Cow<'_, str> {
             let end = chars.peek().map_or(css.len(), |&(i, _)| i);
             (c, end)
         };
-        if matches!(decoded, '"' | '\'' | '\\') || decoded.is_control() {
-            out.push_str(&css[at..end]);
+        if matches!(decoded, '"' | '\'' | '\\' | '(' | ')') || decoded.is_control() {
+            // As written, each byte from its own place.
+            out.push_str(&css[start..end]);
+            at.extend(start..end);
         } else {
-            out.push(decoded);
+            let mut buf = [0u8; 4];
+            push(&mut out, &mut at, decoded.encode_utf8(&mut buf), start);
         }
     }
-    std::borrow::Cow::Owned(out)
+    at.push(css.len());
+    (out, at)
 }
 
 /// A grey box the size of the image it stands for.
@@ -595,9 +642,46 @@ mod tests {
         assert!(!o.html.contains("x.example"), "{}", o.html);
         // Escapes that only spell a character are kept as that character,
         // and a quote spelled as an escape stays escaped.
-        assert_eq!(unescape_css("a\\62 c"), "abc");
-        assert_eq!(unescape_css("content:\"\\22\""), "content:\"\\22\"");
-        assert_eq!(unescape_css("x\\"), "x\\");
+        assert_eq!(unescape_css("a\\62 c").0, "abc");
+        assert_eq!(unescape_css("content:\"\\22\"").0, "content:\"\\22\"");
+        assert_eq!(unescape_css("x\\").0, "x\\");
+        // Each byte read points back at where it was written.
+        let (decoded, at) = unescape_css("a\\62 c");
+        assert_eq!(at, [0, 1, 5, 6]);
+        assert_eq!(decoded.len() + 1, at.len());
+    }
+
+    #[test]
+    fn escaped_selectors_survive_unchanged() {
+        // Utility classes as transactional mail writes them: the escapes
+        // are part of the selector and must reach the web view as written.
+        let css = ".hover\\:text-blue:hover{color:#00f}.w-1\\/2{width:50%}\
+                   .\\!block{display:block}.\\32 xl\\:p-4{padding:1rem}\
+                   .a{content:\"\\201C\"}";
+        let o = plain(&format!("<html><head><style>{css}</style></head><body><p>x</p></body></html>"));
+        assert!(o.html.contains(css), "{}", o.html);
+        assert!(o.remote.is_empty());
+        let o = plain("<p style=\"margin:0\\!important;color:red\">x</p>");
+        assert!(o.html.contains("margin:0\\!important;color:red"), "{}", o.html);
+    }
+
+    #[test]
+    fn quoted_parentheses_do_not_end_a_function() {
+        // A ")" inside a quoted address is part of it.
+        let o = plain(
+            "<div style='background-image:image-set(\"https://x.example/a.png?q=)\" 1x, url(https://tracker.example/leak.png) 2x);color:red'>x</div>",
+        );
+        assert!(o.remote.is_empty(), "{:?}", o.remote);
+        assert!(!o.html.contains("tracker.example"), "{}", o.html);
+        assert!(o.html.contains("color:red"), "{}", o.html);
+        let o = plain("<div style='background:url(\"https://x.example/a.png?q=(1)\") no-repeat'>x</div>");
+        assert_eq!(o.remote, ["https://x.example/a.png?q=(1)"]);
+        assert!(o.html.contains("none no-repeat"), "{}", o.html);
+        let o = plain("<style>@import \"https://x.example/a;b.css\"; p{color:red}</style><p>y</p>");
+        assert!(!o.html.contains("x.example"), "{}", o.html);
+        assert!(o.html.contains("p{color:red}"), "{}", o.html);
+        assert_eq!(function_end("(\"a)\" (b)) c", 1), 10);
+        assert_eq!(function_end("('it\\'s)') c", 1), 10);
     }
 
     #[test]

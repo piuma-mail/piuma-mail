@@ -461,8 +461,9 @@ pub fn init_app() {
     } else {
         log::LevelFilter::Warn
     });
-    // After the bridge's hook: notes where a panic happened, so the log
-    // can say where one message tripped a reader (never what it said).
+    // After the bridge's hook, and the only place that decides what a
+    // panic prints: where it happened, never the text of the mail it was
+    // reading (the whole message only in debug builds).
     piuma_core::guard::install();
 }
 
@@ -1327,6 +1328,7 @@ async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
         id,
         || follow(account.clone(), store.clone()),
         backoff(RESTART_FIRST, RESTART_MOST),
+        RESTART_RESET,
     )
     .await;
     WATCHED
@@ -1339,11 +1341,13 @@ async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
 
 /// Runs the watcher `start` makes until it ends with a refused password,
 /// starting it again, after the next wait of `restarts`, whenever it ends
-/// otherwise or panics.
+/// otherwise or panics. A watcher that ran at least `reset` had worked:
+/// the waits start over from the first.
 async fn keep_following<F, Fut>(
     id: AccountId,
     mut start: F,
     restarts: impl Iterator<Item = Duration> + Clone,
+    reset: Duration,
 ) where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Followed> + Send + 'static,
@@ -1363,7 +1367,7 @@ async fn keep_following<F, Fut>(
             // Cancelled from outside, as when the runtime shuts down.
             Err(_) => "cancelled".into(),
         };
-        if started.elapsed() >= RESTART_RESET {
+        if started.elapsed() >= reset {
             waits = restarts.clone();
         }
         let wait = waits.next().unwrap_or(RESTART_MOST);
@@ -1540,11 +1544,71 @@ mod watcher_supervision_tests {
                 }
             },
             std::iter::repeat(Duration::from_millis(1)),
+            RESTART_RESET,
         ));
         assert_eq!(runs.load(Ordering::SeqCst), 3);
         let log = piuma_core::feedback::recent_log();
         assert!(log.contains("watcher stopped (panic"), "{log}");
         assert!(!log.contains("tripped"), "{log}");
+    }
+
+    /// Restart waits of 1 ms that note which one was asked for: the
+    /// first, the second… A copy starts from the first again, as the
+    /// supervisor's reset does.
+    #[derive(Clone)]
+    struct Waits {
+        next: usize,
+        asked: Arc<Mutex<Vec<usize>>>,
+    }
+
+    impl Iterator for Waits {
+        type Item = Duration;
+        fn next(&mut self) -> Option<Duration> {
+            self.asked.lock().unwrap().push(self.next);
+            self.next += 1;
+            Some(Duration::from_millis(1))
+        }
+    }
+
+    #[test]
+    fn a_watcher_that_ran_long_restarts_from_the_first_wait() {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let waits = Waits {
+            next: 0,
+            asked: asked.clone(),
+        };
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counted = runs.clone();
+        let reset = Duration::from_millis(200);
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(keep_following(
+            AccountId(9),
+            move || {
+                let run = counted.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    match run {
+                        // Two that end at once: the waits go on.
+                        0 | 1 => Followed::Ended("gone".into()),
+                        // One that ran longer than the reset.
+                        2 => {
+                            tokio::time::sleep(reset + Duration::from_millis(100)).await;
+                            Followed::Ended("gone after a while".into())
+                        }
+                        // Ends at once again: the second wait, not the fourth.
+                        3 => Followed::Ended("gone".into()),
+                        _ => Followed::SignInFailed,
+                    }
+                }
+            },
+            waits,
+            reset,
+        ));
+        assert_eq!(runs.load(Ordering::SeqCst), 5);
+        assert_eq!(*asked.lock().unwrap(), [0, 1, 0, 1]);
     }
 
     #[test]
@@ -1568,6 +1632,7 @@ mod watcher_supervision_tests {
                     }
                 },
                 std::iter::repeat(Duration::from_millis(1)),
+                RESTART_RESET,
             ));
             while alive.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
