@@ -21,6 +21,7 @@ import 'sections.dart';
 import 'snooze.dart';
 import 'swipe.dart';
 import 'waiting.dart';
+import '../widgets/button.dart';
 
 /// Row and header heights are fixed, so a 50,000-message inbox lays out
 /// without measuring rows it does not show.
@@ -257,6 +258,10 @@ class MessageListState extends State<MessageList>
   int _generation = 0;
   bool _loaded = false;
 
+  /// A read of the list failed: it says so, with Try again, instead of
+  /// waiting for ever.
+  bool _failed = false;
+
   /// Where the last click landed, for Shift+click ranges.
   int? _anchor;
 
@@ -358,6 +363,7 @@ class MessageListState extends State<MessageList>
       // Another list: its rows come in on their own, never under the
       // old ones (Inbox rows under "Archive").
       _loaded = false;
+      _failed = false;
       _sections = const [];
       _outbox = const [];
       _snoozed = const [];
@@ -381,6 +387,10 @@ class MessageListState extends State<MessageList>
     _reading++;
     try {
       await _read();
+      if (_failed && mounted) setState(() => _failed = false);
+    } catch (_) {
+      // Rows already on screen stay; a list with none says it failed.
+      if (mounted && !_loaded) setState(() => _failed = true);
     } finally {
       _reading--;
       if (_reading == 0 && _changedAgain && mounted) {
@@ -683,13 +693,20 @@ class MessageListState extends State<MessageList>
             unread: widget.unread,
             group: widget.group,
           )
-          .then((rows) {
-            if (!mounted || gen != _generation) return;
-            setState(() {
-              _pages[page] = rows;
-              _loading.remove(page);
-            });
-          });
+          .then(
+            (rows) {
+              if (!mounted || gen != _generation) return;
+              setState(() {
+                _pages[page] = rows;
+                _loading.remove(page);
+              });
+            },
+            onError: (Object _) {
+              if (!mounted || gen != _generation) return;
+              // Not asked again on every frame: Try again asks.
+              setState(() => _failed = true);
+            },
+          );
     }
     return null;
   }
@@ -721,11 +738,47 @@ class MessageListState extends State<MessageList>
   int get _itemCount =>
       _sections.fold(0, (sum, s) => sum + (_headless(s) ? 0 : 1) + s.count);
 
+  /// Reads the list again after a failure.
+  void _retry() {
+    setState(() {
+      _failed = false;
+      _pages.clear();
+      _loading.clear();
+      _generation++;
+    });
+    reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final locale = Localizations.localeOf(context).toLanguageTag();
     final now = widget.now();
     _labelled = {for (final l in LabelScope.of(context)) l.keyword};
+    if (_failed) {
+      final c = PiumaTheme.of(context);
+      final l = AppLocalizations.of(context);
+      return _underTop(
+        Padding(
+          padding: EdgeInsets.fromLTRB(widget.phone ? 20 : 22, 18, 22, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l.listFailed,
+                style: PiumaType.small.copyWith(color: c.muted),
+              ),
+              const SizedBox(height: 12),
+              PiumaButton(
+                label: l.tryAgain,
+                kind: PiumaButtonKind.secondary,
+                size: PiumaButtonSize.compact,
+                onPressed: _retry,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     if (_loaded &&
         _itemCount == 0 &&
         _outbox.isEmpty &&

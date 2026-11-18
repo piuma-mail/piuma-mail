@@ -6172,4 +6172,23 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
+
+  @override
+  String get listFailed => 'Impossibile mostrare queste email.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Impossibile aggiornare questa cartella dal server.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Il server non ha accettato $count modifiche fatte da te: quelle email sono tornate com’erano.',
+      one: 'Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.',
+    );
+    return '$_temp0';
+  }
 }

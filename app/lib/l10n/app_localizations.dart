@@ -9039,6 +9039,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
+
+  /// No description provided for @listFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t show these emails.'**
+  String get listFailed;
+
+  /// No description provided for @folderRefreshFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t refresh this folder from the server.'**
+  String get folderRefreshFailed;
+
+  /// No description provided for @changesDropped.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
+  String changesDropped(int count);
 }
 
 class _AppLocalizationsDelegate

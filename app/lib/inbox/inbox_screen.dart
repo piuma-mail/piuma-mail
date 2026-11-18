@@ -177,6 +177,7 @@ class _InboxScreenState extends State<InboxScreen> {
   List<AttachedFile> _files = const [];
   StreamSubscription<void>? _changes;
   StreamSubscription<List<MailNotice>>? _notices;
+  StreamSubscription<int>? _dropped;
   StreamSubscription<MailRow>? _replies;
 
   /// How many devices share the sync space; null while sync is off.
@@ -286,6 +287,7 @@ class _InboxScreenState extends State<InboxScreen> {
       _refreshSync();
     });
     _notices = widget.source.notices.listen(_notify);
+    _dropped = widget.source.changesDropped.listen(_changesDropped);
     _replies = widget.replies?.listen((row) async {
       final body = await widget.source.body(row).catchError((_) => '');
       if (mounted) _reply(row, body);
@@ -592,6 +594,7 @@ class _InboxScreenState extends State<InboxScreen> {
     _shake.dispose();
     _changes?.cancel();
     _notices?.cancel();
+    _dropped?.cancel();
     _replies?.cancel();
     _reminders?.cancel();
     widget.source.status.removeListener(_signInNotice);
@@ -1489,7 +1492,28 @@ class _InboxScreenState extends State<InboxScreen> {
       _selected = null;
       _picked.clear();
     });
-    widget.source.refreshFolder(account, mailbox).catchError((_) {});
+    _refreshFolder(account, mailbox);
+  }
+
+  /// Asks the server for what an own folder holds; when that fails, says
+  /// so, with a way to ask again, while what is here stays.
+  void _refreshFolder(int account, String mailbox) {
+    widget.source.refreshFolder(account, mailbox).catchError((_) {
+      if (!mounted || account != _account || mailbox != _mailbox) return;
+      final l = AppLocalizations.of(context);
+      _toast(
+        l.folderRefreshFailed,
+        action: l.tryAgain,
+        onAction: () => _refreshFolder(account, mailbox),
+      );
+    });
+  }
+
+  /// Changes the server kept refusing were given up: their messages are
+  /// back where the server has them, and the person knows why.
+  void _changesDropped(int count) {
+    if (!mounted || count <= 0) return;
+    _toast(AppLocalizations.of(context).changesDropped(count));
   }
 
   /// What the person calls the own folder shown.

@@ -2,7 +2,7 @@
 //! the store keeps them, and the watcher sends them when the connection
 //! is back, before it syncs, so the sync does not undo them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Mutex;
 
 use crate::imap::{self, FolderRole};
@@ -10,8 +10,41 @@ use crate::jmap;
 use crate::model::AccountId;
 use crate::store::{Store, StoreError};
 
-/// Tries before a change is given up, e.g. for a folder deleted meanwhile.
-pub const MAX_ATTEMPTS: u32 = 5;
+/// Tries before a change the server refuses for now (busy, throttled,
+/// unavailable) is given up, and only once it has also been failing for
+/// [`GIVE_UP_AFTER`]: a server that is down for an afternoon loses
+/// nothing.
+pub const MAX_ATTEMPTS: u32 = 8;
+
+/// How long a change must have been failing before it is given up, in
+/// seconds.
+pub const GIVE_UP_AFTER: i64 = 24 * 60 * 60;
+
+/// Tries before a change the server refuses for good (the folder is gone,
+/// no permission) is given up: a few, in case the refusal was a moment's.
+pub const REFUSED_ATTEMPTS: u32 = 3;
+
+/// The wait before the next try after `attempts` failed ones, in seconds:
+/// a minute, doubling, at most an hour.
+pub fn retry_after(attempts: u32) -> i64 {
+    let minutes = 1i64 << attempts.saturating_sub(1).min(6);
+    (minutes * 60).min(60 * 60)
+}
+
+/// Kinds of change that hide their message until the server has them:
+/// given up, the message shows again.
+pub(crate) const HIDING: &str = "'archive', 'trash', 'junk', 'move', 'snooze', 'wake'";
+
+/// How a server said no.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Busy, throttled, unavailable, or a refusal we can't place: it may
+    /// take the change later.
+    Temporary,
+    /// It never will: the folder or the message is gone, no permission, a
+    /// command it doesn't understand.
+    Permanent,
+}
 
 /// Read newsletters older than this archive themselves, in seconds.
 pub const NEWSLETTERS_KEPT: i64 = 7 * 24 * 60 * 60;
@@ -109,10 +142,65 @@ pub struct Pending {
     pub attempts: u32,
 }
 
+/// Response codes (RFC 5530) and words that say an IMAP `NO` is for now.
+/// async-imap puts the code it knows in the text by name (`TryCreate`) and
+/// leaves the others in brackets, so both are looked for without them.
+const FOR_NOW: &[&str] = &[
+    "unavailable",
+    "throttl",
+    "limit",
+    "inuse",
+    "serverbug",
+    "overquota",
+    "expungeissued",
+    "try again",
+    "try later",
+    "temporar",
+    "busy",
+];
+
+/// Response codes that say an IMAP `NO` is for good.
+const FOR_GOOD: &[&str] = &[
+    "nonexistent",
+    "trycreate",
+    "noperm",
+    "cannot",
+    "clientbug",
+    "alreadyexists",
+];
+
+/// How an IMAP server's answer to a change should be taken.
+pub fn imap_refusal(e: &imap::ImapError) -> Refusal {
+    use async_imap::error::Error;
+    match e {
+        imap::ImapError::NoFolder | imap::ImapError::Gone | imap::ImapError::TooLarge => {
+            Refusal::Permanent
+        }
+        imap::ImapError::Protocol(Error::Bad(_)) => Refusal::Permanent,
+        imap::ImapError::Protocol(Error::No(text)) => {
+            let text = text.to_ascii_lowercase();
+            if FOR_NOW.iter().any(|w| text.contains(w)) {
+                Refusal::Temporary
+            } else if FOR_GOOD.iter().any(|w| text.contains(w)) {
+                Refusal::Permanent
+            } else {
+                Refusal::Temporary
+            }
+        }
+        _ => Refusal::Temporary,
+    }
+}
+
 /// What a server must do to take the changes.
 pub(crate) trait Server {
     type Error: From<StoreError>;
     fn offline(e: &Self::Error) -> bool;
+    fn refusal(e: &Self::Error) -> Refusal;
+    /// The folder's messages were renumbered: the changes waiting for it
+    /// are already dropped.
+    fn renumbered(_: &Self::Error) -> bool {
+        false
+    }
     async fn seen(
         &mut self,
         store: &Mutex<Store>,
@@ -145,15 +233,21 @@ impl Server for imap::Connection {
     fn offline(e: &imap::ImapError) -> bool {
         e.is_offline()
     }
+    fn refusal(e: &imap::ImapError) -> Refusal {
+        imap_refusal(e)
+    }
+    fn renumbered(e: &imap::ImapError) -> bool {
+        matches!(e, imap::ImapError::Renumbered)
+    }
     async fn seen(
         &mut self,
-        _: &Mutex<Store>,
-        _: AccountId,
+        store: &Mutex<Store>,
+        account: AccountId,
         mailbox: &str,
         uids: &[u32],
         seen: bool,
     ) -> imap::Result<()> {
-        self.set_seen(mailbox, uids, seen).await
+        self.set_seen(store, account, mailbox, uids, seen).await
     }
     async fn moved(
         &mut self,
@@ -192,6 +286,13 @@ impl Server for jmap::Client {
     type Error = jmap::JmapError;
     fn offline(e: &jmap::JmapError) -> bool {
         e.is_offline()
+    }
+    // JMAP names messages by ids that never change: nothing to renumber.
+    fn refusal(e: &jmap::JmapError) -> Refusal {
+        match e {
+            jmap::JmapError::Gone | jmap::JmapError::NoFolder => Refusal::Permanent,
+            _ => Refusal::Temporary,
+        }
     }
     async fn seen(
         &mut self,
@@ -236,22 +337,25 @@ impl Server for jmap::Client {
     }
 }
 
-/// Sends an account's waiting changes, one command per folder and kind:
-/// read and unread and labels first, then moves. A lost connection stops it and
-/// keeps everything; a change the server refuses counts a try.
+/// Sends an account's waiting changes that are due, one command per folder
+/// and kind: read and unread and labels first, then moves. A lost
+/// connection stops it and keeps everything; a change the server refuses
+/// counts a try and waits longer before the next (see
+/// [`crate::store::Store::failed_changes`]). Returns how many changes were
+/// given up, for the person to be told.
 pub(crate) async fn send<S: Server>(
     server: &mut S,
     store: &Mutex<Store>,
     account: AccountId,
-) -> Result<(), S::Error> {
+) -> Result<usize, S::Error> {
     archive_read_newsletters(store, account)?;
     archive_unopened_newsletters(store, account, now())?;
     lock(store).queue_wakes(account, now())?;
     // A reply that came takes its reminder away.
     lock(store).drop_answered_reminders(account)?;
-    let pending = lock(store).pending_changes(account)?;
+    let pending = lock(store).due_changes(account, now())?;
     if pending.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     // Keyed by (is a move, folder, kind, target): the change, its uids,
     // their ids.
@@ -271,7 +375,13 @@ pub(crate) async fn send<S: Server>(
         group.1.push(p.uid);
         group.2.push(p.id);
     }
+    let mut renumbered: HashSet<String> = HashSet::new();
+    let mut given_up = 0;
     for ((_, mailbox, _, _), (change, uids, ids)) in groups {
+        // Its numbers name other messages now: what waited is gone.
+        if renumbered.contains(&mailbox) {
+            continue;
+        }
         let sent = match change {
             Change::Seen(seen) => server.seen(store, account, &mailbox, &uids, seen).await,
             Change::Label { keyword, add } => {
@@ -284,10 +394,13 @@ pub(crate) async fn send<S: Server>(
         match sent {
             Ok(()) => lock(store).drop_changes(&ids)?,
             Err(e) if S::offline(&e) => return Err(e),
-            Err(_) => lock(store).failed_changes(&ids)?,
+            Err(e) if S::renumbered(&e) => {
+                renumbered.insert(mailbox);
+            }
+            Err(e) => given_up += lock(store).failed_changes(&ids, now(), S::refusal(&e))?,
         }
     }
-    Ok(())
+    Ok(given_up)
 }
 
 /// Queues the archiving of the read newsletters that are more than a
@@ -342,4 +455,51 @@ pub(crate) fn now() -> i64 {
 
 fn lock(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
     store.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_imap::error::Error;
+
+    fn no(text: &str) -> imap::ImapError {
+        imap::ImapError::Protocol(Error::No(text.into()))
+    }
+
+    #[test]
+    fn busy_servers_are_told_from_final_refusals() {
+        // As async-imap words them: codes it knows by name, others left in
+        // the text.
+        for busy in [
+            r#"code: None, info: Some("[THROTTLED] Too many commands")"#,
+            r#"code: None, info: Some("[UNAVAILABLE] Backend down")"#,
+            r#"code: None, info: Some("[LIMIT] Too many messages")"#,
+            r#"code: None, info: Some("Server busy, try again later")"#,
+            r#"code: None, info: Some("Something odd happened")"#,
+        ] {
+            assert_eq!(imap_refusal(&no(busy)), Refusal::Temporary, "{busy}");
+        }
+        for final_ in [
+            r#"code: Some(TryCreate), info: Some("Mailbox doesn't exist")"#,
+            r#"code: None, info: Some("[NONEXISTENT] No such folder")"#,
+            r#"code: None, info: Some("[NOPERM] Not allowed")"#,
+        ] {
+            assert_eq!(imap_refusal(&no(final_)), Refusal::Permanent, "{final_}");
+        }
+        assert_eq!(
+            imap_refusal(&imap::ImapError::Protocol(Error::Bad("x".into()))),
+            Refusal::Permanent
+        );
+        assert_eq!(imap_refusal(&imap::ImapError::NoFolder), Refusal::Permanent);
+        assert_eq!(
+            imap_refusal(&imap::ImapError::Throttled("busy".into())),
+            Refusal::Temporary
+        );
+    }
+
+    #[test]
+    fn retries_wait_a_minute_doubling_up_to_an_hour() {
+        let waits: Vec<i64> = (1..=9).map(retry_after).collect();
+        assert_eq!(waits, [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600]);
+    }
 }

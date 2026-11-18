@@ -138,7 +138,7 @@ impl From<ImapError> for EngineError {
     fn from(e: ImapError) -> Self {
         let kind = match &e {
             ImapError::Auth => ErrorKind::WrongPassword,
-            ImapError::Connect { .. } => ErrorKind::Unreachable,
+            ImapError::Connect { .. } | ImapError::TimedOut => ErrorKind::Unreachable,
             ImapError::Tls(_) => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
         };
@@ -340,6 +340,10 @@ pub enum SyncEventKind {
     SignInFailed,
     /// Mail waiting in the outbox went out; `added` says how many.
     OutboxSent,
+    /// Changes made here (a move, read or unread, a label) that the server
+    /// kept refusing were given up; `removed` says how many. Their
+    /// messages are back as the server has them.
+    ChangesDropped,
 }
 
 #[derive(Debug, Clone)]
@@ -1319,14 +1323,17 @@ pub(crate) fn watch_account(account: Account) -> Result<(), EngineError> {
 /// A watcher that ends for any reason but a refused password (a panic
 /// while reading a message, a server that made it give up) is logged and
 /// started again, 5 s later, then twice as long each time up to 5
-/// minutes; one that ran a while starts from 5 s again. The account
-/// stays in WATCHED meanwhile, so nothing else starts a second one.
+/// minutes, spread a little; one that got through a whole sync round
+/// before it ended starts from 5 s again. The same rules as the watcher's
+/// own retries (`piuma_core::backoff`), which come first: the watcher
+/// only ends after those. The account stays in WATCHED meanwhile, so
+/// nothing else starts a second one.
 async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
     let id = account.id;
     keep_following(
         id,
-        || follow(account.clone(), store.clone()),
-        backoff(RESTART_FIRST, RESTART_MOST),
+        |worked| follow(account.clone(), store.clone(), worked),
+        RESTART_FIRST,
     )
     .await;
     WATCHED
@@ -1338,22 +1345,21 @@ async fn supervise(account: Account, store: Arc<Mutex<Store>>) {
 }
 
 /// Runs the watcher `start` makes until it ends with a refused password,
-/// starting it again, after the next wait of `restarts`, whenever it ends
-/// otherwise or panics.
-async fn keep_following<F, Fut>(
-    id: AccountId,
-    mut start: F,
-    restarts: impl Iterator<Item = Duration> + Clone,
-) where
-    F: FnMut() -> Fut,
+/// starting it again whenever it ends otherwise or panics: after `first`,
+/// then longer each time in a row, up to [`RESTART_MOST`]. `start` gets a
+/// flag to raise once a sync round went through; then the waits start
+/// over.
+async fn keep_following<F, Fut>(id: AccountId, mut start: F, first: Duration)
+where
+    F: FnMut(Arc<std::sync::atomic::AtomicBool>) -> Fut,
     Fut: std::future::Future<Output = Followed> + Send + 'static,
 {
-    let mut waits = restarts.clone();
+    let mut waits = piuma_core::backoff::Backoff::new(first);
     loop {
-        let started = tokio::time::Instant::now();
+        let worked = Arc::new(std::sync::atomic::AtomicBool::new(false));
         // Aborting the supervisor (stop_watching) drops this, which aborts
         // the watcher too.
-        let mut follow = AbortOnDrop(tokio::spawn(start()));
+        let mut follow = AbortOnDrop(tokio::spawn(start(worked.clone())));
         let why = match (&mut follow.0).await {
             Ok(Followed::SignInFailed) => return,
             Ok(Followed::Ended(why)) => why,
@@ -1363,10 +1369,10 @@ async fn keep_following<F, Fut>(
             // Cancelled from outside, as when the runtime shuts down.
             Err(_) => "cancelled".into(),
         };
-        if started.elapsed() >= RESTART_RESET {
-            waits = restarts.clone();
+        if worked.load(std::sync::atomic::Ordering::Relaxed) {
+            waits.reset();
         }
-        let wait = waits.next().unwrap_or(RESTART_MOST);
+        let wait = waits.fail(RESTART_MOST);
         piuma_core::feedback::log(
             piuma_core::feedback::Level::Error,
             "sync",
@@ -1400,12 +1406,14 @@ impl<T> Drop for AbortOnDrop<T> {
 
 const RESTART_FIRST: Duration = Duration::from_secs(5);
 const RESTART_MOST: Duration = Duration::from_secs(5 * 60);
-/// A watcher that ran this long had worked: its next restart is quick.
-const RESTART_RESET: Duration = Duration::from_secs(10 * 60);
 
 /// Follows one account until the server refuses its password or the
-/// watcher ends.
-async fn follow(account: Account, store: Arc<Mutex<Store>>) -> Followed {
+/// watcher ends, raising `worked` at each sync round that goes through.
+async fn follow(
+    account: Account,
+    store: Arc<Mutex<Store>>,
+    worked: Arc<std::sync::atomic::AtomicBool>,
+) -> Followed {
     let id = account.id;
     let settings_store = store.clone();
     // A locked/unavailable keychain (or Android credentials not handed
@@ -1427,6 +1435,7 @@ async fn follow(account: Account, store: Arc<Mutex<Store>>) -> Followed {
     let result = remote::watch(&account, &password, store, move |e| {
         // In touch with the server again: what waits can go.
         if let WatchEvent::Synced { .. } = &e {
+            worked.store(true, std::sync::atomic::Ordering::Relaxed);
             save_waiting_drafts(outbox_account.clone(), outbox_password.clone());
             send_outbox(outbox_account.clone(), outbox_password.clone());
             super::away::keep_on_time(outbox_account.clone(), outbox_password.clone());
@@ -1453,6 +1462,10 @@ async fn follow(account: Account, store: Arc<Mutex<Store>>) -> Followed {
             WatchEvent::Offline { reason, .. } => SyncEvent {
                 reason,
                 ..SyncEvent::new(SyncEventKind::Offline, id.0)
+            },
+            WatchEvent::Dropped { changes, .. } => SyncEvent {
+                removed: changes as u32,
+                ..SyncEvent::new(SyncEventKind::ChangesDropped, id.0)
             },
         });
     })
@@ -1529,7 +1542,7 @@ mod watcher_supervision_tests {
             .unwrap();
         runtime.block_on(keep_following(
             AccountId(7),
-            move || {
+            move |_| {
                 let run = counted.fetch_add(1, Ordering::SeqCst);
                 async move {
                     match run {
@@ -1539,7 +1552,7 @@ mod watcher_supervision_tests {
                     }
                 }
             },
-            std::iter::repeat(Duration::from_millis(1)),
+            Duration::from_millis(1),
         ));
         assert_eq!(runs.load(Ordering::SeqCst), 3);
         let log = piuma_core::feedback::recent_log();
@@ -1559,7 +1572,7 @@ mod watcher_supervision_tests {
         runtime.block_on(async move {
             let task = tokio::spawn(keep_following(
                 AccountId(8),
-                move || {
+                move |_| {
                     let inside = inside.clone();
                     async move {
                         inside.fetch_add(1, Ordering::SeqCst);
@@ -1567,7 +1580,7 @@ mod watcher_supervision_tests {
                         std::future::pending::<Followed>().await
                     }
                 },
-                std::iter::repeat(Duration::from_millis(1)),
+                Duration::from_millis(1),
             ));
             while alive.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
@@ -1583,6 +1596,50 @@ mod watcher_supervision_tests {
             }
             assert_eq!(alive.load(Ordering::SeqCst), 0);
         });
+    }
+
+    /// Restarts in a row wait longer each time; one after a watcher that
+    /// got through a sync round is quick again.
+    #[test]
+    fn restarts_wait_longer_until_a_round_goes_through() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let starts = Arc::new(Mutex::new(Vec::new()));
+        let seen = starts.clone();
+        runtime.block_on(keep_following(
+            AccountId(9),
+            move |worked| {
+                let mut starts = seen.lock().unwrap();
+                starts.push(tokio::time::Instant::now());
+                let run = starts.len();
+                async move {
+                    match run {
+                        // The third run gets through a round, then ends.
+                        3 => {
+                            worked.store(true, Ordering::Relaxed);
+                            Followed::Ended("server gave up".into())
+                        }
+                        5 => Followed::SignInFailed,
+                        _ => Followed::Ended("server gave up".into()),
+                    }
+                }
+            },
+            Duration::from_secs(5),
+        ));
+        let starts = starts.lock().unwrap();
+        let gaps: Vec<f64> = starts
+            .windows(2)
+            .map(|w| (w[1] - w[0]).as_secs_f64())
+            .collect();
+        assert_eq!(gaps.len(), 4);
+        // 5 s, 10 s, then 5 s again after the round, then 10 s; ±20 %.
+        assert!((4.0..=6.0).contains(&gaps[0]), "{gaps:?}");
+        assert!((8.0..=12.0).contains(&gaps[1]), "{gaps:?}");
+        assert!((4.0..=6.0).contains(&gaps[2]), "{gaps:?}");
+        assert!((8.0..=12.0).contains(&gaps[3]), "{gaps:?}");
     }
 
     struct Bye(Arc<AtomicUsize>);
@@ -3801,12 +3858,25 @@ pub fn set_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result<(), En
     Ok(())
 }
 
-/// Tells the servers which messages were marked read or unread. When a
-/// server can't be reached the change waits and goes out once it can;
-/// on any other failure they go back to how they were here, and this
-/// fails.
+/// Tells the servers which messages were marked read or unread. The
+/// change is queued first, so a sync whose flags were read before it
+/// reached the server doesn't put the old state back meanwhile; it leaves
+/// the queue once the server has it. When a server can't be reached the
+/// change waits and goes out once it can; on any other failure they go
+/// back to how they were here, and this fails.
 pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result<(), EngineError> {
     let engine = engine()?;
+    {
+        let store = store()?;
+        for m in &messages {
+            store.queue_change(
+                AccountId(m.account_id),
+                &m.mailbox,
+                m.uid,
+                Change::Seen(seen),
+            )?;
+        }
+    }
     let mut by_account: std::collections::BTreeMap<i64, Vec<(String, u32)>> = Default::default();
     for m in &messages {
         by_account
@@ -3833,21 +3903,17 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
                         let mut conn = Remote::open(&account, &password).await?;
                         for (mailbox, uids) in &by_folder {
                             conn.set_seen(&shared, id, mailbox, uids, seen).await?;
+                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            store.settle_seen(id, mailbox, uids, seen)?;
                         }
                         conn.close().await;
                         Ok::<_, RemoteError>(())
                     }
                     .await;
                     match pushed {
-                        Err(e) if e.is_offline() => {
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
-                            for (mailbox, uids) in &by_folder {
-                                for uid in uids {
-                                    store.queue_change(id, mailbox, *uid, Change::Seen(seen))?;
-                                }
-                            }
-                            Ok(())
-                        }
+                        // Queued already: it goes out once the server can
+                        // be reached.
+                        Err(e) if e.is_offline() => Ok(()),
                         other => other,
                     }
                 })
@@ -3857,8 +3923,10 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
         }
         .await;
         if let Err(e) = pushed {
+            // Not done: out of the queue, and back as it was here.
             let store = store()?;
             for (mailbox, uid) in &list {
+                store.settle_seen(id, mailbox, &[*uid], seen)?;
                 store.set_seen(id, mailbox, *uid, !seen)?;
             }
             result = Err(e);

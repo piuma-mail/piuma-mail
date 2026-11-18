@@ -6163,4 +6163,23 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand';
+
+  @override
+  String get listFailed => 'Impossible d’afficher ces e-mails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Impossible d’actualiser ce dossier depuis le serveur.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Le serveur n’a pas accepté $count modifications que vous avez faites : ces e-mails sont revenus comme avant.',
+      one: 'Le serveur n’a pas accepté une modification que vous avez faite : cet e-mail est revenu comme avant.',
+    );
+    return '$_temp0';
+  }
 }

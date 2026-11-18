@@ -6140,4 +6140,23 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante';
+
+  @override
+  String get listFailed => 'Não foi possível mostrar estes e-mails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Não foi possível atualizar esta pasta pelo servidor.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'O servidor não aceitou $count alterações que você fez: esses e-mails voltaram a ser como eram.',
+      one: 'O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.',
+    );
+    return '$_temp0';
+  }
 }

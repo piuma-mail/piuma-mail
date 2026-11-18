@@ -6,6 +6,7 @@
 pub mod autoconfig;
 pub mod automation;
 pub mod away;
+pub mod backoff;
 pub mod brief;
 pub mod calendar;
 pub mod dates;
@@ -50,6 +51,7 @@ pub mod tls;
 mod tokens_g;
 pub mod translate;
 pub mod vault;
+mod watchdog;
 
 pub use model::{
     Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
