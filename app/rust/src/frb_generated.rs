@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1291044339;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 35807335;
 
 // Section: executor
 
@@ -6963,12 +6963,18 @@ fn wire__crate__api__engine__sign_in_again_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_account_id = <i64>::sse_decode(&mut deserializer);
             let api_password = <String>::sse_decode(&mut deserializer);
+            let api_trusted =
+                <Vec<crate::api::engine::TrustedCertificate>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, crate::api::engine::EngineError>(
                     (move || async move {
-                        let output_ok =
-                            crate::api::engine::sign_in_again(api_account_id, api_password).await?;
+                        let output_ok = crate::api::engine::sign_in_again(
+                            api_account_id,
+                            api_password,
+                            api_trusted,
+                        )
+                        .await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -8635,42 +8641,6 @@ fn wire__crate__api__mailbox__trash_mailbox_impl(
             deserializer.end();
             transform_result_sse::<_, crate::api::engine::EngineError>((move || {
                 let output_ok = crate::api::mailbox::trash_mailbox(api_account_id)?;
-                std::result::Result::Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__engine__trust_certificate_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "trust_certificate",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_account_id = <i64>::sse_decode(&mut deserializer);
-            let api_host = <String>::sse_decode(&mut deserializer);
-            let api_fingerprint = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, crate::api::engine::EngineError>((move || {
-                let output_ok = crate::api::engine::trust_certificate(
-                    api_account_id,
-                    api_host,
-                    api_fingerprint,
-                )?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -13196,30 +13166,30 @@ fn pde_ffi_dispatcher_primary_impl(
         246 => wire__crate__api__engine__translate_pairs_impl(port, ptr, rust_vec_len, data_len),
         247 => wire__crate__api__engine__translate_status_impl(port, ptr, rust_vec_len, data_len),
         248 => wire__crate__api__engine__translate_texts_impl(port, ptr, rust_vec_len, data_len),
-        251 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
-        252 => {
+        250 => wire__crate__api__engine__trusted_senders_impl(port, ptr, rust_vec_len, data_len),
+        251 => {
             wire__crate__api__away__turn_off_away_message_impl(port, ptr, rust_vec_len, data_len)
         }
-        253 => {
+        252 => {
             wire__crate__api__engine__unopened_newsletters_impl(port, ptr, rust_vec_len, data_len)
         }
-        254 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
-        255 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
-        257 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
-        258 => wire__crate__api__updates__update_startup_default_impl(
+        253 => wire__crate__api__engine__unsubscribe_impl(port, ptr, rust_vec_len, data_len),
+        254 => wire__crate__api__engine__unsubscribe_info_impl(port, ptr, rust_vec_len, data_len),
+        256 => wire__crate__api__labels__update_label_impl(port, ptr, rust_vec_len, data_len),
+        257 => wire__crate__api__updates__update_startup_default_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        259 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
-        260 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
-        262 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
-        264 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
-        265 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
-        266 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
-        267 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
-        268 => wire__crate__api__engine__watch_translate_progress_impl(
+        258 => wire__crate__api__updates__updates_check_impl(port, ptr, rust_vec_len, data_len),
+        259 => wire__crate__api__updates__updates_download_impl(port, ptr, rust_vec_len, data_len),
+        261 => wire__crate__api__updates__updates_restart_impl(port, ptr, rust_vec_len, data_len),
+        263 => wire__crate__api__engine__vault_cards_impl(port, ptr, rust_vec_len, data_len),
+        264 => wire__crate__api__engine__vault_reminders_impl(port, ptr, rust_vec_len, data_len),
+        265 => wire__crate__api__engine__waiting_impl(port, ptr, rust_vec_len, data_len),
+        266 => wire__crate__api__engine__wake_messages_impl(port, ptr, rust_vec_len, data_len),
+        267 => wire__crate__api__engine__watch_translate_progress_impl(
             port,
             ptr,
             rust_vec_len,
@@ -13338,12 +13308,11 @@ fn pde_ffi_dispatcher_sync_impl(
         242 => wire__crate__api__templates__template_used_impl(ptr, rust_vec_len, data_len),
         243 => wire__crate__api__templates__templates_impl(ptr, rust_vec_len, data_len),
         249 => wire__crate__api__mailbox__trash_mailbox_impl(ptr, rust_vec_len, data_len),
-        250 => wire__crate__api__engine__trust_certificate_impl(ptr, rust_vec_len, data_len),
-        256 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
-        261 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
-        263 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
-        269 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
-        270 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
+        255 => wire__crate__api__accounts__update_account_impl(ptr, rust_vec_len, data_len),
+        260 => wire__crate__api__updates__updates_ready_impl(ptr, rust_vec_len, data_len),
+        262 => wire__crate__api__updates__updates_startup_impl(ptr, rust_vec_len, data_len),
+        268 => wire__crate__api__engine__week_minute_now_impl(ptr, rust_vec_len, data_len),
+        269 => wire__crate__api__groups__written_to_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

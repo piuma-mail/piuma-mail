@@ -18,7 +18,8 @@ use piuma_core::{remote, Account, AccountId, AccountKind, Login};
 use tokio::sync::{mpsc, Notify};
 
 use super::engine::{
-    engine, reader, stop_watching, store, watch_account, AccountInfo, EngineError, ErrorKind,
+    engine, keep_account, reader, stop_watching, store, watch_account, AccountInfo, EngineError,
+    ErrorKind,
 };
 use crate::credentials;
 
@@ -324,12 +325,10 @@ pub async fn add_oauth_account(
         },
     };
     let signed = finish(account.clone(), &email).await?;
-    let id = store()?.add_account(&account)?;
-    if let Err(e) = credentials::keep(id, &signed.stored.to_secret()) {
-        store()?.remove_account(id)?;
-        return Err(e);
-    }
-    store()?.set_setting(&crate::login::oauth_key(id.0), &p.id)?;
+    let id = keep_account(&account, &[], |id| {
+        credentials::keep(id, &signed.stored.to_secret())?;
+        Ok(store()?.set_setting(&crate::login::oauth_key(id.0), &p.id)?)
+    })?;
     signed.id.store(id.0, std::sync::atomic::Ordering::Relaxed);
     crate::login::remember_session(id, signed.session);
     let added = store()?

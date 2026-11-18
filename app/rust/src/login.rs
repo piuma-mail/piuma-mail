@@ -105,7 +105,7 @@ pub(crate) fn pins(id: AccountId) -> Vec<Pin> {
 }
 
 /// The hosts of an account's servers, as pins are kept.
-fn hosts_of(account: &piuma_core::Account) -> Vec<String> {
+pub(crate) fn hosts_of(account: &piuma_core::Account) -> Vec<String> {
     match &account.kind {
         AccountKind::Imap { imap, smtp, .. } => vec![imap.host.clone(), smtp.host.clone()],
         // The session's host. An API on another host with a certificate
@@ -153,6 +153,42 @@ pub(crate) fn trust(id: AccountId, host: &str, fingerprint: &str) -> Result<(), 
     Ok(())
 }
 
+/// The certificates in `trusted` that are for one of `hosts`: a
+/// certificate is only ever kept for a server the account uses.
+pub(crate) fn for_hosts(trusted: Vec<Pin>, hosts: &[String]) -> Vec<Pin> {
+    trusted
+        .into_iter()
+        .filter(|p| hosts.iter().any(|h| h.trim().eq_ignore_ascii_case(&p.host)))
+        .collect()
+}
+
+/// The certificates the account's `hosts` are checked with while
+/// `trusted` is tried: those kept, each replaced by a new one for the
+/// same server.
+pub(crate) fn with_new(id: AccountId, hosts: &[String], trusted: &[Pin]) -> Vec<Pin> {
+    let mut pins = pins_for(id, hosts);
+    pins.retain(|p| !trusted.iter().any(|n| n.host.eq_ignore_ascii_case(&p.host)));
+    pins.extend(trusted.iter().cloned());
+    pins
+}
+
+/// Keeps certificates the check of the account just went through with.
+pub(crate) fn trust_all(id: AccountId, pins: &[Pin]) -> Result<(), EngineError> {
+    for pin in pins {
+        trust(id, &pin.host, &cert::fingerprint_text(&pin.sha256))?;
+    }
+    Ok(())
+}
+
+/// Forgets the certificates trusted for these servers of the account.
+pub(crate) fn untrust(id: AccountId, hosts: &[String]) -> Result<(), EngineError> {
+    let store = store()?;
+    for host in hosts {
+        store.set_setting(&cert_key(id.0, host), "")?;
+    }
+    Ok(())
+}
+
 /// What the account signs in with now.
 pub(crate) fn load(id: AccountId) -> Result<Login, EngineError> {
     let secret = credentials::load(id)?;
@@ -166,4 +202,31 @@ pub(crate) fn load(id: AccountId) -> Result<Login, EngineError> {
 pub(crate) fn read(id: AccountId) -> Result<Login, Unreadable> {
     let secret = credentials::read(id)?;
     Ok(from_secret(id, &secret)?.with_pins(pins(id)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pin(host: &str, byte: u8) -> Pin {
+        Pin {
+            host: host.into(),
+            sha256: [byte; 32],
+        }
+    }
+
+    #[test]
+    fn certificates_are_kept_only_for_the_accounts_servers() {
+        let hosts = ["imap.own.invalid".to_owned(), "smtp.own.invalid".to_owned()];
+        let kept = for_hosts(
+            vec![
+                pin("IMAP.own.invalid", 1),
+                pin("mail.elsewhere.invalid", 2),
+                pin("smtp.own.invalid", 3),
+            ],
+            &hosts,
+        );
+        let kept: Vec<_> = kept.iter().map(|p| p.sha256[0]).collect();
+        assert_eq!(kept, [1, 3]);
+    }
 }

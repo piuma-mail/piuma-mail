@@ -2666,9 +2666,20 @@ class EngineMailSource extends MailSource {
   );
 
   @override
-  Future<void> signInAgain(int accountId, String password) async {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     try {
-      await engine.signInAgain(accountId: accountId, password: password);
+      await engine.signInAgain(
+        accountId: accountId,
+        password: password,
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
+      );
     } on engine.EngineError catch (e) {
       throw _signInError(e);
     }
@@ -2837,19 +2848,6 @@ class EngineMailSource extends MailSource {
 
   @override
   void cancelOAuth() => oauth.cancelOauth();
-
-  @override
-  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
-    try {
-      engine.trustCertificate(
-        accountId: accountId,
-        host: cert.host,
-        fingerprint: cert.fingerprint,
-      );
-    } on engine.EngineError catch (e) {
-      throw _signInError(e);
-    }
-  }
 
   @override
   Future<FoundSettings?> discoverSettings(String email) async {

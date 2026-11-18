@@ -1657,7 +1657,11 @@ class DemoMailSource extends MailSource {
 
   /// The demo's one good password, for trying "Sign in again".
   @override
-  Future<void> signInAgain(int accountId, String password) async {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (password != 'carta-120-opaca') {
       throw const AddAccountException(AddAccountError.wrongPassword, 'demo');
     }

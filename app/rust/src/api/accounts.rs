@@ -128,17 +128,8 @@ pub async fn set_account_servers(
         }
     }
     let hosts = [imap.host.clone(), smtp.host.clone()];
-    let mut pins = crate::login::pins_for(a.id, &hosts);
-    let new_pins: Vec<_> = pins_of(&trusted)
-        .into_iter()
-        .filter(|p| hosts.iter().any(|h| h.eq_ignore_ascii_case(&p.host)))
-        .collect();
-    pins.retain(|p| {
-        !new_pins
-            .iter()
-            .any(|n| n.host.eq_ignore_ascii_case(&p.host))
-    });
-    pins.extend(new_pins.iter().cloned());
+    let new_pins = crate::login::for_hosts(pins_of(&trusted), &hosts);
+    let pins = crate::login::with_new(a.id, &hosts, &new_pins);
     a.kind = AccountKind::Imap {
         imap,
         smtp,
@@ -152,13 +143,7 @@ pub async fn set_account_servers(
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
     // Only now, for servers the account uses.
-    for pin in &new_pins {
-        crate::login::trust(
-            a.id,
-            &pin.host,
-            &piuma_core::cert::fingerprint_text(&pin.sha256),
-        )?;
-    }
+    crate::login::trust_all(a.id, &new_pins)?;
     store()?.update_account(&a)?;
     stop_watching(a.id);
     watch_account(a)
@@ -187,12 +172,8 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     store.set_setting(&alert_key(account_id), "")?;
     store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
     store.set_setting(&crate::login::oauth_key(account_id), "")?;
-    if let AccountKind::Imap { imap, smtp, .. } = &removed.kind {
-        for host in [&imap.host, &smtp.host] {
-            store.set_setting(&crate::login::cert_key(account_id, host), "")?;
-        }
-    }
     drop(store);
+    crate::login::untrust(id, &crate::login::hosts_of(&removed))?;
     credentials::forget(id);
     crate::login::forget_session(id);
     // The refresh token is not revoked: Google's revocation removes the

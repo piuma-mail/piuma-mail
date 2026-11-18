@@ -858,34 +858,49 @@ pub async fn add_jmap_account(
     add_checked_account(account, password, trusted).await
 }
 
-/// Checks that an account signs in, then keeps it and its password.
+/// Checks that an account signs in, then keeps it and its password, and
+/// the certificates in `trusted` that are for its servers.
 pub(crate) async fn add_checked_account(
     account: Account,
     password: String,
     trusted: Vec<TrustedCertificate>,
 ) -> Result<AccountInfo, EngineError> {
     let engine = engine()?;
+    let pins = crate::login::for_hosts(pins_of(&trusted), &crate::login::hosts_of(&account));
     let checked = account.clone();
-    let login = Login::password(&password).with_pins(pins_of(&trusted));
+    let login = Login::password(&password).with_pins(pins.clone());
     engine
         .runtime
         .spawn(async move { remote::check_login(&checked, &login).await })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
-    let id = store()?.add_account(&account)?;
-    if let Err(e) = credentials::save(id, &password) {
+    let id = keep_account(&account, &pins, |id| credentials::save(id, &password))?;
+    let added = store()?.account(id)?.expect("just added");
+    Ok(AccountInfo::from(&added))
+}
+
+/// Adds a checked account, with its secret (`save`) and the certificates
+/// trusted for its servers (`pins`, any other left out): all of it, or,
+/// when one of them can't be kept, none.
+pub(crate) fn keep_account(
+    account: &Account,
+    pins: &[piuma_core::tls::Pin],
+    save: impl FnOnce(AccountId) -> Result<(), EngineError>,
+) -> Result<AccountId, EngineError> {
+    let hosts = crate::login::hosts_of(account);
+    let pins = crate::login::for_hosts(pins.to_vec(), &hosts);
+    let id = store()?.add_account(account)?;
+    let kept = save(id).and_then(|()| crate::login::trust_all(id, &pins));
+    if let Err(e) = kept {
+        // Half an account would sign in with nothing, or trust a
+        // certificate for an account that isn't there.
+        let _ = crate::login::untrust(id, &hosts);
+        let _ = store()?.set_setting(&crate::login::oauth_key(id.0), "");
+        credentials::forget(id);
         store()?.remove_account(id)?;
         return Err(e);
     }
-    for pin in pins_of(&trusted) {
-        crate::login::trust(
-            id,
-            &pin.host,
-            &piuma_core::cert::fingerprint_text(&pin.sha256),
-        )?;
-    }
-    let added = store()?.account(id)?.expect("just added");
-    Ok(AccountInfo::from(&added))
+    Ok(id)
 }
 
 /// Whose mail a list shows: one [address] of a [group], the group, one
@@ -2180,38 +2195,37 @@ pub fn remember_password(account_id: i64, password: String) {
 }
 
 /// Checks a new password for an account whose sign-in failed, saves it in
-/// the system keychain and follows the account again.
-pub async fn sign_in_again(account_id: i64, password: String) -> Result<(), EngineError> {
+/// the system keychain and follows the account again. `trusted` are
+/// certificates the person chose to trust for its servers, after a
+/// [ErrorKind::Certificate]: kept only once the check went through, and
+/// only for the account's own servers.
+pub async fn sign_in_again(
+    account_id: i64,
+    password: String,
+    trusted: Vec<TrustedCertificate>,
+) -> Result<(), EngineError> {
     let engine = engine()?;
     let id = AccountId(account_id);
     let account = store()?
         .account(id)?
         .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such account"))?;
+    let hosts = crate::login::hosts_of(&account);
+    let new_pins = crate::login::for_hosts(pins_of(&trusted), &hosts);
     let checked = account.clone();
-    let login = Login::password(&password).with_pins(crate::login::pins(id));
+    let login = Login::password(&password).with_pins(crate::login::with_new(id, &hosts, &new_pins));
     engine
         .runtime
         .spawn(async move { remote::check_login(&checked, &login).await })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))??;
     credentials::save(id, &password)?;
+    // Only now: the sign-in went through with them.
+    crate::login::trust_all(id, &new_pins)?;
     crate::login::forget_session(id);
     // A watcher still waiting for the missing password starts over now,
     // not at its next look.
     stop_watching(id);
     watch_account(account)
-}
-
-/// Trusts a server certificate for an account, in place of any trusted
-/// before for that server: after a [ErrorKind::Certificate], before
-/// signing in again or saving its servers again.
-#[frb(sync)]
-pub fn trust_certificate(
-    account_id: i64,
-    host: String,
-    fingerprint: String,
-) -> Result<(), EngineError> {
-    crate::login::trust(AccountId(account_id), &host, &fingerprint)
 }
 
 /// The readable text of a message. Downloads it the first time.
@@ -6405,4 +6419,105 @@ pub struct InviteSent {
     pub queued: bool,
     /// The calendar the event was put in, if any.
     pub added_to: Option<String>,
+}
+
+#[cfg(test)]
+mod certificate_trust_tests {
+    use super::*;
+    use piuma_core::{Security, Server};
+    use std::cell::Cell;
+
+    fn open() {
+        std::env::set_var("PIUMA_TEST_MEMORY_KEYCHAIN", "1");
+        open_engine(":memory:".into()).unwrap();
+    }
+
+    /// An account whose server refuses every connection at once. The
+    /// tests run side by side: each has its own address.
+    fn account(host: &str) -> Account {
+        let server = Server {
+            host: host.into(),
+            port: 1,
+            security: Security::None,
+        };
+        Account {
+            id: AccountId(0),
+            name: "Work".into(),
+            email: format!("me@{host}"),
+            sender_name: String::new(),
+            color: "#3451D1".into(),
+            kind: AccountKind::Imap {
+                imap: server.clone(),
+                smtp: server,
+                username: "me".into(),
+            },
+        }
+    }
+
+    fn certificate(host: &str, byte: &str) -> TrustedCertificate {
+        TrustedCertificate {
+            host: host.into(),
+            fingerprint: vec![byte; 32].join(":"),
+        }
+    }
+
+    fn kept(id: AccountId, host: &str) -> Option<String> {
+        store()
+            .unwrap()
+            .setting(&crate::login::cert_key(id.0, host))
+            .unwrap()
+            .filter(|s| !s.is_empty())
+    }
+
+    #[test]
+    fn a_new_account_keeps_certificates_only_for_its_own_servers() {
+        open();
+        let pins = pins_of(&[
+            certificate("mail.own.invalid", "AB"),
+            certificate("mail.elsewhere.invalid", "CD"),
+        ]);
+        let id = keep_account(&account("mail.own.invalid"), &pins, |_| Ok(())).unwrap();
+        assert!(kept(id, "mail.own.invalid").is_some());
+        assert_eq!(kept(id, "mail.elsewhere.invalid"), None);
+        store().unwrap().remove_account(id).unwrap();
+    }
+
+    #[test]
+    fn an_account_whose_secret_cant_be_kept_is_not_added_at_all() {
+        open();
+        let pins = pins_of(&[certificate("mail.half.invalid", "AB")]);
+        let tried = Cell::new(None);
+        let added = keep_account(&account("mail.half.invalid"), &pins, |id| {
+            tried.set(Some(id));
+            Err(EngineError::new(ErrorKind::Keychain, "locked"))
+        });
+        let error = added.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Keychain, "{error:?}");
+        let id = tried.get().expect("saving was tried");
+        assert!(store().unwrap().account(id).unwrap().is_none());
+        assert_eq!(kept(id, "mail.half.invalid"), None);
+        assert!(credentials::load(id).is_err());
+    }
+
+    #[test]
+    fn signing_in_again_trusts_nothing_before_the_check_goes_through() {
+        open();
+        let id = store().unwrap().add_account(&account("127.0.0.1")).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let signed = runtime.block_on(sign_in_again(
+            id.0,
+            "test".into(),
+            vec![
+                certificate("127.0.0.1", "AB"),
+                certificate("mail.elsewhere.invalid", "CD"),
+            ],
+        ));
+        assert!(signed.is_err(), "nothing listens on port 1");
+        assert_eq!(kept(id, "127.0.0.1"), None);
+        assert_eq!(kept(id, "mail.elsewhere.invalid"), None);
+        store().unwrap().remove_account(id).unwrap();
+    }
 }

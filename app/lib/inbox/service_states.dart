@@ -613,7 +613,9 @@ class _SignInFormState extends State<_SignInForm> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
+  /// Signs in again; with [trusted], certificates the person chose to
+  /// trust, kept by the engine only if the sign-in goes through.
+  Future<void> _submit({List<TrustedCertificate> trusted = const []}) async {
     if ((_oauth == null && _password.text.isEmpty) || _busy) return;
     setState(() {
       _busy = true;
@@ -624,7 +626,11 @@ class _SignInFormState extends State<_SignInForm> {
       if (_oauth != null) {
         await widget.source.signInAgainOAuth(widget.account.id);
       } else {
-        await widget.source.signInAgain(widget.account.id, _password.text);
+        await widget.source.signInAgain(
+          widget.account.id,
+          _password.text,
+          trusted: trusted,
+        );
       }
       if (mounted) Navigator.of(context).pop();
     } on AddAccountException catch (e) {
@@ -641,18 +647,17 @@ class _SignInFormState extends State<_SignInForm> {
     }
   }
 
-  /// Trusts the certificate the server showed, for this account only,
-  /// and signs in again.
+  /// Signs in again trusting the certificate the server showed, for this
+  /// account only: kept once the sign-in goes through. A provider's page
+  /// signs in only with certificates the system trusts.
   Future<void> _trust() async {
     final cert = _certificate;
     if (cert == null || _busy) return;
-    try {
-      await widget.source.trustCertificate(widget.account.id, cert.trusted);
-    } catch (_) {
-      if (mounted) setState(() => _error = AddAccountError.other);
+    if (_oauth != null) {
+      setState(() => _error = AddAccountError.other);
       return;
     }
-    await _submit();
+    await _submit(trusted: [cert.trusted]);
   }
 
   @override

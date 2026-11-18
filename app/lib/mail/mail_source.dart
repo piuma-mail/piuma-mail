@@ -2866,8 +2866,15 @@ abstract class MailSource {
   AccountHealth accountHealth(int accountId);
 
   /// Checks a new password for an account in [SyncStatus.failed], keeps it
-  /// and follows the account again. Throws [AddAccountException].
-  Future<void> signInAgain(int accountId, String password);
+  /// and follows the account again. [trusted] are certificates the person
+  /// chose to trust after a [AddAccountError.certificate]: kept only once
+  /// the sign-in went through, and only for the account's own servers.
+  /// Throws [AddAccountException].
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  });
 
   /// The providers that sign in with their own page.
   List<OAuthProviderInfo> get oauthProviders => const [];
@@ -2897,10 +2904,6 @@ abstract class MailSource {
 
   /// Stops waiting for the provider's page.
   void cancelOAuth() {}
-
-  /// Trusts a server certificate for an account, in place of the one
-  /// trusted before for that server.
-  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {}
 
   /// Checks the login, then adds the account. Without [smtp] the engine
   /// guesses `smtp.<domain>` on port 465. [trusted] are certificates the

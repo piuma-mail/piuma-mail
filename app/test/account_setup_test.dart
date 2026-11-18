@@ -480,27 +480,34 @@ class _OAuthAccount extends DemoMailSource {
 }
 
 /// Signing in again meets a certificate nobody vouches for, until it is
-/// trusted.
+/// given with the sign-in.
 class _SignInCert extends DemoMailSource {
-  _SignInCert() : super(now: _now);
+  _SignInCert({this.thenFail = false}) : super(now: _now);
 
-  final certs = <TrustedCertificate>[];
+  /// With the certificate, the sign-in still fails (the server is down).
+  final bool thenFail;
+
+  /// The certificates given with each sign-in.
+  final tries = <List<TrustedCertificate>>[];
 
   @override
-  Future<void> signInAgain(int accountId, String password) async {
-    if (certs.isEmpty) {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
+    tries.add(trusted);
+    if (trusted.isEmpty) {
       throw const AddAccountException(
         AddAccountError.certificate,
         '',
         _selfSigned,
       );
     }
+    if (thenFail) {
+      throw const AddAccountException(AddAccountError.unreachable);
+    }
     status.value = SyncStatus.idle;
-  }
-
-  @override
-  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
-    certs.add(cert);
   }
 }
 
@@ -511,7 +518,6 @@ class _ServersCert extends DemoMailSource {
   /// After trusting it, the check still fails (the server is down).
   final bool thenFail;
   final saves = <List<TrustedCertificate>>[];
-  int trustedDirectly = 0;
 
   @override
   Future<void> setAccountServers(
@@ -531,11 +537,6 @@ class _ServersCert extends DemoMailSource {
       throw const AddAccountException(AddAccountError.unreachable);
     }
     await super.setAccountServers(accountId, servers, trusted: trusted);
-  }
-
-  @override
-  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
-    trustedDirectly++;
   }
 }
 
@@ -726,9 +727,37 @@ void _layouts() {
         await _tap(tester, 'Sign in', last: true);
         expect(find.text(_selfSigned.fingerprint), findsOneWidget);
         await _tap(tester, 'Trust this certificate');
-        expect(source.certs.single.host, 'mail.studio.it');
+        // Given with the sign-in, for the engine to keep once it goes
+        // through; never trusted on its own beforehand.
+        expect(source.tries.length, 2);
+        expect(source.tries.last.single.host, 'mail.studio.it');
+        expect(find.text('Sign in to Work'), findsNothing);
         await _closePage(tester);
       });
+
+      testWidgets(
+        'signing in again with a trusted certificate can still fail',
+        (tester) async {
+          final source = _SignInCert(thenFail: true)
+            ..status.value = const SyncStatus(
+              SyncPhase.signInFailed,
+              failed: [2],
+            );
+          await _accountPage(tester, source, size: size);
+          await _tap(tester, 'Sign in again');
+          await tester.enterText(_field('Password'), 'carta-120-opaca');
+          await tester.pump();
+          await _tap(tester, 'Sign in', last: true);
+          await _tap(tester, 'Trust this certificate');
+          expect(source.tries.last.single.fingerprint, _selfSigned.fingerprint);
+          expect(
+            find.textContaining('The server could not be reached'),
+            findsOneWidget,
+          );
+          expect(find.text('Sign in to Work'), findsOneWidget, reason: 'open');
+          await _closePage(tester);
+        },
+      );
 
       testWidgets('an OAuth account has no Edit servers', (tester) async {
         await _accountPage(tester, _OAuthAccount(), size: size);
@@ -776,7 +805,6 @@ void _layouts() {
         // out; never trusted on its own beforehand.
         expect(source.saves.length, 2);
         expect(source.saves.last.single.host, 'mail.studio.it');
-        expect(source.trustedDirectly, 0);
         expect(
           find.textContaining('The server could not be reached'),
           findsOneWidget,
