@@ -144,6 +144,12 @@ pub enum SendError {
     /// tries again in a later batch.
     #[error("the server deferred the message: {0}")]
     Deferred(String),
+    /// The server's reply broke the SMTP exchange: a reply out of turn,
+    /// data where the TLS handshake should start, a line without end. The
+    /// message may or may not have been taken, so it is not sent again on
+    /// its own: the person sees why and decides.
+    #[error("the server's reply was not valid SMTP: {0}")]
+    Protocol(String),
 }
 
 impl SendError {
@@ -234,7 +240,7 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
     let from = mailbox(&draft.from_name, &draft.from_email)?;
     let mut b = Message::builder()
         .from(from.clone())
-        .subject(draft.subject.trim())
+        .subject(draft.subject.trim().replace(['\r', '\n'], " "))
         .date(match draft.date {
             Some(at) => std::time::UNIX_EPOCH + std::time::Duration::from_secs(at.max(0) as u64),
             None => std::time::SystemTime::now(),
@@ -289,7 +295,7 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
     if unsent && draft.plain_text {
         b = b.header(PiumaPlain("1".into()));
     }
-    let body = draft.body.replace("\r\n", "\n");
+    let body = lf_line_endings(&draft.body);
     let sig = draft.signature.as_ref().filter(|s| !s.lines().is_empty());
     // Each picture with its Content-ID; those with no place in the text,
     // and every one in plain text, go as files.
@@ -335,10 +341,11 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
                         )
                         // Its lines are folded already, so it goes as it
                         // is: calendars read a plain part best.
-                        .body(
-                            Body::new_with_encoding(ics.clone(), ContentTransferEncoding::EightBit)
-                                .unwrap_or_else(Body::new),
-                        ),
+                        .body({
+                            let ics = lf_line_endings(ics);
+                            Body::new_with_encoding(ics, ContentTransferEncoding::EightBit)
+                                .unwrap_or_else(Body::new)
+                        }),
                 ),
         ),
         _ if draft.plain_text => {
@@ -510,18 +517,110 @@ fn mailbox(name: &str, email: &str) -> Result<Mailbox> {
         .trim()
         .parse()
         .map_err(|_| SendError::Address(email.trim().to_owned()))?;
-    let name = name.trim();
-    Ok(Mailbox::new(
-        (!name.is_empty()).then(|| name.to_owned()),
-        addr,
-    ))
+    let name = clean_name(name);
+    Ok(Mailbox::new((!name.is_empty()).then_some(name), addr))
 }
 
 /// Accepts "a@b.c" and "Name <a@b.c>".
+///
+/// The name may come from received mail (a reply, an invite's organizer),
+/// so it is never read as address syntax: the address is what is between
+/// the last angle brackets, and the name is only text. A quoted local part
+/// stays exactly as written, so the envelope and the To line name the same
+/// recipient.
 fn parse(text: &str) -> Result<Mailbox> {
-    text.trim()
-        .parse()
-        .map_err(|_| SendError::Address(text.trim().to_owned()))
+    let text = text.trim();
+    let bad = || SendError::Address(text.to_owned());
+    let split = text
+        .strip_suffix('>')
+        .and_then(|t| t.rsplit_once('<'))
+        .map(|(name, addr)| (unquote(name.trim()), addr.trim()));
+    let (name, email) = match split {
+        Some((name, addr)) => match addr.parse::<lettre::Address>() {
+            Ok(email) => (name, email),
+            // An address with a '<' of its own, inside quotes.
+            Err(_) => from_lettre(text).ok_or_else(bad)?,
+        },
+        None => match text.parse::<lettre::Address>() {
+            Ok(email) => (String::new(), email),
+            // Forms like "a@b.c (Name)".
+            Err(_) => from_lettre(text).ok_or_else(bad)?,
+        },
+    };
+    let name = clean_name(&name);
+    Ok(Mailbox::new((!name.is_empty()).then_some(name), email))
+}
+
+fn from_lettre(text: &str) -> Option<(String, lettre::Address)> {
+    let m: Mailbox = text.parse().ok()?;
+    Some((m.name.unwrap_or_default(), m.email))
+}
+
+/// A display name without its quotes: `"Bianchi, Luca"` is `Bianchi, Luca`.
+fn unquote(name: &str) -> String {
+    let Some(inner) = name
+        .strip_prefix('"')
+        .and_then(|n| n.strip_suffix('"'))
+        .filter(|_| name.len() >= 2)
+    else {
+        return name.to_owned();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        out.push(if c == '\\' {
+            chars.next().unwrap_or(c)
+        } else {
+            c
+        });
+    }
+    out
+}
+
+/// A display name on one line: line breaks, tabs and other control
+/// characters (typed, pasted or from received mail) become single spaces,
+/// so a name can't break the header it goes in.
+fn clean_name(name: &str) -> String {
+    name.split(|c: char| c.is_control() || c.is_whitespace())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Text with every line ending as a bare LF, a lone CR included; the
+/// message builder turns them all into CRLF.
+fn lf_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// The message with every line ending as CRLF: a bare CR or LF becomes
+/// one. Done again here, right before the message goes, for messages
+/// built by older versions and kept in the outbox, so no line of the
+/// content can end in a way the server reads differently from us, and
+/// every line that starts with a dot is one the transport dot-stuffs.
+fn crlf_line_endings(raw: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let clean = raw.iter().enumerate().all(|(i, &b)| match b {
+        b'\r' => raw.get(i + 1) == Some(&b'\n'),
+        b'\n' => i > 0 && raw[i - 1] == b'\r',
+        _ => true,
+    });
+    if clean {
+        return std::borrow::Cow::Borrowed(raw);
+    }
+    let mut out = Vec::with_capacity(raw.len() + raw.len() / 32);
+    let mut i = 0;
+    while i < raw.len() {
+        match raw[i] {
+            b'\r' if raw.get(i + 1) == Some(&b'\n') => {
+                out.extend_from_slice(b"\r\n");
+                i += 1;
+            }
+            b'\r' | b'\n' => out.extend_from_slice(b"\r\n"),
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Hands a message to the SMTP server.
@@ -554,7 +653,7 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
         .timeout(Some(Duration::from_secs(60)))
         .build();
     transport
-        .send_raw(&envelope, &ready.raw)
+        .send_raw(&envelope, &crlf_line_endings(&ready.raw))
         .await
         .map(|_| ())
         .map_err(|e| classify(&cfg.host, e))
@@ -566,6 +665,9 @@ fn classify(host: &str, e: lettre::transport::smtp::Error) -> SendError {
         // A 4xx refusal is temporary, from greylisting to a busy server.
         Some(code) if code.starts_with('4') => SendError::Deferred(e.to_string()),
         Some(_) => SendError::Rejected(e.to_string()),
+        // A reply that breaks the exchange, not a network failure: sending
+        // it again by itself could deliver it twice.
+        None if e.is_response() => SendError::Protocol(e.to_string()),
         None => SendError::Connect {
             host: host.to_owned(),
             detail: e.to_string(),
@@ -799,6 +901,58 @@ mod tests {
         let body = crate::imap::parse_body(&raw);
         assert_eq!(body.attachments.len(), 1, "{:?}", body.attachments);
         assert_eq!(body.attachments[0].name, "notes.txt");
+    }
+
+    #[test]
+    fn a_name_is_never_read_as_an_address() {
+        // A display name from received mail that looks like an address,
+        // with a line break: it stays a name, on one line, and the mail
+        // goes only to the address in the last angle brackets.
+        let mut d = draft();
+        d.from_name = "Matteo\r\nBcc: x@example.net".into();
+        d.to = vec!["Luca <evil@example.net>\r\n <luca@example.org>".into()];
+        let m = build(&d).unwrap();
+        let recipients: Vec<_> = m.envelope().to().iter().map(ToString::to_string).collect();
+        assert_eq!(recipients, ["luca@example.org"]);
+        let raw = String::from_utf8(m.formatted()).unwrap();
+        let head = raw.split("\r\n\r\n").next().unwrap();
+        assert!(!head.lines().any(|l| l.starts_with("Bcc:")), "{head}");
+        let parsed = mail_parser::MessageParser::default()
+            .parse(raw.as_bytes())
+            .unwrap();
+        let from = parsed.from().unwrap().first().unwrap();
+        assert_eq!(from.name(), Some("Matteo Bcc: x@example.net"));
+        let to = parsed.to().unwrap().first().unwrap();
+        assert_eq!(to.address(), Some("luca@example.org"));
+        assert_eq!(to.name(), Some("Luca <evil@example.net>"));
+    }
+
+    #[test]
+    fn quoted_names_and_local_parts_stay_as_written() {
+        let m = parse("\"Bianchi, Luca\" <luca@example.org>").unwrap();
+        assert_eq!(m.name.as_deref(), Some("Bianchi, Luca"));
+        assert_eq!(m.email.to_string(), "luca@example.org");
+        for text in ["\"d \"@example.org", "D <\"d \"@example.org>"] {
+            assert_eq!(parse(text).unwrap().email.to_string(), "\"d \"@example.org");
+        }
+        assert_eq!(
+            parse("luca@example.org").unwrap().email.to_string(),
+            "luca@example.org"
+        );
+        assert!(parse("Luca <not an address>").is_err());
+    }
+
+    #[test]
+    fn line_endings_become_crlf() {
+        assert_eq!(
+            &*crlf_line_endings(b"a\nb\rc\r\nd\n\r\n.\n"),
+            b"a\r\nb\r\nc\r\nd\r\n\r\n.\r\n"
+        );
+        assert!(matches!(
+            crlf_line_endings(b"a\r\nb\r\n"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(lf_line_endings("a\r\nb\rc\nd"), "a\nb\nc\nd");
     }
 
     #[test]

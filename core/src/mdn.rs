@@ -213,13 +213,20 @@ pub fn report(from: &Mailbox, to: &str, original: &Original) -> smtp::Result<Rea
          that the message was read or understood.\r\n",
         original.subject.trim()
     );
+    // Header values read from the message: no line break may get into
+    // the fields written here.
+    let field = |v: &str| v.replace(['\r', '\n'], "");
+    let me = field(&me);
     let mut machine = String::from("Reporting-UA: Piuma Mail\r\n");
     if let Some(r) = &original.original_recipient {
-        machine.push_str(&format!("Original-Recipient: rfc822;{r}\r\n"));
+        machine.push_str(&format!("Original-Recipient: rfc822;{}\r\n", field(r)));
     }
     machine.push_str(&format!("Final-Recipient: rfc822;{me}\r\n"));
     if !original.message_id.is_empty() {
-        machine.push_str(&format!("Original-Message-ID: {}\r\n", original.message_id));
+        machine.push_str(&format!(
+            "Original-Message-ID: {}\r\n",
+            field(&original.message_id)
+        ));
     }
     machine.push_str("Disposition: manual-action/MDN-sent-manually; displayed\r\n");
     // The text part encoded as lettre encodes any part, so the report
