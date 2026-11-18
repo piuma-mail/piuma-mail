@@ -29,6 +29,7 @@ class _Recording extends DemoMailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     this.name = name;
     this.host = host;

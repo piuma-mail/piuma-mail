@@ -7,6 +7,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../onboarding/account_errors.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/progress.dart';
@@ -589,31 +590,69 @@ class _SignInForm extends StatefulWidget {
 }
 
 class _SignInFormState extends State<_SignInForm> {
+  String _providerName(String id) =>
+      widget.source.oauthProviders
+          .where((p) => p.id == id)
+          .map((p) => p.name)
+          .firstOrNull ??
+      id;
+
   final _password = TextEditingController();
   bool _show = false;
   bool _busy = false;
   AddAccountError? _error;
+  CertificateProblem? _certificate;
+
+  /// The provider whose page this account signs in on, if any.
+  late final String? _oauth = widget.source.accountOAuth(widget.account.id);
 
   @override
   void dispose() {
+    if (_busy && _oauth != null) widget.source.cancelOAuth();
     _password.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    if (_password.text.isEmpty || _busy) return;
+    if ((_oauth == null && _password.text.isEmpty) || _busy) return;
     setState(() {
       _busy = true;
       _error = null;
+      _certificate = null;
     });
     try {
-      await widget.source.signInAgain(widget.account.id, _password.text);
+      if (_oauth != null) {
+        await widget.source.signInAgainOAuth(widget.account.id);
+      } else {
+        await widget.source.signInAgain(widget.account.id, _password.text);
+      }
       if (mounted) Navigator.of(context).pop();
     } on AddAccountException catch (e) {
-      if (mounted) setState(() => _error = e.error);
+      if (mounted) {
+        setState(() {
+          _error = e.error;
+          _certificate = e.certificate;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = AddAccountError.other);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Trusts the certificate the server showed, for this account only,
+  /// and signs in again.
+  Future<void> _trust() async {
+    final cert = _certificate;
+    if (cert == null || _busy) return;
+    try {
+      await widget.source.trustCertificate(widget.account.id, cert.trusted);
+    } catch (_) {
+      if (mounted) setState(() => _error = AddAccountError.other);
+      return;
+    }
+    await _submit();
   }
 
   @override
@@ -666,43 +705,64 @@ class _SignInFormState extends State<_SignInForm> {
             ),
           ),
           const SizedBox(height: 18),
-          PiumaTextField(
-            label: l.password,
-            controller: _password,
-            obscure: !_show,
-            autofocus: true,
-            autofillHints: const [AutofillHints.password],
-            onSubmitted: (_) => _submit(),
-            trailing: PiumaButton(
-              label: _show ? l.hide : l.show,
-              kind: PiumaButtonKind.tertiary,
-              size: PiumaButtonSize.compact,
-              onPressed: () => setState(() => _show = !_show),
+          if (_oauth case final provider?)
+            Text(
+              l.oauthLead(_providerName(provider)),
+              style: TextStyle(fontSize: 14, height: 1.45, color: c.muted),
+            )
+          else
+            PiumaTextField(
+              label: l.password,
+              controller: _password,
+              obscure: !_show,
+              autofocus: true,
+              autofillHints: const [AutofillHints.password],
+              onSubmitted: (_) => _submit(),
+              trailing: PiumaButton(
+                label: _show ? l.hide : l.show,
+                kind: PiumaButtonKind.tertiary,
+                size: PiumaButtonSize.compact,
+                onPressed: () => setState(() => _show = !_show),
+              ),
             ),
-          ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            PiumaEnter(
-              child: Text(switch (_error!) {
-                AddAccountError.wrongPassword => l.errorWrongPassword,
-                AddAccountError.unreachable => l.errorUnreachable,
-                AddAccountError.insecure => l.errorInsecure,
-                AddAccountError.keychain => l.errorKeychain,
-                AddAccountError.other => l.errorOther,
-              }, style: TextStyle(fontSize: 14, color: c.danger)),
+            AccountErrorView(
+              error: _error!,
+              certificate: _certificate,
+              onTrust: _busy ? null : _trust,
             ),
           ],
           const SizedBox(height: 20),
           ListenableBuilder(
             listenable: _password,
             builder: (context, _) => PiumaButton(
-              label: _busy ? l.signingIn : l.signIn,
+              label: switch (_oauth) {
+                String() when _busy => l.oauthWaiting,
+                final p? => l.oauthSignInWith(_providerName(p)),
+                null when _busy => l.signingIn,
+                null => l.signIn,
+              },
               size: widget.phone
                   ? PiumaButtonSize.large
                   : PiumaButtonSize.touch,
-              onPressed: _password.text.isNotEmpty && !_busy ? _submit : null,
+              onPressed:
+                  (_oauth != null || _password.text.isNotEmpty) && !_busy
+                  ? _submit
+                  : null,
             ),
           ),
+          if (_oauth != null && _busy) ...[
+            const SizedBox(height: 8),
+            PiumaButton(
+              label: l.cancel,
+              kind: PiumaButtonKind.tertiary,
+              size: widget.phone
+                  ? PiumaButtonSize.large
+                  : PiumaButtonSize.touch,
+              onPressed: widget.source.cancelOAuth,
+            ),
+          ],
         ],
       ),
     );

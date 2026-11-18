@@ -11,6 +11,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
+import 'account_errors.dart';
 import '../widgets/text_field.dart';
 
 /// Reads codes for [ScanPairScreen]: the camera, or a stand-in in tests.
@@ -103,13 +104,7 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
     } on AddAccountException catch (e) {
       if (!mounted) return;
       setState(
-        () => _error = switch (e.error) {
-          AddAccountError.wrongPassword => l.errorWrongPassword,
-          AddAccountError.unreachable => l.errorUnreachable,
-          AddAccountError.insecure => l.errorInsecure,
-          AddAccountError.keychain => l.errorKeychain,
-          AddAccountError.other => l.errorOther,
-        },
+        () => _error = accountErrorText(l, e.error),
       );
     } on SyncFailure catch (e) {
       if (!mounted) return;

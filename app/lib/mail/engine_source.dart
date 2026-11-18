@@ -12,6 +12,7 @@ import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../engine/api/calendars.dart' as cal;
 import '../engine/api/engine.dart' as engine;
@@ -21,6 +22,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/oauth.dart' as oauth;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
@@ -618,6 +620,8 @@ class EngineMailSource extends MailSource {
         _failed.add(id);
         _failedSince.putIfAbsent(id, DateTime.now);
     }
+    // A refresh token the provider replaced, for the Android Keystore.
+    if (e.kind == engine.SyncEventKind.synced) _keepNewSecrets().ignore();
     if (e.kind == engine.SyncEventKind.progress ||
         e.kind == engine.SyncEventKind.synced) {
       _offline.remove(id);
@@ -2029,6 +2033,7 @@ class EngineMailSource extends MailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     try {
       final a = await engine.addImapAccount(
@@ -2048,6 +2053,10 @@ class EngineMailSource extends MailSource {
                 port: smtp.port,
                 security: _security(smtp.security),
               ),
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
       return await _added(a, password);
     } on engine.EngineError catch (e) {
@@ -2107,6 +2116,7 @@ class EngineMailSource extends MailSource {
       smtp: server(s.smtp),
       username: s.username,
       jmapUrl: s.jmapUrl,
+      oauth: s.oauth,
     );
   }
 
@@ -2270,13 +2280,158 @@ class EngineMailSource extends MailSource {
   }
 
   static AddAccountException _signInError(engine.EngineError e) =>
-      AddAccountException(switch (e.kind) {
-        engine.ErrorKind.wrongPassword => AddAccountError.wrongPassword,
-        engine.ErrorKind.unreachable => AddAccountError.unreachable,
-        engine.ErrorKind.insecureConnection => AddAccountError.insecure,
-        engine.ErrorKind.keychain => AddAccountError.keychain,
-        _ => AddAccountError.other,
-      }, e.detail);
+      AddAccountException(
+        switch (e.kind) {
+          engine.ErrorKind.wrongPassword => AddAccountError.wrongPassword,
+          engine.ErrorKind.unreachable => AddAccountError.unreachable,
+          engine.ErrorKind.insecureConnection => AddAccountError.insecure,
+          engine.ErrorKind.keychain => AddAccountError.keychain,
+          engine.ErrorKind.noKeyring => AddAccountError.noKeyring,
+          engine.ErrorKind.certificate => AddAccountError.certificate,
+          engine.ErrorKind.signInUnavailable =>
+            AddAccountError.signInUnavailable,
+          engine.ErrorKind.signInCancelled => AddAccountError.signInCancelled,
+          engine.ErrorKind.signInDenied => AddAccountError.signInDenied,
+          _ => AddAccountError.other,
+        },
+        e.detail,
+        e.kind == engine.ErrorKind.certificate
+            ? CertificateProblem.fromJson(e.detail)
+            : null,
+      );
+
+  @override
+  List<OAuthProviderInfo> get oauthProviders => [
+    for (final p in oauth.oauthProviders())
+      OAuthProviderInfo(
+        id: p.id,
+        name: p.name,
+        builtIn: p.builtIn,
+        appPasswords: p.appPasswords,
+        hasTenant: p.hasTenant,
+      ),
+  ];
+
+  @override
+  String? accountOAuth(int accountId) {
+    try {
+      return oauth.accountOauth(accountId: accountId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static oauth.OAuthClient? _client(OAuthClientConfig? c) => c == null
+      ? null
+      : oauth.OAuthClient(
+          clientId: c.clientId,
+          clientSecret: c.clientSecret,
+          tenant: c.tenant,
+        );
+
+  /// The provider's page in the system browser: Custom Tabs on Android,
+  /// the default browser elsewhere; never a web view of the app's own.
+  static Future<void> _openSignInPage(String url) async {
+    final opened = await launchUrl(
+      Uri.parse(url),
+      mode: Platform.isAndroid
+          ? LaunchMode.inAppBrowserView
+          : LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      oauth.cancelOauth();
+      throw const AddAccountException(AddAccountError.signInCancelled);
+    }
+  }
+
+  /// Secrets the engine got itself, for the Android Keystore.
+  Future<void> _keepNewSecrets() async {
+    for (final k in oauth.takeNewSecrets()) {
+      await AndroidPasswords.saveKey(k.key, k.value);
+    }
+  }
+
+  @override
+  Future<MailAccount> addOAuthAccount({
+    required String provider,
+    required String name,
+    required String email,
+    String senderName = '',
+    required Color color,
+    OAuthClientConfig? client,
+  }) async {
+    try {
+      final url = await oauth.beginOauth(
+        provider: provider,
+        email: email,
+        client: _client(client),
+      );
+      await _openSignInPage(url);
+      final a = await oauth.addOauthAccount(
+        provider: provider,
+        name: name,
+        email: email,
+        senderName: senderName,
+        color: _hex(color),
+      );
+      await _keepNewSecrets();
+      _reloadAccounts();
+      startSync();
+      return MailAccount(
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        color: _parseColor(a.color),
+        senderName: a.senderName,
+      );
+    } on engine.EngineError catch (e) {
+      throw _signInError(e);
+    }
+  }
+
+  @override
+  Future<void> signInAgainOAuth(
+    int accountId, {
+    OAuthClientConfig? client,
+  }) async {
+    final provider = accountOAuth(accountId);
+    final account = accounts.where((a) => a.id == accountId).firstOrNull;
+    if (provider == null || account == null) {
+      throw const AddAccountException(AddAccountError.other);
+    }
+    try {
+      final servers = acc.accountServers(accountId: accountId);
+      final url = await oauth.beginOauth(
+        provider: provider,
+        email: servers.username.isEmpty ? account.email : servers.username,
+        client: _client(client),
+      );
+      await _openSignInPage(url);
+      await oauth.signInAgainOauth(accountId: accountId);
+      await _keepNewSecrets();
+    } on engine.EngineError catch (e) {
+      throw _signInError(e);
+    }
+    _failed.remove(accountId);
+    _failedSince.remove(accountId);
+    _updateStatus();
+  }
+
+  @override
+  void cancelOAuth() => oauth.cancelOauth();
+
+  @override
+  Future<void> trustCertificate(int accountId, TrustedCertificate cert) async {
+    try {
+      engine.trustCertificate(
+        accountId: accountId,
+        host: cert.host,
+        fingerprint: cert.fingerprint,
+      );
+    } on engine.EngineError catch (e) {
+      throw _signInError(e);
+    }
+  }
 
   @override
   Future<FoundSettings?> discoverSettings(String email) async {

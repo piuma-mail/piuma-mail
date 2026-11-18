@@ -11,6 +11,7 @@ import '../design/tokens.g.dart';
 import '../inbox/service_states.dart' show showSignInAgain;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../onboarding/account_errors.dart';
 import '../onboarding/add_account_screen.dart' show SecurityPicker;
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
@@ -840,6 +841,9 @@ class _ServersFormState extends State<_ServersForm> {
   bool _checking = false;
   String? _error;
 
+  /// The certificate a server showed, refused, for the person to trust.
+  CertificateProblem? _certificate;
+
   @override
   void dispose() {
     for (final t in [_imapHost, _imapPort, _smtpHost, _smtpPort, _username]) {
@@ -850,22 +854,24 @@ class _ServersFormState extends State<_ServersForm> {
 
   Future<void> _save() async {
     final l = AppLocalizations.of(context);
+    final imapPort = validPort(_imapPort.text);
+    final smtpPort = validPort(_smtpPort.text);
+    if (imapPort == null || smtpPort == null) {
+      setState(() {
+        _error = l.errorPort;
+        _certificate = null;
+      });
+      return;
+    }
     final servers = AccountServers(
-      imap: MailServer(
-        _imapHost.text.trim(),
-        int.tryParse(_imapPort.text.trim()) ?? 993,
-        _imapSecurity,
-      ),
-      smtp: MailServer(
-        _smtpHost.text.trim(),
-        int.tryParse(_smtpPort.text.trim()) ?? 465,
-        _smtpSecurity,
-      ),
+      imap: MailServer(_imapHost.text.trim(), imapPort, _imapSecurity),
+      smtp: MailServer(_smtpHost.text.trim(), smtpPort, _smtpSecurity),
       username: _username.text.trim(),
     );
     setState(() {
       _checking = true;
       _error = null;
+      _certificate = null;
     });
     try {
       await widget.source.setAccountServers(widget.accountId, servers);
@@ -874,15 +880,29 @@ class _ServersFormState extends State<_ServersForm> {
       if (!mounted) return;
       setState(() {
         _checking = false;
-        _error = switch (e.error) {
-          AddAccountError.wrongPassword => l.errorWrongPassword,
-          AddAccountError.unreachable => l.errorUnreachable,
-          AddAccountError.insecure => l.errorInsecure,
-          AddAccountError.keychain => l.errorKeychain,
-          AddAccountError.other => l.errorOther,
-        };
+        _error = accountErrorText(l, e.error);
+        _certificate = e.certificate;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = l.errorOther;
       });
     }
+  }
+
+  /// Trusts the refused certificate for this account, and saves again.
+  Future<void> _trust() async {
+    final cert = _certificate;
+    if (cert == null || _checking) return;
+    try {
+      await widget.source.trustCertificate(widget.accountId, cert.trusted);
+    } catch (_) {
+      if (mounted) setState(() => _error = AppLocalizations.of(context).errorOther);
+      return;
+    }
+    await _save();
   }
 
   @override
@@ -983,6 +1003,13 @@ class _ServersFormState extends State<_ServersForm> {
           if (error != null) ...[
             const SizedBox(height: 12),
             Text(error, style: PiumaType.small.copyWith(color: c.danger)),
+          ],
+          if (_certificate case final cert?) ...[
+            const SizedBox(height: 12),
+            CertificateCard(
+              problem: cert,
+              onTrust: _checking ? null : _trust,
+            ),
           ],
           const SizedBox(height: 20),
           Row(
