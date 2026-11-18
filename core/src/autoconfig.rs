@@ -10,6 +10,11 @@
 //! 4. The usual host names (`imap.<domain>`, `mail.<domain>`…), kept only
 //!    when a connection to them actually opens.
 //!
+//! Providers that sign in with OAuth (Microsoft 365 and Outlook.com,
+//! Gmail; see [`crate::oauth`]) are told apart by domain and by MX, and
+//! [`Settings::oauth`] names them, so the app offers their sign-in page
+//! rather than a password field.
+//!
 //! Nothing here asks a third party: the address never leaves the device
 //! except towards the person's own mail domain, and the MX lookup goes to
 //! the system's own DNS resolver.
@@ -38,6 +43,8 @@ pub struct Settings {
     /// The login, usually the whole address.
     pub username: String,
     pub source: Source,
+    /// The OAuth provider (`microsoft`, `google`) whose servers these are.
+    pub oauth: Option<String>,
 }
 
 /// Finds the settings for an address, or None when only a manual setup
@@ -76,12 +83,18 @@ pub async fn discover(email: &str) -> Option<Settings> {
             return Some(s);
         }
     }
-    if let Some((imap, smtp)) = mx_hosts(&domain).await.iter().find_map(|h| by_mx(h)) {
+    let mx = mx_hosts(&domain).await;
+    if let Some((imap, smtp)) = mx.iter().find_map(|h| by_mx(h)) {
+        let oauth = mx
+            .iter()
+            .find_map(|h| crate::oauth::for_mx(h))
+            .map(|p| p.id.clone());
         return Some(Settings {
             imap,
             smtp,
             username: email.trim().to_owned(),
             source: Source::Known,
+            oauth,
         });
     }
     guess(email).await
@@ -110,21 +123,18 @@ pub fn known(email: &str) -> Option<Settings> {
         smtp,
         username: email.trim().to_owned(),
         source: Source::Known,
+        oauth: crate::oauth::for_domain(&domain).map(|p| p.id.clone()),
     })
 }
 
 /// The IMAP and SMTP servers of a provider's own domain.
 fn preset(domain: &str) -> Option<(Server, Server)> {
     use Security::{StartTls, Tls};
+    // OAuth providers' own servers come with their definition.
+    if let Some(p) = crate::oauth::for_domain(domain) {
+        return Some((p.imap(), p.smtp()));
+    }
     Some(match domain {
-        "gmail.com" | "googlemail.com" => (
-            server("imap.gmail.com", 993, Tls),
-            server("smtp.gmail.com", 465, Tls),
-        ),
-        "outlook.com" | "hotmail.com" | "hotmail.it" | "live.com" | "live.it" | "msn.com" => (
-            server("outlook.office365.com", 993, Tls),
-            server("smtp-mail.outlook.com", 587, StartTls),
-        ),
         "icloud.com" | "me.com" | "mac.com" => (
             server("imap.mail.me.com", 993, Tls),
             server("smtp.mail.me.com", 587, StartTls),
@@ -206,8 +216,8 @@ pub fn by_mx(host: &str) -> Option<(Server, Server)> {
         "legalmail.it"
     } else if under("aruba.it") {
         "aruba.it"
-    } else if under("google.com") || under("googlemail.com") {
-        "gmail.com"
+    } else if let Some(p) = crate::oauth::for_mx(&host) {
+        return Some((p.imap(), p.smtp()));
     } else if under("messagingengine.com") {
         "fastmail.com"
     } else if under("icloud.com") {
@@ -225,7 +235,12 @@ pub fn by_mx(host: &str) -> Option<(Server, Server)> {
 fn trusted_settings(s: &Settings, domain: &str) -> bool {
     let ok = |host: &str| {
         let host = host.trim_end_matches('.').to_ascii_lowercase();
-        host == domain || host.ends_with(&format!(".{domain}")) || by_mx(&host).is_some()
+        host == domain
+            || host.ends_with(&format!(".{domain}"))
+            || by_mx(&host).is_some()
+            || crate::oauth::providers()
+                .iter()
+                .any(|p| p.imap().host == host || p.smtp().host == host)
     };
     ok(&s.imap.host) && ok(&s.smtp.host)
 }
@@ -291,11 +306,13 @@ pub fn parse(xml: &str, email: &str, source: Source) -> Option<Settings> {
     };
     let (imap, imap_user) = pick("incomingServer", "imap")?;
     let (smtp, _) = pick("outgoingServer", "smtp")?;
+    let oauth = crate::oauth::for_server(&imap.host).map(|p| p.id.clone());
     Some(Settings {
         imap,
         smtp,
         username: imap_user,
         source,
+        oauth,
     })
 }
 
@@ -343,6 +360,7 @@ async fn guess(email: &str) -> Option<Settings> {
         smtp,
         username: email.trim().to_owned(),
         source: Source::Guessed,
+        oauth: None,
     })
 }
 
@@ -431,6 +449,29 @@ mod tests {
         );
         assert_eq!(known("matteo@studio.it"), None);
         assert_eq!(known("not an address"), None);
+    }
+
+    #[test]
+    fn oauth_providers_are_named() {
+        let outlook = known("someone@hotmail.it").unwrap();
+        assert_eq!(outlook.oauth.as_deref(), Some("microsoft"));
+        assert_eq!(outlook.imap.host, "outlook.office365.com");
+        assert_eq!(
+            outlook.smtp,
+            server("smtp.office365.com", 587, Security::StartTls)
+        );
+        assert_eq!(known("a@gmail.com").unwrap().oauth.as_deref(), Some("google"));
+        assert_eq!(known("a@libero.it").unwrap().oauth, None);
+        // A custom domain on Microsoft 365, by its MX.
+        let (imap, smtp) = by_mx("studio-it.mail.protection.outlook.com").unwrap();
+        assert_eq!(imap.host, "outlook.office365.com");
+        assert_eq!(smtp.host, "smtp.office365.com");
+        // Published settings naming Microsoft's servers.
+        let xml = XML
+            .replace("imap.studio.it", "outlook.office365.com")
+            .replace("smtp.%EMAILDOMAIN%", "smtp.office365.com");
+        let s = parse(&xml, "a@studio.it", Source::Published).unwrap();
+        assert_eq!(s.oauth.as_deref(), Some("microsoft"));
     }
 
     #[test]

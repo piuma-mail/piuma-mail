@@ -107,7 +107,9 @@ impl fmt::Debug for JmapConfig {
 
 impl JmapConfig {
     /// The JMAP settings of an account, or None for other accounts.
-    pub fn for_account(account: &Account, password: &str) -> Option<Self> {
+    /// JMAP accounts sign in with a password or an API token; an OAuth
+    /// sign-in gives none here.
+    pub fn for_account(account: &Account, login: &crate::auth::Login) -> Option<Self> {
         match &account.kind {
             AccountKind::Jmap {
                 session_url,
@@ -115,7 +117,7 @@ impl JmapConfig {
             } => Some(JmapConfig {
                 session_url: session_url.clone(),
                 username: username.clone(),
-                password: password.to_owned(),
+                password: login.password_text().unwrap_or_default().to_owned(),
             }),
             AccountKind::Imap { .. } => None,
         }

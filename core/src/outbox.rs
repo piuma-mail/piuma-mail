@@ -56,7 +56,7 @@ pub struct Sent {
 pub async fn send(
     store: &Mutex<Store>,
     account: &Account,
-    password: &str,
+    login: &crate::auth::Login,
 ) -> Result<Vec<Sent>, StoreError> {
     let waiting = lock(store).outbox(Some(account.id))?;
     let now = crate::pending::now();
@@ -68,7 +68,7 @@ pub async fn send(
         let Some(out) = lock(store).outgoing(w.id)? else {
             continue;
         };
-        match remote::send_ready(account, password, &out.ready).await {
+        match remote::send_ready(account, login, &out.ready).await {
             Ok(report) => {
                 lock(store).drop_outgoing(w.id)?;
                 sent.push(Sent {
@@ -77,7 +77,7 @@ pub async fn send(
                     filed: report.filed_in.is_some(),
                 });
             }
-            Err(e) if e.is_offline() || matches!(e, SendError::Auth) => break,
+            Err(e) if e.is_offline() || e.needs_person() => break,
             // A 4xx: the server may take it later, so the message keeps
             // waiting, without an error, for a later batch.
             Err(SendError::Deferred(_)) => continue,

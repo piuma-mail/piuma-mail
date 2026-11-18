@@ -93,7 +93,7 @@ fn smtp(port: u16, password: &str) -> SmtpConfig {
         port,
         security: Security::None,
         username: "me".into(),
-        password: password.into(),
+        login: password.into(),
     }
 }
 
@@ -156,7 +156,7 @@ async fn files_a_copy_in_sent() {
         port: imap_port.parse().unwrap(),
         security: Security::None,
         username: format!("sender-{stamp}"),
-        password: "test".into(),
+        login: "test".into(),
     };
     let (port, inbox) = smtp_sink(false).await;
 
@@ -231,7 +231,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
 
     // Offline: the send can't reach the server, so it waits.
     let offline = account(id, down, no_imap);
-    let err = remote::send(&offline, "test", &draft()).await.unwrap_err();
+    let err = remote::send(&offline, &"test".into(), &draft()).await.unwrap_err();
     assert!(err.is_offline(), "{err:?}");
     let out = Outgoing {
         account: id,
@@ -241,7 +241,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
         send_at: None,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
-    assert!(outbox::send(&store, &offline, "test")
+    assert!(outbox::send(&store, &offline, &"test".into())
         .await
         .unwrap()
         .is_empty());
@@ -253,14 +253,14 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     // A refused password keeps it waiting, without a reason.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    assert!(outbox::send(&store, &online, "nope")
+    assert!(outbox::send(&store, &online, &"nope".into())
         .await
         .unwrap()
         .is_empty());
     assert_eq!(store.lock().unwrap().outbox(None).unwrap()[0].error, None);
 
     // Back online: it goes as it was built, and leaves the outbox.
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(&store, &online, &"test".into()).await.unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
@@ -292,7 +292,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // just not taking it now. It stays in the outbox, without a reason.
     let (port, _deferred) = smtp_sink(true).await;
     let deferring = account(id, port, no_imap);
-    assert!(outbox::send(&store, &deferring, "test")
+    assert!(outbox::send(&store, &deferring, &"test".into())
         .await
         .unwrap()
         .is_empty());
@@ -304,7 +304,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     // A server that takes it: it goes as it was built, and leaves.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, no_imap);
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(&store, &online, &"test".into()).await.unwrap();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].id, queued);
     assert_eq!(sent[0].saved, Some(("Drafts".into(), 7)));
@@ -357,7 +357,7 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
     // Only the one whose time has come goes.
     let (port, inbox) = smtp_sink(false).await;
     let online = account(id, port, closed_port());
-    let sent = outbox::send(&store, &online, "test").await.unwrap();
+    let sent = outbox::send(&store, &online, &"test".into()).await.unwrap();
     assert_eq!(sent.iter().map(|s| s.id).collect::<Vec<_>>(), [due]);
     let waiting = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(waiting.iter().map(|w| w.id).collect::<Vec<_>>(), [later]);

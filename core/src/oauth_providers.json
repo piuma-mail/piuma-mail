@@ -1,0 +1,44 @@
+[
+  {
+    "id": "microsoft",
+    "name": "Microsoft",
+    "authorize_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+    "token_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+    "revoke_url": null,
+    "tenant": "common",
+    "scopes": [
+      "https://outlook.office.com/IMAP.AccessAsUser.All",
+      "https://outlook.office.com/SMTP.Send",
+      "offline_access"
+    ],
+    "params": { "prompt": "select_account" },
+    "mechanism": "xoauth2",
+    "imap": { "host": "outlook.office365.com", "port": 993, "security": "tls" },
+    "smtp": { "host": "smtp.office365.com", "port": 587, "security": "starttls" },
+    "domains": [
+      "outlook.com", "outlook.it", "outlook.de", "outlook.fr", "outlook.es",
+      "hotmail.com", "hotmail.it", "hotmail.de", "hotmail.fr", "hotmail.es", "hotmail.co.uk",
+      "live.com", "live.it", "live.de", "live.fr", "live.co.uk", "msn.com"
+    ],
+    "mx": ["mail.protection.outlook.com", "olc.protection.outlook.com"],
+    "android_redirect": "{app_scheme}://oauth",
+    "app_passwords": false
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "revoke_url": "https://oauth2.googleapis.com/revoke",
+    "tenant": null,
+    "scopes": ["https://mail.google.com/"],
+    "params": { "access_type": "offline", "prompt": "consent" },
+    "mechanism": "xoauth2",
+    "imap": { "host": "imap.gmail.com", "port": 993, "security": "tls" },
+    "smtp": { "host": "smtp.gmail.com", "port": 465, "security": "tls" },
+    "domains": ["gmail.com", "googlemail.com"],
+    "mx": ["google.com", "googlemail.com"],
+    "android_redirect": "{reversed_client_id}:/oauth2redirect",
+    "app_passwords": true
+  }
+]

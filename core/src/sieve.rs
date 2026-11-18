@@ -6,13 +6,10 @@
 //! reading, uploading, activating and deleting scripts.
 
 use std::fmt;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::TlsConnector;
 
 use crate::model::Security;
 
@@ -30,7 +27,7 @@ pub struct SieveConfig {
     /// `StartTls` for real servers; `None` only for local test servers.
     pub security: Security,
     pub username: String,
-    pub password: String,
+    pub login: crate::auth::Login,
 }
 
 impl fmt::Debug for SieveConfig {
@@ -47,8 +44,11 @@ impl fmt::Debug for SieveConfig {
 impl SieveConfig {
     /// The account's IMAP server and login, on the ManageSieve port.
     /// None for other accounts.
-    pub fn for_account(account: &crate::model::Account, password: &str) -> Option<Self> {
-        let imap = crate::imap::ImapConfig::for_account(account, password)?;
+    pub fn for_account(
+        account: &crate::model::Account,
+        login: &crate::auth::Login,
+    ) -> Option<Self> {
+        let imap = crate::imap::ImapConfig::for_account(account, login)?;
         Some(SieveConfig {
             host: imap.host,
             port: PORT,
@@ -59,7 +59,7 @@ impl SieveConfig {
                 _ => Security::StartTls,
             },
             username: imap.username,
-            password: imap.password,
+            login: imap.login,
         })
     }
 }
@@ -369,7 +369,7 @@ impl Client {
                 }
                 client.command(b"STARTTLS\r\n").await?;
                 let tcp = std::mem::replace(&mut client.stream, Box::new(tokio::io::empty()));
-                client.stream = Box::new(tls(&cfg.host, tcp).await?);
+                client.stream = Box::new(tls(&cfg.host, &cfg.login.pins, tcp).await?);
                 client.buf.clear();
                 // RFC 5804 2.2: the capabilities again, now over TLS.
                 let (lines, status) = client.response().await?;
@@ -378,15 +378,29 @@ impl Client {
                 }
             }
         }
-        if !client.caps.sasl.iter().any(|m| m == "PLAIN") {
-            return Err(SieveError::Unsupported("PLAIN login".into()));
-        }
-        let pair = format!("\0{}\0{}", cfg.username, cfg.password);
-        let initial = {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD.encode(pair)
+        use crate::auth::Credential;
+        let credential = cfg.login.credential().await.map_err(|e| match e {
+            crate::oauth::TokenError::Rejected(_) => SieveError::Auth,
+            crate::oauth::TokenError::Offline(why) => SieveError::Refused(why),
+        })?;
+        let (mechanism, initial) = match credential {
+            Credential::Password(password) => {
+                let pair = zeroize::Zeroizing::new(format!("\0{}\0{}", cfg.username, password.as_str()));
+                use base64::Engine;
+                (
+                    "PLAIN",
+                    zeroize::Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(pair.as_bytes())),
+                )
+            }
+            Credential::Token { mechanism, token } => (
+                crate::auth::sasl_name(mechanism),
+                crate::auth::sasl_initial_base64(mechanism, &cfg.username, &token, &cfg.host, cfg.port),
+            ),
         };
-        let mut auth = b"AUTHENTICATE \"PLAIN\" ".to_vec();
+        if !client.caps.sasl.iter().any(|m| m == mechanism) {
+            return Err(SieveError::Unsupported(format!("{mechanism} login")));
+        }
+        let mut auth = format!("AUTHENTICATE \"{mechanism}\" ").into_bytes();
         auth.extend_from_slice(&quoted(&initial));
         auth.extend_from_slice(b"\r\n");
         client.send(&auth).await?;
@@ -546,14 +560,15 @@ pub fn quoted(s: &str) -> Vec<u8> {
     out
 }
 
-async fn tls<T>(host: &str, stream: T) -> Result<tokio_rustls::client::TlsStream<T>>
+async fn tls<T>(
+    host: &str,
+    pins: &[crate::tls::Pin],
+    stream: T,
+) -> Result<tokio_rustls::client::TlsStream<T>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let config = crate::tls::client_config().map_err(SieveError::Tls)?;
-    let name = ServerName::try_from(host.to_owned()).map_err(|e| SieveError::Tls(e.to_string()))?;
-    TlsConnector::from(Arc::new(config))
-        .connect(name, stream)
+    crate::tls::connect(host, pins, stream)
         .await
         .map_err(|e| SieveError::Tls(e.to_string()))
 }
@@ -672,12 +687,12 @@ mod tests {
                 username: "matteo".into(),
             },
         };
-        let cfg = SieveConfig::for_account(&account, "pw").unwrap();
+        let cfg = SieveConfig::for_account(&account, &"pw".into()).unwrap();
         assert_eq!(cfg.host, "mail.studio.it");
         assert_eq!(cfg.port, 4190);
         assert_eq!(cfg.security, Security::StartTls);
         assert_eq!(cfg.username, "matteo");
-        assert_eq!(cfg.password, "pw");
+        assert_eq!(cfg.login.password_text(), Some("pw"));
         assert!(!format!("{cfg:?}").contains("pw"));
     }
 }

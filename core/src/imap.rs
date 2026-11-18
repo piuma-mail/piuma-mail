@@ -18,8 +18,10 @@ use futures::TryStreamExt;
 use mail_parser::MessageParser;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::TlsConnector;
+
+use crate::auth::{sasl_initial, sasl_name, Credential, ImapSasl, Login};
+use crate::oauth::{Mechanism, TokenError};
+use crate::tls::Pin;
 
 use crate::groups;
 use crate::model::{AccountId, Flags, Folder, ListInfo, MessageSummary, ReplyInfo};
@@ -36,7 +38,8 @@ pub struct ImapConfig {
     pub port: u16,
     pub security: Security,
     pub username: String,
-    pub password: String,
+    /// The password or OAuth sign-in, and the certificates trusted.
+    pub login: Login,
 }
 
 impl fmt::Debug for ImapConfig {
@@ -52,14 +55,14 @@ impl fmt::Debug for ImapConfig {
 
 impl ImapConfig {
     /// The IMAP settings of an account, or None for non-IMAP accounts.
-    pub fn for_account(account: &crate::model::Account, password: &str) -> Option<Self> {
+    pub fn for_account(account: &crate::model::Account, login: &Login) -> Option<Self> {
         match &account.kind {
             crate::model::AccountKind::Imap { imap, username, .. } => Some(ImapConfig {
                 host: imap.host.clone(),
                 port: imap.port,
                 security: imap.security,
                 username: username.clone(),
-                password: password.to_owned(),
+                login: login.clone(),
             }),
             crate::model::AccountKind::Jmap { .. } => None,
         }
@@ -75,8 +78,14 @@ pub enum ImapError {
     },
     #[error("secure connection failed: {0}")]
     Tls(String),
+    /// The server's certificate was refused; the person may trust it.
+    #[error("{0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server rejected the user name or password")]
     Auth,
+    /// The OAuth provider could not give a token just now.
+    #[error("could not get a sign-in token: {0}")]
+    TokenUnavailable(String),
     #[error("the server is busy and will not accept the login just now: {0}")]
     Throttled(String),
     #[error("the server does not keep stable message ids in this folder")]
@@ -99,6 +108,7 @@ impl ImapError {
             self,
             ImapError::Connect { .. }
                 | ImapError::Throttled(_)
+                | ImapError::TokenUnavailable(_)
                 | ImapError::Protocol(
                     async_imap::error::Error::Io(_) | async_imap::error::Error::ConnectionLost
                 )
@@ -174,23 +184,20 @@ impl Connection {
         tcp.set_nodelay(true).ok();
 
         let stream: Box<dyn Io> = match cfg.security {
-            Security::Tls => Box::new(tls(&cfg.host, tcp).await?),
+            Security::Tls => Box::new(tls(&cfg.host, &cfg.login.pins, tcp).await?),
             Security::None => Box::new(tcp),
             Security::StartTls => {
                 let mut client = async_imap::Client::new(tcp);
                 greeting(&mut client).await?;
                 client.run_command_and_check_ok("STARTTLS", None).await?;
-                Box::new(tls(&cfg.host, client.into_inner()).await?)
+                Box::new(tls(&cfg.host, &cfg.login.pins, client.into_inner()).await?)
             }
         };
         let mut client = async_imap::Client::new(stream);
         if cfg.security != Security::StartTls {
             greeting(&mut client).await?;
         }
-        let mut session = client
-            .login(&cfg.username, &cfg.password)
-            .await
-            .map_err(|(e, _)| classify_login(e))?;
+        let mut session = sign_in(client, cfg).await?;
         let caps = session.capabilities().await?;
         // For reports: which of the capabilities that matter it has, by a
         // number, never its name.
@@ -1450,7 +1457,8 @@ pub enum WatchEvent {
 
 /// Keeps `mailbox` of one account in sync forever: sync, wait for a change
 /// with IDLE (or poll), sync again. Reconnects with a growing pause after
-/// errors. Wrong credentials end the loop.
+/// errors. Wrong credentials, or a certificate that isn't trusted, end
+/// the loop.
 pub async fn watch(
     cfg: ImapConfig,
     store: Arc<Mutex<Store>>,
@@ -1556,6 +1564,9 @@ pub async fn watch(
         };
         match result {
             Err(ImapError::Auth) => return Err(ImapError::Auth),
+            // A certificate other than the one trusted is never retried
+            // quietly: the person has to look at it.
+            Err(e @ ImapError::Certificate(_)) => return Err(e),
             Err(e) => events(WatchEvent::Offline {
                 account,
                 reason: e.to_string(),
@@ -1586,16 +1597,93 @@ where
     Ok(())
 }
 
-async fn tls<T>(host: &str, stream: T) -> Result<tokio_rustls::client::TlsStream<T>>
+async fn tls<T>(host: &str, pins: &[Pin], stream: T) -> Result<tokio_rustls::client::TlsStream<T>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let config = crate::tls::client_config().map_err(ImapError::Tls)?;
-    let name = ServerName::try_from(host.to_owned()).map_err(|e| ImapError::Tls(e.to_string()))?;
-    TlsConnector::from(Arc::new(config))
-        .connect(name, stream)
+    crate::tls::connect(host, pins, stream)
         .await
-        .map_err(|e| ImapError::Tls(e.to_string()))
+        .map_err(|f| match f {
+            crate::tls::Failure::Certificate(r) => ImapError::Certificate(r),
+            crate::tls::Failure::Other(e) => ImapError::Tls(e),
+        })
+}
+
+type Client = async_imap::Client<Box<dyn Io>>;
+
+/// Logs in with the password, or authenticates with an OAuth token. A
+/// refused token gets one new one and one more try on the same
+/// connection; a second refusal is [`ImapError::Auth`], never a loop.
+async fn sign_in(client: Client, cfg: &ImapConfig) -> Result<Session> {
+    let (mechanism, token) = match cfg.login.credential().await.map_err(token_error)? {
+        Credential::Password(password) => {
+            return client
+                .login(&cfg.username, password.as_str())
+                .await
+                .map_err(|(e, _)| classify_login(e));
+        }
+        Credential::Token { mechanism, token } => (mechanism, token),
+    };
+    let (e, client) = match authenticate(client, cfg, mechanism, &token).await {
+        Ok(session) => return Ok(session),
+        Err(failed) => failed,
+    };
+    let first = classify_token(e);
+    if !matches!(first, ImapError::Auth) {
+        return Err(first);
+    }
+    let Some(renewed) = cfg.login.renew().await else {
+        return Err(first);
+    };
+    let Credential::Token { mechanism, token } = renewed.map_err(token_error)? else {
+        return Err(first);
+    };
+    authenticate(client, cfg, mechanism, &token)
+        .await
+        .map_err(|(e, _)| classify_token(e))
+}
+
+async fn authenticate(
+    client: Client,
+    cfg: &ImapConfig,
+    mechanism: Mechanism,
+    token: &str,
+) -> std::result::Result<Session, (async_imap::error::Error, Client)> {
+    let sasl = ImapSasl {
+        mechanism,
+        initial: sasl_initial(mechanism, &cfg.username, token, &cfg.host, cfg.port),
+        sent: false,
+    };
+    client.authenticate(sasl_name(mechanism), sasl).await
+}
+
+/// A provider that refuses to give a token: for good means signing in
+/// again, a provider out of reach means trying later.
+pub(crate) fn token_error(e: TokenError) -> ImapError {
+    match e {
+        TokenError::Rejected(_) => ImapError::Auth,
+        TokenError::Offline(why) => ImapError::TokenUnavailable(why),
+    }
+}
+
+/// A `NO` to AUTHENTICATE with a token: the token was refused, unless
+/// the server says it is busy. Servers word it in many ways
+/// ("AUTHENTICATE failed.", "[AUTHENTICATIONFAILED] Invalid credentials").
+fn classify_token(e: async_imap::error::Error) -> ImapError {
+    match e {
+        async_imap::error::Error::No(text) => {
+            let lowered = text.to_ascii_lowercase();
+            if LOGIN_BUSY.iter().any(|w| lowered.contains(w))
+                && !LOGIN_DENIED.iter().any(|w| lowered.contains(w))
+            {
+                ImapError::Throttled(text)
+            } else {
+                ImapError::Auth
+            }
+        }
+        async_imap::error::Error::Bad(_) => ImapError::Auth,
+        e => ImapError::Protocol(e),
+    }
 }
 
 /// Words that say the login failed because the credentials are wrong, the

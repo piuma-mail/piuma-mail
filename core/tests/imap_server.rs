@@ -39,7 +39,7 @@ fn config(test: &str) -> Option<ImapConfig> {
         port,
         security: Security::None,
         username: format!("{test}-{stamp}-{n}"),
-        password: "test".into(),
+        login: "test".into(),
     })
 }
 
@@ -81,7 +81,7 @@ impl Outside {
         let mut client = async_imap::Client::new(tcp);
         client.read_response().await.unwrap();
         let mut s = client
-            .login(&cfg.username, &cfg.password)
+            .login(&cfg.username, cfg.login.password_text().unwrap())
             .await
             .map_err(|(e, _)| e)
             .unwrap();
@@ -514,7 +514,7 @@ async fn wrong_password_is_reported_as_such() {
     let Some(mut cfg) = config("auth") else {
         return;
     };
-    cfg.password = "nope".into();
+    cfg.login = "nope".into();
     assert!(matches!(check_login(&cfg).await, Err(ImapError::Auth)));
 }
 
@@ -1102,7 +1102,7 @@ async fn a_closed_port_counts_as_offline_and_a_bad_password_does_not() {
         return;
     };
     let mut wrong = cfg.clone();
-    wrong.password = "nope".into();
+    wrong.login = "nope".into();
     assert!(!Connection::open(&wrong).await.err().unwrap().is_offline());
     cfg.port = 1;
     assert!(Connection::open(&cfg).await.err().unwrap().is_offline());

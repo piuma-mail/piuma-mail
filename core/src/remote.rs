@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::auth::Login;
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
 use crate::model::{Account, AccountId, AccountKind};
@@ -70,14 +71,14 @@ pub enum Remote {
 }
 
 impl Remote {
-    pub async fn open(account: &Account, password: &str) -> Result<Self> {
+    pub async fn open(account: &Account, login: &Login) -> Result<Self> {
         Ok(match &account.kind {
             AccountKind::Imap { .. } => {
-                let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+                let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
                 Remote::Imap(imap::Connection::open(&cfg).await?)
             }
             AccountKind::Jmap { .. } => {
-                let cfg = JmapConfig::for_account(account, password).expect("JMAP account");
+                let cfg = JmapConfig::for_account(account, login).expect("JMAP account");
                 Remote::Jmap(jmap::Client::open(&cfg).await?)
             }
         })
@@ -393,24 +394,24 @@ impl Remote {
 }
 
 /// Checks that an account's settings work.
-pub async fn check_login(account: &Account, password: &str) -> Result<()> {
-    Remote::open(account, password).await?.close().await;
+pub async fn check_login(account: &Account, login: &Login) -> Result<()> {
+    Remote::open(account, login).await?.close().await;
     Ok(())
 }
 
 /// Sends a draft and files a copy in Sent (see [`send_ready`]).
-pub async fn send(account: &Account, password: &str, draft: &Draft) -> smtp::Result<SendReport> {
-    send_ready(account, password, &smtp::ready(draft)?).await
+pub async fn send(account: &Account, login: &Login, draft: &Draft) -> smtp::Result<SendReport> {
+    send_ready(account, login, &smtp::ready(draft)?).await
 }
 
 /// Sends a message already built and files a copy in Sent: over SMTP
 /// for IMAP accounts, through the server itself for JMAP ones.
 pub async fn send_ready(
     account: &Account,
-    password: &str,
+    login: &Login,
     ready: &Ready,
 ) -> smtp::Result<SendReport> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
+    if let Some(cfg) = JmapConfig::for_account(account, login) {
         let sent = async {
             let mut client = jmap::Client::open(&cfg).await?;
             client
@@ -431,8 +432,8 @@ pub async fn send_ready(
             filed_in: Some(sent),
         });
     }
-    let smtp = SmtpConfig::for_account(account, password).expect("IMAP account");
-    let imap = ImapConfig::for_account(account, password).expect("IMAP account");
+    let smtp = SmtpConfig::for_account(account, login).expect("IMAP account");
+    let imap = ImapConfig::for_account(account, login).expect("IMAP account");
     smtp::send_and_file(&smtp, &imap, ready).await
 }
 
@@ -440,13 +441,13 @@ pub async fn send_ready(
 /// `jmap::watch`). Wrong credentials end it.
 pub async fn watch(
     account: &Account,
-    password: &str,
+    login: &Login,
     store: Arc<Mutex<Store>>,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
+    if let Some(cfg) = JmapConfig::for_account(account, login) {
         return Ok(jmap::watch(cfg, store, account.id, events).await?);
     }
-    let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+    let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
     Ok(imap::watch(cfg, store, account.id, "INBOX".to_owned(), events).await?)
 }
