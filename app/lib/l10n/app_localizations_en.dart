@@ -732,7 +732,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'IMAP and SMTP. Gmail, iCloud and Fastmail set themselves up.';
 
   @override
-  String get privacyTitle => 'Privacy & security';
+  String get privacyTitle => 'Reports and privacy';
 
   @override
   String get privacySubtitle =>
@@ -5525,7 +5525,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportLog => 'App log';
 
   @override
-  String get reportLogHint => 'No addresses or subjects';
+  String get reportLogHint =>
+      'Addresses and names removed. Check before sending';
 
   @override
   String get reportDevice => 'Device and app info';
@@ -5645,10 +5646,68 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportDelete => 'Delete';
 
   @override
+  String get reportPrivacyLine =>
+      'Becomes a private issue on GitHub for the maintainers.';
+
+  @override
+  String get reportPrivacyLink => 'How reports are handled';
+
+  @override
+  String get privacyWhat =>
+      'What is sent: only what “See what\'s sent” shows. Your words, device and app details, and the screenshot, log and files you leave on. The log is scrubbed of addresses, names and subjects, but scrubbing can miss something: check it before sending.';
+
+  @override
+  String privacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days days',
+      one: '1 day',
+    );
+    return 'Where it goes: through the project\'s relay on Cloudflare ($relay) to a private issue on GitHub, in the United States. Attachments stay in Cloudflare storage in the EU and are deleted after $_temp0.';
+  }
+
+  @override
+  String privacyWhereEmail(String contact) {
+    return 'Where it goes: by email from your own account to $contact.';
+  }
+
+  @override
+  String privacyWho(String controller) {
+    return 'Who sees it: $controller, the people who help maintain Piuma Mail, and the tools they use to sort reports, AI assistants included. Reports are never sold or used for advertising.';
+  }
+
+  @override
+  String get privacyKeep =>
+      'How long: the issue is kept while it helps fix the problem. Deleting a report in Your reports removes only the copy on this device.';
+
+  @override
+  String privacyErase(String contact) {
+    return 'To see what is kept or have it erased, write to $contact with the report number.';
+  }
+
+  @override
+  String get privacyFull => 'Full privacy notice';
+
+  @override
+  String get reportDeleteTitle => 'Delete this report?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'This removes it from this device. The report you sent (#$number) stays with the maintainers: you can ask them to erase it too.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Delete from this device';
+
+  @override
+  String get reportDeleteAndErase => 'Also ask to erase it';
+
+  @override
   String get reportOptions => 'Report options';
 
   @override
-  String get crashLine => 'Piuma closed unexpectedly. Send a report?';
+  String get crashLine => 'Piuma ran into a problem last time. Send a report?';
 
   @override
   String get crashReport => 'Report';

@@ -738,7 +738,7 @@ class AppLocalizationsFr extends AppLocalizations {
       'IMAP et SMTP. Gmail, iCloud et Fastmail se configurent tout seuls.';
 
   @override
-  String get privacyTitle => 'Confidentialité et sécurité';
+  String get privacyTitle => 'Signalements et confidentialité';
 
   @override
   String get privacySubtitle =>
@@ -5567,7 +5567,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get reportLog => 'Journal de l’app';
 
   @override
-  String get reportLogHint => 'Sans adresses ni objets';
+  String get reportLogHint => 'Sans adresses ni noms. À vérifier avant l’envoi';
 
   @override
   String get reportDevice => 'Infos sur l’appareil et l’app';
@@ -5688,11 +5688,69 @@ class AppLocalizationsFr extends AppLocalizations {
   String get reportDelete => 'Supprimer';
 
   @override
+  String get reportPrivacyLine =>
+      'Devient un ticket privé sur GitHub pour les mainteneurs.';
+
+  @override
+  String get reportPrivacyLink => 'Comment les signalements sont traités';
+
+  @override
+  String get privacyWhat =>
+      'Ce qui est envoyé : seulement ce que montre « Voir ce qui est envoyé ». Vos mots, les informations sur l’appareil et l’app, et la capture, le journal et les fichiers que vous laissez activés. Le journal est nettoyé des adresses, des noms et des objets, mais le nettoyage peut en oublier : vérifiez-le avant l’envoi.';
+
+  @override
+  String privacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days jours',
+      one: '1 jour',
+    );
+    return 'Où ça va : par le relais du projet chez Cloudflare ($relay) vers un ticket privé sur GitHub, aux États-Unis. Les pièces jointes restent dans le stockage de Cloudflare dans l’UE et sont supprimées au bout de $_temp0.';
+  }
+
+  @override
+  String privacyWhereEmail(String contact) {
+    return 'Où ça va : par e-mail depuis votre propre compte à $contact.';
+  }
+
+  @override
+  String privacyWho(String controller) {
+    return 'Qui le voit : $controller, les personnes qui aident à maintenir Piuma Mail, et les outils qu’elles utilisent pour trier les signalements, assistants IA compris. Les signalements ne sont jamais vendus ni utilisés pour la publicité.';
+  }
+
+  @override
+  String get privacyKeep =>
+      'Combien de temps : le ticket est gardé tant qu’il aide à corriger le problème. Supprimer un signalement dans Vos signalements n’efface que la copie sur cet appareil.';
+
+  @override
+  String privacyErase(String contact) {
+    return 'Pour savoir ce qui est conservé ou le faire effacer, écrivez à $contact avec le numéro du signalement.';
+  }
+
+  @override
+  String get privacyFull => 'Politique de confidentialité complète';
+
+  @override
+  String get reportDeleteTitle => 'Supprimer ce signalement ?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'Il est retiré de cet appareil. Le signalement envoyé (#$number) reste chez les mainteneurs : vous pouvez leur demander de l’effacer aussi.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Supprimer de cet appareil';
+
+  @override
+  String get reportDeleteAndErase => 'Demander aussi l’effacement';
+
+  @override
   String get reportOptions => 'Options du signalement';
 
   @override
   String get crashLine =>
-      'Piuma s’est fermée de façon inattendue. Envoyer un signalement ?';
+      'Piuma a rencontré un problème la dernière fois. Envoyer un signalement ?';
 
   @override
   String get crashReport => 'Signaler';

@@ -121,7 +121,8 @@ class _HelpPageState extends State<HelpPage> {
       Uri(
         scheme: 'mailto',
         path: e.to,
-        query: 'subject=${Uri.encodeComponent(e.subject)}'
+        query:
+            'subject=${Uri.encodeComponent(e.subject)}'
             '&body=${Uri.encodeComponent(e.body)}',
       ),
     );

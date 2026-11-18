@@ -247,7 +247,10 @@ void main() {
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
     expect(find.text('Delete this report?'), findsOneWidget);
-    expect(find.textContaining('(#12) stays with the maintainers'), findsOneWidget);
+    expect(
+      find.textContaining('(#12) stays with the maintainers'),
+      findsOneWidget,
+    );
     // Cancel keeps it.
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
@@ -291,9 +294,15 @@ void main() {
     expect(find.textContaining('reports.example.org'), findsOneWidget);
     expect(find.textContaining('in the United States'), findsOneWidget);
     expect(find.textContaining('deleted after 90 days'), findsOneWidget);
-    expect(find.textContaining('The maintainers of Piuma Mail'), findsOneWidget);
+    expect(
+      find.textContaining('The maintainers of Piuma Mail'),
+      findsOneWidget,
+    );
     expect(find.textContaining('write to piuma@example.org'), findsOneWidget);
-    expect(find.textContaining('removes only the copy on this device'), findsOneWidget);
+    expect(
+      find.textContaining('removes only the copy on this device'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Full privacy notice'));
     await tester.pump();
     expect(opened.single.path, endsWith('/PRIVACY.md'));

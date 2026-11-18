@@ -735,7 +735,7 @@ class AppLocalizationsPt extends AppLocalizations {
       'IMAP e SMTP. Gmail, iCloud e Fastmail se configuram sozinhos.';
 
   @override
-  String get privacyTitle => 'Privacidade e segurança';
+  String get privacyTitle => 'Relatos e privacidade';
 
   @override
   String get privacySubtitle =>
@@ -5547,7 +5547,8 @@ class AppLocalizationsPt extends AppLocalizations {
   String get reportLog => 'Registro do app';
 
   @override
-  String get reportLogHint => 'Sem endereços nem assuntos';
+  String get reportLogHint =>
+      'Sem endereços nem nomes. Confira antes de enviar';
 
   @override
   String get reportDevice => 'Informações do dispositivo e do app';
@@ -5668,10 +5669,69 @@ class AppLocalizationsPt extends AppLocalizations {
   String get reportDelete => 'Excluir';
 
   @override
+  String get reportPrivacyLine =>
+      'Vira uma issue privada no GitHub para quem mantém o app.';
+
+  @override
+  String get reportPrivacyLink => 'Como os relatos são tratados';
+
+  @override
+  String get privacyWhat =>
+      'O que é enviado: só o que “Ver o que é enviado” mostra. Suas palavras, os dados do dispositivo e do app, e a captura, o registro e os arquivos que você deixar ativados. Endereços, nomes e assuntos são tirados do registro, mas algo pode escapar: confira antes de enviar.';
+
+  @override
+  String privacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days dias',
+      one: '1 dia',
+    );
+    return 'Para onde vai: pelo relay do projeto na Cloudflare ($relay) para uma issue privada no GitHub, nos Estados Unidos. Os anexos ficam no armazenamento da Cloudflare na UE e são apagados depois de $_temp0.';
+  }
+
+  @override
+  String privacyWhereEmail(String contact) {
+    return 'Para onde vai: por e-mail da sua própria conta para $contact.';
+  }
+
+  @override
+  String privacyWho(String controller) {
+    return 'Quem vê: $controller, as pessoas que ajudam a manter o Piuma Mail e as ferramentas que usam para organizar os relatos, assistentes de IA incluídos. Os relatos nunca são vendidos nem usados para publicidade.';
+  }
+
+  @override
+  String get privacyKeep =>
+      'Por quanto tempo: a issue fica enquanto ajudar a resolver o problema. Excluir um relato em Seus relatos remove só a cópia deste dispositivo.';
+
+  @override
+  String privacyErase(String contact) {
+    return 'Para saber o que é guardado ou pedir que seja apagado, escreva para $contact com o número do relato.';
+  }
+
+  @override
+  String get privacyFull => 'Aviso de privacidade completo';
+
+  @override
+  String get reportDeleteTitle => 'Excluir este relato?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'Remove do dispositivo. O relato enviado (#$number) continua com quem mantém o app: você pode pedir que apaguem também.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Excluir deste dispositivo';
+
+  @override
+  String get reportDeleteAndErase => 'Pedir também para apagar';
+
+  @override
   String get reportOptions => 'Opções do relato';
 
   @override
-  String get crashLine => 'O Piuma fechou inesperadamente. Enviar um relato?';
+  String get crashLine =>
+      'O Piuma teve um problema da última vez. Enviar um relato?';
 
   @override
   String get crashReport => 'Relatar';

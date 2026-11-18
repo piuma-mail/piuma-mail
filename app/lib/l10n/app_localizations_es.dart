@@ -736,7 +736,7 @@ class AppLocalizationsEs extends AppLocalizations {
       'IMAP y SMTP. Gmail, iCloud y Fastmail se configuran solos.';
 
   @override
-  String get privacyTitle => 'Privacidad y seguridad';
+  String get privacyTitle => 'Informes y privacidad';
 
   @override
   String get privacySubtitle =>
@@ -5551,7 +5551,8 @@ class AppLocalizationsEs extends AppLocalizations {
   String get reportLog => 'Registro de la app';
 
   @override
-  String get reportLogHint => 'Sin direcciones ni asuntos';
+  String get reportLogHint =>
+      'Sin direcciones ni nombres. Revísalo antes de enviar';
 
   @override
   String get reportDevice => 'Información del dispositivo y la app';
@@ -5672,10 +5673,69 @@ class AppLocalizationsEs extends AppLocalizations {
   String get reportDelete => 'Eliminar';
 
   @override
+  String get reportPrivacyLine =>
+      'Se convierte en una incidencia privada en GitHub para quienes mantienen la app.';
+
+  @override
+  String get reportPrivacyLink => 'Cómo se tratan los informes';
+
+  @override
+  String get privacyWhat =>
+      'Qué se envía: solo lo que muestra «Ver qué se envía». Tus palabras, los datos del dispositivo y de la app, y la captura, el registro y los archivos que dejes activados. Del registro se quitan direcciones, nombres y asuntos, pero algo puede escaparse: revísalo antes de enviar.';
+
+  @override
+  String privacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days días',
+      one: '1 día',
+    );
+    return 'Adónde va: a través del relé del proyecto en Cloudflare ($relay) a una incidencia privada en GitHub, en Estados Unidos. Los adjuntos quedan en el almacenamiento de Cloudflare en la UE y se eliminan a los $_temp0.';
+  }
+
+  @override
+  String privacyWhereEmail(String contact) {
+    return 'Adónde va: por correo desde tu propia cuenta a $contact.';
+  }
+
+  @override
+  String privacyWho(String controller) {
+    return 'Quién lo ve: $controller, las personas que ayudan a mantener Piuma Mail y las herramientas que usan para ordenar los informes, asistentes de IA incluidos. Los informes nunca se venden ni se usan para publicidad.';
+  }
+
+  @override
+  String get privacyKeep =>
+      'Cuánto tiempo: la incidencia se guarda mientras ayude a resolver el problema. Eliminar un informe en Tus informes solo quita la copia de este dispositivo.';
+
+  @override
+  String privacyErase(String contact) {
+    return 'Para saber qué se guarda o pedir que se borre, escribe a $contact con el número del informe.';
+  }
+
+  @override
+  String get privacyFull => 'Aviso de privacidad completo';
+
+  @override
+  String get reportDeleteTitle => '¿Eliminar este informe?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'Lo quita de este dispositivo. El informe enviado (#$number) sigue con quienes mantienen la app: puedes pedirles que también lo borren.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Eliminar de este dispositivo';
+
+  @override
+  String get reportDeleteAndErase => 'Pedir también que se borre';
+
+  @override
   String get reportOptions => 'Opciones del informe';
 
   @override
-  String get crashLine => 'Piuma se cerró inesperadamente. ¿Enviar un informe?';
+  String get crashLine =>
+      'Piuma tuvo un problema la última vez. ¿Enviar un informe?';
 
   @override
   String get crashReport => 'Informar';

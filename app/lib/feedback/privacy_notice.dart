@@ -18,8 +18,10 @@ import '../widgets/links.dart';
 Future<void> showPrivacyNotice(BuildContext context, MailSource source) {
   final l = AppLocalizations.of(context);
   final phone = MediaQuery.sizeOf(context).width < 600;
-  Widget panel(BuildContext context) =>
-      PrivacyNotice(privacy: source.reportPrivacy, byRelay: source.reportsByRelay);
+  Widget panel(BuildContext context) => PrivacyNotice(
+    privacy: source.reportPrivacy,
+    byRelay: source.reportsByRelay,
+  );
   return phone
       ? showPiumaSheet<void>(context, label: l.privacyTitle, builder: panel)
       : showPiumaDialog<void>(
@@ -31,7 +33,11 @@ Future<void> showPrivacyNotice(BuildContext context, MailSource source) {
 }
 
 class PrivacyNotice extends StatelessWidget {
-  const PrivacyNotice({super.key, required this.privacy, required this.byRelay});
+  const PrivacyNotice({
+    super.key,
+    required this.privacy,
+    required this.byRelay,
+  });
 
   final ReportPrivacy privacy;
 
@@ -67,7 +73,11 @@ class PrivacyNotice extends StatelessWidget {
                 borderRadius: BorderRadius.circular(PiumaRadius.button),
               ),
               alignment: Alignment.center,
-              child: PiumaIconView(PiumaIcon.lock, size: 18, color: c.accentText),
+              child: PiumaIconView(
+                PiumaIcon.lock,
+                size: 18,
+                color: c.accentText,
+              ),
             ),
             const SizedBox(width: PiumaSpace.s12),
             Expanded(
@@ -135,8 +145,7 @@ enum DeleteSent { here, andErase }
 Future<DeleteSent?> askDeleteSent(BuildContext context, int issue) {
   final l = AppLocalizations.of(context);
   final phone = MediaQuery.sizeOf(context).width < 600;
-  Widget panel(BuildContext context) =>
-      _DeleteSent(issue: issue, phone: phone);
+  Widget panel(BuildContext context) => _DeleteSent(issue: issue, phone: phone);
   return phone
       ? showPiumaSheet<DeleteSent>(
           context,
@@ -179,7 +188,10 @@ class _DeleteSent extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(l.reportDeleteTitle, style: PiumaType.subtitle.copyWith(color: c.fg)),
+        Text(
+          l.reportDeleteTitle,
+          style: PiumaType.subtitle.copyWith(color: c.fg),
+        ),
         const SizedBox(height: PiumaSpace.s12),
         Text(
           l.reportDeleteSent(issue),
