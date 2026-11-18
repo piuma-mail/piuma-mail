@@ -30,6 +30,8 @@ struct Script {
     refuse_select: bool,
     /// UIDVALIDITY per folder; 1 when not listed.
     validity: Vec<(&'static str, u32)>,
+    /// Leaves UIDVALIDITY out of its SELECT answers.
+    no_validity: bool,
     /// Starts sending a whole message, then goes quiet.
     stall_body: bool,
     /// Answers to UID MOVE, in turn; OK once they run out.
@@ -128,8 +130,13 @@ async fn session(stream: tokio::net::TcpStream, script: Script, seen: Seen) {
                     .iter()
                     .find(|(m, _)| *m == selected)
                     .map_or(1, |(_, v)| *v);
+                let validity = if script.no_validity {
+                    String::new()
+                } else {
+                    format!("* OK [UIDVALIDITY {validity}] ok\r\n")
+                };
                 format!(
-                    "* 3 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY {validity}] ok\r\n\
+                    "* 3 EXISTS\r\n* 0 RECENT\r\n{validity}\
                      * OK [UIDNEXT 20] ok\r\n* FLAGS (\\Seen \\Deleted)\r\n\
                      * OK [PERMANENTFLAGS (\\Seen \\Deleted \\*)] ok\r\n\
                      {tag} OK [READ-WRITE] done\r\n"
@@ -481,4 +488,53 @@ async fn a_move_refused_for_good_is_given_up_and_counted() {
     let s = store.lock().unwrap();
     assert!(s.pending_changes(account).unwrap().is_empty());
     assert_eq!(s.count(Folder::Inbox).unwrap(), 1);
+}
+
+/// A SELECT answer without UIDVALIDITY can't vouch for the stored numbers:
+/// nothing is sent, but nothing is thrown away either. The queued move
+/// counts a try, stays queued and hidden, and follows the usual rules.
+#[tokio::test]
+async fn a_folder_answer_without_uidvalidity_touches_and_drops_nothing() {
+    let (cfg, seen) = serve(Script {
+        no_validity: true,
+        ..Script::default()
+    })
+    .await;
+    let (store, account) = store_with_account();
+    stored(&store, account, "INBOX", 1, &[1, 2]);
+    stored(&store, account, "Drafts", 5, &[4]);
+    {
+        let s = store.lock().unwrap();
+        s.set_hidden(account, "INBOX", 1, true).unwrap();
+        s.queue_change(
+            account,
+            "INBOX",
+            1,
+            Change::Move(piuma_core::imap::FolderRole::Trash),
+        )
+        .unwrap();
+    }
+    let conn = Connection::open_timed(&cfg, quick()).await.unwrap();
+    let mut remote = Remote::Imap(conn);
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    let Remote::Imap(mut conn) = remote else {
+        unreachable!()
+    };
+    let e = conn
+        .erase(&store, account, "Drafts", &[4])
+        .await
+        .unwrap_err();
+    assert!(matches!(e, ImapError::NoUidValidity), "{e}");
+
+    for verb in ["UID MOVE", "UID COPY", "UID STORE", "UID EXPUNGE", "EXPUNGE"] {
+        assert!(!seen.any(verb), "{verb} sent: {:?}", seen.commands());
+    }
+    let s = store.lock().unwrap();
+    let waiting = s.pending_changes(account).unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].attempts, 1);
+    // Still hidden: its move is still on its way.
+    assert_eq!(s.count(Folder::Inbox).unwrap(), 1);
+    // The stored numbers are kept for the next sync to check.
+    assert!(s.message(account, "Drafts", 4).unwrap().is_some());
 }

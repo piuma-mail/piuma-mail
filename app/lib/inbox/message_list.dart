@@ -258,9 +258,13 @@ class MessageListState extends State<MessageList>
   int _generation = 0;
   bool _loaded = false;
 
-  /// A read of the list failed: it says so, with Try again, instead of
-  /// waiting for ever.
+  /// The first read of the list failed and nothing is on screen: the
+  /// list says so, with Try again, instead of waiting for ever.
   bool _failed = false;
+
+  /// Pages that could not be read while scrolling: the rows around them
+  /// stay, and the page offers Try again in its place.
+  final _failedPages = <int>{};
 
   /// Where the last click landed, for Shift+click ranges.
   int? _anchor;
@@ -370,6 +374,7 @@ class MessageListState extends State<MessageList>
       _reminded = const [];
       _pages.clear();
       _loading.clear();
+      _failedPages.clear();
       _fromMemory();
       reload();
     }
@@ -427,6 +432,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
+      _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
@@ -468,6 +474,7 @@ class MessageListState extends State<MessageList>
           _pages[i] = all.skip(i * _pageSize).take(_pageSize).toList();
         }
         _loading.clear();
+      _failedPages.clear();
         _folding = const {};
       });
       widget.onTotal?.call(total);
@@ -569,6 +576,7 @@ class MessageListState extends State<MessageList>
         widget.group,
       );
       _loading.clear();
+      _failedPages.clear();
       _folding = const {};
     });
     (_lastLists[widget.source] ??= {})[_shown!] = (
@@ -680,6 +688,8 @@ class MessageListState extends State<MessageList>
       final i = index % _pageSize;
       return i < rows.length ? rows[i] : null;
     }
+    // A page that failed waits for its Try again, not for the next frame.
+    if (_failedPages.contains(page)) return null;
     if (_loading.add(page)) {
       final gen = _generation;
       widget.source
@@ -703,8 +713,10 @@ class MessageListState extends State<MessageList>
             },
             onError: (Object _) {
               if (!mounted || gen != _generation) return;
-              // Not asked again on every frame: Try again asks.
-              setState(() => _failed = true);
+              setState(() {
+                _loading.remove(page);
+                _failedPages.add(page);
+              });
             },
           );
     }
@@ -738,12 +750,16 @@ class MessageListState extends State<MessageList>
   int get _itemCount =>
       _sections.fold(0, (sum, s) => sum + (_headless(s) ? 0 : 1) + s.count);
 
+  /// Reads one page again after it failed.
+  void _retryPage(int page) => setState(() => _failedPages.remove(page));
+
   /// Reads the list again after a failure.
   void _retry() {
     setState(() {
       _failed = false;
       _pages.clear();
       _loading.clear();
+      _failedPages.clear();
       _generation++;
     });
     reload();
@@ -921,7 +937,18 @@ class MessageListState extends State<MessageList>
               }
               if (_hiddenNotice(item.row)) return const SizedBox.shrink();
               final row = _row(item.row);
-              if (row == null) return const _RowPlaceholder();
+              if (row == null) {
+                final page = item.row ~/ _pageSize;
+                // A page that failed says so on its first row.
+                if (_failedPages.contains(page) &&
+                    item.row == page * _pageSize) {
+                  return _PageFailed(
+                    phone: widget.phone,
+                    onRetry: () => _retryPage(page),
+                  );
+                }
+                return const _RowPlaceholder();
+              }
               final run = _noticeRun(item.row);
               if (_groupNotices &&
                   run.isNotEmpty &&
@@ -1464,6 +1491,41 @@ class _SyncPlaceholderState extends State<SyncPlaceholder>
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// In place of a page of rows that could not be read: what happened, and
+/// Try again, in the row's own height.
+class _PageFailed extends StatelessWidget {
+  const _PageFailed({required this.onRetry, this.phone = false});
+
+  final VoidCallback onRetry;
+  final bool phone;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: phone ? 20 : 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              l.listFailed,
+              style: PiumaType.small.copyWith(color: c.muted),
+            ),
+          ),
+          const SizedBox(width: 12),
+          PiumaButton(
+            label: l.tryAgain,
+            kind: PiumaButtonKind.secondary,
+            size: PiumaButtonSize.compact,
+            onPressed: onRetry,
+          ),
+        ],
       ),
     );
   }

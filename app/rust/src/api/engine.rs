@@ -1527,6 +1527,74 @@ async fn wait_for_credentials(
 }
 
 #[cfg(test)]
+mod seen_rollback_tests {
+    use super::*;
+    use piuma_core::model::ReplyInfo;
+    use piuma_core::{Flags, ListInfo, Security, Server};
+
+    fn message(account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
+        MessageSummary {
+            account,
+            mailbox: mailbox.into(),
+            uid,
+            from_name: "Julia".into(),
+            from_email: "julia@example.org".into(),
+            to: String::new(),
+            subject: format!("Message {uid}"),
+            preview: String::new(),
+            received_at: 1_000 + uid as i64,
+            flags: Flags::default(),
+            reply: ReplyInfo::default(),
+            list: ListInfo::default(),
+        }
+    }
+
+    /// Marked read in two folders; the server took the first and refused
+    /// the second: only the second goes back to unread and leaves the
+    /// queue.
+    #[test]
+    fn a_failed_push_undoes_only_the_folders_the_server_did_not_take() {
+        let mut store = Store::open_in_memory().unwrap();
+        let server = Server {
+            host: "127.0.0.1".into(),
+            port: 1,
+            security: Security::None,
+        };
+        let id = store
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Test".into(),
+                email: "me@example.org".into(),
+                sender_name: String::new(),
+                color: "#2F8F83".into(),
+                kind: AccountKind::Imap {
+                    imap: server.clone(),
+                    smtp: server,
+                    username: "me".into(),
+                },
+            })
+            .unwrap();
+        store
+            .upsert_messages(&[message(id, "INBOX", 1), message(id, "Work", 2)])
+            .unwrap();
+        let list = vec![("INBOX".to_owned(), 1), ("Work".to_owned(), 2)];
+        for (mailbox, uid) in &list {
+            store.set_seen(id, mailbox, *uid, true).unwrap();
+            store
+                .queue_change(id, mailbox, *uid, Change::Seen(true))
+                .unwrap();
+        }
+        // The inbox went through and was settled, as the push does.
+        store.settle_seen(id, "INBOX", &[1], true).unwrap();
+        undo_seen(&store, id, &list, &["INBOX".to_owned()], true).unwrap();
+        let seen = |m: &str, u| store.message(id, m, u).unwrap().unwrap().flags.seen;
+        assert!(seen("INBOX", 1), "delivered: stays read");
+        assert!(!seen("Work", 2), "not delivered: back to unread");
+        assert!(store.pending_changes(id).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod watcher_supervision_tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3943,11 +4011,13 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
     let mut result = Ok(());
     for (account_id, list) in by_account {
         let id = AccountId(account_id);
+        // Folders whose server took the change, in case a later one fails.
+        let mut delivered: Vec<String> = Vec::new();
         let pushed = async {
             let (account, password) = signed_in(id)?;
             let shared = engine.store.clone();
             let list = list.clone();
-            engine
+            let (done, sent) = engine
                 .runtime
                 .spawn(async move {
                     let mut by_folder: std::collections::BTreeMap<String, Vec<u32>> =
@@ -3955,40 +4025,56 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
                     for (mailbox, uid) in list {
                         by_folder.entry(mailbox).or_default().push(uid);
                     }
+                    let mut done = Vec::new();
                     let pushed = async {
                         let mut conn = Remote::open(&account, &password).await?;
                         for (mailbox, uids) in &by_folder {
                             conn.set_seen(&shared, id, mailbox, uids, seen).await?;
                             let store = shared.lock().unwrap_or_else(|e| e.into_inner());
                             store.settle_seen(id, mailbox, uids, seen)?;
+                            done.push(mailbox.clone());
                         }
                         conn.close().await;
                         Ok::<_, RemoteError>(())
                     }
                     .await;
-                    match pushed {
+                    let pushed = match pushed {
                         // Queued already: it goes out once the server can
                         // be reached.
                         Err(e) if e.is_offline() => Ok(()),
                         other => other,
-                    }
+                    };
+                    (done, pushed)
                 })
                 .await
-                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
-                .map_err(EngineError::from)
+                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
+            delivered = done;
+            sent.map_err(EngineError::from)
         }
         .await;
         if let Err(e) = pushed {
-            // Not done: out of the queue, and back as it was here.
-            let store = store()?;
-            for (mailbox, uid) in &list {
-                store.settle_seen(id, mailbox, &[*uid], seen)?;
-                store.set_seen(id, mailbox, *uid, !seen)?;
-            }
+            undo_seen(&store()?, id, &list, &delivered, seen)?;
             result = Err(e);
         }
     }
     result
+}
+
+/// A read or unread change that didn't reach the server: out of the queue,
+/// and back as it was here, for every message but those in `delivered`,
+/// folders whose server already took it.
+fn undo_seen(
+    store: &Store,
+    id: AccountId,
+    list: &[(String, u32)],
+    delivered: &[String],
+    seen: bool,
+) -> Result<(), piuma_core::StoreError> {
+    for (mailbox, uid) in list.iter().filter(|(m, _)| !delivered.contains(m)) {
+        store.settle_seen(id, mailbox, &[*uid], seen)?;
+        store.set_seen(id, mailbox, *uid, !seen)?;
+    }
+    Ok(())
 }
 
 /// Where a message goes.
