@@ -83,12 +83,29 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
       _code = code;
       _step = _Scan.password;
       _error = null;
+      _server = null;
+      _checking = true;
+    });
+    _checkServer(code);
+  }
+
+  /// Where the password goes, shown before it is typed: anyone can print
+  /// a code, so the address's own settings come first.
+  InviteServer? _server;
+  bool _checking = false;
+
+  Future<void> _checkServer(ScannedPair code) async {
+    final server = await widget.source.inviteServer(code);
+    if (!mounted || _code != code) return;
+    setState(() {
+      _server = server;
+      _checking = false;
     });
   }
 
   Future<void> _link() async {
     final code = _code;
-    if (code == null || _password.text.isEmpty || _busy) return;
+    if (code == null || _password.text.isEmpty || _busy || _checking) return;
     final l = AppLocalizations.of(context);
     setState(() {
       _busy = true;
@@ -345,6 +362,10 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
             style: PiumaType.body.copyWith(fontSize: 15, color: c.fg),
           ),
         ),
+        if (_checking || _server != null) ...[
+          const SizedBox(height: 10),
+          _ServerLine(server: _server),
+        ],
         const SizedBox(height: 14),
         PiumaTextField(
           label: l.password,
@@ -385,9 +406,70 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
         PiumaButton(
           label: _busy ? l.pairLinking : l.pairLink,
           size: PiumaButtonSize.large,
-          onPressed: _password.text.isEmpty || _busy ? null : _link,
+          onPressed: _password.text.isEmpty || _busy || _checking
+              ? null
+              : _link,
         ),
       ],
+    );
+  }
+}
+
+/// "Signs in at imap.example.org", under the address; in the warning
+/// color, with a word of caution, when the server comes from the code.
+class _ServerLine extends StatelessWidget {
+  const _ServerLine({required this.server});
+
+  /// Null while it is being checked.
+  final InviteServer? server;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final s = server;
+    final fromCode = s?.fromCode ?? false;
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: PiumaIconView(
+              fromCode ? PiumaIcon.warning : PiumaIcon.server,
+              size: 16,
+              color: fromCode ? c.warn : c.muted,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  s == null ? l.pairServerChecking : l.pairServer(s.host),
+                  style: PiumaType.body.copyWith(
+                    fontSize: 13,
+                    fontWeight: s == null ? null : FontWeight.w500,
+                    color: s == null ? c.muted : c.fg,
+                  ),
+                ),
+                if (fromCode) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    l.pairServerFromCode,
+                    style: PiumaType.body.copyWith(
+                      fontSize: 13,
+                      color: c.muted,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

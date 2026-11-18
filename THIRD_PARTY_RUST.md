@@ -107,6 +107,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [displaydoc](https://github.com/yaahc/displaydoc) | 0.2.7 | MIT OR Apache-2.0 |
 | [dtoa](https://github.com/dtolnay/dtoa) | 1.0.11 | MIT OR Apache-2.0 |
 | [dtoa-short](https://github.com/upsuper/dtoa-short) | 0.3.5 | MPL-2.0 |
+| [ed25519](https://github.com/RustCrypto/signatures) | 3.0.0 | Apache-2.0 OR MIT |
+| [ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek) | 3.0.0 | BSD-3-Clause |
 | [ego-tree](https://github.com/rust-scraper/ego-tree) | 0.11.0 | ISC |
 | [either](https://github.com/rayon-rs/either) | 1.19.0 | MIT OR Apache-2.0 |
 | [email-encoding](https://github.com/lettre/email-encoding) | 0.4.3 | MIT OR Apache-2.0 |
@@ -370,6 +372,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [sha2](https://github.com/RustCrypto/hashes) | 0.10.9 | MIT OR Apache-2.0 |
 | [sha2](https://github.com/RustCrypto/hashes) | 0.11.1 | MIT OR Apache-2.0 |
 | [signal-hook-registry](https://github.com/vorner/signal-hook) | 1.4.8 | MIT OR Apache-2.0 |
+| [signature](https://github.com/RustCrypto/traits) | 3.0.0 | Apache-2.0 OR MIT |
 | [simd-adler32](https://github.com/mcountryman/simd-adler32) | 0.3.10 | MIT |
 | [simd_cesu8](https://github.com/seancroach/simd_cesu8) | 1.2.0 | Apache-2.0 OR MIT |
 | [simdutf8](https://github.com/rusticstuff/simdutf8) | 0.1.5 | MIT OR Apache-2.0 |

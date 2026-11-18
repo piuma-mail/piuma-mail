@@ -4297,6 +4297,14 @@ class AppLocalizationsPt extends AppLocalizations {
       'Estas palavras não abrem seu espaço. Confira-as e tente de novo.';
 
   @override
+  String get pairPhraseOld =>
+      'Esta frase de recuperação foi substituída: seu espaço recebeu uma mais nova quando um dispositivo foi desvinculado ou desativou a sincronização. Use a frase mais recente, ou um código de um dispositivo vinculado.';
+
+  @override
+  String get pairConflict =>
+      'Dois dos seus dispositivos removeram um ao outro, por isso ainda não é possível entrar neste espaço. Altere a senha da caixa de correio que o guarda, sincronize um dispositivo que você ainda tem e tente de novo.';
+
+  @override
   String get pairContinue => 'Continuar';
 
   @override
@@ -6342,6 +6350,214 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante';
+
+  @override
+  String syncHeldTitle(String email) {
+    return '$email foi removida em outro dispositivo';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Aqui ela ainda tem $what. Remover também deste dispositivo ou manter em todos?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails esperando para serem enviados',
+      one: '1 email esperando para ser enviado',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count rascunhos ainda não salvos no servidor',
+      one: '1 rascunho ainda não salvo no servidor',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count alterações que ainda não estão no servidor',
+      one: '1 alteração que ainda não está no servidor',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'A caixa dela guarda seu espaço de sincronização, então ela fica aqui. Mantenha-a ou mova antes o espaço para outra caixa.';
+
+  @override
+  String get syncHeldRemove => 'Remover aqui';
+
+  @override
+  String get syncHeldKeep => 'Manter';
+
+  @override
+  String get syncRollbackTitle =>
+      'Uma cópia mais antiga do seu espaço foi ignorada';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Alguém com acesso a $email, ou um dispositivo que você desvinculou, pode tê-la colocado de volta. Nada foi aproveitado dela. Se acontecer de novo, troque a senha dessa caixa.';
+  }
+
+  @override
+  String get syncOutdatedTitle =>
+      'Atualize o Piuma para sincronizar as alterações deste dispositivo';
+
+  @override
+  String get syncOutdatedBody =>
+      'Outro dispositivo salvou seu espaço com uma versão mais nova. Este continua recebendo alterações e guarda as suas até ser atualizado.';
+
+  @override
+  String get syncExposedTitle => 'Troque estas senhas';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name não consegue mais ler seu espaço, mas ainda conhece as senhas destas caixas. Troque-as no seu provedor para deixá-lo fora do seu email também.';
+  }
+
+  @override
+  String get syncExposedDone => 'Entendi';
+
+  @override
+  String get syncPaused => 'Pausada neste dispositivo';
+
+  @override
+  String get syncConfirmTitle => 'Confirme este dispositivo';
+
+  @override
+  String get syncConfirmBody =>
+      'O Piuma agora verifica quais dispositivos fazem parte do seu espaço. Até você confirmar este com sua frase de recuperação, ou com um código de um dispositivo já atualizado, nada é sincronizado aqui.';
+
+  @override
+  String get syncConfirm => 'Confirmar';
+
+  @override
+  String get syncConflictTitle => 'Dois dispositivos removeram um ao outro';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names removeram um ao outro do seu espaço, e um deles pode não ser mais seu. A sincronização parou neste dispositivo: vincule-o de novo a partir de um dispositivo que você ainda tem.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Vincular de novo';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name removeu este dispositivo';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'A sincronização parou neste dispositivo; as contas e os e-mails dele ficam aqui. Se não foi você, vincule-o de novo a partir de um dispositivo que você ainda tem. Caso contrário, desative a sincronização aqui.';
+
+  @override
+  String get syncExposedNowTitle => 'Troque estas senhas agora';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name ainda conhece estas senhas. Comece por $email: até a senha dela mudar, $name ainda consegue chegar à pasta que guarda seu espaço.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Já troquei';
+
+  @override
+  String get syncExposedFirst => 'Primeiro: guarda seu espaço';
+
+  @override
+  String get syncFailRollback =>
+      'Esta caixa só tem uma cópia mais antiga do seu espaço. Nada foi alterado.';
+
+  @override
+  String get syncFailOutdated =>
+      'Seu espaço foi salvo por uma versão mais nova do Piuma. Atualize o Piuma neste dispositivo.';
+
+  @override
+  String pairServer(String host) {
+    return 'Entra em $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'Este servidor vem do código, não das configurações do seu provedor. Confira se é do seu provedor antes de digitar a senha.';
+
+  @override
+  String get pairServerChecking => 'Verificando o servidor…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Seu celular disse que não era você.',
+      'tablet': 'Seu tablet disse que não era você.',
+      'other': 'Seu computador disse que não era você.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Abra o Piuma no seu celular e digite o código.',
+      'tablet': 'Abra o Piuma no seu tablet e digite o código.',
+      'other': 'Abra o Piuma no seu computador e digite o código.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Aguardando seu celular confirmar…',
+      'tablet': 'Aguardando seu tablet confirmar…',
+      'other': 'Aguardando seu computador confirmar…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Seu celular vai mostrar “$title”',
+      'tablet': 'Seu tablet vai mostrar “$title”',
+      'other': 'Seu computador vai mostrar “$title”',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'Por segurança, confirme em um dispositivo já vinculado: seu celular, ativo $ago.',
+      'tablet':
+          'Por segurança, confirme em um dispositivo já vinculado: seu tablet, ativo $ago.',
+      'other':
+          'Por segurança, confirme em um dispositivo já vinculado: seu computador, ativo $ago.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Anote sua nova frase de recuperação';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Seu espaço ganhou uma nova chave e uma nova frase de recuperação, porque um dispositivo saiu ou dois foram desvinculados ao mesmo tempo. A que você anotou não funciona mais.';
 
   @override
   String get saveSearch => 'Guardar pesquisa';
