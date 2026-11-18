@@ -1590,6 +1590,22 @@ class AppLocalizationsPt extends AppLocalizations {
       'A ligação caiu durante o envio. Veja em Enviados antes de o enviar outra vez.';
 
   @override
+  String get outboxRedirectTitle => 'Redirecionamento em espera';
+
+  @override
+  String get outboxRedirectLine => 'Redirecionado sem alterações';
+
+  @override
+  String get outboxRedirectBody =>
+      'Um redirecionamento segue tal como o email chegou, por isso não há nada para editar. Cancele-o ou tente enviá-lo outra vez.';
+
+  @override
+  String get outboxCancelRedirect => 'Cancelar redirecionamento';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirecionamento cancelado';
+
+  @override
   String get dataProblemTitle => 'O Piuma não conseguiu abrir os seus dados';
 
   @override

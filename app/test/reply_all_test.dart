@@ -662,6 +662,130 @@ void main() {
     expect(source.sent, isEmpty);
   });
 
+  /// Redirects the open message to eve@example.org while offline: it
+  /// waits in the Outbox once its Undo window is over.
+  Future<DemoMailSource> redirectOffline(
+    WidgetTester tester, {
+    bool phone = false,
+  }) async {
+    final source = await _pump(
+      tester,
+      size: phone ? const Size(390, 844) : const Size(1440, 900),
+    );
+    source.offline = true;
+    if (phone) {
+      await tester.tap(find.text('Mockup v3 review'));
+      await tester.pumpAndSettle();
+    } else {
+      await _open(tester, 'Mockup v3 review');
+    }
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Redirect').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'eve@example.org');
+    await tester.pump();
+    await tester.tap(find.text('Redirect').last);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect((await source.outbox(null)).single.redirect, isTrue);
+    if (phone) {
+      // Back from the email to the list, as the system's Back does.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+    }
+    // Its row says what it is: it has no text of its own.
+    expect(
+      find.widgetWithText(OutboxTile, 'Redirected unchanged'),
+      findsOneWidget,
+    );
+    return source;
+  }
+
+  for (final phone in [false, true]) {
+    final where = phone ? 'phone' : 'desktop';
+    testWidgets('$where: a Redirect in the Outbox never opens in compose', (
+      tester,
+    ) async {
+      final source = await redirectOffline(tester, phone: phone);
+      await tester.tap(find.byType(OutboxTile));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsNothing);
+      expect(find.text('Redirect waiting'), findsOneWidget);
+      expect(find.text('Cancel redirect'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      // Dismissed, it stays as it was.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect((await source.outbox(null)).single.redirect, isTrue);
+      expect(find.byType(ComposePane), findsNothing);
+    });
+
+    testWidgets('$where: Cancel redirect takes it out, nothing sent', (
+      tester,
+    ) async {
+      final source = await redirectOffline(tester, phone: phone);
+      await tester.tap(find.byType(OutboxTile));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel redirect'));
+      await tester.pumpAndSettle();
+      expect(await source.outbox(null), isEmpty);
+      expect(find.byType(OutboxTile), findsNothing);
+      expect(find.text('Redirect cancelled'), findsOneWidget);
+      source.goOnline();
+      await tester.pumpAndSettle();
+      expect(source.sent, isEmpty);
+    });
+
+    testWidgets('$where: Try again sends the same Redirect', (tester) async {
+      final source = await redirectOffline(tester, phone: phone);
+      final id = (await source.outbox(null)).single.id;
+      source.offline = false;
+      await tester.tap(find.byType(OutboxTile));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(source.retried, [id]);
+      expect(find.text('Redirected to eve@example.org'), findsOneWidget);
+      expect(await source.outbox(null), isEmpty);
+      expect(source.sent.single.to, ['eve@example.org']);
+      expect(find.byType(ComposePane), findsNothing);
+    });
+  }
+
+  testWidgets('Redirect refused: Try again keeps it in the Outbox', (
+    tester,
+  ) async {
+    final source = await _pump(tester);
+    source.failNextSend = const SendException(SendError.other, '550 no');
+    await _open(tester, 'Mockup v3 review');
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Redirect'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'eve@example.org');
+    await tester.pump();
+    await tester.tap(find.text('Redirect').last);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Couldn’t redirect the email. Check the addresses and the connection.',
+      ),
+      findsOneWidget,
+    );
+    final id = (await source.outbox(null)).single.id;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    // The same message again, never a second one, never compose.
+    expect(source.retried, [id]);
+    expect(source.redirected, hasLength(1));
+    expect(find.byType(ComposePane), findsNothing);
+    expect(source.sent.single.to, ['eve@example.org']);
+  });
+
   testWidgets('Redirect: names with a comma, and a wrong address said', (
     tester,
   ) async {

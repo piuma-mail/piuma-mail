@@ -1040,10 +1040,16 @@ class OutboxItem {
     this.sendAt,
     this.state = OutboxState.waiting,
     this.undo = false,
+    this.redirect = false,
   });
 
   final int id;
   final int accountId;
+
+  /// A Redirect: the email as it came, with nothing of its own to edit.
+  /// It never opens in compose; it is cancelled or tried again
+  /// ([MailSource.cancelOutgoing], [MailSource.retryOutgoing]).
+  final bool redirect;
 
   /// Where it stands: waiting, on its way, refused, or maybe sent.
   final OutboxState state;
@@ -1082,6 +1088,7 @@ class OutboxItem {
     sendAt: clearSendAt ? null : sendAt,
     state: state ?? this.state,
     undo: undo ?? this.undo,
+    redirect: redirect,
   );
 
   /// Who it goes to, by name where there is one.
@@ -2334,7 +2341,7 @@ abstract class MailSource {
   /// Redirect: [row] unchanged, with Resent-* headers on top, to [to],
   /// from the account (or the alias it was written to). It goes through
   /// the outbox like any message, after [window] (Undo takes it back with
-  /// [reopenOutgoing]); returns its id there, for [deliver]. Throws
+  /// [cancelOutgoing]); returns its id there, for [deliver]. Throws
   /// [SendException] for an address that isn't one.
   Future<int> redirect(MailRow row, List<String> to, Duration window) =>
       Future.error(UnsupportedError('no redirect'));
@@ -2780,8 +2787,21 @@ abstract class MailSource {
   /// Mail waiting to go, oldest first: one account's, or every account's.
   Future<List<OutboxItem>> outbox(int? accountId);
 
-  /// Takes a message back out of the outbox, to edit it.
+  /// Takes a message back out of the outbox, to edit it. Never a
+  /// Redirect ([OutboxItem.redirect]), which has nothing to edit: that
+  /// throws and the Redirect stays.
   Future<Draft> reopenOutgoing(int id);
+
+  /// Deletes a message from the outbox without sending it: Undo of a
+  /// Redirect, or Cancel in the Outbox. Throws when it is on its way.
+  Future<void> cancelOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
+
+  /// Sends a message of the outbox again now (waiting, refused, or maybe
+  /// sent, when the person says so); [deliver] then says what became of
+  /// it. Throws when it is on its way or gone.
+  Future<void> retryOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
 
   /// How many drafts every account keeps.
   Future<int> draftCount();

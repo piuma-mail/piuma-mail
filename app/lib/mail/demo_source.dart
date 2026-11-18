@@ -3470,10 +3470,23 @@ class DemoMailSource extends MailSource {
     }
     final bare = [for (final t in to) bareAddress(t)];
     redirected.add((row, bare));
-    return sendWithUndo(
+    final id = await sendWithUndo(
       Draft(accountId: row.accountId, to: bare, subject: row.subject),
       window,
     );
+    final i = _outbox.indexWhere((o) => o.id == id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: row.accountId,
+      to: bare,
+      subject: row.subject,
+      body: '',
+      queuedAt: _outbox[i].queuedAt,
+      sendAt: _outbox[i].sendAt,
+      undo: true,
+      redirect: true,
+    );
+    return id;
   }
 
   @override
@@ -4463,11 +4476,48 @@ class DemoMailSource extends MailSource {
     if (i < 0 || _outbox[i].state == OutboxState.sending) {
       throw StateError('not in the outbox');
     }
+    // A Redirect has nothing to edit: it stays, as the engine keeps it.
+    if (_outbox[i].redirect) throw StateError('a redirect');
     _outbox.removeAt(i);
     _undoWindows.remove(id);
     final draft = _outboxDrafts.remove(id)!;
     _changes.add(null);
     return draft;
+  }
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    _outbox.removeAt(i);
+    _undoWindows.remove(id);
+    _outboxDrafts.remove(id);
+    _changes.add(null);
+  }
+
+  /// Messages tried again from the Outbox, for tests.
+  final List<int> retried = [];
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    retried.add(id);
+    _undoWindows.remove(id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: _outbox[i].accountId,
+      to: _outbox[i].to,
+      subject: _outbox[i].subject,
+      body: _outbox[i].body,
+      queuedAt: _outbox[i].queuedAt,
+      redirect: _outbox[i].redirect,
+    );
+    _changes.add(null);
   }
 
   void _deliver(Draft draft) {

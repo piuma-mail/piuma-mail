@@ -1595,6 +1595,22 @@ class AppLocalizationsFr extends AppLocalizations {
       'La connexion a été coupée pendant l’envoi. Vérifiez dans Envoyés avant de le renvoyer.';
 
   @override
+  String get outboxRedirectTitle => 'Redirection en attente';
+
+  @override
+  String get outboxRedirectLine => 'Redirigé sans modification';
+
+  @override
+  String get outboxRedirectBody =>
+      'Une redirection part telle que l’e-mail est arrivé : il n’y a rien à modifier. Annulez-la ou réessayez de l’envoyer.';
+
+  @override
+  String get outboxCancelRedirect => 'Annuler la redirection';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirection annulée';
+
+  @override
   String get dataProblemTitle => 'Piuma n’a pas pu ouvrir ses données';
 
   @override

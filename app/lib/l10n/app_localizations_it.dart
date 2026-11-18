@@ -1588,6 +1588,22 @@ class AppLocalizationsIt extends AppLocalizations {
       'La connessione si è interrotta durante l’invio. Controlla in Inviati prima di inviarlo di nuovo.';
 
   @override
+  String get outboxRedirectTitle => 'Inoltro diretto in attesa';
+
+  @override
+  String get outboxRedirectLine => 'Inoltrata senza modifiche';
+
+  @override
+  String get outboxRedirectBody =>
+      'Un inoltro diretto parte com’è arrivata l’email, quindi non c’è niente da modificare. Annullalo o prova a inviarlo di nuovo.';
+
+  @override
+  String get outboxCancelRedirect => 'Annulla inoltro';
+
+  @override
+  String get outboxRedirectCancelled => 'Inoltro annullato';
+
+  @override
   String get dataProblemTitle => 'Piuma non è riuscita ad aprire i suoi dati';
 
   @override

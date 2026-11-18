@@ -335,6 +335,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     assert!(outbox::send(
@@ -399,6 +400,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
         saved: Some(("Drafts".into(), 7)),
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
 
@@ -461,6 +463,7 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
             saved: None,
             send_at: Some(send_at),
             undo: false,
+            redirect: false,
         };
         store.lock().unwrap().queue_outgoing(&out, now).unwrap()
     };
@@ -699,6 +702,7 @@ async fn a_broken_reply_after_the_message_is_may_have_been_sent_not_resent() {
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     for _ in 0..3 {
@@ -738,6 +742,7 @@ async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     store.lock().unwrap().queue_outgoing(&out, 1_000).unwrap();
     for _ in 0..2 {

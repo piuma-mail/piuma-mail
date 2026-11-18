@@ -1581,6 +1581,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'The connection broke as it went. Check Sent before sending it again.';
 
   @override
+  String get outboxRedirectTitle => 'Redirect waiting';
+
+  @override
+  String get outboxRedirectLine => 'Redirected unchanged';
+
+  @override
+  String get outboxRedirectBody =>
+      'A redirect goes as the email came, so there’s nothing to edit. Cancel it, or try sending it again.';
+
+  @override
+  String get outboxCancelRedirect => 'Cancel redirect';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirect cancelled';
+
+  @override
   String get dataProblemTitle => 'Piuma couldn’t open its data';
 
   @override

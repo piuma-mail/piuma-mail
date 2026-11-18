@@ -1590,6 +1590,22 @@ class AppLocalizationsEs extends AppLocalizations {
       'La conexión se cortó al enviarlo. Mira en Enviados antes de enviarlo otra vez.';
 
   @override
+  String get outboxRedirectTitle => 'Redirección en espera';
+
+  @override
+  String get outboxRedirectLine => 'Redirigido sin cambios';
+
+  @override
+  String get outboxRedirectBody =>
+      'Una redirección sale tal como llegó el correo, así que no hay nada que editar. Cancélala o intenta enviarla otra vez.';
+
+  @override
+  String get outboxCancelRedirect => 'Cancelar redirección';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirección cancelada';
+
+  @override
   String get dataProblemTitle => 'Piuma no pudo abrir sus datos';
 
   @override

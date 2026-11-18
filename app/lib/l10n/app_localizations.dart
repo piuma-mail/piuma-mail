@@ -2530,6 +2530,36 @@ abstract class AppLocalizations {
   /// **'The connection broke as it went. Check Sent before sending it again.'**
   String get outboxMaybeSentCheck;
 
+  /// No description provided for @outboxRedirectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect waiting'**
+  String get outboxRedirectTitle;
+
+  /// No description provided for @outboxRedirectLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirected unchanged'**
+  String get outboxRedirectLine;
+
+  /// No description provided for @outboxRedirectBody.
+  ///
+  /// In en, this message translates to:
+  /// **'A redirect goes as the email came, so there’s nothing to edit. Cancel it, or try sending it again.'**
+  String get outboxRedirectBody;
+
+  /// No description provided for @outboxCancelRedirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel redirect'**
+  String get outboxCancelRedirect;
+
+  /// No description provided for @outboxRedirectCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Redirect cancelled'**
+  String get outboxRedirectCancelled;
+
   /// No description provided for @dataProblemTitle.
   ///
   /// In en, this message translates to:

@@ -222,6 +222,7 @@ pub async fn redirect_message(
         saved: None,
         send_at: Some(send_at),
         undo: true,
+        redirect: true,
     };
     let queued = store()?.queue_outgoing(&out, now)?;
     send_outbox_at(id, send_at)?;

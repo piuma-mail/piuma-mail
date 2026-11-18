@@ -1056,7 +1056,10 @@ impl Client {
             // out, so a failed send leaves it where the person can find it.
             _ => self.import(raw, &drafts, &["$draft", "$seen"]).await?,
         };
-        let identity = self.identity(from).await?;
+        // The envelope goes from the identity's own address: one the
+        // server lets this account send as, which an alias without an
+        // identity of its own is not.
+        let (identity, mail_from) = self.identity(from).await?;
         let rcpt: Vec<Value> = recipients.iter().map(|r| json!({ "email": r })).collect();
         let (drafts_id, sent_id) = (self.remote(&drafts)?, self.remote(&sent)?);
         let [submitted] = self
@@ -1066,7 +1069,7 @@ impl Client {
                     "accountId": self.account_id,
                     "create": { "send": {
                         "identityId": identity, "emailId": email,
-                        "envelope": { "mailFrom": { "email": from }, "rcptTo": rcpt },
+                        "envelope": { "mailFrom": { "email": mail_from }, "rcptTo": rcpt },
                     } },
                     "onSuccessUpdateEmail": { "#send": {
                         format!("mailboxIds/{drafts_id}"): null,
@@ -1273,8 +1276,13 @@ impl Client {
             .ok_or_else(|| not_done(&imported, "notCreated"))
     }
 
-    /// The identity that sends as `from`, else the first one.
-    async fn identity(&mut self, from: &str) -> Result<String> {
+    /// The identity that sends as `from` (its own, or a wildcard
+    /// `*@domain` one for its domain), else the login's, else the first
+    /// one; and the address the envelope goes from with it: `from` when
+    /// the identity covers it, the identity's own address otherwise, which
+    /// the server lets the account send as (an alias without an identity
+    /// of its own would be `forbiddenMailFrom`).
+    async fn identity(&mut self, from: &str) -> Result<(String, String)> {
         let [got] = self
             .call([(
                 "Identity/get",
@@ -1282,16 +1290,42 @@ impl Client {
             )])
             .await?;
         let list = got["list"].as_array().cloned().unwrap_or_default();
-        list.iter()
-            .find(|i| {
-                i["email"]
-                    .as_str()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(from))
-            })
+        let email = |i: &Value| i["email"].as_str().unwrap_or_default().to_owned();
+        let covers = |identity: &Value, address: &str| {
+            let e = email(identity);
+            e.eq_ignore_ascii_case(address)
+                || e.strip_prefix("*@").is_some_and(|domain| {
+                    address
+                        .rsplit_once('@')
+                        .is_some_and(|(_, d)| d.eq_ignore_ascii_case(domain))
+                })
+        };
+        let login = self.config.username.clone();
+        let (identity, mail_from) = if let Some(i) = list.iter().find(|i| covers(i, from)) {
+            (i, from.to_owned())
+        } else if let Some(i) = list
+            .iter()
+            .find(|i| !login.is_empty() && covers(i, &login))
             .or(list.first())
-            .and_then(|i| i["id"].as_str())
+        {
+            let e = email(i);
+            let mail_from = if e.starts_with("*@") && covers(i, &login) {
+                // A wildcard has no one address of its own: the login's.
+                login.clone()
+            } else if e.is_empty() || e.starts_with("*@") {
+                from.to_owned()
+            } else {
+                e
+            };
+            (i, mail_from)
+        } else {
+            return Err(JmapError::Protocol("no identity to send as".into()));
+        };
+        let id = identity["id"]
+            .as_str()
             .map(str::to_owned)
-            .ok_or_else(|| JmapError::Protocol("no identity to send as".into()))
+            .ok_or_else(|| JmapError::Protocol("no identity to send as".into()))?;
+        Ok((id, mail_from))
     }
 
     /// Every message id in one folder, newest first; past the page cap

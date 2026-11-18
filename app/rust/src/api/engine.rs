@@ -3472,6 +3472,7 @@ fn queue_draft(
         saved,
         send_at,
         undo,
+        redirect: false,
     };
     let id = store()?.queue_outgoing(&out, now_secs())?;
     Ok(Queued {
@@ -3699,6 +3700,10 @@ pub struct OutboxItem {
     pub state: OutboxState,
     /// Sent with Undo: [send_at] ends the Undo window.
     pub undo: bool,
+    /// A Redirect: the message as it came, with nothing of its own to
+    /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+    /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+    pub redirect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3734,6 +3739,7 @@ pub fn outbox(account_id: Option<i64>) -> Result<Vec<OutboxItem>, EngineError> {
                 outbox::State::Unknown => OutboxState::MaybeSent,
             },
             undo: w.undo,
+            redirect: w.redirect,
         })
         .collect())
 }
@@ -3755,8 +3761,12 @@ fn take_outgoing(id: i64) -> Result<Outgoing, EngineError> {
 }
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 pub fn reopen_outgoing(id: i64) -> Result<OutgoingMessage, EngineError> {
+    if store()?.outgoing(id)?.is_some_and(|o| o.redirect) {
+        return Err(EngineError::new(ErrorKind::Other, "a redirect"));
+    }
     let out = take_outgoing(id)?;
     let d = out.draft;
     Ok(OutgoingMessage {
@@ -3805,6 +3815,22 @@ pub fn send_outbox_now() -> Result<(), EngineError> {
 /// being sent.
 pub fn delete_outgoing(id: i64) -> Result<(), EngineError> {
     take_outgoing(id).map(|_| ())
+}
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+pub fn retry_outgoing(id: i64) -> Result<(), EngineError> {
+    let store = store()?;
+    let Some(out) = store.outgoing(id)? else {
+        return Err(EngineError::new(ErrorKind::Other, "already sent"));
+    };
+    if !store.retry_outgoing(id)? {
+        return Err(EngineError::new(ErrorKind::Other, "being sent"));
+    }
+    drop(store);
+    send_outbox_at(out.account, now_secs())
 }
 
 /// Accounts whose outbox is being sent by this process: one batch at a

@@ -1533,6 +1533,16 @@ impl Store {
         if !envelope {
             tx.execute_batch("ALTER TABLE message ADD COLUMN envelope TEXT")?;
         }
+        // A Redirect waiting in the outbox: the message as it came, with no
+        // body or files of its own to edit, so it is never reopened.
+        let redirect: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('outbox') WHERE name = 'redirect')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !redirect {
+            tx.execute_batch("ALTER TABLE outbox ADD COLUMN redirect INTEGER NOT NULL DEFAULT 0")?;
+        }
         // A change the server refused waits before it is tried again, and
         // is given up only after failing for a day (pending.rs). Added
         // here rather than in MIGRATIONS, like those above, so it holds
@@ -4125,9 +4135,10 @@ impl Store {
         tx.execute(
             "INSERT INTO outbox (account, from_name, from_email, to_list, cc_list, bcc_list,
                  subject, body, in_reply_to, refs, signature, message_id, mail_from,
-                 recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo)
+                 recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo,
+                 redirect)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21)",
+                 ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 out.account.0,
                 d.from_name,
@@ -4150,6 +4161,7 @@ impl Store {
                 out.send_at,
                 crate::rich::encode(&d.marks).unwrap_or_default(),
                 out.undo,
+                out.redirect,
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -4167,7 +4179,8 @@ impl Store {
     /// The outbox, oldest first: one account's, or every account's.
     pub fn outbox(&self, account: Option<AccountId>) -> Result<Vec<Waiting>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, account, to_list, subject, body, queued_at, error, send_at, state, undo
+            "SELECT id, account, to_list, subject, body, queued_at, error, send_at, state, undo,
+                    redirect
                FROM outbox
               WHERE (?1 IS NULL OR account = ?1) AND state NOT IN ('unfiled', 'filing')
               ORDER BY id",
@@ -4184,6 +4197,7 @@ impl Store {
                 send_at: r.get(7)?,
                 state: crate::outbox::State::from_column(&r.get::<_, String>(8)?),
                 undo: r.get(9)?,
+                redirect: r.get(10)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -4196,7 +4210,8 @@ impl Store {
             .query_row(
                 "SELECT account, from_name, from_email, to_list, cc_list, bcc_list, subject,
                         body, in_reply_to, refs, signature, message_id, mail_from,
-                        recipients, raw, saved_mailbox, saved_uid, send_at, marks, undo
+                        recipients, raw, saved_mailbox, saved_uid, send_at, marks, undo,
+                        redirect
                    FROM outbox WHERE id = ?1",
                 params![id],
                 |r| {
@@ -4229,11 +4244,13 @@ impl Store {
                         saved,
                         r.get::<_, Option<i64>>(17)?,
                         r.get::<_, bool>(19)?,
+                        r.get::<_, bool>(20)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((account, mut draft, signature, ready, saved, send_at, undo)) = row else {
+        let Some((account, mut draft, signature, ready, saved, send_at, undo, redirect)) = row
+        else {
             return Ok(None);
         };
         let mut stmt = self.conn.prepare(
@@ -4259,6 +4276,7 @@ impl Store {
             saved,
             send_at,
             undo,
+            redirect,
         }))
     }
 
@@ -4631,6 +4649,17 @@ impl Store {
             )?;
         }
         Ok(())
+    }
+
+    /// The person asks to send a message of the outbox again now: waiting,
+    /// refused or maybe sent, it goes back in the queue, due at once. Not
+    /// one a sender holds. Returns whether it was there to retry.
+    pub fn retry_outgoing(&self, id: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbox SET state = 'queued', error = NULL, send_at = NULL, undo = 0
+              WHERE id = ?1 AND claim IS NULL AND state IN ('queued', 'refused', 'unknown')",
+            params![id],
+        )? == 1)
     }
 
     /// Keeps the message as it went (dated when it went), for its Sent copy.
@@ -10116,6 +10145,7 @@ From: <help@bank.example>\r\n\r\nHi";
             saved: None,
             send_at: None,
             undo: false,
+            redirect: false,
         };
         let first = store.queue_outgoing(&out, 100).unwrap();
         let second = store.queue_outgoing(&out, 200).unwrap();
@@ -10151,6 +10181,56 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(store.outbox(None).unwrap().is_empty());
     }
 
+    #[test]
+    fn a_redirect_stays_one_in_the_outbox_and_is_retried_as_it_is() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let raw = b"From: Anna <anna@x.it>\r\nTo: me@example.org\r\nSubject: Plans\r\n\r\nHi\r\n";
+        let own = ["me@example.org".to_owned()];
+        let (draft, ready) =
+            crate::envelope::redirect(raw, "Plans", None, &own, &["bo@x.it".to_owned()], 100)
+                .unwrap();
+        let out = crate::outbox::Outgoing {
+            account: a,
+            draft,
+            ready,
+            saved: None,
+            send_at: Some(110),
+            undo: true,
+            redirect: true,
+        };
+        let id = store.queue_outgoing(&out, 100).unwrap();
+        let plain = queued(&store, a, None);
+        // What was kept comes back whole, flag and message as it came
+        // (dated when it is to go, as every message sent later).
+        let mut kept = out.clone();
+        kept.draft.date = out.send_at;
+        assert_eq!(store.outgoing(id).unwrap(), Some(kept));
+        let rows = store.outbox(Some(a)).unwrap();
+        assert_eq!(
+            rows.iter().map(|w| (w.id, w.redirect)).collect::<Vec<_>>(),
+            [(id, true), (plain, false)]
+        );
+
+        // Refused, then tried again: due now, the message unchanged.
+        assert!(store.claim_outgoing(id, "me", 200).unwrap());
+        assert!(!store.retry_outgoing(id).unwrap(), "a sender holds it");
+        store.refused_outgoing(id, "me", "550 no").unwrap();
+        assert!(store.retry_outgoing(id).unwrap());
+        let again = store.outgoing(id).unwrap().unwrap();
+        assert!(again.redirect);
+        assert_eq!(again.ready, out.ready);
+        assert_eq!((again.send_at, again.undo), (None, false));
+        let row = &store.outbox(Some(a)).unwrap()[0];
+        assert_eq!(
+            (row.state, row.error.as_deref()),
+            (crate::outbox::State::Waiting, None)
+        );
+        assert_eq!(store.due_outgoing(a, 0).unwrap(), [id, plain]);
+    }
+
     fn queued(store: &Store, account: AccountId, send_at: Option<i64>) -> i64 {
         use crate::outbox::Outgoing;
         use crate::smtp::{ready, Draft};
@@ -10167,6 +10247,7 @@ From: <help@bank.example>\r\n\r\nHi";
             saved: None,
             send_at,
             undo: false,
+            redirect: false,
         };
         store.queue_outgoing(&out, 100).unwrap()
     }

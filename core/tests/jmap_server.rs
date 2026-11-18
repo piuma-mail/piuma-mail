@@ -332,8 +332,18 @@ impl Server {
                     .unwrap()
                     .to_owned();
                 let identity = send["identityId"].as_str().unwrap().to_owned();
-                // The identity is the address it goes from.
-                assert_eq!(identity, if from == ALIAS { "alias" } else { "me" });
+                // As servers do: the envelope goes from the identity's
+                // own address, or nothing goes.
+                let own = match identity.as_str() {
+                    "other" => "someone@example.com",
+                    "alias" => ALIAS,
+                    _ => USER,
+                };
+                if from != own {
+                    return one(json!({
+                        "notCreated": { "send": { "type": "forbiddenMailFrom" } }
+                    }));
+                }
                 self.senders.push((identity, from));
                 let email = send["emailId"].as_str().unwrap().to_owned();
                 let rcpt = send["envelope"]["rcptTo"]
@@ -1018,6 +1028,7 @@ async fn keeps_every_recipient_and_redirects() {
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
     let account = store.lock().unwrap().account(account).unwrap().unwrap();
@@ -1033,21 +1044,72 @@ async fn keeps_every_recipient_and_redirects() {
         matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
         "{outcome:?}"
     );
+    {
+        let s = server.lock().unwrap();
+        let (email, rcpt) = s.sent.last().unwrap();
+        assert_eq!(rcpt, &["eve@x.it".to_owned()]);
+        assert_eq!(
+            s.senders.last().unwrap(),
+            &("alias".to_owned(), ALIAS.to_owned())
+        );
+        let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+        assert!(
+            sent.starts_with(&format!("Resent-From: {ALIAS}\r\n")),
+            "{sent}"
+        );
+        assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
+        assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
+        assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");
+    }
+
+    // From an alias the server has no identity for: the login's identity
+    // sends it, with the envelope from that identity's address (the alias
+    // would be forbiddenMailFrom); Resent-From still names the alias.
+    let shop = "shop@example.com";
+    let own = vec![USER.to_owned(), ALIAS.to_owned(), shop.to_owned()];
+    let (draft, ready) = envelope::redirect(
+        &raw,
+        "Plan for Friday",
+        Some(shop),
+        &own,
+        &to,
+        1_790_000_100,
+    )
+    .unwrap();
+    assert_eq!(ready.from, shop);
+    let out = piuma_core::outbox::Outgoing {
+        account: account.id,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: true,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, PASSWORD),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
     let s = server.lock().unwrap();
-    let (email, rcpt) = s.sent.last().unwrap();
-    assert_eq!(rcpt, &["eve@x.it".to_owned()]);
     assert_eq!(
         s.senders.last().unwrap(),
-        &("alias".to_owned(), ALIAS.to_owned())
+        &("me".to_owned(), USER.to_owned())
     );
+    let (email, _) = s.sent.last().unwrap();
     let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
     assert!(
-        sent.starts_with(&format!("Resent-From: {ALIAS}\r\n")),
+        sent.starts_with(&format!("Resent-From: {shop}\r\n")),
         "{sent}"
     );
-    assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
-    assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
-    assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");
 }
 
 #[tokio::test]

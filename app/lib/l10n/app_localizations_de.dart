@@ -1591,6 +1591,22 @@ class AppLocalizationsDe extends AppLocalizations {
       'Die Verbindung brach beim Senden ab. Sieh in „Gesendet“ nach, bevor du sie noch einmal sendest.';
 
   @override
+  String get outboxRedirectTitle => 'Umleitung wartet';
+
+  @override
+  String get outboxRedirectLine => 'Unverändert umgeleitet';
+
+  @override
+  String get outboxRedirectBody =>
+      'Eine Umleitung geht so, wie die E-Mail ankam, daher gibt es nichts zu bearbeiten. Brich sie ab oder versuche es noch einmal.';
+
+  @override
+  String get outboxCancelRedirect => 'Umleitung abbrechen';
+
+  @override
+  String get outboxRedirectCancelled => 'Umleitung abgebrochen';
+
+  @override
   String get dataProblemTitle => 'Piuma konnte seine Daten nicht öffnen';
 
   @override

@@ -2865,8 +2865,29 @@ class EngineMailSource extends MailSource {
           engine.OutboxState.maybeSent => OutboxState.maybeSent,
         },
         undo: o.undo,
+        redirect: o.redirect,
       ),
   ];
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    try {
+      await engine.deleteOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    try {
+      await engine.retryOutgoing(id: id);
+    } finally {
+      _changes.add(null);
+    }
+  }
 
   @override
   Future<Draft> reopenOutgoing(int id) async {

@@ -171,13 +171,21 @@ class MessageActions {
       );
       return;
     }
+    await _follow(id, to, undo: true);
+  }
+
+  /// Waits for the Redirect [id] of the outbox to go, with Undo while
+  /// [undo] says its window lasts, and says what became of it. Try again
+  /// sends the same one again: it never leaves the outbox meanwhile.
+  Future<void> _follow(int id, List<String> to, {bool undo = false}) async {
+    final l = _l;
     final delivery = source.deliver(id);
     if (!context.mounted) return;
     toast(
       l.sending,
-      action: l.undo,
-      duration: undoSendWindow,
-      onAction: () => source.reopenOutgoing(id).ignore(),
+      action: undo ? l.undo : null,
+      duration: undo ? undoSendWindow : null,
+      onAction: undo ? () => source.cancelOutgoing(id).ignore() : null,
     );
     final done = await delivery;
     if (!context.mounted) return;
@@ -195,14 +203,52 @@ class MessageActions {
         toast(
           l.redirectFailed,
           action: l.tryAgain,
-          onAction: () {
-            source.reopenOutgoing(id).ignore();
-            _sendRedirect(row, to);
-          },
+          onAction: () => _retry(id, to),
         );
       case SendOutcome.gone:
         // Taken back with Undo.
         break;
+    }
+  }
+
+  Future<void> _retry(int id, List<String> to) async {
+    try {
+      await source.retryOutgoing(id);
+    } catch (_) {
+      // On its way, or gone meanwhile: nothing to try again.
+      return;
+    }
+    if (context.mounted) await _follow(id, to);
+  }
+
+  /// A Redirect waiting in the Outbox: it has no text of its own to edit,
+  /// so it doesn't open in compose. It is cancelled, or tried again.
+  Future<void> outboxRedirect(OutboxItem item) async {
+    final l = _l;
+    Widget panel(BuildContext context) => _OutboxRedirectPanel(item: item);
+    final pick = phone
+        ? await _sheet<_RedirectPick>(
+            context,
+            label: l.outboxRedirectTitle,
+            builder: panel,
+          )
+        : await showPiumaDialog<_RedirectPick>(
+            context,
+            label: l.outboxRedirectTitle,
+            builder: panel,
+          );
+    if (pick == null || !context.mounted) return;
+    switch (pick) {
+      case _RedirectPick.cancel:
+        try {
+          await source.cancelOutgoing(item.id);
+          if (context.mounted) toast(l.outboxRedirectCancelled);
+        } catch (_) {
+          // On its way right now: it can't be stopped any more.
+          if (context.mounted) toast(l.sending);
+        }
+      case _RedirectPick.retry:
+        await _retry(item.id, item.to);
     }
   }
 
@@ -577,6 +623,80 @@ class _FetchPanelState extends State<_FetchPanel> {
                 onPressed: _finish,
               ),
             if (stuck) PiumaButton(label: l.tryAgain, onPressed: _run),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+enum _RedirectPick { cancel, retry }
+
+/// A Redirect waiting in the Outbox: where it goes, where it stands, and
+/// Cancel redirect or Try again.
+class _OutboxRedirectPanel extends StatelessWidget {
+  const _OutboxRedirectPanel({required this.item});
+
+  final OutboxItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final note = switch (item.state) {
+      OutboxState.refused => l.outboxRefused(item.error ?? ''),
+      OutboxState.maybeSent => l.outboxMaybeSentCheck,
+      _ => l.outboxRedirectBody,
+    };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l.outboxRedirectTitle,
+          style: PiumaType.subtitle.copyWith(color: c.fg),
+        ),
+        const SizedBox(height: PiumaSpace.s12),
+        Text(
+          l.outboxTo(item.recipients),
+          style: PiumaType.body.copyWith(color: c.fg),
+        ),
+        Text(
+          item.subject.isEmpty ? l.noSubject : item.subject,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: PiumaType.body.copyWith(color: c.muted),
+        ),
+        const SizedBox(height: PiumaSpace.s12),
+        Text(
+          note,
+          style: PiumaType.small.copyWith(
+            color: switch (item.state) {
+              OutboxState.refused => c.danger,
+              OutboxState.maybeSent => c.warn,
+              _ => c.muted,
+            },
+          ),
+        ),
+        const SizedBox(height: PiumaSpace.s24),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: PiumaSpace.s8,
+          runSpacing: PiumaSpace.s8,
+          children: [
+            PiumaButton(
+              label: l.outboxCancelRedirect,
+              kind: PiumaButtonKind.danger,
+              onPressed: item.state == OutboxState.sending
+                  ? null
+                  : () => Navigator.of(context).pop(_RedirectPick.cancel),
+            ),
+            PiumaButton(
+              label: l.tryAgain,
+              onPressed: item.state == OutboxState.sending
+                  ? null
+                  : () => Navigator.of(context).pop(_RedirectPick.retry),
+            ),
           ],
         ),
       ],

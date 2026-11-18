@@ -1425,6 +1425,12 @@ class _InboxScreenState extends State<InboxScreen> {
     }
   }
 
+  /// A row of the Outbox, tapped: a message opens in compose again; a
+  /// Redirect, which has nothing to edit, offers Cancel or Try again.
+  void _openOutgoing(OutboxItem item) => item.redirect
+      ? _actions.outboxRedirect(item)
+      : _reopenOutgoing(item.id);
+
   /// A message in the Outbox opens in compose again, and stops waiting.
   /// Undo of a send is this too.
   Future<void> _reopenOutgoing(int id) async {
@@ -2572,7 +2578,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 now: widget.now,
                 selected: null,
                 onSelect: _open,
-                onOutbox: (o) => _reopenOutgoing(o.id),
+                onOutbox: _openOutgoing,
                 phone: true,
                 picked: _picked.keys.toSet(),
                 onPick: _pick,
@@ -3007,7 +3013,7 @@ class _InboxScreenState extends State<InboxScreen> {
             // Alone in the window, the list marks nothing as open.
             selected: _stacked ? null : _selected?.key,
             onSelect: _open,
-            onOutbox: (o) => _reopenOutgoing(o.id),
+            onOutbox: _openOutgoing,
             picked: _picked.keys.toSet(),
             onPick: _pick,
             onTotal: (n) {
