@@ -31,7 +31,15 @@ Future<void> showTextSize(
   Widget panel(BuildContext context) =>
       _TextSizePanel(size: size, onSize: onSize);
   return phone
-      ? showPiumaSheet<void>(context, label: l.textSize, builder: panel)
+      ? showPiumaSheet<void>(
+          context,
+          label: l.textSize,
+          // In from the edges, as the app's other sheets.
+          builder: (context) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: PiumaSpace.s20),
+            child: panel(context),
+          ),
+        )
       : showPiumaDialog<void>(
           context,
           label: l.textSize,

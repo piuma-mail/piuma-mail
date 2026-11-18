@@ -123,7 +123,7 @@ class MessageActions {
     final l = _l;
     Widget panel(BuildContext context) => _RedirectPanel(row: row);
     final to = phone
-        ? await showPiumaSheet<List<String>>(
+        ? await _sheet<List<String>>(
             context,
             label: l.redirectTitle,
             builder: panel,
@@ -166,7 +166,7 @@ class MessageActions {
     );
     final l = _l;
     if (phone) {
-      await showPiumaSheet<void>(context, label: l.sourceTitle, builder: panel);
+      await _sheet<void>(context, label: l.sourceTitle, builder: panel);
     } else {
       await showPiumaDialog<void>(
         context,
@@ -287,13 +287,28 @@ class MessageActions {
     Widget panel(BuildContext context) =>
         _FetchPanel(items: items, title: label, whole: whole);
     return phone
-        ? showPiumaSheet<List<DraftFile>>(context, label: label, builder: panel)
+        ? _sheet<List<DraftFile>>(context, label: label, builder: panel)
         : showPiumaDialog<List<DraftFile>>(
             context,
             label: label,
             builder: panel,
           );
   }
+
+  /// A sheet from the bottom, its panel in from the edges as the app's
+  /// other sheets have them.
+  Future<T?> _sheet<T>(
+    BuildContext context, {
+    required String label,
+    required WidgetBuilder builder,
+  }) => showPiumaSheet<T>(
+    context,
+    label: label,
+    builder: (context) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: PiumaSpace.s20),
+      child: builder(context),
+    ),
+  );
 
   String _accountEmail(MailRow row) =>
       source.accounts.where((a) => a.id == row.accountId).firstOrNull?.email ??
