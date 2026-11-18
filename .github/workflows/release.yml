@@ -470,7 +470,9 @@ jobs:
           ks="$RUNNER_TEMP/release.keystore"
           trap 'rm -f "$ks"' EXIT
           printf '%s' "$PIUMA_KEYSTORE_B64" | base64 -d > "$ks"
-          for apk in unsigned/*.apk; do
+          # Only the phone and watch APKs, by name: attest refuses any other.
+          for apk in unsigned/PiumaMail-android-arm64.apk unsigned/PiumaMail-wear.apk; do
+            [ -f "$apk" ] || { echo "::error::$apk is missing from the build."; exit 1; }
             out="signed/$(basename "$apk")"
             "$tools/apksigner" sign --ks "$ks" --ks-key-alias "$ALIAS" \
               --ks-pass env:PIUMA_KEYSTORE_PASSWORD --key-pass env:PIUMA_KEYSTORE_PASSWORD \
@@ -490,7 +492,7 @@ jobs:
             echo "::error::The phone and watch APKs are signed with different keys."
             exit 1
           fi
-          { echo "sums<<SUMS_EOF"; (cd signed && sha256sum -- *.apk); echo "SUMS_EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "sums<<SUMS_EOF"; (cd signed && sha256sum -- PiumaMail-android-arm64.apk PiumaMail-wear.apk); echo "SUMS_EOF"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-android
@@ -547,7 +549,11 @@ jobs:
         run: |
           set -eu
           sh tools/linux-appimage.sh "$RUNNER_TEMP/linux/PiumaMail-linux-x86_64.AppImage"
-          { echo "sums<<SUMS_EOF"; (cd "$RUNNER_TEMP/linux" && sha256sum -- *); echo "SUMS_EOF"; } >> "$GITHUB_OUTPUT"
+          # The one file this job ships: attest refuses any other name.
+          if [ "$(ls -A "$RUNNER_TEMP/linux")" != PiumaMail-linux-x86_64.AppImage ]; then
+            echo "::error::Only PiumaMail-linux-x86_64.AppImage belongs in the Linux release files."; exit 1
+          fi
+          { echo "sums<<SUMS_EOF"; (cd "$RUNNER_TEMP/linux" && sha256sum -- PiumaMail-linux-x86_64.AppImage); echo "SUMS_EOF"; } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux
@@ -688,7 +694,7 @@ jobs:
   # SHA-256 those jobs reported. Anything else stops the release.
   attest:
     name: Attest
-    needs: [windows-pack, windows-smoke, android-sign, linux, macos-sign]
+    needs: [gate, windows-pack, windows-smoke, android-sign, linux, macos-sign]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -725,6 +731,7 @@ jobs:
         id: files
         env:
           CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ needs.gate.outputs.version }}
           WIN_X64: ${{ needs.windows-pack.outputs.sums-x64 }}
           WIN_ARM64: ${{ needs.windows-pack.outputs.sums-arm64 }}
           LINUX: ${{ needs.linux.outputs.sums }}
@@ -732,23 +739,64 @@ jobs:
           MACOS: ${{ needs.macos-sign.result == 'success' && needs.macos-sign.outputs.sums || '' }}
         run: |
           set -eu
-          for v in WIN_X64 WIN_ARM64 LINUX; do
-            if [ -z "${!v}" ]; then echo "::error::No checksums from the $v job."; exit 1; fi
+          if ! printf '%s' "$VERSION" | grep -Eqx '0\.1\.0-beta\.[0-9]+'; then
+            echo "::error::Unexpected version \"$VERSION\"."; exit 1
+          fi
+          re() { printf '%s' "$1" | sed 's/[.]/\\./g'; }
+          v=$(re "$VERSION")
+          # The names each job may ship, and nothing else: a compromised
+          # job must not be able to declare another platform's files (a
+          # Linux build adding releases.win-canary.json or a .nupkg).
+          # Each Windows leg only its own Velopack channel's files
+          # (vpk upload local: installer, portable zip, packages of this
+          # version, the channel's releases file and legacy RELEASES).
+          win_names() {
+            c=$(re "$1")
+            if [ "$1" = win ]; then pkg="PiumaMail-$v-(full|delta)\.nupkg|RELEASES"
+            else pkg="PiumaMail-$v-$c-(full|delta)\.nupkg|RELEASES-$c"; fi
+            printf '%s' "PiumaMail-$c-Setup\.exe|PiumaMail-$c-Portable\.zip|releases\.$c\.json|$pkg"
+          }
+          suffix=""; [ "$CHANNEL" = canary ] && suffix="-canary"
+          # check <folder> <checksums the job reported> <allowed names>:
+          # the job reported only allowed names, and its artifact holds
+          # exactly those files, with those checksums.
+          check() {
+            sums=$(printf '%s\n' "$2" | sed 's/ \*/  /' | grep -v '^[[:space:]]*$' | sort || true)
+            if [ -z "$sums" ]; then echo "::error::No checksums from the $1 job."; exit 1; fi
+            bad=$(printf '%s\n' "$sums" | grep -Evx "[0-9a-f]{64}  ($3)" || true)
+            if [ -n "$bad" ]; then
+              echo "::error::The $1 job reported files it must not ship:"; printf '%s\n' "$bad"; exit 1
+            fi
+            if [ ! -d "all/$1" ]; then echo "::error::No artifact from the $1 job."; exit 1; fi
+            have=$(cd "all/$1" && find . -type f -exec sha256sum {} + | sed 's#  \./#  #' | sort)
+            if [ "$sums" != "$have" ]; then
+              echo "::error::The $1 artifact is not exactly the files its job made."
+              diff <(echo "$sums") <(echo "$have") || true
+              exit 1
+            fi
+            printf '%s\n' "$sums" >> expected.txt
+          }
+          if [ -n "$(find all -mindepth 2 -type d)" ]; then echo "::error::Folders in the release artifacts."; exit 1; fi
+          : > expected.txt
+          check windows-x64 "$WIN_X64" "$(win_names "win$suffix")"
+          check windows-arm64 "$WIN_ARM64" "$(win_names "win-arm64$suffix")"
+          check linux "$LINUX" 'PiumaMail-linux-x86_64\.AppImage'
+          [ -z "$ANDROID" ] || check android "$ANDROID" 'PiumaMail-android-arm64\.apk|PiumaMail-wear\.apk'
+          [ -z "$MACOS" ] || check macos "$MACOS" 'PiumaMail-macos-universal\.zip'
+          # Nothing else came in: no folder whose job is not shipping.
+          for d in all/*; do
+            case "${d#all/}" in
+              windows-x64|windows-arm64|linux) ;;
+              android) [ -n "$ANDROID" ] || { echo "::error::An Android artifact without its checksums."; exit 1; } ;;
+              macos) [ -n "$MACOS" ] || { echo "::error::A macOS artifact without its checksums."; exit 1; } ;;
+              *) echo "::error::Unexpected folder $d."; exit 1 ;;
+            esac
           done
-          # "<sha256>  <name>", one line per file, as the jobs reported them.
-          expected=$(printf '%s\n' "$WIN_X64" "$WIN_ARM64" "$LINUX" "$ANDROID" "$MACOS" |
-            sed 's/ \*/  /' | grep -v '^[[:space:]]*$' | sort)
           # Each platform's files have names of their own; two of a name
           # would overwrite each other.
-          dupes=$(printf '%s\n' "$expected" | awk '{print $2}' | sort | uniq -d)
+          dupes=$(sed -E 's/^[0-9a-f]{64}  //' expected.txt | sort | uniq -d)
           if [ -n "$dupes" ]; then echo "::error::Two files named: $dupes"; exit 1; fi
-          if [ -n "$(find all -mindepth 2 -type d)" ]; then echo "::error::Folders in the release artifacts."; exit 1; fi
-          actual=$(find all -type f -exec sha256sum {} + | sed -E 's#  .*/#  #' | sort)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::The release artifacts are not exactly the files the signing and packaging jobs made."
-            diff <(echo "$expected") <(echo "$actual") || true
-            exit 1
-          fi
+          rm expected.txt
           mkdir -p dist
           find all -type f -exec mv {} dist/ \;
           if [ "$CHANNEL" = canary ]; then
