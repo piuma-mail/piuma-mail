@@ -3030,6 +3030,7 @@ dependencies = [
  "image",
  "lettre",
  "libc",
+ "log",
  "mail-parser",
  "piuma-core",
  "qrcode",

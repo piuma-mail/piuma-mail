@@ -163,6 +163,8 @@ pub struct Connection {
     idle: bool,
     moves: bool,
     uidplus: bool,
+    /// Literals that need no go-ahead (RFC 7888), for UTF-8 search text.
+    literal_plus: bool,
     /// RFC 2087: the server says how full the mailbox is.
     quota: bool,
     /// Jobs the person gave folders of their choice: they win over the
@@ -249,6 +251,25 @@ pub(crate) const VAULT_BYTES: usize = 512 * 1024;
 pub(crate) const FILES_LOOK: u32 = 2000;
 /// Outlines asked for per round trip.
 const FILES_BATCH: usize = 200;
+/// Without CONDSTORE, the newest messages of a folder whose flags are
+/// read again at every round...
+///
+/// The compromise, on servers without CONDSTORE only: a flag changed
+/// elsewhere (read, starred, answered on another device or in webmail)
+/// shows here at the next round for the newest 500 messages of a folder,
+/// but for older ones only when the sweep below reaches them, after up to
+/// `messages / FLAGS_SWEEP` rounds (a folder of 100,000 messages: about 50
+/// rounds, a few hours of rounds every few minutes). Reading every
+/// message's flags at every round instead costs a FETCH of the whole
+/// folder each time, which on big folders is slow on the server and the
+/// network and wears phones' batteries. Changes made here go to the server
+/// at once either way, and servers with CONDSTORE (most) get every change
+/// at the next round.
+const FLAGS_NEWEST: u32 = 500;
+/// ...and how many older ones each round adds, going down the folder and
+/// starting again at the top: a big folder is looked at whole in a few
+/// rounds, never all at once.
+const FLAGS_SWEEP: u32 = 2000;
 /// Servers drop IDLE after 30 minutes; renew it before that.
 pub const IDLE_RENEW: Duration = Duration::from_secs(25 * 60);
 
@@ -304,6 +325,7 @@ impl Connection {
             idle: caps.has_str("IDLE"),
             moves: caps.has_str("MOVE"),
             uidplus: caps.has_str("UIDPLUS"),
+            literal_plus: caps.has_str("LITERAL+") || caps.has_str("LITERAL-"),
             quota: caps.has_str("QUOTA"),
             roles: Vec::new(),
             limits,
@@ -372,6 +394,13 @@ impl Connection {
         self.moves = false;
     }
 
+    /// Acts as if the server had no CONDSTORE, to test the flags read in
+    /// windows.
+    #[doc(hidden)]
+    pub fn forget_condstore_for_tests(&mut self) {
+        self.condstore = false;
+    }
+
     pub fn supports_idle(&self) -> bool {
         self.idle
     }
@@ -425,7 +454,7 @@ impl Connection {
             lock(store).set_labels_local(account)?;
         }
 
-        let (prior, local) = {
+        let (prior, local, unchanged, found) = {
             let store = lock(store);
             let mut prior = store.mailbox_state(account, mailbox)?;
             if prior.is_some_and(|p| p.uid_validity != uid_validity) {
@@ -433,12 +462,35 @@ impl Connection {
                 report.reset = true;
                 prior = None;
             }
-            let local: HashSet<u32> = store.uids(account, mailbox)?.into_iter().collect();
-            (prior, local)
+            // A folder as the last complete sync left it lists nothing:
+            // no UID SEARCH ALL, no set of every uid here.
+            let unchanged = prior.is_some()
+                && store.mailbox_unchanged(
+                    account,
+                    mailbox,
+                    uid_validity,
+                    selected.uid_next,
+                    selected.exists,
+                )?;
+            let local: HashSet<u32> = if unchanged {
+                HashSet::new()
+            } else {
+                store.uids(account, mailbox)?.into_iter().collect()
+            };
+            (
+                prior,
+                local,
+                unchanged,
+                store.server_found_uids(account, mailbox)?,
+            )
         };
 
         // 1. Forget what the server no longer has.
-        let server = session.uid_search("ALL").await?;
+        let server = if unchanged {
+            HashSet::new()
+        } else {
+            session.uid_search("ALL").await?
+        };
         let gone: Vec<u32> = local.difference(&server).copied().collect();
         if !gone.is_empty() {
             lock(store).remove_messages(account, mailbox, &gone)?;
@@ -452,8 +504,9 @@ impl Connection {
         report.more = total.saturating_sub(round.limit);
         missing.truncate(round.limit);
         // News is what came after the newest message we had: older ones
-        // still arriving are history being filled in.
-        let newest = local.iter().max().copied();
+        // still arriving are history being filled in. What a server search
+        // brought doesn't count: mail past it would never be announced.
+        let newest = local.difference(&found).max().copied();
         let news = |uid: u32| prior.is_some() && newest.is_none_or(|n| uid > n);
         for (i, batch) in missing.chunks(BATCH).enumerate() {
             let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
@@ -500,17 +553,57 @@ impl Connection {
             progress(report.added, total);
         }
 
+        // 2b. What a server search brought is synced mail once the sync
+        // has come down to it (it goes newest first): it then shows in
+        // the folder's list like the rest.
+        if !found.is_empty() {
+            let lowest = local
+                .difference(&found)
+                .chain(missing.iter())
+                .min()
+                .copied();
+            let from = if report.more == 0 { Some(0) } else { lowest };
+            if let Some(from) = from {
+                lock(store).adopt_server_found(account, mailbox, from)?;
+            }
+        }
+
         // 3. Refresh flags of what we already had.
         // Rounds that only fill in history skip it, and keep the old
         // modseq so the round that does look misses no change.
-        let kept: Vec<u32> = local.intersection(&server).copied().collect();
-        if round.flags && !kept.is_empty() {
+        let kept = unchanged || local.intersection(&server).next().is_some();
+        let mut flags_below = lock(store).flags_below(account, mailbox)?;
+        if round.flags && kept {
             let flags_query = match prior.and_then(|p| p.highest_modseq) {
                 Some(modseq) if condstore => Some((
                     "1:*".to_owned(),
                     format!("(UID FLAGS) (CHANGEDSINCE {modseq})"),
                 )),
-                _ => Some((uid_set(&kept), "(UID FLAGS)".to_owned())),
+                // Without CONDSTORE: the newest messages, and the next
+                // slice of the older ones, instead of every message's
+                // flags at every round.
+                _ => {
+                    let (window, below) = {
+                        let store = lock(store);
+                        let mut window = store.uids_below(account, mailbox, None, FLAGS_NEWEST)?;
+                        let start = flags_below.or(window.last().copied());
+                        let older = match start {
+                            Some(start) => {
+                                store.uids_below(account, mailbox, Some(start), FLAGS_SWEEP)?
+                            }
+                            None => Vec::new(),
+                        };
+                        // A slice shorter than asked reached the bottom:
+                        // the next round starts again at the top.
+                        let below = (older.len() as u32 == FLAGS_SWEEP)
+                            .then(|| older.last().copied())
+                            .flatten();
+                        window.extend(older);
+                        (window, below)
+                    };
+                    flags_below = below;
+                    (!window.is_empty()).then(|| (uid_set(&window), "(UID FLAGS)".to_owned()))
+                }
             };
             if let Some((set, q)) = flags_query {
                 let fetches: Vec<Fetch> = session.uid_fetch(set, q).await?.try_collect().await?;
@@ -668,6 +761,19 @@ impl Connection {
                     _ => selected.highest_modseq,
                 },
             },
+        )?;
+        // What the folder looked like when this round began, kept only
+        // when the round left nothing to download: the next round can then
+        // tell an unchanged folder without listing it.
+        let complete = report.more == 0;
+        lock(store).set_mailbox_scan(
+            account,
+            mailbox,
+            selected
+                .uid_next
+                .filter(|_| complete)
+                .map(|next| (uid_validity, next, selected.exists)),
+            flags_below,
         )?;
         Ok(report)
     }
@@ -877,6 +983,118 @@ impl Connection {
             },
         )?;
         Ok(mailbox)
+    }
+
+    /// Runs a search in one folder on the server and brings the newest
+    /// `limit` messages it finds here, as headers (bodies come when one is
+    /// opened, as for any message). Returns their UIDs, newest first, and
+    /// whether the answer may be partial: the server refused UTF-8 and the
+    /// text was cut to ASCII, or the folder was renumbered since the last
+    /// sync (then nothing is kept until the sync starts it over).
+    ///
+    /// `ESEARCH` (RFC 4731) is not used even where offered: the parser
+    /// under async-imap can't read its answer, and an unreadable answer
+    /// would end the connection. A plain `UID SEARCH` gives the same UIDs.
+    pub async fn search_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        query: &crate::search::ServerQuery,
+        limit: usize,
+    ) -> Result<FolderFound> {
+        let literal_plus = self.literal_plus;
+        let session = self.session()?;
+        let selected = session.examine(mailbox).await?;
+        let uid_validity = selected.uid_validity.ok_or(ImapError::NoUidValidity)?;
+        let renumbered = lock(store)
+            .mailbox_state(account, mailbox)?
+            .is_some_and(|p| p.uid_validity != uid_validity);
+        lock(store).forget_renumbered_found(account, mailbox, uid_validity)?;
+        let mut partial = renumbered;
+        let mut uids = match uid_search(session, &query.imap(literal_plus)).await? {
+            Ok(uids) => uids,
+            Err(_refusal) if query.needs_utf8() => {
+                // BADCHARSET, or a server that refuses CHARSET at all.
+                partial = true;
+                match query.ascii() {
+                    Some(ascii) => uid_search(session, &ascii.imap(literal_plus))
+                        .await?
+                        .map_err(async_imap::error::Error::No)?,
+                    // Nothing it could be asked would come close.
+                    None => {
+                        return Ok(FolderFound {
+                            text_refused: true,
+                            ..FolderFound::default()
+                        })
+                    }
+                }
+            }
+            Err(refusal) => return Err(async_imap::error::Error::No(refusal).into()),
+        };
+        uids.sort_unstable_by(|a, b| b.cmp(a));
+        uids.dedup();
+        if renumbered {
+            return Ok(FolderFound {
+                partial: true,
+                ..FolderFound::default()
+            });
+        }
+        let (local, synced, newest) = {
+            let s = lock(store);
+            (
+                s.uids(account, mailbox)?
+                    .into_iter()
+                    .collect::<HashSet<u32>>(),
+                s.mailbox_state(account, mailbox)?.is_some(),
+                s.newest_synced(account, mailbox)?.map(|(uid, _)| uid),
+            )
+        };
+        // Mail past the newest the sync brought is for the next sync, which
+        // announces it: taken here first, it would never be.
+        if synced {
+            let newest = newest.unwrap_or(0);
+            uids.retain(|u| local.contains(u) || *u <= newest);
+        }
+        uids.truncate(limit);
+        let missing: Vec<u32> = uids
+            .iter()
+            .filter(|u| !local.contains(u))
+            .copied()
+            .collect();
+        for batch in missing.chunks(BATCH) {
+            let (fetches, html) = fetch_heads(session, account, mailbox, batch).await?;
+            let summaries: Vec<MessageSummary> = fetches
+                .iter()
+                .filter_map(|f| summary_with(f, account, mailbox, &html))
+                .collect();
+            let found: Vec<u32> = summaries.iter().map(|s| s.uid).collect();
+            let listed: Vec<(u32, Vec<Attachment>)> = fetches
+                .iter()
+                .filter_map(|f| Some((f.uid?, listed_files(f.bodystructure()?))))
+                .collect();
+            let mut store = lock(store);
+            store.upsert_messages(&summaries)?;
+            store.set_server_labels(account, mailbox, &labels_of(&fetches))?;
+            store.set_listed_files(account, mailbox, &listed)?;
+            store.note_server_found(account, mailbox, &found, uid_validity)?;
+        }
+        // Within what the sync already covers, it is synced mail.
+        {
+            let s = lock(store);
+            if let Some(lowest) = s.lowest_synced(account, mailbox)? {
+                s.adopt_server_found(account, mailbox, lowest)?;
+            }
+        }
+        // What the server listed but didn't fetch (gone meanwhile) is
+        // left out.
+        let here: HashSet<u32> = lock(store).uids(account, mailbox)?.into_iter().collect();
+        uids.retain(|u| here.contains(u));
+        Ok(FolderFound {
+            uids,
+            partial,
+            text_refused: false,
+        })
     }
 
     /// The folder with a job, when the account has one.
@@ -2170,6 +2388,62 @@ fn retry_cap(answered: bool, e: &ImapError) -> Duration {
     } else {
         crate::backoff::OFFLINE_MOST
     }
+}
+
+/// Sends `UID SEARCH` and reads its answer itself: async-imap's own
+/// `uid_search` takes a refusal (`NO [BADCHARSET]`) for an empty answer.
+/// The inner error is the server's refusal.
+async fn uid_search(
+    session: &mut Session,
+    criteria: &str,
+) -> Result<std::result::Result<Vec<u32>, String>> {
+    use async_imap::imap_proto::{MailboxDatum, Response, Status};
+    let tag = session
+        .run_command(format!("UID SEARCH {criteria}"))
+        .await?;
+    let mut uids = Vec::new();
+    loop {
+        let response = session
+            .read_response()
+            .await
+            .map_err(async_imap::error::Error::Io)?
+            .ok_or(async_imap::error::Error::ConnectionLost)?;
+        match response.parsed() {
+            Response::MailboxData(MailboxDatum::Search(found)) => uids.extend_from_slice(found),
+            Response::Done {
+                tag: done,
+                status,
+                outcome,
+            } if *done == tag => {
+                return Ok(match status {
+                    Status::Ok => Ok(uids),
+                    _ => Err(format!(
+                        "{status:?} {:?} {:?}",
+                        outcome.code, outcome.information
+                    )),
+                });
+            }
+            Response::Data {
+                status: Status::Bye,
+                ..
+            } => return Err(async_imap::error::Error::ConnectionLost.into()),
+            // News about the folder meanwhile: the next sync reads it.
+            _ => {}
+        }
+    }
+}
+
+/// What [`Connection::search_folder`] found in one folder.
+#[derive(Debug, Default)]
+pub struct FolderFound {
+    /// Newest first, all on this device now.
+    pub uids: Vec<u32>,
+    /// The answer may be partial: text cut to ASCII, or the folder was
+    /// renumbered since the last sync.
+    pub partial: bool,
+    /// The server refuses UTF-8 and the text has no ASCII to ask for
+    /// instead ("日本"): it wasn't asked at all.
+    pub text_refused: bool,
 }
 
 /// Which messages [`Connection::empty`] may delete.

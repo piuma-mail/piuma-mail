@@ -38,7 +38,34 @@ class DemoMailSource extends MailSource {
     this.asks = false,
     bool contactGroups = false,
     this.mailbox = false,
+    bool unsent = false,
+    this.backup = false,
+    this.noRoom = false,
   }) : now = now ?? DateTime.now(),
+       _unsent = [
+         if (unsent) ...const [
+           UnsentMessage(
+             id: 41,
+             accountId: 2,
+             subject: 'Quote for the Rossi kitchen',
+             to: ['Luca Ferri <luca@ferramentabianchi.it>'],
+             refused: true,
+           ),
+           UnsentMessage(
+             id: 42,
+             accountId: 2,
+             subject: 'Site visit on Thursday',
+             to: ['Sara Conti <sara@studio.it>', 'giulia@studio.it'],
+           ),
+           UnsentMessage(
+             id: 7,
+             accountId: 2,
+             subject: 'Notes from the Tuesday meeting',
+             to: ['Anna Bianchi <anna@studio.it>'],
+             draft: true,
+           ),
+         ],
+       ],
        _crashWaiting = crashed {
     if (contactGroups) {
       // A group typed in To brings every address.
@@ -877,14 +904,82 @@ class DemoMailSource extends MailSource {
     _servers[accountId] = servers;
   }
 
+  /// Mail written in Work that hasn't gone, with `unsent`.
+  final List<UnsentMessage> _unsent;
+
+  /// The Storage page shows a copy kept from before the last update.
+  final bool backup;
+
+  /// Clearing cached mail finds no room on the disk to shrink the file.
+  final bool noRoom;
+
+  @override
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => [
+    for (final u in _unsent)
+      if (u.accountId == accountId) u,
+  ];
+
+  @override
+  Future<void> sendUnsent(UnsentMessage message) async {
+    _unsent.removeWhere((u) => u.id == message.id && u.draft == message.draft);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> deleteUnsent(UnsentMessage message) async {
+    _unsent.removeWhere((u) => u.id == message.id && u.draft == message.draft);
+    _changes.add(null);
+  }
+
   @override
   Future<void> removeAccount(int accountId) async {
+    if (_unsent.any((u) => u.accountId == accountId)) {
+      throw const UnsentMailLeft();
+    }
     accounts = [
       for (final a in accounts)
         if (a.id != accountId) a,
     ];
     _rows.removeWhere((r) => r.accountId == accountId);
     _changes.add(null);
+  }
+
+  /// Days whole messages are kept, as picked in Settings › Storage.
+  int? _keepDays = 90;
+
+  /// Accounts whose cached mail was cleared.
+  final _cleared = <int>{};
+
+  @override
+  Future<StorageUse> storage() async {
+    final list = [
+      for (final (i, a) in accounts.indexed)
+        AccountStorage(
+          accountId: a.id,
+          messages: 1840 + i * 2315,
+          cachedBytes: _cleared.contains(a.id) ? 0 : (38 + i * 21) << 20,
+        ),
+    ];
+    final copy = backup ? 182 << 20 : 0;
+    return StorageUse(
+      totalBytes:
+          (96 << 20) +
+          copy +
+          list.fold<int>(0, (sum, a) => sum + a.cachedBytes),
+      backupBytes: copy,
+      accounts: list,
+      keepDays: _keepDays,
+    );
+  }
+
+  @override
+  Future<void> setKeepDays(int? days) async => _keepDays = days;
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async {
+    _cleared.add(accountId);
+    if (noRoom) throw NoRoomToShrink(await storage());
+    return storage();
   }
 
   @override
@@ -4150,6 +4245,141 @@ class DemoMailSource extends MailSource {
     ];
   }();
 
+  /// Older mail only "the server" has, until a server search brings it
+  /// here (`searchServer`).
+  late final List<MailRow> _onServer = () {
+    final year = DateTime(now.year - 1, now.month, now.day);
+    var uid = 900;
+    MailRow row(
+      MailAccount a,
+      String name,
+      String email,
+      int daysAgo,
+      String subject,
+      String preview,
+    ) => MailRow(
+      accountId: a.id,
+      mailbox: 'Archive',
+      folder: MailFolder.archive,
+      uid: uid--,
+      fromName: name,
+      fromEmail: email,
+      subject: subject,
+      preview: preview,
+      receivedAt: year.subtract(Duration(days: daysAgo, hours: 3)),
+      seen: true,
+      messageId: '<demo-s${uid + 1}@piuma.mail>',
+    );
+    return [
+      row(
+        _work,
+        'Sara Conti',
+        'sara@studio.it',
+        12,
+        'Print quote for the spring catalog',
+        'Here is last year’s quote: 2,000 copies, matte cover, delivery in ten days.',
+      ),
+      row(
+        _personal,
+        'Studio Rossi Immobiliare',
+        'contratti@rossi-immobiliare.it',
+        80,
+        'Lease agreement, signed copy',
+        'Attached is the signed lease agreement with the cellar keys inventory.',
+      ),
+      row(
+        _icloud,
+        'Trenitalia',
+        'noreply@trenitalia.it',
+        140,
+        'Your tickets Bologna – Milano',
+        'Ticket code 4F7K2: Frecciarossa 9533, coach 6, seat 12A.',
+      ),
+    ];
+  }();
+
+  /// What a server search brought here: found by later searches too.
+  final _fromServer = <MailRow>[];
+
+  /// Bumped to stop the server search running.
+  int _serverRound = 0;
+
+  /// Saved searches; tests read and change them.
+  final savedSearchList = <SavedSearch>[];
+
+  @override
+  Future<ServerResults> searchServer(String query, {int limit = 50}) async {
+    final round = ++_serverRound;
+    // A real server takes a moment; tests and screenshots needn't wait.
+    await Future<void>.value();
+    if (round != _serverRound) throw StateError('server search cancelled');
+    final words = searchWords(query);
+    if (words.isEmpty) return const ServerResults(asked: false);
+    bool has(String text, String word) => countMatches(text, [word]) > 0;
+    final found = [
+      for (final r in _onServer)
+        if (words.every(
+          (w) =>
+              has('${r.subject} ${r.fromName} ${r.fromEmail} ${r.preview}', w),
+        ))
+          r,
+    ];
+    for (final r in found) {
+      if (!_fromServer.any((f) => f.key == r.key)) _fromServer.add(r);
+    }
+    return ServerResults(
+      hits: [for (final r in found.take(limit)) SearchHit(r)],
+    );
+  }
+
+  @override
+  void cancelServerSearch() => _serverRound++;
+
+  @override
+  Future<List<SavedSearch>> savedSearches() async => List.of(savedSearchList);
+
+  @override
+  Future<int> saveSearch(String name, String query) async {
+    final q = query.trim().split(RegExp(r'\s+')).join(' ');
+    final i = savedSearchList.indexWhere(
+      (s) => s.name.toLowerCase() == name.trim().toLowerCase(),
+    );
+    final id = i >= 0
+        ? savedSearchList[i].id
+        : savedSearchList.fold(0, (m, s) => s.id > m ? s.id : m) + 1;
+    final saved = SavedSearch(
+      id: id,
+      name: i >= 0 ? savedSearchList[i].name : name.trim(),
+      query: q,
+    );
+    if (i >= 0) {
+      savedSearchList[i] = saved;
+    } else {
+      savedSearchList.add(saved);
+    }
+    _changes.add(null);
+    return id;
+  }
+
+  @override
+  Future<bool> renameSavedSearch(int id, String name) async {
+    final taken = savedSearchList.any(
+      (s) => s.id != id && s.name.toLowerCase() == name.trim().toLowerCase(),
+    );
+    final i = savedSearchList.indexWhere((s) => s.id == id);
+    if (taken || i < 0) return false;
+    final s = savedSearchList[i];
+    savedSearchList[i] = SavedSearch(id: id, name: name.trim(), query: s.query);
+    _changes.add(null);
+    return true;
+  }
+
+  @override
+  Future<void> deleteSavedSearch(int id) async {
+    savedSearchList.removeWhere((s) => s.id == id);
+    _changes.add(null);
+  }
+
   /// Recent searches, as on `SearchEmpty`; tests read and change them.
   final recentSearches = <String>[
     'quote',
@@ -4246,6 +4476,7 @@ class DemoMailSource extends MailSource {
     final all = [
       ..._visible,
       ..._archived.where((r) => !_gone.contains(r.key)),
+      ..._fromServer.where((r) => !_gone.contains(r.key)),
       for (final n in _letters)
         if (!_gone.contains(n.row.key)) n.row,
       if (files) ..._files.map((f) => f.row),

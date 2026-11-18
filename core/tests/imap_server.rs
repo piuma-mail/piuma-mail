@@ -284,6 +284,52 @@ async fn resync_applies_deletes_flags_and_new_mail() {
 }
 
 #[tokio::test]
+async fn an_unchanged_folder_is_not_listed_and_flags_come_without_condstore() {
+    let Some(cfg) = config("unchanged") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    for day in 10..14 {
+        let raw = PLAIN.replace("New website quote", &format!("Day {day}"));
+        outside
+            .deliver(&raw, &format!("{day}-Oct-2026 09:00:00 +0200"))
+            .await;
+    }
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.forget_condstore_for_tests();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    // Nothing came or went: no listing, and still the flags.
+    outside.store(1, "+FLAGS (\\Seen)").await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        (report.added, report.removed, report.flags_changed),
+        (0, 0, 1)
+    );
+    // One gone and one new, with the same count: listed again.
+    outside.store(2, "+FLAGS (\\Deleted)").await;
+    outside.expunge().await;
+    outside
+        .deliver(HTML_ONLY, "15-Oct-2026 08:00:00 +0200")
+        .await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!((report.added, report.removed), (1, 1));
+    let s = store.lock().unwrap();
+    let mut uids = s.uids(account, "INBOX").unwrap();
+    uids.sort();
+    assert_eq!(uids, [1, 3, 4, 5]);
+    assert!(s.message(account, "INBOX", 1).unwrap().unwrap().flags.seen);
+}
+
+#[tokio::test]
 async fn big_folders_fill_in_rounds_without_false_news() {
     let Some(cfg) = config("rounds") else { return };
     let mut outside = Outside::open(&cfg).await;
@@ -1940,4 +1986,45 @@ async fn labels_are_keywords_on_the_server() {
         .message_labels(account, "INBOX", 1)
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn server_search_finds_mail_not_here_yet() {
+    use piuma_core::remote::Remote;
+    use piuma_core::Query;
+    let Some(cfg) = config("serversearch") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(PLAIN, "12-Oct-2026 09:41:00 +0200").await;
+    outside
+        .deliver(
+            &PLAIN.replace("New website quote", "Città e caffè"),
+            "13-Oct-2026 09:41:00 +0200",
+        )
+        .await;
+    let (store, id) = store_with_account();
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::Imap(Connection::open(&cfg).await.unwrap());
+    // Nothing is synced: only the server knows.
+    let found = remote
+        .search_server(&store, &account, &Query::parse("subject:caffè"), 100)
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    assert!(found.asked && !found.partial);
+    let found = remote
+        .search_server(
+            &store,
+            &account,
+            &Query::parse("updated -subject:città from:julia"),
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    remote.close().await;
+    let s = store.lock().unwrap();
+    assert_eq!(s.search(&Query::parse("caffè"), 10).unwrap().total, 1);
+    assert_eq!(s.search(&Query::parse("website"), 10).unwrap().total, 1);
 }

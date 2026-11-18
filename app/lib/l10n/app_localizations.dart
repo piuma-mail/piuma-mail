@@ -5284,6 +5284,150 @@ abstract class AppLocalizations {
   /// **'Remove'**
   String get accountRemoveConfirm;
 
+  /// No description provided for @accountRemoveBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 message written here hasn\'t gone yet. Send it or delete it, then remove the account.} other{{count} messages written here haven\'t gone yet. Send or delete them, then remove the account.}}'**
+  String accountRemoveBlocked(int count);
+
+  /// No description provided for @accountUnsentDraft.
+  ///
+  /// In en, this message translates to:
+  /// **'Draft kept on this device'**
+  String get accountUnsentDraft;
+
+  /// No description provided for @accountUnsentSendNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Send now'**
+  String get accountUnsentSendNow;
+
+  /// No description provided for @accountUnsentSaveNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Save now'**
+  String get accountUnsentSaveNow;
+
+  /// No description provided for @accountUnsentFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'That didn\'t work. Check the connection and try again, or delete it.'**
+  String get accountUnsentFailed;
+
+  /// No description provided for @updatingMail.
+  ///
+  /// In en, this message translates to:
+  /// **'Updating your mail'**
+  String get updatingMail;
+
+  /// No description provided for @updatingMailNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma was updated and is getting your mail ready. It only happens once, and closing the app meanwhile loses nothing.'**
+  String get updatingMailNote;
+
+  /// No description provided for @storageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get storageTitle;
+
+  /// No description provided for @storageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The mail kept on this device. Everything stays on the server.'**
+  String get storageSubtitle;
+
+  /// No description provided for @storageTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} on this device'**
+  String storageTotal(String size);
+
+  /// No description provided for @storageAccountLine.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 email} other{{count} emails}} · {size} kept for reading offline'**
+  String storageAccountLine(int count, String size);
+
+  /// No description provided for @storageClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear cached mail'**
+  String get storageClear;
+
+  /// No description provided for @storageClearing.
+  ///
+  /// In en, this message translates to:
+  /// **'Clearing…'**
+  String get storageClearing;
+
+  /// No description provided for @storageBackup.
+  ///
+  /// In en, this message translates to:
+  /// **'Of which {size} is a copy kept from before the last update, removed at the next start.'**
+  String storageBackup(String size);
+
+  /// No description provided for @storageClearFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t clear the cached mail. Try again.'**
+  String get storageClearFailed;
+
+  /// No description provided for @storageNoRoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Cached mail cleared. There isn\'t enough free space to make the file smaller now: Piuma reuses the room.'**
+  String get storageNoRoom;
+
+  /// No description provided for @storageClearTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the cached mail of {name}?'**
+  String storageClearTitle(String name);
+
+  /// No description provided for @storageClearNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.'**
+  String get storageClearNote;
+
+  /// No description provided for @storageKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep whole messages for reading offline'**
+  String get storageKeep;
+
+  /// No description provided for @storageKeepHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Older ones are downloaded again when you open them. Search still finds their words.'**
+  String get storageKeepHint;
+
+  /// No description provided for @storageKeepMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'1 month'**
+  String get storageKeepMonth;
+
+  /// No description provided for @storageKeepMonths.
+  ///
+  /// In en, this message translates to:
+  /// **'3 months'**
+  String get storageKeepMonths;
+
+  /// No description provided for @storageKeepYear.
+  ///
+  /// In en, this message translates to:
+  /// **'1 year'**
+  String get storageKeepYear;
+
+  /// No description provided for @storageKeepAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always'**
+  String get storageKeepAlways;
+
   /// No description provided for @accountServersTitle.
   ///
   /// In en, this message translates to:
@@ -9237,6 +9381,150 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
+
+  /// No description provided for @saveSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Save search'**
+  String get saveSearch;
+
+  /// No description provided for @savedSearchEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit saved search'**
+  String get savedSearchEdit;
+
+  /// No description provided for @savedSearchName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get savedSearchName;
+
+  /// No description provided for @savedSearchSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get savedSearchSave;
+
+  /// No description provided for @savedSearchDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete search'**
+  String get savedSearchDelete;
+
+  /// No description provided for @savedSearchDeleteNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the saved search goes: the emails stay where they are.'**
+  String get savedSearchDeleteNote;
+
+  /// No description provided for @savedSearchNameTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'Another saved search has this name.'**
+  String get savedSearchNameTaken;
+
+  /// No description provided for @savedSearchesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'SAVED SEARCHES'**
+  String get savedSearchesSection;
+
+  /// No description provided for @savedSearches.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved searches'**
+  String get savedSearches;
+
+  /// No description provided for @searchSuggestions.
+  ///
+  /// In en, this message translates to:
+  /// **'Suggestions'**
+  String get searchSuggestions;
+
+  /// No description provided for @searchOnServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Search on server'**
+  String get searchOnServer;
+
+  /// No description provided for @searchOnServerHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'On the server'**
+  String get searchOnServerHeading;
+
+  /// No description provided for @searchingServers.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching on the server…'**
+  String get searchingServers;
+
+  /// No description provided for @searchServerError.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t search on the server.'**
+  String get searchServerError;
+
+  /// No description provided for @searchServerLocalOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'This search can only look at this device.'**
+  String get searchServerLocalOnly;
+
+  /// No description provided for @searchServerNothing.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing more on the server.'**
+  String get searchServerNothing;
+
+  /// No description provided for @searchFromServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Found on the server'**
+  String get searchFromServer;
+
+  /// No description provided for @searchServerPartial.
+  ///
+  /// In en, this message translates to:
+  /// **'Some folders couldn’t be searched in full.'**
+  String get searchServerPartial;
+
+  /// No description provided for @searchServerMaybe.
+  ///
+  /// In en, this message translates to:
+  /// **'Older emails, and text this device hasn’t kept, may still be on the server.'**
+  String get searchServerMaybe;
+
+  /// No description provided for @searchServerTextRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 account’s server searches only plain letters (A–Z), so it wasn’t asked for this text.} other{{count} accounts’ servers search only plain letters (A–Z), so they weren’t asked for this text.}}'**
+  String searchServerTextRefused(int count);
+
+  /// No description provided for @searchServerPartialIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Searched only in part: {accounts}. What was found before stopping is here.'**
+  String searchServerPartialIn(String accounts);
+
+  /// No description provided for @searchServerFound.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 more email found on the server, now on this device.} other{{count} more emails found on the server, now on this device.}}'**
+  String searchServerFound(int count);
+
+  /// No description provided for @searchServerUnreachable.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 account’s server couldn’t be reached.} other{{count} accounts’ servers couldn’t be reached.}}'**
+  String searchServerUnreachable(int count);
+
+  /// No description provided for @savedSearchEditNamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename or delete {name}'**
+  String savedSearchEditNamed(String name);
 
   /// No description provided for @errorNoKeyring.
   ///

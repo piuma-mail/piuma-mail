@@ -6,8 +6,8 @@ use piuma_core::{AccountId, AccountKind, Server};
 
 use super::calendars::disconnect_calendar;
 use super::engine::{
-    engine, pins_of, reader, stop_watching, store, watch_account, AccountInfo, ConnectionSecurity,
-    EngineError, ErrorKind, OutgoingServer, TrustedCertificate,
+    bulk_reader, engine, pins_of, reader, stop_watching, store, watch_account, AccountInfo,
+    ConnectionSecurity, EngineError, ErrorKind, OutgoingServer, TrustedCertificate,
 };
 use crate::credentials;
 use piuma_core::remote;
@@ -149,11 +149,75 @@ pub async fn set_account_servers(
     watch_account(a)
 }
 
+/// A message written in an account that hasn't gone yet: removing the
+/// account waits until each is sent, saved on the server or deleted.
+#[derive(Debug, Clone)]
+pub struct UnsentMessage {
+    /// The outbox message's id ([super::engine::retry_outgoing],
+    /// [super::engine::delete_outgoing]), or the waiting draft's
+    /// ([save_waiting_drafts_now], [delete_waiting_draft]).
+    pub id: i64,
+    /// A draft waiting on this device to be saved on the server, rather
+    /// than mail in the outbox.
+    pub draft: bool,
+    pub to: Vec<String>,
+    pub subject: String,
+    /// The server refused it (outbox only).
+    pub refused: bool,
+    /// On its way now (outbox only): it can't be deleted.
+    pub sending: bool,
+    /// When it was queued or saved, in Unix seconds.
+    pub at: i64,
+}
+
+/// What removing an account waits on: its outbox mail that hasn't gone
+/// (not the mail the server took, nor what may have gone) and its drafts
+/// waiting on this device, outbox first.
+pub fn account_unsent(account_id: i64) -> Result<Vec<UnsentMessage>, EngineError> {
+    Ok(bulk_reader()?
+        .unsent_mail(AccountId(account_id))?
+        .into_iter()
+        .map(|u| UnsentMessage {
+            id: u.id,
+            draft: u.draft,
+            to: u.to,
+            subject: u.subject,
+            refused: u.state == Some(piuma_core::outbox::State::Refused),
+            sending: u.state == Some(piuma_core::outbox::State::Sending),
+            at: u.at,
+        })
+        .collect())
+}
+
+/// Tries now to save an account's drafts waiting on this device on its
+/// server; [super::engine::SyncEventKind::Synced] follows when they went.
+pub fn save_waiting_drafts_now(account_id: i64) -> Result<(), EngineError> {
+    let account = account(account_id)?;
+    let password = crate::login::load(account.id)?;
+    super::engine::save_waiting_drafts(account, password);
+    Ok(())
+}
+
+/// Deletes a draft waiting on this device without saving it on the
+/// server; a copy saved there before stays.
+pub fn delete_waiting_draft(id: i64) -> Result<(), EngineError> {
+    store()?.drop_waiting_draft(id)?;
+    Ok(())
+}
+
 /// Removes an account from this device: its mail here, its password and
-/// the calendars that used it. Its mail stays on the server.
-#[frb(sync)]
+/// the calendars that used it. Its mail stays on the server. The account
+/// leaves every list at once; its messages are removed in the background,
+/// a few thousand at a time (and the removal goes on at the next start if
+/// the app stops first), so nothing waits on it. Refused
+/// ([ErrorKind::Unsent]) while mail written in it hasn't gone
+/// ([account_unsent]): nothing unsent is ever removed with it.
 pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     let id = AccountId(account_id);
+    let removed = account(account_id)?;
+    // First, in one write that checks for unsent mail: nothing is undone
+    // (watching, calendars, passwords) when it is refused.
+    store()?.start_removing_account(id)?;
     stop_watching(id);
     crate::background::forget(id);
     let sources: Vec<i64> = store()?
@@ -165,9 +229,7 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     for source in sources {
         disconnect_calendar(source)?;
     }
-    let removed = account(account_id)?;
     let store = store()?;
-    store.remove_account(id)?;
     // An account added later may get the same id.
     store.set_setting(&alert_key(account_id), "")?;
     store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
@@ -185,6 +247,7 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     // this device's token. Forgetting it here is enough: it never leaves
     // the keychain, and the person can remove the app's access from their
     // Google Account. Microsoft's run out on their own.
+    super::engine::kick_maintenance();
     Ok(())
 }
 

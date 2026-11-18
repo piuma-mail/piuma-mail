@@ -101,7 +101,7 @@ void main() {
     );
     final dir = await Directory.systemTemp.createTemp('piuma-e2e');
     addTearDown(() => dir.delete(recursive: true));
-    engine.openEngine(dbPath: '${dir.path}/piuma.db');
+    await engine.openEngine(dbPath: '${dir.path}/piuma.db');
 
     final free = await ServerSocket.bind('127.0.0.1', 0);
     final link = _Link(free.port);

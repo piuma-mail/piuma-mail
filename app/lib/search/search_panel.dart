@@ -17,8 +17,11 @@ import '../mail/mail_source.dart';
 import '../widgets/attachment_chip.dart';
 import '../widgets/button.dart';
 import '../widgets/links.dart';
+import '../widgets/progress.dart';
 import 'highlight.dart';
+import 'saved_searches.dart';
 import 'search_start.dart';
+import 'suggestions.dart';
 import '../inbox/risky_file.dart';
 
 /// Desktop search, as in the `SearchDesktop` mockup: the field with its
@@ -70,7 +73,9 @@ class SearchPanel extends StatefulWidget {
 
 class _SearchPanelState extends State<SearchPanel> {
   late final _field = TextEditingController(text: widget.initialQuery);
-  final _focus = FocusNode();
+
+  // The field sees Tab first: it takes the first suggestion.
+  late final _focus = FocusNode(onKeyEvent: _key);
   final _list = ScrollController();
 
   bool _unread = false;
@@ -90,6 +95,25 @@ class _SearchPanelState extends State<SearchPanel> {
 
   /// What the phone shows before anything is typed.
   SearchStart? _start;
+
+  /// The saved searches, for the phone's start screen.
+  List<SavedSearch> _saved = const [];
+
+  /// What the servers found for [_serverQuery], once they answered.
+  ServerResults? _server;
+
+  /// The query the server search ran, or runs, for; null before one.
+  String? _serverQuery;
+  bool _serverRunning = false, _serverFailed = false;
+
+  /// With nothing found here, the servers are asked after a pause, so a
+  /// word still being typed isn't sent.
+
+  /// Suggestions for the token being typed, and where that token starts.
+  List<SearchSuggestion> _suggestions = const [];
+  int _suggestStart = 0;
+  SuggestionData _suggestData = const SuggestionData();
+  int _suggestRound = 0;
 
   SearchResults _results = SearchResults.empty;
   int _selected = 0;
@@ -112,7 +136,12 @@ class _SearchPanelState extends State<SearchPanel> {
     _field.addListener(_typed);
     _changes = widget.source.changes.listen((_) => _run());
     _run();
-    if (widget.phone) _loadStart();
+    if (widget.phone) {
+      _loadStart();
+    } else {
+      _loadSaved();
+    }
+    _loadSuggestData();
     // The inbox may hold focus already, so autofocus alone isn't enough.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _focus.requestFocus();
@@ -122,6 +151,7 @@ class _SearchPanelState extends State<SearchPanel> {
   @override
   void dispose() {
     _debounce?.cancel();
+    if (_serverRunning) widget.source.cancelServerSearch();
     _changes?.cancel();
     _field.dispose();
     _focus.dispose();
@@ -132,6 +162,7 @@ class _SearchPanelState extends State<SearchPanel> {
   String _lastText = '';
 
   void _typed() {
+    _suggest();
     if (_field.text == _lastText) return;
     _lastText = _field.text;
     _debounce?.cancel();
@@ -140,7 +171,168 @@ class _SearchPanelState extends State<SearchPanel> {
 
   Future<void> _loadStart() async {
     final start = await widget.source.searchStart();
-    if (mounted) setState(() => _start = start);
+    final saved = await widget.source.savedSearches();
+    if (mounted) {
+      setState(() {
+        _start = start;
+        _saved = saved;
+      });
+    }
+  }
+
+  /// Folders, labels, accounts and the people written to most, for the
+  /// suggestions.
+  Future<void> _loadSuggestData() async {
+    try {
+      final source = widget.source;
+      final folders = <String>[
+        for (final a in source.accounts)
+          ...folderPaths(await source.folders(a.id)),
+      ];
+      final labels = [for (final l in await source.labels()) l.name];
+      final start = _start ?? await source.searchStart();
+      if (!mounted) return;
+      _suggestData = SuggestionData(
+        folders: folders,
+        labels: labels,
+        accounts: [for (final a in source.accounts) a.name],
+        people: [
+          for (final p in start.frequent) Contact(name: p.name, email: p.email),
+        ],
+      );
+      _frequent = _suggestData.people;
+      _suggest();
+    } catch (_) {
+      // Suggestions are a help: without them, search still works.
+    }
+  }
+
+  /// The people written to most, for `from:` before a letter is typed.
+  List<Contact> _frequent = const [];
+
+  /// Suggestions for the token at the caret.
+  void _suggest() {
+    final token = typedToken(_field.text, _field.selection.baseOffset);
+    final shown = token == null
+        ? const <SearchSuggestion>[]
+        : searchSuggestions(token.typed, _suggestData, now: widget.now());
+    if (token != null) _suggestStart = token.start;
+    if (!listEquals(shown, _suggestions)) setState(() => _suggestions = shown);
+    final person = token == null ? null : personTyped(token.typed);
+    if (person != null && person.$2 != _peopleFor) _lookUpPeople(person.$2);
+  }
+
+  /// What the people in the suggestions were looked up for.
+  String? _peopleFor;
+
+  /// People whose name or address starts with [typed], for `from:` and
+  /// the like.
+  Future<void> _lookUpPeople(String typed) async {
+    _peopleFor = typed;
+    final round = ++_suggestRound;
+    final people = typed.trim().isEmpty
+        ? _frequent
+        : await widget.source.suggestRecipients(typed);
+    if (!mounted || round != _suggestRound) return;
+    final d = _suggestData;
+    _suggestData = SuggestionData(
+      folders: d.folders,
+      labels: d.labels,
+      accounts: d.accounts,
+      people: people,
+    );
+    _suggest();
+  }
+
+  void _accept(SearchSuggestion s) {
+    _field.value = applySuggestion(_field.value, _suggestStart, s);
+    _focus.requestFocus();
+  }
+
+  KeyEventResult _key(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.tab &&
+        !HardwareKeyboard.instance.isShiftPressed &&
+        _suggestions.isNotEmpty) {
+      _accept(_suggestions.first);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// What the field and the filters ask, as the engine reads it.
+  String get _query => [_field.text.trim(), ..._tokens].join(' ').trim();
+
+  /// Forgets the server search, stopping it when it runs.
+  void _forgetServer() {
+    if (_serverRunning) widget.source.cancelServerSearch();
+    _server = null;
+    _serverQuery = null;
+    _serverRunning = false;
+    _serverFailed = false;
+  }
+
+  /// Asks the servers for what the search here didn't find.
+  Future<void> _searchServer() async {
+    final query = _query;
+    if (query.isEmpty || _serverRunning && _serverQuery == query) return;
+    setState(() {
+      _serverQuery = query;
+      _serverRunning = true;
+      _serverFailed = false;
+      _server = null;
+    });
+    try {
+      final found = await widget.source.searchServer(query);
+      if (!mounted || _serverQuery != query) return;
+      setState(() {
+        _server = found;
+        _serverRunning = false;
+      });
+    } catch (_) {
+      if (!mounted || _serverQuery != query) return;
+      setState(() {
+        _serverRunning = false;
+        _serverFailed = true;
+      });
+    }
+  }
+
+  /// What the servers found that isn't among the results here.
+  List<SearchHit> get _serverHits {
+    final here = {for (final h in _results.hits) h.row.key};
+    return [
+      for (final h in _server?.hits ?? const <SearchHit>[])
+        if (!here.contains(h.row.key)) h,
+    ];
+  }
+
+  /// Every result, here then from the servers, as ↑↓ go through them.
+  List<SearchHit> get _hits => [..._results.hits, ..._serverHits];
+
+  /// ⌘S: keeps the search under a name.
+  Future<void> _saveSearch() async {
+    final query = _query;
+    if (query.isEmpty) return;
+    await showSavedSearchEditor(context, source: widget.source, query: query);
+    await _reloadSaved();
+  }
+
+  /// The saved searches, for the desktop's empty search (the phone's come
+  /// with its start screen).
+  Future<void> _loadSaved() async {
+    final saved = await widget.source.savedSearches();
+    if (mounted) setState(() => _saved = saved);
+  }
+
+  Future<void> _reloadSaved() => widget.phone ? _loadStart() : _loadSaved();
+
+  /// ⋯ on a saved search: rename or delete it.
+  Future<void> _editSaved(SavedSearch s) async {
+    await showSavedSearchEditor(context, source: widget.source, saved: s);
+    await _reloadSaved();
   }
 
   /// Opens a result, keeping what was searched among the recent ones.
@@ -249,7 +441,7 @@ class _SearchPanelState extends State<SearchPanel> {
     try {
       while (_searchAgain && mounted) {
         _searchAgain = false;
-        final query = [_field.text.trim(), ..._tokens].join(' ').trim();
+        final query = _query;
         final SearchResults results;
         try {
           // Nothing typed and no filter: the start screen shows, and
@@ -263,8 +455,9 @@ class _SearchPanelState extends State<SearchPanel> {
         if (!mounted) return;
         final keep = _current?.row.key;
         setState(() {
+          if (query != _serverQuery) _forgetServer();
           _results = results;
-          final i = results.hits.indexWhere((h) => h.row.key == keep);
+          final i = _hits.indexWhere((h) => h.row.key == keep);
           _selected = i < 0 ? 0 : i;
         });
       }
@@ -297,11 +490,13 @@ class _SearchPanelState extends State<SearchPanel> {
 
   bool _openWhenReady = false, _opened = false;
 
-  SearchHit? get _current =>
-      _selected < _results.hits.length ? _results.hits[_selected] : null;
+  SearchHit? get _current {
+    final hits = _hits;
+    return _selected < hits.length ? hits[_selected] : null;
+  }
 
   void _move(int by) {
-    final n = _results.hits.length;
+    final n = _hits.length;
     if (n == 0) return;
     setState(() => _selected = (_selected + by).clamp(0, n - 1));
   }
@@ -347,6 +542,19 @@ class _SearchPanelState extends State<SearchPanel> {
         const SingleActivator(LogicalKeyboardKey.arrowDown): () => _move(1),
         const SingleActivator(LogicalKeyboardKey.arrowUp): () => _move(-1),
         const SingleActivator(LogicalKeyboardKey.enter): _submit,
+        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _saveSearch,
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true):
+            _saveSearch,
+        const SingleActivator(
+          LogicalKeyboardKey.enter,
+          meta: true,
+          shift: true,
+        ): _searchServer,
+        const SingleActivator(
+          LogicalKeyboardKey.enter,
+          control: true,
+          shift: true,
+        ): _searchServer,
         if (widget.onOpenWindow != null) ...{
           const SingleActivator(LogicalKeyboardKey.enter, meta: true): () {
             if (current != null) _openWindow(current.row);
@@ -503,8 +711,18 @@ class _SearchPanelState extends State<SearchPanel> {
                 if (searching) ...[
                   const SizedBox(width: 10),
                   Text(
-                    l.searchResults(_results.total),
+                    // What the servers found counts too: "No results"
+                    // above a result from the server read as wrong.
+                    l.searchResults(_results.total + _serverHits.length),
                     style: PiumaType.label.copyWith(color: c.muted),
+                  ),
+                  const SizedBox(width: 6),
+                  PiumaButton(
+                    label: l.saveSearch,
+                    kind: PiumaButtonKind.tertiary,
+                    size: PiumaButtonSize.compact,
+                    shortcut: _apple ? '⌘S' : 'Ctrl S',
+                    onPressed: _saveSearch,
                   ),
                 ],
                 const SizedBox(width: 10),
@@ -539,20 +757,42 @@ class _SearchPanelState extends State<SearchPanel> {
                   ),
                 ),
                 Container(width: 1, height: 18, color: c.line),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      l.searchOperators,
-                      style: PiumaType.label.copyWith(color: c.muted),
+                // While an operator is typed, what it may be; Tab takes
+                // the first.
+                if (_suggestions.isNotEmpty)
+                  Semantics(
+                    container: true,
+                    label: l.searchSuggestions,
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          l.searchSuggestions,
+                          style: PiumaType.label.copyWith(color: c.muted),
+                        ),
+                        const SizedBox(width: 8),
+                        for (final s in _suggestions)
+                          _Operator(s.insert, s.label, (_) => _accept(s)),
+                        const SizedBox(width: 8),
+                        const _Kbd('Tab', boxed: true),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    _Operator('from:', l.operatorNameHint, _insert),
-                    _Operator('before:', l.operatorDateHint, _insert),
-                    _Operator('after:', l.operatorDateHint, _insert),
-                    _Operator('is:unread', '', _insert),
-                  ],
-                ),
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        l.searchOperators,
+                        style: PiumaType.label.copyWith(color: c.muted),
+                      ),
+                      const SizedBox(width: 8),
+                      _Operator('from:', l.operatorNameHint, _insert),
+                      _Operator('before:', l.operatorDateHint, _insert),
+                      _Operator('after:', l.operatorDateHint, _insert),
+                      _Operator('is:unread', '', _insert),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -675,6 +915,14 @@ class _SearchPanelState extends State<SearchPanel> {
         on: _unread,
         onTap: () => _filter(() => _unread = !_unread),
       ),
+      // On the phone the field has no room for it.
+      if (phone && _query.isNotEmpty)
+        _FilterChip(
+          phone: phone,
+          label: l.saveSearch,
+          on: false,
+          onTap: _saveSearch,
+        ),
     ];
   }
 
@@ -796,6 +1044,26 @@ class _SearchPanelState extends State<SearchPanel> {
               ],
             ),
           ),
+          if (_suggestions.isNotEmpty)
+            Semantics(
+              container: true,
+              label: l.searchSuggestions,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                child: Row(
+                  children: [
+                    for (final s in _suggestions)
+                      _Operator(
+                        s.insert,
+                        s.label,
+                        (_) => _accept(s),
+                        tall: true,
+                      ),
+                  ],
+                ),
+              ),
+            ),
           // The start screen of `SearchEmpty` has no filters yet.
           if (_field.text.trim().isNotEmpty || _anyFilter || _start == null)
             Semantics(
@@ -835,46 +1103,84 @@ class _SearchPanelState extends State<SearchPanel> {
         onRecent: _again,
         onForget: _forget,
         onClear: _clearRecent,
+        saved: _saved,
+        onSaved: (s) => _again(s.query),
+        onEditSaved: _editSaved,
       );
     }
     if (!searching) {
-      return Padding(
-        padding: EdgeInsets.all(side),
-        child: Text(
-          l.searchEmptyHint,
-          style: PiumaType.body.copyWith(color: c.muted),
-        ),
-      );
-    }
-    if (r.hits.isEmpty && r.people.isEmpty) {
-      return Padding(
-        padding: EdgeInsets.fromLTRB(side, phone ? 72 : 40, side, 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _anyFilter ? l.searchNoResultsFilters : l.searchNoResults,
-              style: PiumaType.body.copyWith(
-                fontWeight: FontWeight.w600,
-                color: c.fg,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _anyFilter ? l.searchNoResultsFiltersHint : l.searchNoResultsHint,
+      // The saved searches here too, as on the phone's start screen: the
+      // sidebar is only icons in a narrow window.
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 16),
+        children: [
+          Padding(
+            padding: EdgeInsets.all(side),
+            child: Text(
+              l.searchEmptyHint,
               style: PiumaType.body.copyWith(color: c.muted),
             ),
-            if (_anyFilter) ...[
-              const SizedBox(height: 14),
-              PiumaButton(
-                label: l.clearFilters,
-                kind: PiumaButtonKind.secondary,
-                size: PiumaButtonSize.compact,
-                onPressed: _clearFilters,
+          ),
+          if (_saved.isNotEmpty) ...[
+            Padding(
+              padding: EdgeInsets.fromLTRB(side, 4, side, 2),
+              child: Semantics(
+                header: true,
+                child: Text(
+                  l.savedSearches,
+                  style: PiumaType.label.copyWith(
+                    color: c.muted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-            ],
+            ),
+            for (final s in _saved)
+              SavedSearchRow(
+                search: s,
+                onTap: () => _again(s.query),
+                onEdit: () => _editSaved(s),
+              ),
           ],
-        ),
+        ],
+      );
+    }
+    final server = _serverHits;
+    if (r.hits.isEmpty && r.people.isEmpty && server.isEmpty) {
+      return ListView(
+        padding: EdgeInsets.fromLTRB(side, phone ? 72 : 40, side, 18),
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _anyFilter ? l.searchNoResultsFilters : l.searchNoResults,
+                style: PiumaType.body.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: c.fg,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _anyFilter
+                    ? l.searchNoResultsFiltersHint
+                    : l.searchNoResultsHint,
+                style: PiumaType.body.copyWith(color: c.muted),
+              ),
+              if (_anyFilter) ...[
+                const SizedBox(height: 14),
+                PiumaButton(
+                  label: l.clearFilters,
+                  kind: PiumaButtonKind.secondary,
+                  size: PiumaButtonSize.compact,
+                  onPressed: _clearFilters,
+                ),
+              ],
+              const SizedBox(height: 22),
+              ..._serverStatus(context),
+            ],
+          ),
+        ],
       );
     }
     final heading = PiumaType.label.copyWith(
@@ -962,6 +1268,7 @@ class _SearchPanelState extends State<SearchPanel> {
               ),
             ),
         ],
+        ..._serverSection(context, words, heading),
         if (r.files.isNotEmpty) ...[
           Padding(
             padding: EdgeInsets.fromLTRB(
@@ -1018,6 +1325,165 @@ class _SearchPanelState extends State<SearchPanel> {
       ],
     );
   }
+
+  /// The servers' results under the ones here: a heading, the rows, and
+  /// how the search there went.
+  List<Widget> _serverSection(
+    BuildContext context,
+    List<String> words,
+    TextStyle heading,
+  ) {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final phone = widget.phone;
+    final side = phone ? 20.0 : 18.0;
+    final hits = _serverHits;
+    final offset = _results.hits.length;
+    return [
+      if (hits.isNotEmpty) ...[
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            side,
+            phone ? 16 : 14,
+            side,
+            phone ? 4 : 6,
+          ),
+          child: Semantics(
+            header: true,
+            child: Row(
+              children: [
+                PiumaIconView(PiumaIcon.server, size: 13, color: c.muted),
+                const SizedBox(width: 6),
+                Expanded(child: Text(l.searchOnServerHeading, style: heading)),
+                Text(
+                  '${hits.length}',
+                  style: PiumaType.label.copyWith(color: c.muted),
+                ),
+              ],
+            ),
+          ),
+        ),
+        for (final (i, h) in hits.indexed)
+          Padding(
+            padding: phone
+                ? EdgeInsets.zero
+                : const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+            child: PiumaEnter(
+              key: ValueKey('server ${h.row.key}'),
+              index: i.clamp(0, 7),
+              child: _ResultRow(
+                hit: h,
+                words: words,
+                account: _accountOf(h.row),
+                when: rowTime(
+                  h.row.receivedAt,
+                  widget.now(),
+                  Localizations.localeOf(context).toLanguageTag(),
+                ),
+                selected: !phone && offset + i == _selected,
+                phone: phone,
+                server: true,
+                onTap: phone
+                    ? () => _open(h.row)
+                    : () => setState(() => _selected = offset + i),
+              ),
+            ),
+          ),
+      ],
+      Padding(
+        padding: EdgeInsets.fromLTRB(side, 12, side, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _serverStatus(context),
+        ),
+      ),
+    ];
+  }
+
+  /// "Search on server", or how the search there goes or went.
+  List<Widget> _serverStatus(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final note = PiumaType.small.copyWith(color: c.muted);
+    final server = _server;
+    if (_serverRunning) {
+      return [
+        Semantics(
+          liveRegion: true,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(width: 64, child: PiumaProgress(color: c.accent)),
+              const SizedBox(width: 10),
+              Flexible(child: Text(l.searchingServers, style: note)),
+            ],
+          ),
+        ),
+      ];
+    }
+    if (_serverFailed) {
+      return [
+        Semantics(
+          liveRegion: true,
+          child: Text(l.searchServerError, style: note),
+        ),
+        const SizedBox(height: 8),
+        _serverButton(context, l.tryAgain),
+      ];
+    }
+    if (server != null) {
+      return [
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            !server.asked
+                ? l.searchServerLocalOnly
+                : _serverHits.isEmpty
+                ? l.searchServerNothing
+                : l.searchServerFound(_serverHits.length),
+            style: note,
+          ),
+        ),
+        if (server.textRefused > 0)
+          Text(l.searchServerTextRefused(server.textRefused), style: note),
+        if (server.failed > 0)
+          Text(l.searchServerUnreachable(server.failed), style: note),
+        if (server.partial)
+          Text(
+            server.partialAccounts.isEmpty
+                ? l.searchServerPartial
+                : l.searchServerPartialIn(server.partialAccounts.join(', ')),
+            style: note,
+          ),
+      ];
+    }
+    if (_query.isEmpty) return const [];
+    // The server is asked only from here (or ⇧⌘↵): never by itself while
+    // typing. With little or nothing here, the button leads.
+    final few = _results.hits.length < _fewResults;
+    return [
+      if (few) ...[
+        Text(l.searchServerMaybe, style: note),
+        const SizedBox(height: 8),
+      ],
+      _serverButton(context, l.searchOnServer, prominent: few),
+    ];
+  }
+
+  /// Fewer results here than this, and "Search on server" leads.
+  static const _fewResults = 5;
+
+  Widget _serverButton(
+    BuildContext context,
+    String label, {
+    bool prominent = false,
+  }) => PiumaButton(
+    label: label,
+    kind: prominent ? PiumaButtonKind.primary : PiumaButtonKind.secondary,
+    size: widget.phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
+    shortcut: widget.phone ? null : (_apple ? '⇧⌘↵' : 'Ctrl ⇧ ↵'),
+    onPressed: _searchServer,
+  );
 
   /// A file's email: picked among the results on the desktop, opened on
   /// the phone or when it isn't among them.
@@ -1226,34 +1692,40 @@ class _FilterChip extends StatelessWidget {
 
 /// An operator button: puts the operator in the field.
 class _Operator extends StatelessWidget {
-  const _Operator(this.op, this.hint, this.onInsert);
+  const _Operator(this.op, this.hint, this.onInsert, {this.tall = false});
   final String op;
   final String hint;
   final ValueChanged<String> onInsert;
+
+  /// 44 points high, for a finger.
+  final bool tall;
 
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     return PiumaPressable(
       onTap: () => onInsert(op),
-      semanticLabel: op,
+      semanticLabel: hint.isEmpty ? op : '$op $hint',
       child: Container(
-        height: 30,
+        height: tall ? 44 : 30,
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        alignment: Alignment.center,
-        child: Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: op,
-                style: PiumaType.mono.copyWith(fontSize: 13, color: c.fg),
-              ),
-              if (hint.isNotEmpty)
+        // As wide as its text, in a Wrap too.
+        child: Center(
+          widthFactor: 1,
+          child: Text.rich(
+            TextSpan(
+              children: [
                 TextSpan(
-                  text: ' $hint',
-                  style: PiumaType.small.copyWith(color: c.muted),
+                  text: op,
+                  style: PiumaType.mono.copyWith(fontSize: 13, color: c.fg),
                 ),
-            ],
+                if (hint.isNotEmpty)
+                  TextSpan(
+                    text: ' $hint',
+                    style: PiumaType.small.copyWith(color: c.muted),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1388,10 +1860,14 @@ class _ResultRow extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.phone = false,
+    this.server = false,
   });
 
   /// A full-width row of `SearchPhone`, with two lines of preview.
   final bool phone;
+
+  /// Found by the server search, not here.
+  final bool server;
   final SearchHit hit;
   final List<String> words;
   final MailAccount? account;
@@ -1459,6 +1935,17 @@ class _ResultRow extends StatelessWidget {
                       label: l.searchHasFiles,
                       child: PiumaIconView(
                         PiumaIcon.paperclip,
+                        size: 13,
+                        color: c.muted,
+                      ),
+                    ),
+                  ],
+                  if (server) ...[
+                    const SizedBox(width: 8),
+                    Semantics(
+                      label: l.searchFromServer,
+                      child: PiumaIconView(
+                        PiumaIcon.server,
                         size: 13,
                         color: c.muted,
                       ),

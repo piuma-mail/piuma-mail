@@ -44,6 +44,7 @@ pub mod pec;
 pub mod pending;
 pub mod pictures;
 pub mod preview;
+pub mod private_files;
 pub mod reading;
 pub mod remote;
 pub mod rich;
@@ -72,7 +73,7 @@ pub use reading::Readable;
 pub use search::Query;
 pub use store::{
     AccountFolder, Attachment, Body, Conversation, Found, Hit, MailboxState, MessageTemplate,
-    Person, PrivacyCounts, SenderAddress, Store, StoreError, TrustedSender,
+    Person, PrivacyCounts, Restored, SavedSearch, SenderAddress, Store, StoreError, TrustedSender,
 };
 
 /// Engine version, shown in the app's settings.

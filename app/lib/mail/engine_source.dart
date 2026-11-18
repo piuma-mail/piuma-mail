@@ -23,10 +23,12 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/search.dart' as srch;
 import '../engine/api/mailbox.dart' as mbx;
 import '../engine/api/oauth.dart' as oauth;
 import '../engine/api/outside.dart' as outside;
 import '../engine/api/reply.dart' as rep;
+import '../engine/api/storage.dart' as store;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
@@ -634,6 +636,12 @@ class EngineMailSource extends MailSource with EngineCompose {
         _changes.add(null);
         _dropped.add(e.removed);
       case engine.SyncEventKind.signInFailed:
+        // An account a removal gave back, because mail written in it
+        // hadn't gone: listed again, to sign in to it.
+        if (!_accounts.any((a) => a.id == id)) {
+          _reloadAccounts();
+          _changes.add(null);
+        }
         _progress.remove(id);
         _offline.remove(id);
         _failed.add(id);
@@ -772,7 +780,14 @@ class EngineMailSource extends MailSource with EngineCompose {
     GroupScope? group,
   }) async {
     if (folder == MailFolder.label) {
-      return (await labelled(mailbox ?? '')).skip(offset).take(limit).toList();
+      return [
+        for (final r in await lbl.labelledPage(
+          keyword: mailbox ?? '',
+          offset: offset,
+          limit: limit,
+        ))
+          _row(r),
+      ];
     }
     if (folder == MailFolder.starred) {
       return [
@@ -1042,6 +1057,73 @@ class EngineMailSource extends MailSource with EngineCompose {
   Future<List<MailRow>> labelled(String keyword) async => [
     for (final r in await lbl.labelled(keyword: keyword)) _row(r),
   ];
+
+  @override
+  Future<int> labelledCount(String keyword) =>
+      lbl.labelledCount(keyword: keyword);
+
+  @override
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => [
+    for (final u in await acc.accountUnsent(accountId: accountId))
+      UnsentMessage(
+        id: u.id.toInt(),
+        accountId: accountId,
+        subject: u.subject,
+        to: u.to,
+        draft: u.draft,
+        refused: u.refused,
+        sending: u.sending,
+      ),
+  ];
+
+  @override
+  Future<void> sendUnsent(UnsentMessage message) async {
+    if (message.draft) {
+      await acc.saveWaitingDraftsNow(accountId: message.accountId);
+    } else {
+      await retryOutgoing(message.id);
+    }
+  }
+
+  @override
+  Future<void> deleteUnsent(UnsentMessage message) async {
+    if (message.draft) {
+      await acc.deleteWaitingDraft(id: message.id);
+      _changes.add(null);
+    } else {
+      await cancelOutgoing(message.id);
+    }
+  }
+
+  @override
+  Future<StorageUse> storage() async => _storage(await store.storageInfo());
+
+  @override
+  Future<void> setKeepDays(int? days) => store.setKeepDays(days: days);
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async {
+    try {
+      return _storage(await store.clearCachedMail(accountId: accountId));
+    } on engine.EngineError catch (e) {
+      if (e.kind != engine.ErrorKind.diskFull) rethrow;
+      throw NoRoomToShrink(await storage());
+    }
+  }
+
+  static StorageUse _storage(store.StorageInfo s) => StorageUse(
+    totalBytes: s.totalBytes,
+    backupBytes: s.backupBytes,
+    keepDays: s.keepDays,
+    accounts: [
+      for (final a in s.accounts)
+        AccountStorage(
+          accountId: a.accountId,
+          messages: a.messages,
+          cachedBytes: a.cachedBytes,
+        ),
+    ],
+  );
 
   @override
   bool labelsLocal(int accountId) => lbl.labelsLocal(accountId: accountId);
@@ -1497,6 +1579,51 @@ class EngineMailSource extends MailSource with EngineCompose {
       limit: limit,
       frequent: (await searchStart()).frequent,
     );
+  }
+
+  @override
+  Future<ServerResults> searchServer(String query, {int limit = 50}) async {
+    final r = await srch.searchServer(query: query, limit: limit);
+    return ServerResults(
+      hits: [
+        for (final h in r.hits)
+          SearchHit(_row(h.row), snippet: h.snippet, files: h.files),
+      ],
+      asked: r.asked,
+      failed: r.failed,
+      partial: r.partial,
+      partialAccounts: r.partialAccounts,
+      textRefused: r.textRefused,
+    );
+  }
+
+  @override
+  void cancelServerSearch() => srch.cancelServerSearch();
+
+  @override
+  Future<List<SavedSearch>> savedSearches() async => [
+    for (final s in await srch.savedSearches())
+      SavedSearch(id: s.id, name: s.name, query: s.query),
+  ];
+
+  @override
+  Future<int> saveSearch(String name, String query) async {
+    final id = await srch.saveSearch(name: name, query: query);
+    _changes.add(null);
+    return id;
+  }
+
+  @override
+  Future<bool> renameSavedSearch(int id, String name) async {
+    final done = await srch.renameSavedSearch(id: id, name: name);
+    if (done) _changes.add(null);
+    return done;
+  }
+
+  @override
+  Future<void> deleteSavedSearch(int id) async {
+    await srch.deleteSavedSearch(id: id);
+    _changes.add(null);
   }
 
   @override
@@ -2563,7 +2690,14 @@ class EngineMailSource extends MailSource with EngineCompose {
 
   @override
   Future<void> removeAccount(int accountId) async {
-    acc.removeAccount(accountId: accountId);
+    // Leaves the lists at once; its mail goes in the background. Never
+    // with mail written in it that hasn't gone.
+    try {
+      await acc.removeAccount(accountId: accountId);
+    } on engine.EngineError catch (e) {
+      if (e.kind == engine.ErrorKind.unsent) throw const UnsentMailLeft();
+      rethrow;
+    }
     await AndroidPasswords.forget(accountId);
     _forgetStatus(accountId);
     _reloadAccounts();
@@ -2870,16 +3004,30 @@ class EngineMailSource extends MailSource with EngineCompose {
 
   @override
   void setHidden(MailRow row, bool hidden) {
-    for (final c in row.actionCopies) {
-      engine.setMessageHidden(
-        accountId: c.accountId,
-        mailbox: c.mailbox,
-        uid: c.uid,
-        hidden: hidden,
-      );
-    }
-    _changes.add(null);
+    // Off the thread that draws: a sync writing a batch holds the
+    // database for a moment. The lists read again once it is written.
+    // One after the other, in the order asked: each call runs on a thread
+    // of its own, so a hide and its Undo sent together could otherwise
+    // land the other way round and leave the message hidden.
+    _hiding = _hiding
+        .then(
+          (_) => Future.wait([
+            for (final c in row.actionCopies)
+              engine.setMessageHidden(
+                accountId: c.accountId,
+                mailbox: c.mailbox,
+                uid: c.uid,
+                hidden: hidden,
+              ),
+          ]),
+        )
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _changes.add(null));
   }
+
+  /// The last hide or show asked for ([setHidden]); the next one waits
+  /// for it.
+  Future<void> _hiding = Future.value();
 
   @override
   Future<void> apply(List<MailRow> rows, MessageAction action) async {

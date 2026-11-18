@@ -9,8 +9,8 @@ use crate::automation::{machine_address, no_reply_address};
 use crate::groups::{AddressGroup, GroupAddress, Within};
 use crate::label::Label;
 use crate::model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary,
-    ReplyInfo, Section, Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, ReplyInfo, Section, Security, Server,
 };
 use crate::outbox::{Outgoing, Waiting};
 use crate::pec;
@@ -35,6 +35,14 @@ pub enum StoreError {
     /// lose what that version keeps.
     #[error("this data was written by a newer version of Piuma (schema {found}, this one knows {known}); update Piuma to open it")]
     TooNew { found: usize, known: usize },
+    /// Not enough free room on the disk to write the database anew:
+    /// [need] bytes, [free] free.
+    #[error("not enough free room on the disk: {need} bytes needed, {free} free")]
+    NoRoom { need: u64, free: u64 },
+    /// An account can't be removed while mail written in it hasn't gone:
+    /// [outbox] messages and [drafts] waiting on this device.
+    #[error("the account still has unsent mail ({outbox} in the outbox, {drafts} drafts on this device)")]
+    Unsent { outbox: u32, drafts: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -71,7 +79,7 @@ pub const RECENT_SEARCHES_KEPT: usize = 5;
 /// nor from a machine-looking address ([`machine_address`]), with no Vault
 /// card unless a person forwarded it. A sender the person moved to People or Notifications
 /// stays where they put it.
-const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
+pub(crate) const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
     AND m.folder NOT IN ('sent', 'drafts', 'newsletters')
     AND lower(m.from_email) NOT IN (SELECT lower(email) FROM account)
     AND COALESCE((SELECT s.people FROM sender_side s WHERE s.email = lower(m.from_email)),
@@ -85,13 +93,17 @@ const PEOPLE: &str = "(m.newsletter = 0 AND m.from_email != ''
         AND (forwarded(m.subject) OR NOT EXISTS (SELECT 1 FROM vault_card v
             WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid))))))";
 
+/// Leaves out the messages `m` of an account being removed: they go a
+/// few thousand at a time (`Store::maintain`), and leave the lists at once.
+pub(crate) const LIVE: &str = " AND m.account NOT IN (SELECT account FROM account_removal)";
+
 /// The SQL that keeps what a [`ListFilter`] keeps of a list of messages `m`.
 fn section_sql(filter: impl Into<ListFilter>) -> String {
     let filter = filter.into();
     let section = match filter.section {
-        Section::All => String::new(),
-        Section::People => format!(" AND {PEOPLE}"),
-        Section::Notifications => format!(" AND NOT {PEOPLE}"),
+        Section::All => LIVE.to_owned(),
+        Section::People => format!("{LIVE} AND {PEOPLE}"),
+        Section::Notifications => format!("{LIVE} AND NOT {PEOPLE}"),
     };
     match (filter.unread, filter.flat) {
         (true, false) => section + UNREAD_IN_THREAD,
@@ -155,19 +167,35 @@ fn cross_account_sql(within: &Within, section: &str, filter: &ListFilter) -> Str
     )
 }
 
-/// Keeps who the person wrote to, from the Sent mail `?1`/`?2`/`?3` (an
-/// account, a mailbox and a uid; a NULL keeps them all): the senders the
-/// inbox always counts as people.
-const NOTE_WRITTEN_TO: &str = "WITH RECURSIVE split(account, rest, email) AS (
+/// Keeps who the person wrote to, from the Sent message `?1`/`?2`/`?3` (an
+/// account, a mailbox and a uid), found by its key: the senders the inbox
+/// always counts as people. Run for each stored message, so it never walks
+/// the whole Sent folder (the mail kept before is read by the `written_to`
+/// job of `Store::maintain`).
+const NOTE_WRITTEN_TO_ONE: &str = "WITH RECURSIVE split(account, rest, email) AS (
         SELECT account, recipients || ' ', '' FROM message
-        WHERE folder = 'sent' AND recipients <> ''
-          AND (?1 IS NULL OR account = ?1) AND (?2 IS NULL OR mailbox = ?2)
-          AND (?3 IS NULL OR uid = ?3)
+        WHERE account = ?1 AND mailbox = ?2 AND uid = ?3
+          AND folder = 'sent' AND recipients <> ''
         UNION ALL
         SELECT account, substr(rest, instr(rest, ' ') + 1), substr(rest, 1, instr(rest, ' ') - 1)
         FROM split WHERE rest <> '')
     INSERT OR IGNORE INTO written_to (account, email)
     SELECT account, lower(email) FROM split WHERE email <> ''";
+
+/// Keeps an address a list takes leave requests at.
+const NOTE_LIST_MAILTO: &str = "INSERT OR IGNORE INTO list_mailto (email) VALUES (?1)";
+
+/// The address of a `mailto:` unsubscribe link, in lower case; None for
+/// any other link.
+fn list_mailto(unsubscribe: &str) -> Option<String> {
+    // Anywhere in the value, as kept by older versions too: `<mailto:…>`.
+    let at = unsubscribe.to_ascii_lowercase().find("mailto:")?;
+    let link: String = unsubscribe[at + "mailto:".len()..]
+        .chars()
+        .take_while(|c| !matches!(c, '<' | '>' | ',' | '"') && !c.is_whitespace())
+        .collect();
+    crate::newsletter::mailto(&format!("mailto:{link}")).map(|m| m.to.trim().to_lowercase())
+}
 
 const MIGRATIONS: &[&str] = &[
     r#"
@@ -1044,7 +1072,117 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (outbox, position)
     );
 "#,
+    // 66. Indexes for the lookups that walked every message, and the
+    // tables of the work done in the background (see `Store::maintain`).
+    // Only CREATEs and one small INSERT: no row of `message` is rewritten
+    // here, so it takes a moment on any mailbox.
+    r#"
+    -- A sender's mail, by address in any case: sender sheets, the
+    -- impostor check, Waiting's list check, frequent contacts.
+    CREATE INDEX IF NOT EXISTS message_by_sender ON message(lower(from_email), received_at);
+    -- Other addresses that carry the same full name.
+    CREATE INDEX IF NOT EXISTS message_by_name ON message(lower(trim(from_name)));
+    -- Recent mail of an account, for replies without References.
+    CREATE INDEX IF NOT EXISTS message_by_account_date ON message(account, received_at);
+    -- What each sync round still has to look at: small, since they only
+    -- hold the rows still waiting.
+    CREATE INDEX IF NOT EXISTS message_list_unchecked ON message(account, mailbox, uid)
+        WHERE list_checked = 0;
+    CREATE INDEX IF NOT EXISTS message_vault_unchecked ON message(account, mailbox, received_at)
+        WHERE vault_checked = 0;
+    CREATE INDEX IF NOT EXISTS message_files_unchecked ON message(account, mailbox, received_at)
+        WHERE files_checked = 0;
+    CREATE INDEX IF NOT EXISTS message_hidden ON message(account, mailbox, uid) WHERE hidden = 1;
+    -- Counting conversations, and unread mail, reads the indexes alone:
+    -- the walk down a folder and the look for a newer message of each
+    -- thread.
+    DROP INDEX IF EXISTS message_by_folder;
+    CREATE INDEX message_by_folder
+        ON message(folder, received_at DESC, account, uid DESC, hidden, thread, flags);
+    DROP INDEX IF EXISTS message_by_thread;
+    CREATE INDEX message_by_thread
+        ON message(account, thread, folder, hidden, received_at DESC, uid);
+    -- Bodies whose sender a server vouched for.
+    CREATE INDEX IF NOT EXISTS message_body_verified ON message_body(account, mailbox, uid)
+        WHERE verified = 1;
+    -- Bodies still here: the ones a clean-up of old mail looks at. A body
+    -- let go keeps its row with format -1 (and whether its sender was
+    -- verified), and is fetched again when opened.
+    CREATE INDEX IF NOT EXISTS message_body_kept ON message_body(account, mailbox, uid)
+        WHERE format >= 0;
+    -- The addresses lists take requests to leave at (List-Unsubscribe
+    -- mailto:), so Waiting knows them without reading every message.
+    CREATE TABLE IF NOT EXISTS list_mailto (
+        email TEXT PRIMARY KEY
+    ) WITHOUT ROWID;
+    -- Accounts whose mail is being removed, a few thousand rows at a time;
+    -- they are no longer listed, and a removal cut short goes on.
+    CREATE TABLE IF NOT EXISTS account_removal (
+        account INTEGER PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE
+    );
+    -- Work on many rows, done in small steps in the background and taken
+    -- up again where it stopped: never inside a migration.
+    CREATE TABLE IF NOT EXISTS maintenance (
+        job    TEXT PRIMARY KEY,
+        cursor INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO maintenance (job) VALUES ('list_mailto');
+    -- What a folder looked like at the end of its last complete sync, so
+    -- an unchanged folder isn't listed again, and how far the look at old
+    -- flags has come on servers without CONDSTORE.
+    CREATE TABLE IF NOT EXISTS mailbox_scan (
+        account      INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        mailbox      TEXT NOT NULL,
+        uid_validity INTEGER NOT NULL,
+        uid_next     INTEGER NOT NULL,
+        messages     INTEGER NOT NULL,
+        flags_below  INTEGER,
+        PRIMARY KEY (account, mailbox)
+    );
+"#,
 ];
+
+/// `message.hidden` of a message a server search brought from outside
+/// what the sync covers (older than the oldest synced message of its
+/// folder, or past the folders and pages the sync reads): searches find
+/// it and it opens with its conversation, but folder lists, counts and
+/// suggestions leave it out, so old mail doesn't turn up in the Inbox.
+/// Once the sync comes down to it, it is ordinary mail (hidden 0) and
+/// leaves `server_found`. 1 is an action waiting to be undone.
+pub const OUTSIDE_SYNC: u8 = 2;
+
+/// What `hidden` goes back to when an action is undone or given up.
+const SHOWN: &str = "CASE WHEN EXISTS (SELECT 1 FROM server_found f
+    WHERE f.account = message.account AND f.mailbox = message.mailbox AND f.uid = message.uid)
+    THEN 2 ELSE 0 END";
+
+/// Saved searches (`saved_search`, kept on this device for now: the sync
+/// space can carry it later by `uuid`, last change winning by
+/// `updated_at`), and the messages a server search brought here
+/// (`server_found`), which the database's growth rules may let go first.
+const SEARCH_TABLES: &str = "
+    CREATE TABLE IF NOT EXISTS saved_search (
+        id         INTEGER PRIMARY KEY,
+        uuid       TEXT NOT NULL UNIQUE,
+        name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        query      TEXT NOT NULL,
+        position   INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS server_found (
+        account      INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        mailbox      TEXT NOT NULL,
+        uid          INTEGER NOT NULL,
+        uid_validity INTEGER NOT NULL,
+        found_at     INTEGER NOT NULL,
+        PRIMARY KEY (account, mailbox, uid)
+    );
+    CREATE TRIGGER IF NOT EXISTS server_found_gone AFTER DELETE ON message
+    BEGIN
+        DELETE FROM server_found
+         WHERE account = old.account AND mailbox = old.mailbox AND uid = old.uid;
+    END;
+";
 
 /// Number of the migration that made `written_to`, filled from the Sent
 /// mail already kept.
@@ -1086,12 +1224,14 @@ const SPACE_LOCAL_COLUMNS: &[(&str, &str)] = &[
 /// Settings that stay on their device.
 const LOCAL_SETTINGS: &[&str] = &[
     "hint.",
+    "storage.",
     "search.",
     "space.",
     "nightly.",
     "rules.sorted.",
     "sign_in.",
     "labels.local.",
+    "account_restored.",
 ];
 
 /// A column value as JSON; blobs as `{"blob": base64}`.
@@ -1405,6 +1545,132 @@ pub struct MailboxState {
 
 pub struct Store {
     conn: Connection,
+    /// The senders' organizations, counted once and then kept up to date
+    /// from the newest rows only (see [`Store::known_domains`]).
+    tally: std::cell::RefCell<Option<DomainTally>>,
+    /// Counts the lists asked for, with the `data_version` they were
+    /// counted at: on the reader, a list drawn again with nothing synced
+    /// in between doesn't count its folder again.
+    counts: std::cell::RefCell<HashMap<String, (i64, u32)>>,
+    /// Opened by [`Store::open_reader`]: it never writes.
+    reader: bool,
+    /// Where pages of each list ended, at a `data_version` (see
+    /// [`Store::anchor`]).
+    anchors: std::cell::RefCell<HashMap<String, Anchors>>,
+}
+
+/// Where a row is in the order of the unified lists: its time, its
+/// account and its uid.
+type RowKey = (i64, i64, u32);
+
+/// The `data_version` some anchors of one list were noted at, and the
+/// anchors: an offset, and the key of the row just before it.
+type Anchors = (i64, std::collections::BTreeMap<u32, RowKey>);
+
+/// Rows after an anchor `?5`/`?6`/`?7` (received_at, account, uid) in the
+/// order of the unified lists: newest first, then by account, then the
+/// highest uid first. The range on `received_at` keeps it on the index.
+const AFTER_ANCHOR: &str = " AND m.received_at <= ?5
+    AND (m.received_at < ?5 OR m.account > ?6 OR (m.account = ?6 AND m.uid < ?7))";
+
+/// Mail per sender organization, and whether a server vouched for one of
+/// its messages, as of the newest message and body rows it has seen.
+struct DomainTally {
+    counts: HashMap<String, (u32, bool)>,
+    message_mark: i64,
+    body_mark: i64,
+    /// How many kept bodies were verified when it was last brought up to
+    /// date: fewer now means a sender lost its verification (a body kept
+    /// again without it, or removed), and the count starts over.
+    verified: i64,
+    built: std::time::Instant,
+}
+
+/// How long [`DomainTally`] only adds new rows before it counts again
+/// from scratch, to let go of mail that was removed meanwhile.
+const TALLY_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// The newest Sent message to `?1` (see [`Store::last_sent_to`]).
+const LAST_SENT_TO: &str = "SELECT received_at FROM message INDEXED BY message_by_folder
+     WHERE (EXISTS (SELECT 1 FROM written_to WHERE email = ?1)
+            OR EXISTS (SELECT 1 FROM maintenance WHERE job = 'written_to'))
+       AND folder = 'sent' AND instr(lower(to_list), ?1) > 0
+     ORDER BY received_at DESC LIMIT 1";
+
+/// The messages with the label `?1`, outside the trash (see
+/// [`Store::labelled_page`]): the labelled rows first, then each one's
+/// message, so the walk is as long as the labels, not the mailbox.
+const LABELLED: &str = "FROM message_labels ml CROSS JOIN message m USING (account, mailbox, uid)
+     WHERE m.hidden = 0 AND m.folder <> 'trash'
+       AND instr(' ' || ml.labels || ' ', ' ' || ?1 || ' ') > 0
+       AND m.account NOT IN (SELECT account FROM account_removal)";
+
+/// The background jobs of `maintenance` this version does, besides
+/// `clear:<account>` (see [`Store::maintain`]).
+/// Where [`Store::maintain`] notes an account a removal gave back, until
+/// [`Store::take_restored`]: the account's id follows.
+const RESTORED: &str = "account_restored.";
+
+/// An account a removal gave back (see [`Store::take_restored`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restored {
+    pub account: AccountId,
+    /// An account added since has its address: it keeps the placeholder
+    /// "address (removed N)" until it is removed again.
+    pub address_taken: bool,
+}
+
+const KNOWN_JOBS: &str = "('clean_previews', 'written_to', 'list_mailto', 'evict')";
+
+/// Rows of `message` one step of a background job looks at.
+const MAINTENANCE_ROWS: i64 = 5_000;
+
+/// Messages of a removed account deleted per step, each in its own short
+/// write, so a sync or a tap never waits long behind a removal.
+const REMOVAL_ROWS: i64 = 500;
+
+/// The outbox states of mail that hasn't gone: waiting, on its way, or
+/// refused. `unknown` (the server may have taken it) and `unfiled` /
+/// `filing` (sent, its copy for Sent still to file) are not counted.
+const UNSENT_STATES: &str = "('queued', 'sending', 'refused')";
+
+/// [`Store::unsent`] on `conn`.
+fn unsent_in(conn: &Connection, id: AccountId) -> Result<(u32, u32)> {
+    Ok(conn.query_row(
+        &format!(
+            "SELECT (SELECT COUNT(*) FROM outbox WHERE account = ?1 AND state IN {UNSENT_STATES}),
+                    (SELECT COUNT(*) FROM draft_waiting WHERE account = ?1)"
+        ),
+        params![id.0],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
+/// A message written in an account that hasn't gone yet
+/// ([`Store::unsent_mail`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unsent {
+    /// The outbox row's id, or the waiting draft's.
+    pub id: i64,
+    /// A draft waiting on this device to be saved on the server, rather
+    /// than mail in the outbox.
+    pub draft: bool,
+    pub to: Vec<String>,
+    pub subject: String,
+    /// Where an outbox message stands; None for a draft.
+    pub state: Option<crate::outbox::State>,
+    /// When it was queued or saved, in Unix seconds.
+    pub at: i64,
+}
+
+/// What [`Store::open_file`] did before the database was ready.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Opened {
+    /// The schema was updated.
+    pub migrated: bool,
+    /// A copy of the database as it was before the update was kept next
+    /// to it (`<name>.before-update`).
+    pub backed_up: bool,
 }
 
 /// What was stopped: trackers in all (pixels among them), links cleaned,
@@ -1474,8 +1740,6 @@ pub struct Attachment {
     pub encoding: Option<String>,
 }
 
-/// Runs every stored preview through [`crate::imap::clean_preview`] again.
-/// One that comes out empty is filled in when its message is opened.
 /// Adds the columns a table doesn't have yet.
 fn add_columns(tx: &rusqlite::Transaction, table: &str, columns: &[(&str, &str)]) -> Result<()> {
     for (name, kind) in columns {
@@ -1491,10 +1755,18 @@ fn add_columns(tx: &rusqlite::Transaction, table: &str, columns: &[(&str, &str)]
     Ok(())
 }
 
-fn clean_previews(tx: &rusqlite::Transaction) -> Result<()> {
+/// Runs the stored previews of the rows in (`from`, `to`] through
+/// [`crate::imap::clean_preview`] again. One that comes out empty is filled
+/// in when its message is opened. A step of the `clean_previews` job.
+fn clean_previews(tx: &rusqlite::Transaction, from: i64, to: i64) -> Result<()> {
     let changed: Vec<(i64, String)> = {
-        let mut stmt = tx.prepare("SELECT rowid, preview FROM message WHERE preview != ''")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut stmt = tx.prepare(
+            "SELECT rowid, preview FROM message
+             WHERE rowid > ?1 AND rowid <= ?2 AND preview != ''",
+        )?;
+        let rows = stmt.query_map([from, to], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
         let mut changed = Vec::new();
         for row in rows {
             let (id, preview) = row?;
@@ -1513,6 +1785,117 @@ fn clean_previews(tx: &rusqlite::Transaction) -> Result<()> {
         update.execute(params![id, preview])?;
     }
     Ok(())
+}
+
+/// Keeps a copy of the database at `path` as it is now, before an update,
+/// as `<path>.before-update` (replacing the copy of an earlier update).
+/// False when it couldn't be made, most often because the disk is too
+/// full: the half-written copy is let go and the update goes on.
+fn back_up(conn: &Connection, path: &Path) -> bool {
+    let (part, copy) = (beside(path, ".before-update.part"), backup_of(path));
+    // What an earlier attempt left; VACUUM INTO never writes over a file.
+    let _ = std::fs::remove_file(&part);
+    let Some(target) = part.to_str() else {
+        return false;
+    };
+    let made =
+        conn.execute("VACUUM INTO ?1", [target]).is_ok() && std::fs::rename(&part, &copy).is_ok();
+    if made {
+        crate::private_files::database(path);
+    } else {
+        let _ = std::fs::remove_file(&part);
+    }
+    made
+}
+
+/// Where the database notes the version that the update the copy from
+/// before it (see [`back_up`]) was kept for went through to.
+const BACKUP_UPDATED_TO: &str = "storage.update_backup_to";
+
+/// Whether the copy kept next to `path` is from before an update that
+/// didn't go through: the database at `version` is half updated. A copy
+/// from before an update that went through (the version noted then) is
+/// old, and the next update makes its own.
+fn update_cut_short(conn: &Connection, path: &Path, version: i64) -> bool {
+    if !backup_of(path).exists() {
+        return false;
+    }
+    let updated_to: Option<String> = conn
+        .query_row(
+            "SELECT value FROM setting WHERE key = ?1",
+            [BACKUP_UPDATED_TO],
+            |r| r.get(0),
+        )
+        .ok();
+    updated_to.and_then(|v| v.parse::<i64>().ok()) != Some(version)
+}
+
+/// `path` with `suffix` added to its name.
+fn beside(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+/// The copy [`back_up`] keeps of the database at `path`.
+fn backup_of(path: &Path) -> std::path::PathBuf {
+    beside(path, ".before-update")
+}
+
+/// How long the copy made before an update is kept at most, when the app
+/// isn't started again meanwhile (it is let go of at the next start).
+pub const UPDATE_BACKUP_DAYS: u64 = 7;
+
+/// Bytes free for this user on the disk holding `dir`; None when the
+/// system won't say.
+fn free_space(dir: &Path) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+        let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        // SAFETY: a NUL-terminated name and room for the answer, which is
+        // read only when the call says it filled it.
+        let done = unsafe { libc::statvfs(name.as_ptr(), stat.as_mut_ptr()) };
+        if done != 0 {
+            return None;
+        }
+        // SAFETY: filled by the call above.
+        let stat = unsafe { stat.assume_init() };
+        #[allow(clippy::unnecessary_cast)]
+        Some((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetDiskFreeSpaceExW(
+                dir: *const u16,
+                available: *mut u64,
+                total: *mut u64,
+                free: *mut u64,
+            ) -> i32;
+        }
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut available = 0u64;
+        // SAFETY: a NUL-terminated name, one answer asked for, the others
+        // left out as the call allows.
+        let done = unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut available,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        (done != 0).then_some(available)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = dir;
+        None
+    }
 }
 
 /// The functions the SQL here calls: [`machine_address`],
@@ -1558,7 +1941,45 @@ impl Store {
         // A checkpoint can hold readers off for a moment.
         conn.busy_timeout(std::time::Duration::from_secs(2))?;
         functions(&conn)?;
-        Ok(Store { conn })
+        Ok(Store {
+            reader: true,
+            ..Store::with(conn)
+        })
+    }
+
+    fn with(conn: Connection) -> Self {
+        Store {
+            conn,
+            tally: std::cell::RefCell::new(None),
+            counts: std::cell::RefCell::new(HashMap::new()),
+            reader: false,
+            anchors: std::cell::RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// `count()`, or the number it gave for the same `key` when nothing
+    /// was written since. Only on a read-only connection, whose
+    /// `data_version` changes with every write the other connection
+    /// commits; elsewhere it always counts.
+    fn cached_count(&self, key: String, count: impl FnOnce() -> Result<u32>) -> Result<u32> {
+        if !self.reader {
+            return count();
+        }
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "data_version", |r| r.get(0))?;
+        if let Some((v, n)) = self.counts.borrow().get(&key) {
+            if *v == version {
+                return Ok(*n);
+            }
+        }
+        let n = count()?;
+        let mut counts = self.counts.borrow_mut();
+        if counts.len() >= 256 {
+            counts.clear();
+        }
+        counts.insert(key, (version, n));
+        Ok(n)
     }
 
     /// In-memory database, for tests.
@@ -1566,11 +1987,98 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
+    /// [`Self::open`] for the app's own database file: before the schema
+    /// is updated, keeps a copy of the database as it was next to it
+    /// (`VACUUM INTO`, when the disk has room for it), and makes the
+    /// file and its folder readable by this user only. Slow while an
+    /// update runs: never call it on a thread that draws.
+    pub fn open_file(path: impl AsRef<Path>) -> Result<(Self, Opened)> {
+        let path = path.as_ref();
+        crate::private_files::folder(path.parent());
+        crate::private_files::database(path);
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        let version = conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?;
+        // A database a newer Piuma wrote is left as it is: no copy of it
+        // replaces the copy an earlier update kept.
+        if version as usize > MIGRATIONS.len() {
+            return Err(StoreError::TooNew {
+                found: version as usize,
+                known: MIGRATIONS.len(),
+            });
+        }
+        let mut opened = Opened {
+            migrated: (version as usize) < MIGRATIONS.len(),
+            backed_up: false,
+        };
+        if opened.migrated && version > 0 {
+            // An update cut short (the schema is updated a step at a time)
+            // starts again from a database half updated: the copy from
+            // before it stays as it was.
+            opened.backed_up = update_cut_short(&conn, path, version) || back_up(&conn, path);
+        }
+        let store = Self::init(conn)?;
+        if opened.migrated && opened.backed_up {
+            // The copy now belongs to an update that went through: the
+            // next update makes its own.
+            store.set_setting(BACKUP_UPDATED_TO, &MIGRATIONS.len().to_string())?;
+        }
+        crate::private_files::database(path);
+        if !opened.migrated {
+            // The start after an update's: the updated database opened and
+            // the app ran on it, so the copy from before (which still holds
+            // mail deleted since) has done its job.
+            store.drop_update_backup();
+        }
+        Ok((store, opened))
+    }
+
+    /// The copy of the database kept before the last update, when there
+    /// is one (see [`Self::open_file`]).
+    fn update_backup(&self) -> Option<std::path::PathBuf> {
+        let path = self.conn.path().filter(|p| !p.is_empty())?;
+        Some(backup_of(Path::new(path)))
+    }
+
+    /// Lets go of the copy of the database kept before the last update. It
+    /// holds the mail as it was then, mail deleted since included: gone at
+    /// the start after the update's, after [`UPDATE_BACKUP_DAYS`], when an
+    /// account is removed and when cached mail is cleared.
+    pub fn drop_update_backup(&self) {
+        if let Some(copy) = self.update_backup() {
+            let _ = std::fs::remove_file(&copy);
+            let _ = std::fs::remove_file(beside(&copy, ".part"));
+        }
+    }
+
+    /// [`Self::drop_update_backup`] when the copy is older than `days`.
+    pub fn drop_old_update_backup(&self, days: u64) {
+        let old = self
+            .update_backup()
+            .and_then(|copy| std::fs::metadata(copy).ok())
+            .and_then(|m| m.modified().ok())
+            .and_then(|at| at.elapsed().ok())
+            .is_some_and(|age| age >= std::time::Duration::from_secs(days * 86_400));
+        if old {
+            self.drop_update_backup();
+        }
+    }
+
+    /// Bytes of the copy kept before the last update; 0 when there is none.
+    pub fn update_backup_bytes(&self) -> u64 {
+        self.update_backup()
+            .and_then(|copy| std::fs::metadata(copy).ok())
+            .map_or(0, |m| m.len())
+    }
+
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // A checkpoint brings the log back to this size, so it doesn't stay
+        // as big as the largest write ever made.
+        conn.pragma_update(None, "journal_size_limit", 32 * 1024 * 1024)?;
         functions(&conn)?;
-        let mut store = Store { conn };
+        let mut store = Store::with(conn);
         store.migrate()?;
         Ok(store)
     }
@@ -1588,8 +2096,14 @@ impl Store {
                 known: MIGRATIONS.len(),
             });
         }
-        let tx = self.conn.transaction()?;
+        // One transaction per migration: an update cut short (the app
+        // killed, the phone off) keeps the migrations done and goes on from
+        // the next one at the next start. Work on many rows is not done
+        // here but queued in `maintenance` (see `Store::maintain`).
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+            let tx = self.conn.transaction()?;
+            // Its columns are added in the same transaction, so a
+            // migration cut short leaves neither behind.
             if i + 1 == OUTBOX_STATES {
                 add_columns(
                     &tx,
@@ -1615,7 +2129,9 @@ impl Store {
             }
             tx.execute_batch(sql)?;
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
+            tx.commit()?;
         }
+        let tx = self.conn.transaction()?;
         // Bulk or automatic mail by Precedence and Auto-Submitted, which
         // goes to Notifications.
         let bulk: bool = tx.query_row(
@@ -1652,6 +2168,9 @@ impl Store {
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
         }
+        // Search's own tables, made here rather than as a numbered
+        // migration so branches adding migrations meanwhile don't clash.
+        tx.execute_batch(SEARCH_TABLES)?;
         // To, Cc, every Reply-To, Mail-Followup-To and List-Post, as JSON
         // (`envelope::Envelope`), for Reply all and the reader; NULL until
         // the headers are read, for mail kept before.
@@ -1704,17 +2223,243 @@ impl Store {
                  ALTER TABLE account_folder ADD COLUMN delimiter TEXT NOT NULL DEFAULT '';",
             )?;
         }
-        if current < CLEAN_PREVIEWS {
-            clean_previews(&tx)?;
-        }
-        if current < WRITTEN_TO {
+        // Both read every message: done in the background, a few
+        // thousand rows at a time (`Store::maintain`).
+        if current > 0 && current < CLEAN_PREVIEWS {
             tx.execute(
-                NOTE_WRITTEN_TO,
-                params![None::<i64>, None::<String>, None::<u32>],
+                "INSERT OR IGNORE INTO maintenance (job) VALUES ('clean_previews')",
+                [],
+            )?;
+        }
+        if current > 0 && current < WRITTEN_TO {
+            tx.execute(
+                "INSERT OR IGNORE INTO maintenance (job) VALUES ('written_to')",
+                [],
             )?;
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Does one step of the work waiting in the background: the next few
+    /// thousand messages of an account being removed, or of a job a
+    /// migration queued (see `maintenance`). Each step is one short write,
+    /// and a step cut short is done again. Returns whether work is left.
+    /// A step that fails (a removal, or one job) is logged and left for
+    /// the next call, and never holds up the others: false once nothing
+    /// is left but steps that failed.
+    pub fn maintain(&mut self) -> Result<bool> {
+        let removals: Vec<i64> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT account FROM account_removal ORDER BY account")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for account in removals {
+            match self.remove_step(account) {
+                Ok(()) => return Ok(true),
+                Err(e) => log::warn!("removing account {account}: {e}"),
+            }
+        }
+        // Only the jobs this version knows: one a newer version queued
+        // (the person went back to an older Piuma) stays for it.
+        let jobs: Vec<(String, i64)> = {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT job, cursor FROM maintenance
+                  WHERE job IN {KNOWN_JOBS} OR job LIKE 'clear:%'
+                  ORDER BY job"
+            ))?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for (job, from) in jobs {
+            match self.job_step(&job, from) {
+                Ok(()) => return Ok(true),
+                Err(e) => log::warn!("maintenance job {job}: {e}"),
+            }
+        }
+        Ok(false)
+    }
+
+    /// One step of a job of [`Self::maintain`], from `from`.
+    fn job_step(&mut self, job: &str, from: i64) -> Result<()> {
+        let last: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(MAX(rowid), 0) FROM message", [], |r| {
+                    r.get(0)
+                })?;
+        let to = from + MAINTENANCE_ROWS;
+        let tx = self.conn.transaction()?;
+        let done = match job {
+            "clean_previews" => {
+                clean_previews(&tx, from, to)?;
+                to >= last
+            }
+            "written_to" => {
+                let sent: Vec<(i64, String, u32)> = {
+                    let mut stmt = tx.prepare(
+                        "SELECT account, mailbox, uid FROM message
+                         WHERE rowid > ?1 AND rowid <= ?2 AND folder = 'sent'",
+                    )?;
+                    let rows =
+                        stmt.query_map([from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+                    rows.collect::<rusqlite::Result<_>>()?
+                };
+                let mut written = tx.prepare(NOTE_WRITTEN_TO_ONE)?;
+                for (account, mailbox, uid) in sent {
+                    written.execute(params![account, mailbox, uid])?;
+                }
+                to >= last
+            }
+            "list_mailto" => {
+                let links: Vec<String> = {
+                    let mut stmt = tx.prepare(
+                        "SELECT unsubscribe FROM message
+                         WHERE rowid > ?1 AND rowid <= ?2 AND unsubscribe LIKE '%mailto:%'",
+                    )?;
+                    let rows = stmt.query_map([from, to], |r| r.get(0))?;
+                    rows.collect::<rusqlite::Result<_>>()?
+                };
+                let mut mailto = tx.prepare(NOTE_LIST_MAILTO)?;
+                for address in links.iter().filter_map(|l| list_mailto(l)) {
+                    mailto.execute([address])?;
+                }
+                to >= last
+            }
+            // The cursor holds the time before which bodies go.
+            "evict" => let_go_of_bodies(&tx, None, from)? == 0,
+            clear if clear.starts_with("clear:") => match clear[6..].parse::<i64>() {
+                Ok(account) => let_go_of_bodies(&tx, Some(account), i64::MAX)? == 0,
+                Err(_) => true,
+            },
+            // A clear: job with no account in it.
+            _ => true,
+        };
+        if done {
+            tx.execute("DELETE FROM maintenance WHERE job = ?1", [job])?;
+        } else if job != "evict" && !job.starts_with("clear:") {
+            tx.execute(
+                "UPDATE maintenance SET cursor = ?2 WHERE job = ?1",
+                params![job, to],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Runs [`Self::maintain`] until nothing is left; for tests and tools.
+    #[doc(hidden)]
+    pub fn maintain_all(&mut self) -> Result<()> {
+        while self.maintain()? {}
+        Ok(())
+    }
+
+    /// Whether background work is waiting.
+    pub fn maintenance_pending(&self) -> Result<bool> {
+        Ok(self.conn.query_row(
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM maintenance
+                                 WHERE job IN {KNOWN_JOBS} OR job LIKE 'clear:%')
+                     OR EXISTS (SELECT 1 FROM account_removal)"
+            ),
+            [],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// One step of removing `account`: some of its messages, then what
+    /// else was kept for it, then the account itself.
+    fn remove_step(&mut self, account: i64) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        // Mail written in it that hasn't gone is never removed with it
+        // (a removal queued by an older version, or before it was
+        // written): the account comes back, to send or delete it first.
+        let (outbox, drafts) = unsent_in(&tx, AccountId(account))?;
+        if outbox + drafts > 0 {
+            tx.execute("DELETE FROM account_removal WHERE account = ?1", [account])?;
+            // Its address back, unless an account added since has it: then
+            // it keeps the placeholder, which says it was removed.
+            let address_taken = tx.execute(
+                "UPDATE account SET email = substr(email, 1, instr(email, ' (removed ') - 1)
+                 WHERE id = ?1 AND instr(email, ' (removed ') > 0
+                   AND NOT EXISTS (
+                       SELECT 1 FROM account other
+                        WHERE other.id != account.id
+                          AND lower(other.email) = lower(substr(account.email, 1, instr(account.email, ' (removed ') - 1)))",
+                [account],
+            )? == 0
+                && tx.query_row(
+                    "SELECT instr(email, ' (removed ') > 0 FROM account WHERE id = ?1",
+                    [account],
+                    |r| r.get::<_, bool>(0),
+                )?;
+            // Its password, sign-in and certificates went with the
+            // removal: the app asks to sign in again ([`Self::take_restored`]).
+            tx.execute(
+                "INSERT OR REPLACE INTO setting (key, value) VALUES (?1, ?2)",
+                params![
+                    format!("{RESTORED}{account}"),
+                    if address_taken { "address_taken" } else { "1" }
+                ],
+            )?;
+            tx.commit()?;
+            return Ok(());
+        }
+        // Through the primary key, newest rows last; the triggers and the
+        // cascades of each message (its body, files, search entry, card)
+        // run here, a step at a time.
+        let removed = tx.execute(
+            "DELETE FROM message WHERE rowid IN (
+                 SELECT rowid FROM message WHERE account = ?1 LIMIT ?2)",
+            params![account, REMOVAL_ROWS],
+        )?;
+        if removed == 0 {
+            let ids = tx.execute(
+                "DELETE FROM jmap_email WHERE rowid IN (
+                     SELECT rowid FROM jmap_email WHERE account = ?1 LIMIT ?2)",
+                params![account, REMOVAL_ROWS],
+            )?;
+            if ids == 0 {
+                // The rest is small; this also ends the removal's own row.
+                tx.execute("DELETE FROM account WHERE id = ?1", [account])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The accounts a removal gave back since the last call, because mail
+    /// written in them hadn't gone (see [`Self::maintain`]), each once.
+    /// They come back without their password or sign-in, which went with
+    /// the removal: the app asks to sign in to them again.
+    pub fn take_restored(&self) -> Result<Vec<Restored>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let found: Vec<(String, String)> = {
+            let mut stmt = tx.prepare(&format!(
+                "SELECT key, value FROM setting WHERE key LIKE '{RESTORED}%' ORDER BY key"
+            ))?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        // Asked after every step of the background work: no write when
+        // there is nothing.
+        if found.is_empty() {
+            return Ok(Vec::new());
+        }
+        for (key, _) in &found {
+            tx.execute("DELETE FROM setting WHERE key = ?1", [key])?;
+        }
+        tx.commit()?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(key, value)| {
+                Some(Restored {
+                    account: AccountId(key[RESTORED.len()..].parse().ok()?),
+                    address_taken: value == "address_taken",
+                })
+            })
+            .collect())
     }
 
     /// Schema version, useful for diagnostics.
@@ -1776,7 +2521,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, email, color, kind, imap_host, imap_port, imap_security,
                     smtp_host, smtp_port, smtp_security, username, jmap_url, sender_name
-             FROM account ORDER BY id",
+             FROM account WHERE id NOT IN (SELECT account FROM account_removal) ORDER BY id",
         )?;
         let rows = stmt.query_map([], |r| {
             let server = |host: usize, port: usize, security: usize, default_port: u16| {
@@ -1882,10 +2627,92 @@ impl Store {
     }
 
     /// Removes an account and, through the foreign keys, all its mail.
+    /// Removes an account and everything kept for it, at once. With a big
+    /// mailbox this holds the database for long: the app uses
+    /// [`Self::start_removing_account`] instead.
     pub fn remove_account(&self, id: AccountId) -> Result<()> {
         self.conn
             .execute("DELETE FROM account WHERE id = ?1", params![id.0])?;
         Ok(())
+    }
+
+    /// Takes an account off every list now and queues the removal of its
+    /// mail here, done a few thousand messages at a time by
+    /// [`Self::maintain`], and carried on at the next start if the app
+    /// stops first. Its mail stays on the server. Refused while it still
+    /// has mail written here that hasn't gone ([`Self::unsent`]): that is
+    /// sent, or deleted, first, never removed with the account.
+    pub fn start_removing_account(&self, id: AccountId) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let (outbox, drafts) = unsent_in(&tx, id)?;
+        if outbox + drafts > 0 {
+            return Err(StoreError::Unsent { outbox, drafts });
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO account_removal (account)
+             SELECT id FROM account WHERE id = ?1",
+            params![id.0],
+        )?;
+        // Its address is free at once, to add the account again.
+        tx.execute(
+            "UPDATE account SET email = email || ' (removed ' || id || ')'
+             WHERE id = ?1 AND instr(email, ' (removed ') = 0",
+            params![id.0],
+        )?;
+        tx.commit()?;
+        // The copy from before the last update still holds its mail.
+        self.drop_update_backup();
+        Ok(())
+    }
+
+    /// What would be lost with an account: messages written here that
+    /// haven't gone yet (the outbox: waiting, on their way or refused; not
+    /// the ones the server took, whose copy for Sent is still being filed,
+    /// nor the ones that may have gone) and drafts waiting on this device.
+    pub fn unsent(&self, id: AccountId) -> Result<(u32, u32)> {
+        unsent_in(&self.conn, id)
+    }
+
+    /// The messages [`Self::unsent`] counts, outbox first, oldest first:
+    /// what removing the account waits on.
+    pub fn unsent_mail(&self, id: AccountId) -> Result<Vec<Unsent>> {
+        let mut out: Vec<Unsent> = {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT id, to_list, subject, state, queued_at FROM outbox
+                  WHERE account = ?1 AND state IN {UNSENT_STATES}
+                  ORDER BY id"
+            ))?;
+            let rows = stmt.query_map([id.0], |r| {
+                Ok(Unsent {
+                    id: r.get(0)?,
+                    draft: false,
+                    to: list(&r.get::<_, String>(1)?),
+                    subject: r.get(2)?,
+                    state: Some(crate::outbox::State::from_column(&r.get::<_, String>(3)?)),
+                    at: r.get(4)?,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let drafts: Vec<(i64, Vec<u8>, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, raw, saved_at FROM draft_waiting WHERE account = ?1 ORDER BY id",
+            )?;
+            let rows = stmt.query_map([id.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for (draft_id, raw, at) in drafts {
+            let d = crate::imap::parse_draft(&raw);
+            out.push(Unsent {
+                id: draft_id,
+                draft: true,
+                to: d.to,
+                subject: d.subject,
+                state: None,
+                at,
+            });
+        }
+        Ok(out)
     }
 
     pub fn account(&self, id: AccountId) -> Result<Option<Account>> {
@@ -1949,7 +2776,8 @@ impl Store {
             let mut known = tx.prepare(
                 "SELECT thread FROM message WHERE account = ?1 AND message_id = ?2 LIMIT 1",
             )?;
-            let mut written = tx.prepare(NOTE_WRITTEN_TO)?;
+            let mut written = tx.prepare(NOTE_WRITTEN_TO_ONE)?;
+            let mut mailto = tx.prepare(NOTE_LIST_MAILTO)?;
             // Messages that arrived before this one and took its id as their
             // thread (they only knew their parent) join this one's thread.
             let mut merge = tx.prepare(
@@ -2059,6 +2887,9 @@ impl Store {
                 if !m.reply.recipients.is_empty() {
                     written.execute(params![m.account.0, m.mailbox, m.uid])?;
                 }
+                if let Some(address) = list_mailto(&m.list.unsubscribe) {
+                    mailto.execute([address])?;
+                }
                 if let Some(r) = m.list.receipt.as_ref().filter(|_| receipt_of(m)) {
                     receipt.execute(params![
                         m.account.0,
@@ -2086,7 +2917,10 @@ impl Store {
         hidden: bool,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE message SET hidden = ?4 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            &format!(
+                "UPDATE message SET hidden = CASE WHEN ?4 THEN 1 ELSE {SHOWN} END
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3"
+            ),
             params![account.0, mailbox, uid, hidden],
         )?;
         Ok(())
@@ -2280,15 +3114,17 @@ impl Store {
         filter: ListFilter,
     ) -> Result<u32> {
         let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
-        Ok(self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM message m
-                 WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
-                   AND {newest}"
-            ),
-            params![account.0, mailbox],
-            |r| r.get(0),
-        )?)
+        let sql = format!(
+            "SELECT COUNT(*) FROM message m
+             WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
+               AND {newest}"
+        );
+        let key = format!("{sql}|{}|{mailbox}", account.0);
+        self.cached_count(key, || {
+            Ok(self
+                .conn
+                .query_row(&sql, params![account.0, mailbox], |r| r.get(0))?)
+        })
     }
 
     /// Shows every hidden message again: an action that never reached the
@@ -2299,7 +3135,7 @@ impl Store {
     pub fn unhide_all(&self) -> Result<()> {
         self.conn.execute(
             &format!(
-                "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
+                "UPDATE message SET hidden = {SHOWN} WHERE hidden = 1 AND NOT EXISTS (
                     SELECT 1 FROM pending_change p
                      WHERE p.account = message.account AND p.mailbox = message.mailbox
                        AND p.uid = message.uid AND p.change IN ({HIDING}))"
@@ -2617,18 +3453,39 @@ impl Store {
     /// Every message with a label, from every account and folder but the
     /// trash, newest first.
     pub fn labelled_messages(&self, keyword: &str) -> Result<Vec<MessageSummary>> {
-        let mut stmt = self.conn.prepare(
+        self.labelled_page(keyword, 0, u32::MAX)
+    }
+
+    /// Rows `offset..offset+limit` of [`Self::labelled_messages`]: a label
+    /// the server keeps (a Gmail label) can hold tens of thousands. Walks
+    /// the labelled messages only (`message_labels` first, CROSS JOIN), so
+    /// a page costs what the labels hold, not the whole mailbox.
+    pub fn labelled_page(
+        &self,
+        keyword: &str,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<MessageSummary>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list
-               FROM message_labels ml JOIN message m USING (account, mailbox, uid)
-              WHERE m.hidden = 0 AND m.folder <> 'trash'
-                AND instr(' ' || ml.labels || ' ', ' ' || ?1 || ' ') > 0
-              ORDER BY m.received_at DESC, m.uid DESC",
-        )?;
+               {LABELLED}
+              ORDER BY m.received_at DESC, m.uid DESC
+              LIMIT ?2 OFFSET ?3"
+        ))?;
         let rows = stmt
-            .query_map(params![keyword], row_to_summary)?
+            .query_map(params![keyword, limit, offset], row_to_summary)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// How many rows [`Self::labelled_messages`] has.
+    pub fn labelled_count(&self, keyword: &str) -> Result<u32> {
+        Ok(self.conn.query_row(
+            &format!("SELECT COUNT(*) {LABELLED}"),
+            params![keyword],
+            |r| r.get(0),
+        )?)
     }
 
     /// How many messages carry each label, by its id, outside the trash.
@@ -2786,7 +3643,7 @@ impl Store {
             }
             tx.execute(
                 &format!(
-                    "UPDATE message SET hidden = 0 WHERE EXISTS (
+                    "UPDATE message SET hidden = {SHOWN} WHERE EXISTS (
                         SELECT 1 FROM pending_change p
                          WHERE p.id = ?1
                            AND p.account = message.account AND p.mailbox = message.mailbox
@@ -2808,11 +3665,13 @@ impl Store {
     pub fn drop_renumbered(&self, account: AccountId, mailbox: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE message SET hidden = 0
+            &format!(
+                "UPDATE message SET hidden = {SHOWN}
               WHERE account = ?1 AND mailbox = ?2 AND hidden = 1 AND EXISTS (
                   SELECT 1 FROM pending_change p
                    WHERE p.account = message.account AND p.mailbox = message.mailbox
-                     AND p.uid = message.uid)",
+                     AND p.uid = message.uid)"
+            ),
             params![account.0, mailbox],
         )?;
         tx.execute(
@@ -3012,6 +3871,25 @@ impl Store {
         let dedupe = cross_account_sql(&within, &section, &filter);
         let newest = newest_sql(&filter);
         let order = filter.order.sql();
+        let filter_sql = format!(
+            "m.folder = ?1 AND m.hidden = 0 AND (?4 IS NULL OR m.account = ?4)
+               AND {newest}{section}{dedupe}"
+        );
+        let account = within.account();
+        let key = format!("{filter_sql}|{}|{account:?}", folder.tag());
+        // From the nearest row a page drawn before ended at: the rows
+        // above it are not walked again (see `Store::anchor`). Only in the
+        // app's own order, newest first, which the anchor follows.
+        let keyset = filter.order == ListOrder::Newest;
+        let anchor = if keyset {
+            self.anchor(&key, offset)?
+        } else {
+            None
+        };
+        let (skip, after) = match anchor {
+            Some((at, row)) => (offset - at, Some(row)),
+            None => (offset, None),
+        };
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -3022,23 +3900,83 @@ impl Store {
                      WHERE t.account = m.account AND t.thread = m.thread AND t.hidden = 0
                        AND t.folder <> 'drafts')
              FROM message m
-             WHERE m.folder = ?1 AND m.hidden = 0 AND (?4 IS NULL OR m.account = ?4)
-               AND {newest}{section}{dedupe}
+             WHERE {filter_sql}{}
              ORDER BY {order}
-             LIMIT ?2 OFFSET ?3"
+             LIMIT ?2 OFFSET ?3",
+            if after.is_some() { AFTER_ANCHOR } else { "" }
         ))?;
-        let account = within.account();
-        let rows = stmt.query_map(params![folder.tag(), limit, offset, account], |r| {
+        let (at, by, uid) = after.unwrap_or_default();
+        let read = |r: &rusqlite::Row<'_>| {
             Ok(Conversation {
                 latest: row_to_summary(r)?,
                 thread: r.get(13)?,
                 messages: r.get(14)?,
             })
-        })?;
-        Ok(as_listed(
-            &filter,
-            rows.collect::<std::result::Result<_, _>>()?,
-        ))
+        };
+        let rows: Vec<Conversation> = if after.is_some() {
+            stmt.query_map(
+                params![folder.tag(), limit, skip, account, at, by, uid],
+                read,
+            )?
+            .collect::<std::result::Result<_, _>>()?
+        } else {
+            stmt.query_map(params![folder.tag(), limit, skip, account], read)?
+                .collect::<std::result::Result<_, _>>()?
+        };
+        if let Some(last) = rows.last().filter(|_| keyset) {
+            let last = &last.latest;
+            self.note_anchor(
+                &key,
+                offset + rows.len() as u32,
+                (last.received_at, last.account.0, last.uid),
+            )?;
+        }
+        Ok(as_listed(&filter, rows))
+    }
+
+    /// The nearest place at or before `offset` where a page of the list
+    /// `key` ended, with the order of its last row, while nothing was
+    /// written since: the next page starts after that row (keyset paging)
+    /// instead of walking every row above it again (OFFSET). Only on the
+    /// reader, whose `data_version` says whether anything was written.
+    fn anchor(&self, key: &str, offset: u32) -> Result<Option<(u32, RowKey)>> {
+        if !self.reader || offset == 0 {
+            return Ok(None);
+        }
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "data_version", |r| r.get(0))?;
+        let anchors = self.anchors.borrow();
+        Ok(anchors
+            .get(key)
+            .filter(|(v, _)| *v == version)
+            .and_then(|(_, at)| at.range(..=offset).next_back())
+            .map(|(o, row)| (*o, *row)))
+    }
+
+    /// Remembers where a page of the list `key` ended (see [`Self::anchor`]).
+    fn note_anchor(&self, key: &str, offset: u32, row: RowKey) -> Result<()> {
+        if !self.reader {
+            return Ok(());
+        }
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "data_version", |r| r.get(0))?;
+        let mut anchors = self.anchors.borrow_mut();
+        if anchors.len() >= 32 && !anchors.contains_key(key) {
+            anchors.clear();
+        }
+        let (v, at) = anchors
+            .entry(key.to_owned())
+            .or_insert_with(|| (version, Default::default()));
+        if *v != version {
+            *v = version;
+            at.clear();
+        }
+        if at.len() < 4096 {
+            at.insert(offset, row);
+        }
+        Ok(())
     }
 
     /// The visible server copies of a combined row. Single-account lists
@@ -3124,15 +4062,17 @@ impl Store {
         let section = section_sql(filter) + &within.sql();
         let dedupe = cross_account_sql(&within, &section, &filter);
         let newest = newest_sql(&filter);
-        Ok(self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM message m
-                 WHERE m.folder = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.account = ?2)
-                   AND {newest}{section}{dedupe}"
-            ),
-            params![folder.tag(), within.account()],
-            |r| r.get(0),
-        )?)
+        let sql = format!(
+            "SELECT COUNT(*) FROM message m
+             WHERE m.folder = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.account = ?2)
+               AND {newest}{section}{dedupe}"
+        );
+        let key = format!("{sql}|{}|{:?}", folder.tag(), within.account());
+        self.cached_count(key, || {
+            Ok(self
+                .conn
+                .query_row(&sql, params![folder.tag(), within.account()], |r| r.get(0))?)
+        })
     }
 
     /// How many conversations of `folder` had their newest message there
@@ -3150,16 +4090,20 @@ impl Store {
         let section = section_sql(filter) + &within.sql();
         let dedupe = cross_account_sql(&within, &section, &filter);
         let newest = newest_sql(&filter);
-        Ok(self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM message m
-                 WHERE m.folder = ?1 AND m.hidden = 0 AND m.received_at >= ?2
-                   AND m.received_at < ?3 AND (?4 IS NULL OR m.account = ?4)
-                   AND {newest}{section}{dedupe}"
-            ),
-            params![folder.tag(), from, to, within.account()],
-            |r| r.get(0),
-        )?)
+        let sql = format!(
+            "SELECT COUNT(*) FROM message m
+             WHERE m.folder = ?1 AND m.hidden = 0 AND m.received_at >= ?2
+               AND m.received_at < ?3 AND (?4 IS NULL OR m.account = ?4)
+               AND {newest}{section}{dedupe}"
+        );
+        let key = format!("{sql}|{}|{from}|{to}|{:?}", folder.tag(), within.account());
+        self.cached_count(key, || {
+            Ok(self.conn.query_row(
+                &sql,
+                params![folder.tag(), from, to, within.account()],
+                |r| r.get(0),
+            )?)
+        })
     }
 
     /// Every message of a conversation, in every folder but Drafts, oldest
@@ -3174,7 +4118,7 @@ impl Store {
             "SELECT account, mailbox, uid, from_name, from_email, subject, preview, received_at, flags,
                     message_id, refs, reply_to, to_list, folder
              FROM message
-             WHERE account = ?1 AND thread = ?2 AND hidden = 0 AND folder <> 'drafts'
+             WHERE account = ?1 AND thread = ?2 AND hidden IN (0, 2) AND folder <> 'drafts'
              ORDER BY received_at, mailbox = 'INBOX' DESC, uid",
         )?;
         let rows = stmt.query_map(params![account.0, thread], |r| {
@@ -3314,7 +4258,92 @@ impl Store {
             "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2",
             params![account.0, mailbox],
         )?;
+        self.conn.execute(
+            "DELETE FROM mailbox_scan WHERE account = ?1 AND mailbox = ?2",
+            params![account.0, mailbox],
+        )?;
         Ok(())
+    }
+
+    /// Whether a folder is as its last complete sync left it: the same
+    /// UIDVALIDITY, UIDNEXT and number of messages on the server, and as
+    /// many here. Then no message came or went (a new one moves UIDNEXT,
+    /// one gone lowers the number), and the folder needn't be listed.
+    pub fn mailbox_unchanged(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid_validity: u32,
+        uid_next: Option<u32>,
+        messages: u32,
+    ) -> Result<bool> {
+        let Some(uid_next) = uid_next else {
+            return Ok(false);
+        };
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM mailbox_scan
+                 WHERE account = ?1 AND mailbox = ?2 AND uid_validity = ?3
+                   AND uid_next = ?4 AND messages = ?5)
+               AND (SELECT COUNT(*) FROM message WHERE account = ?1 AND mailbox = ?2) = ?5",
+            params![account.0, mailbox, uid_validity, uid_next, messages],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Notes what the server said of a folder when a sync of it ended
+    /// complete (`Some`), or forgets it (`None`, so the next sync lists the
+    /// folder again); and where the look at old flags has come to.
+    pub fn set_mailbox_scan(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        seen: Option<(u32, u32, u32)>,
+        flags_below: Option<u32>,
+    ) -> Result<()> {
+        let (uid_validity, uid_next, messages) = seen.unwrap_or((0, 0, u32::MAX));
+        self.conn.execute(
+            "INSERT INTO mailbox_scan (account, mailbox, uid_validity, uid_next, messages, flags_below)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (account, mailbox) DO UPDATE SET
+                 uid_validity = excluded.uid_validity, uid_next = excluded.uid_next,
+                 messages = excluded.messages, flags_below = excluded.flags_below",
+            params![account.0, mailbox, uid_validity, uid_next, messages, flags_below],
+        )?;
+        Ok(())
+    }
+
+    /// Where the look at old flags stopped in a folder: it goes on below
+    /// that uid.
+    pub fn flags_below(&self, account: AccountId, mailbox: &str) -> Result<Option<u32>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT flags_below FROM mailbox_scan WHERE account = ?1 AND mailbox = ?2",
+                params![account.0, mailbox],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Up to `limit` uids of a folder, highest first, below `below` when
+    /// given: a window of the folder, read through the primary key.
+    pub fn uids_below(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        below: Option<u32>,
+        limit: u32,
+    ) -> Result<Vec<u32>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT uid FROM message WHERE account = ?1 AND mailbox = ?2 AND uid < ?3
+             ORDER BY uid DESC LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(
+            params![account.0, mailbox, below.map_or(i64::MAX, i64::from), limit],
+            |r| r.get(0),
+        )?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
     /// The JMAP ids cached for one folder, with their local numbers.
@@ -3324,6 +4353,25 @@ impl Store {
             .prepare("SELECT email_id, uid FROM jmap_email WHERE account = ?1 AND mailbox = ?2")?;
         let rows = stmt.query_map(params![account.0, mailbox], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Where a JMAP email is kept here, in one of its folders, if it is.
+    pub fn jmap_email_at(
+        &self,
+        account: AccountId,
+        email_id: &str,
+    ) -> Result<Option<(String, u32)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT j.mailbox, j.uid FROM jmap_email j
+                   JOIN message m ON m.account = j.account AND m.mailbox = j.mailbox AND m.uid = j.uid
+                  WHERE j.account = ?1 AND j.email_id = ?2
+                  ORDER BY j.mailbox = 'INBOX' DESC LIMIT 1",
+                params![account.0, email_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
     }
 
     /// Gives new JMAP ids of a folder their local numbers, in order.
@@ -3440,7 +4488,8 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT text FROM message_body WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                "SELECT text FROM message_body
+                 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND format >= 0",
                 params![account.0, mailbox, uid],
                 |r| r.get(0),
             )
@@ -3531,7 +4580,8 @@ impl Store {
     /// a domain the person gets verified mail from, or its name claims a
     /// company it doesn't send for. Addresses and domains the person has
     /// written to never imitate or borrow anything. None until the body
-    /// is kept, and for every other sender.
+    /// is kept (or while a body let go of is downloaded again: its empty
+    /// text would hide a claimed brand), and for every other sender.
     pub fn sender_warning(
         &self,
         account: AccountId,
@@ -3548,7 +4598,7 @@ impl Store {
                    ON b.account = m.account AND b.mailbox = m.mailbox AND b.uid = m.uid
                  LEFT JOIN sender_check s
                    ON s.account = m.account AND s.mailbox = m.mailbox AND s.uid = m.uid
-                 WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3",
+                 WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3 AND b.format >= 0",
                 params![account.0, mailbox, uid],
                 |r| {
                     Ok((
@@ -3665,37 +4715,85 @@ impl Store {
 
     /// The organizations' domains the person gets verified mail from, with
     /// how many emails came from each.
+    ///
+    /// Counting every message at each open would read the whole mailbox:
+    /// the count is made once, then only the rows added since (by rowid)
+    /// are added to it, and it is made again from scratch every
+    /// [`TALLY_AGE`] to let go of mail that was removed, and at once when
+    /// fewer bodies are verified than before. Mail hidden for a while
+    /// (inside its Undo window, or moved while offline) still counts: it
+    /// came from that domain all the same, and hiding it changes nothing.
     fn known_domains(&self) -> Result<Vec<(String, u32)>> {
-        let mut counts: HashMap<String, (u32, bool)> = HashMap::new();
-        let mut stmt = self.conn.prepare(
-            "SELECT lower(m.from_email), COUNT(*), MAX(COALESCE(b.verified, 0))
-             FROM message m LEFT JOIN message_body b
-               ON b.account = m.account AND b.mailbox = m.mailbox AND b.uid = m.uid
-             WHERE m.hidden = 0 AND m.from_email != ''
-             GROUP BY lower(m.from_email)",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, u32>(1)?,
-                r.get::<_, bool>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (email, n, verified) = row?;
+        let mut tally = self.tally.borrow_mut();
+        let fresh = tally
+            .as_ref()
+            .is_some_and(|t| t.built.elapsed() < TALLY_AGE);
+        if !fresh {
+            *tally = Some(DomainTally {
+                counts: HashMap::new(),
+                message_mark: 0,
+                body_mark: 0,
+                verified: 0,
+                built: std::time::Instant::now(),
+            });
+        }
+        let t = tally.as_mut().expect("just made");
+        let add = |counts: &mut HashMap<String, (u32, bool)>, email: &str, n: u32, verified| {
             let Some((_, domain)) = email.rsplit_once('@') else {
-                continue;
+                return;
             };
             let entry = counts
                 .entry(crate::sender_auth::organization(domain.trim()))
                 .or_default();
             entry.0 += n;
             entry.1 |= verified;
+        };
+        let (message_mark, body_mark, verified): (i64, i64, i64) = self.conn.query_row(
+            "SELECT (SELECT COALESCE(MAX(rowid), 0) FROM message),
+                    (SELECT COALESCE(MAX(rowid), 0) FROM message_body),
+                    (SELECT COUNT(*) FROM message_body INDEXED BY message_body_verified
+                      WHERE verified = 1)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        if message_mark < t.message_mark || body_mark < t.body_mark || verified < t.verified {
+            // Rows were numbered again (a compacted database), or a
+            // verification was lost: count anew.
+            drop(tally);
+            *self.tally.borrow_mut() = None;
+            return self.known_domains();
         }
-        let mut known: Vec<(String, u32)> = counts
-            .into_iter()
+        {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT lower(from_email), COUNT(*) FROM message
+                 WHERE rowid > ?1 AND rowid <= ?2 AND from_email != ''
+                 GROUP BY lower(from_email)",
+            )?;
+            let rows = stmt.query_map([t.message_mark, message_mark], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?))
+            })?;
+            for row in rows {
+                let (email, n) = row?;
+                add(&mut t.counts, &email, n, false);
+            }
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT DISTINCT lower(m.from_email) FROM message_body b
+                 JOIN message m USING (account, mailbox, uid)
+                 WHERE b.rowid > ?1 AND b.rowid <= ?2 AND b.verified = 1",
+            )?;
+            let rows = stmt.query_map([t.body_mark, body_mark], |r| r.get::<_, String>(0))?;
+            for row in rows {
+                add(&mut t.counts, &row?, 0, true);
+            }
+        }
+        t.message_mark = message_mark;
+        t.body_mark = body_mark;
+        t.verified = verified;
+        let mut known: Vec<(String, u32)> = t
+            .counts
+            .iter()
             .filter(|(_, (_, verified))| *verified)
-            .map(|(d, (n, _))| (d, n))
+            .map(|(d, (n, _))| (d.clone(), *n))
             .collect();
         // The busiest first: the one a look-alike most likely means.
         known.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -5272,13 +6370,20 @@ impl Store {
 
     /// When you last wrote to an address, from the sent folders.
     pub fn last_sent_to(&self, email: &str) -> Result<Option<i64>> {
-        let pattern = format!("%{}%", email.trim().to_lowercase());
-        Ok(self.conn.query_row(
-            "SELECT max(received_at) FROM message
-             WHERE folder = 'sent' AND lower(to_list) LIKE ?1",
-            params![pattern],
-            |r| r.get(0),
-        )?)
+        let email = email.trim().to_lowercase();
+        if email.is_empty() {
+            return Ok(None);
+        }
+        // Someone never written to needs no walk through Sent, except while
+        // `written_to` is still being filled from older Sent mail (a job
+        // of `maintain`). The walk goes newest first down the folder's
+        // index, which is in that order (no sorting), and stops at the
+        // first match. The address is looked for as text (instr), never as
+        // a LIKE pattern, so a `%` or `_` in it matches only itself.
+        Ok(self
+            .conn
+            .query_row(LAST_SENT_TO, params![email], |r| r.get(0))
+            .optional()?)
     }
 
     /// The message is a newsletter (bulk mail one can leave).
@@ -5632,9 +6737,13 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT 1 FROM message m
-                 JOIN message_body b USING (account, mailbox, uid)
-                 WHERE b.verified = 1 AND lower(m.from_email) LIKE '%@' || ?1
+                // Only the bodies a server vouched for (a small partial
+                // index), and the address compared as text: a `%` or `_`
+                // in the domain is not a pattern.
+                "SELECT 1 FROM message_body b
+                 JOIN message m USING (account, mailbox, uid)
+                 WHERE b.verified = 1
+                   AND substr(lower(m.from_email), -length(?1) - 1) = '@' || ?1
                  LIMIT 1",
                 params![domain.to_ascii_lowercase()],
                 |_| Ok(()),
@@ -5708,15 +6817,17 @@ impl Store {
             &(section.clone() + " AND (m.flags & 1) = 0"),
             &filter,
         );
-        Ok(self.conn.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM message m
-                 WHERE m.folder = ?1 AND m.hidden = 0 AND (m.flags & 1) = 0
-                   AND (?2 IS NULL OR m.account = ?2){section}{dedupe}"
-            ),
-            params![folder.tag(), within.account()],
-            |r| r.get(0),
-        )?)
+        let sql = format!(
+            "SELECT COUNT(*) FROM message m
+             WHERE m.folder = ?1 AND m.hidden = 0 AND (m.flags & 1) = 0
+               AND (?2 IS NULL OR m.account = ?2){section}{dedupe}"
+        );
+        let key = format!("{sql}|{}|{:?}", folder.tag(), within.account());
+        self.cached_count(key, || {
+            Ok(self
+                .conn
+                .query_row(&sql, params![folder.tag(), within.account()], |r| r.get(0))?)
+        })
     }
 
     /// What the list headers of one message said.
@@ -5879,7 +6990,7 @@ impl Store {
                 "UPDATE message SET recipients = ?4
                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
             )?;
-            let mut written = tx.prepare(NOTE_WRITTEN_TO)?;
+            let mut written = tx.prepare(NOTE_WRITTEN_TO_ONE)?;
             for (uid, to) in recipients {
                 stmt.execute(params![account.0, mailbox, uid, to])?;
                 written.execute(params![account.0, mailbox, uid])?;
@@ -6073,6 +7184,12 @@ impl Store {
     /// that aren't this device's own.
     pub fn space_tables(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
         let mut out = serde_json::Map::new();
+        // An account being removed, and what was kept for it, is gone.
+        let removing: HashSet<i64> = {
+            let mut stmt = self.conn.prepare("SELECT account FROM account_removal")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
         for table in SPACE_TABLES {
             let mut stmt = self.conn.prepare(&format!("SELECT * FROM {table}"))?;
             let names: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
@@ -6088,6 +7205,7 @@ impl Store {
                     Ok(serde_json::Value::Object(row))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
+            let owner = if *table == "account" { "id" } else { "account" };
             let rows = rows
                 .into_iter()
                 .filter(|row| {
@@ -6095,6 +7213,11 @@ impl Store {
                         || row["key"]
                             .as_str()
                             .is_some_and(|k| !LOCAL_SETTINGS.iter().any(|p| k.starts_with(p)))
+                })
+                .filter(|row| {
+                    row.get(owner)
+                        .and_then(|a| a.as_i64())
+                        .is_none_or(|a| !removing.contains(&a))
                 })
                 .collect();
             out.insert((*table).to_owned(), serde_json::Value::Array(rows));
@@ -6410,6 +7533,7 @@ impl Store {
                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
                 inbox_zone("from_email", "?4")
             ))?;
+            let mut mailto = tx.prepare(NOTE_LIST_MAILTO)?;
             for (uid, list) in lists {
                 stmt.execute(params![
                     account.0,
@@ -6420,6 +7544,9 @@ impl Store {
                     list.one_click,
                     list.bulk
                 ])?;
+                if let Some(address) = list_mailto(&list.unsubscribe) {
+                    mailto.execute([address])?;
+                }
             }
         }
         tx.commit()?;
@@ -6461,40 +7588,49 @@ impl Store {
         Ok(())
     }
 
-    /// Newsletters of an account whose body is not cached yet, newest
-    /// first, at most `limit`: what to fetch for reading offline.
+    /// Of an account's newest `limit` newsletters, the ones whose body is
+    /// not cached yet, newest first: what to fetch for reading offline.
     pub fn newsletters_without_body(
         &self,
         account: AccountId,
         limit: u32,
     ) -> Result<Vec<(String, u32)>> {
+        // Among the newest `limit` only: older ones are fetched when opened,
+        // so the cache doesn't fill with every newsletter ever received.
         let mut stmt = self.conn.prepare(
-            "SELECT m.mailbox, m.uid FROM message m
-             WHERE m.account = ?1 AND m.folder = 'newsletters' AND NOT EXISTS (
+            "SELECT mailbox, uid FROM (
+                 SELECT m.account, m.mailbox, m.uid, m.received_at FROM message m
+                 WHERE m.account = ?1 AND m.folder = 'newsletters'
+                 ORDER BY m.received_at DESC LIMIT ?2) m
+             WHERE NOT EXISTS (
                  SELECT 1 FROM message_body b
                  WHERE b.account = m.account AND b.mailbox = m.mailbox AND b.uid = m.uid)
-             ORDER BY m.received_at DESC LIMIT ?2",
+             ORDER BY m.received_at DESC",
         )?;
         let rows = stmt.query_map(params![account.0, limit], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
-    /// The newest Inbox mail of an account's folder whose body is not
-    /// cached yet, at most `limit`: fetched ahead, so opening one doesn't
-    /// wait on the server.
+    /// Of the newest `limit` Inbox messages of an account's folder, the
+    /// ones whose body is not cached yet: fetched ahead, so opening one
+    /// doesn't wait on the server.
     pub fn inbox_without_body(
         &self,
         account: AccountId,
         mailbox: &str,
         limit: u32,
     ) -> Result<Vec<u32>> {
+        // Among the newest `limit` only: going further back would, round
+        // after round, end with every message of the inbox cached whole.
         let mut stmt = self.conn.prepare(
-            "SELECT m.uid FROM message m
-             WHERE m.account = ?1 AND m.mailbox = ?2 AND m.folder = 'inbox' AND m.hidden = 0
-               AND NOT EXISTS (
+            "SELECT uid FROM (
+                 SELECT m.account, m.mailbox, m.uid, m.received_at FROM message m
+                 WHERE m.account = ?1 AND m.mailbox = ?2 AND m.folder = 'inbox' AND m.hidden = 0
+                 ORDER BY m.received_at DESC LIMIT ?3) m
+             WHERE NOT EXISTS (
                  SELECT 1 FROM message_body b
                  WHERE b.account = m.account AND b.mailbox = m.mailbox AND b.uid = m.uid)
-             ORDER BY m.received_at DESC LIMIT ?3",
+             ORDER BY m.received_at DESC",
         )?;
         let rows = stmt.query_map(params![account.0, mailbox, limit], |r| r.get(0))?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -6514,6 +7650,7 @@ impl Store {
                     message_id, refs, reply_to, to_list, words
              FROM message
              WHERE folder = 'newsletters' AND hidden = 0 AND (?3 IS NULL OR account = ?3)
+               AND account NOT IN (SELECT account FROM account_removal)
              ORDER BY received_at DESC, account, uid DESC
              LIMIT ?1 OFFSET ?2",
         )?;
@@ -7139,6 +8276,7 @@ impl Store {
              FROM message m
              WHERE m.folder = 'sent' AND m.hidden = 0 AND m.message_id != ''
                AND m.received_at >= ?2 AND (?1 IS NULL OR m.account = ?1)
+               AND m.account NOT IN (SELECT account FROM account_removal)
                AND NOT EXISTS (SELECT 1 FROM waiting_done d
                    WHERE d.account = m.account AND d.message_id = m.message_id)
                AND NOT EXISTS (SELECT 1 FROM message n
@@ -7185,11 +8323,12 @@ impl Store {
     /// The address sends mail one can leave, a newsletter or a list, or
     /// is where a list takes requests to leave it.
     fn is_list(&self, email: &str) -> Result<bool> {
+        // Both lookups use an index: the sender's own mail, and the
+        // addresses lists take leave requests at (`list_mailto`).
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM message WHERE lower(from_email) = ?1
                  AND (newsletter = 1 OR unsubscribe != ''))
-             OR EXISTS (SELECT 1 FROM message
-                 WHERE unsubscribe != '' AND instr(lower(unsubscribe), 'mailto:' || ?1) > 0)",
+             OR EXISTS (SELECT 1 FROM list_mailto WHERE email = ?1)",
             params![email],
             |r| r.get(0),
         )?)
@@ -7311,30 +8450,48 @@ impl Store {
         if query.is_empty() {
             return Ok(Found::default());
         }
-        let (sql, mut args, fts) = search_where(query, " FROM message m");
+        let crate::search::Where { sql, args, fts } =
+            query.sql(" FROM message m", &self.search_folders(query)?);
         let total: u32 = self.conn.query_row(
             &format!("SELECT COUNT(*){sql}"),
             rusqlite::params_from_iter(&args),
             |r| r.get(0),
         )?;
-        let snippet = if fts {
-            "snippet(message_fts, 3, char(2), char(3), '…', 14)"
-        } else {
-            "''"
+        // The page first, by rowid alone; then each row with its
+        // snippet: snippet() for every match before the sort was most of
+        // the time of a common word.
+        let mut page_args = args.clone();
+        page_args.push(limit.into());
+        let rowids: Vec<i64> = {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT m.rowid {sql}
+                 ORDER BY m.received_at DESC, m.account, m.uid DESC
+                 LIMIT ?{}",
+                page_args.len()
+            ))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(&page_args), |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
         };
-        args.push(limit.into());
+        let (snippet, from, at) = if fts {
+            (
+                "snippet(message_fts, 3, char(2), char(3), '…', 14)",
+                " FROM message m JOIN message_fts ON message_fts.rowid = m.rowid
+                  WHERE message_fts MATCH ?1 AND m.rowid = ?2",
+                2,
+            )
+        } else {
+            ("''", " FROM message m WHERE m.rowid = ?1", 1)
+        };
         let mut stmt = self.conn.prepare(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list, {snippet},
                     EXISTS (SELECT 1 FROM attachment x
                             WHERE x.account = m.account AND x.mailbox = m.mailbox AND x.uid = m.uid)
-             {sql}
-             ORDER BY m.received_at DESC, m.account, m.uid DESC
-             LIMIT ?{}",
-            args.len()
+             {from}"
         ))?;
-        let hits = stmt
-            .query_map(rusqlite::params_from_iter(&args), |r| {
+        let mut hits = Vec::with_capacity(rowids.len());
+        for rowid in rowids {
+            let row = |r: &rusqlite::Row| {
                 let snippet: String = r.get(13)?;
                 Ok(Hit {
                     message: row_to_summary(r)?,
@@ -7346,8 +8503,15 @@ impl Store {
                     },
                     files: r.get(14)?,
                 })
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+            };
+            let hit = if at == 2 {
+                stmt.query_row(params![args[0], rowid], row)
+            } else {
+                stmt.query_row(params![rowid], row)
+            }
+            .optional()?;
+            hits.extend(hit);
+        }
         Ok(Found { total, hits })
     }
 
@@ -7360,9 +8524,9 @@ impl Store {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let (sql, mut args, _) = search_where(
-            query,
+        let crate::search::Where { sql, mut args, .. } = query.sql(
             " FROM message m JOIN attachment a USING (account, mailbox, uid)",
+            &self.search_folders(query)?,
         );
         args.push(limit.into());
         let mut stmt = self.conn.prepare(&format!(
@@ -7590,30 +8754,700 @@ impl Store {
     /// How many messages on this device a search looks through: all of
     /// them, or one account's with `account:`, or one group's with `group:`.
     pub fn indexed(&self, query: &Query) -> Result<u32> {
+        if query.account().is_none() && query.group().is_none() {
+            // Every row, counted on the smallest index, less the ones
+            // hidden for an undo from their own small one.
+            return Ok(self.conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM message)
+                      - (SELECT COUNT(*) FROM message WHERE hidden = 1)",
+                [],
+                |r| r.get(0),
+            )?);
+        }
         let group = query
-            .group
+            .group()
             .map_or(String::new(), |g| crate::groups::Within::Group(g).sql());
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
-                 WHERE m.hidden = 0 AND (?1 IS NULL OR m.account IN
+                 WHERE m.hidden IN (0, 2) AND (?1 IS NULL OR m.account IN
                     (SELECT id FROM account WHERE lower(name) = lower(?1) OR lower(email) = lower(?1))){group}"
             ),
-            params![query.account],
+            params![query.account()],
             |r| r.get(0),
         )?)
     }
 
-    /// Builds the search index again from the messages.
-    pub fn rebuild_search_index(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "DELETE FROM message_fts;
-             INSERT INTO message_fts (rowid, subject, sender, preview, body)
-             SELECT m.rowid, m.subject, m.from_name || ' ' || m.from_email, m.preview, COALESCE(b.text, '')
-             FROM message m LEFT JOIN message_body b USING (account, mailbox, uid);",
+    /// How much room the mail takes on this device: the database file,
+    /// the part of it that is free for reuse, and per account the messages
+    /// and the bytes of the whole messages and pictures kept for reading
+    /// offline. Reads every cached body's length: call it off the thread
+    /// that draws.
+    pub fn storage(&self) -> Result<Storage> {
+        let page = self
+            .conn
+            .pragma_query_value(None, "page_size", |r| r.get::<_, i64>(0))?
+            .max(0) as u64;
+        let pages = self
+            .conn
+            .pragma_query_value(None, "page_count", |r| r.get::<_, i64>(0))?
+            .max(0) as u64;
+        let free = self
+            .conn
+            .pragma_query_value(None, "freelist_count", |r| r.get::<_, i64>(0))?
+            .max(0) as u64;
+        let mut stmt = self.conn.prepare(
+            "SELECT a.id,
+                    (SELECT COUNT(*) FROM message m WHERE m.account = a.id),
+                    (SELECT COALESCE(SUM(octet_length(b.text) + COALESCE(octet_length(b.html), 0)
+                                         + COALESCE(octet_length(b.calendar), 0)), 0)
+                     FROM message_body b WHERE b.account = a.id AND b.format >= 0),
+                    (SELECT COALESCE(SUM(octet_length(i.data)), 0)
+                     FROM inline_image i WHERE i.account = a.id)
+                  + (SELECT COALESCE(SUM(octet_length(t.data)), 0)
+                     FROM attachment_thumb t WHERE t.account = a.id)
+             FROM account a WHERE a.id NOT IN (SELECT account FROM account_removal)
+             ORDER BY a.id",
+        )?;
+        let accounts = stmt
+            .query_map([], |r| {
+                Ok(AccountStorage {
+                    account: AccountId(r.get(0)?),
+                    messages: r.get::<_, i64>(1)?.max(0) as u64,
+                    bodies: r.get::<_, i64>(2)?.max(0) as u64,
+                    pictures: r.get::<_, i64>(3)?.max(0) as u64,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Storage {
+            file: page * pages,
+            free: page * free,
+            backup: self.update_backup_bytes(),
+            accounts,
+        })
+    }
+
+    /// How many days whole messages are kept for reading offline; None
+    /// keeps them for good.
+    pub fn keep_bodies_days(&self) -> Result<Option<u32>> {
+        Ok(match self.setting(KEEP_BODIES)? {
+            Some(days) => days.parse::<u32>().ok().filter(|d| *d > 0),
+            None => Some(KEEP_BODIES_DAYS),
+        })
+    }
+
+    /// Sets [`Self::keep_bodies_days`]; None keeps them for good.
+    pub fn set_keep_bodies_days(&self, days: Option<u32>) -> Result<()> {
+        self.set_setting(KEEP_BODIES, &days.unwrap_or(0).to_string())
+    }
+
+    /// Queues letting go of the whole messages and pictures of mail older
+    /// than [`Self::keep_bodies_days`] at `now` (Unix seconds), done by
+    /// [`Self::maintain`]. Their list rows stay, and so does finding them
+    /// by subject and sender; opening one fetches it from the server again.
+    pub fn queue_body_clean_up(&self, now: i64) -> Result<()> {
+        let Some(days) = self.keep_bodies_days()? else {
+            return Ok(());
+        };
+        self.conn.execute(
+            "INSERT INTO maintenance (job, cursor) VALUES ('evict', ?1)
+             ON CONFLICT (job) DO UPDATE SET cursor = excluded.cursor",
+            [now - i64::from(days) * 86_400],
         )?;
         Ok(())
     }
+
+    /// Where each folder a search names with `in:` is.
+    fn search_folders(&self, query: &Query) -> Result<crate::search::Folders> {
+        let mut out = crate::search::Folders::new();
+        for f in query.folders() {
+            let places = self.folders_named(f)?;
+            out.insert(
+                crate::search::folder_key(f),
+                places.into_iter().map(|(a, m)| (a.0, m)).collect(),
+            );
+        }
+        Ok(out)
+    }
+
+    /// The folders an `in:` value names, in every account: a job (`inbox`,
+    /// `sent`, `archive`, `drafts`, `snoozed`, `spam`), or a folder by its
+    /// name, its path ("Clients/Acme") or its server name, in any case.
+    pub fn folders_named(&self, value: &str) -> Result<Vec<(AccountId, String)>> {
+        use crate::search::folder_key;
+        let key = folder_key(value);
+        let mut out: Vec<(AccountId, String)> = Vec::new();
+        if key.is_empty() {
+            return Ok(out);
+        }
+        let mut add = |a: AccountId, m: String| {
+            if !out.iter().any(|(x, y)| *x == a && *y == m) {
+                out.push((a, m));
+            }
+        };
+        let accounts: Vec<AccountId> = self
+            .conn
+            .prepare("SELECT id FROM account ORDER BY id")?
+            .query_map([], |r| Ok(AccountId(r.get(0)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut roles = self
+            .conn
+            .prepare("SELECT role, mailbox FROM folder_role WHERE account = ?1")?;
+        for a in accounts {
+            if key == "inbox" {
+                add(a, "INBOX".into());
+            }
+            for row in roles.query_map(params![a.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })? {
+                let (role, mailbox) = row?;
+                if role == key || folder_key(&mailbox) == key {
+                    add(a, mailbox);
+                }
+            }
+            if let Some(junk) = self.junk_mailbox(a)? {
+                if matches!(key.as_str(), "spam" | "junk") || folder_key(&junk) == key {
+                    add(a, junk);
+                }
+            }
+            let mut path: Vec<String> = Vec::new();
+            for f in self.account_folders(a)? {
+                path.truncate(f.depth as usize);
+                path.push(f.name.clone());
+                if f.selectable
+                    && (folder_key(&path.join("/")) == key
+                        || folder_key(&f.name) == key
+                        || folder_key(&f.mailbox) == key)
+                {
+                    add(a, f.mailbox);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The messages at these places as search hits, newest first; ones
+    /// gone or hidden meanwhile are left out.
+    pub fn search_hits_at(&self, at: &[(AccountId, String, u32)]) -> Result<Vec<Hit>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
+                    m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
+                    EXISTS (SELECT 1 FROM attachment x
+                            WHERE x.account = m.account AND x.mailbox = m.mailbox AND x.uid = m.uid)
+               FROM message m
+              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3 AND m.hidden IN (0, 2)
+                {LIVE}"
+        ))?;
+        let mut hits: Vec<Hit> = Vec::new();
+        for (account, mailbox, uid) in at {
+            let hit = stmt
+                .query_row(params![account.0, mailbox, uid], |r| {
+                    Ok(Hit {
+                        message: row_to_summary(r)?,
+                        snippet: String::new(),
+                        files: r.get(13)?,
+                    })
+                })
+                .optional()?;
+            if let Some(hit) = hit {
+                let m = &hit.message;
+                // One message in two folders (Gmail keeps it in the inbox
+                // and All Mail) shows once: where it came first, and the
+                // inbox comes first.
+                let id = &m.reply.message_id;
+                if !hits.iter().any(|h| {
+                    h.message.account == m.account
+                        && ((h.message.mailbox == m.mailbox && h.message.uid == m.uid)
+                            || (!id.is_empty() && h.message.reply.message_id == *id))
+                }) {
+                    hits.push(hit);
+                }
+            }
+        }
+        hits.sort_by(|a, b| {
+            (b.message.received_at, a.message.account, b.message.uid).cmp(&(
+                a.message.received_at,
+                b.message.account,
+                a.message.uid,
+            ))
+        });
+        Ok(hits)
+    }
+
+    /// Notes messages a server search brought to this device, with their
+    /// folder's UIDVALIDITY (0 where ids don't change, as with JMAP): the
+    /// database's growth rules can tell them from synced mail, and
+    /// [`Self::forget_renumbered_found`] from mail of a renumbered folder.
+    pub fn note_server_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        uid_validity: u32,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO server_found (account, mailbox, uid, uid_validity, found_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                    uid_validity = excluded.uid_validity, found_at = excluded.found_at",
+            )?;
+            let mut hide = tx.prepare_cached(&format!(
+                "UPDATE message SET hidden = {OUTSIDE_SYNC}
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND hidden = 0"
+            ))?;
+            let now = crate::pending::now();
+            for uid in uids {
+                stmt.execute(params![account.0, mailbox, uid, uid_validity, now])?;
+                hide.execute(params![account.0, mailbox, uid])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The messages of a folder a server search brought, not its sync.
+    pub fn server_found_uids(&self, account: AccountId, mailbox: &str) -> Result<HashSet<u32>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT uid FROM server_found WHERE account = ?1 AND mailbox = ?2")?;
+        let rows = stmt.query_map(params![account.0, mailbox], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// The newest message the sync of a folder brought (UID, received at),
+    /// leaving out what a server search brought: past it is mail the next
+    /// sync brings and announces, which a search must not take first.
+    pub fn newest_synced(&self, account: AccountId, mailbox: &str) -> Result<Option<(u32, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT MAX(uid), MAX(received_at) FROM message m
+                  WHERE account = ?1 AND mailbox = ?2 AND NOT EXISTS
+                    (SELECT 1 FROM server_found f
+                      WHERE f.account = m.account AND f.mailbox = m.mailbox AND f.uid = m.uid)",
+                params![account.0, mailbox],
+                |r| Ok(r.get::<_, Option<u32>>(0)?.zip(r.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// The oldest message the sync of a folder brought, leaving out what
+    /// a server search brought: the sync goes newest first, so from it up
+    /// the folder is all here.
+    pub fn lowest_synced(&self, account: AccountId, mailbox: &str) -> Result<Option<u32>> {
+        Ok(self.conn.query_row(
+            "SELECT MIN(uid) FROM message m
+              WHERE account = ?1 AND mailbox = ?2 AND NOT EXISTS
+                (SELECT 1 FROM server_found f
+                  WHERE f.account = m.account AND f.mailbox = m.mailbox AND f.uid = m.uid)",
+            params![account.0, mailbox],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Takes the messages a server search brought into a folder into its
+    /// synced mail once the sync has reached them (`from` and newer: the
+    /// sync goes newest first), or all of them when the whole folder is
+    /// synced (`from` = 0). They then show in the folder's list like the
+    /// rest, and the growth rules treat them as synced mail.
+    pub fn adopt_server_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        from: u32,
+    ) -> Result<usize> {
+        self.adopt_found_where(account, mailbox, "uid >= ?3", from)
+    }
+
+    /// As [`Self::adopt_server_found`], for these messages (JMAP: those the
+    /// sync of the folder listed).
+    pub fn adopt_server_found_uids(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+    ) -> Result<usize> {
+        let mut n = 0;
+        for uid in uids {
+            n += self.adopt_found_where(account, mailbox, "uid = ?3", *uid)?;
+        }
+        Ok(n)
+    }
+
+    fn adopt_found_where(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        which: &str,
+        value: u32,
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            &format!(
+                "UPDATE message SET hidden = 0
+                  WHERE account = ?1 AND mailbox = ?2 AND hidden = {OUTSIDE_SYNC} AND uid IN
+                    (SELECT uid FROM server_found WHERE account = ?1 AND mailbox = ?2 AND {which})"
+            ),
+            params![account.0, mailbox, value],
+        )?;
+        let n = tx.execute(
+            &format!("DELETE FROM server_found WHERE account = ?1 AND mailbox = ?2 AND {which}"),
+            params![account.0, mailbox, value],
+        )?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Forgets the messages a server search kept in a folder whose
+    /// UIDVALIDITY changed since: their numbers name other messages now.
+    /// Returns how many went.
+    pub fn forget_renumbered_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid_validity: u32,
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM message WHERE account = ?1 AND mailbox = ?2 AND uid IN
+                (SELECT uid FROM server_found
+                  WHERE account = ?1 AND mailbox = ?2 AND uid_validity <> ?3)",
+            params![account.0, mailbox, uid_validity],
+        )?)
+    }
+
+    /// The saved searches, in the person's order.
+    pub fn saved_searches(&self) -> Result<Vec<SavedSearch>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, uuid, name, query FROM saved_search ORDER BY position, id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SavedSearch {
+                id: r.get(0)?,
+                uuid: r.get(1)?,
+                name: r.get(2)?,
+                query: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Saves a search under a name, last; a search already saved under
+    /// that name (in any case) gets the new query instead. Returns its id.
+    pub fn save_search(&self, name: &str, query: &str) -> Result<i64> {
+        let name = name.trim();
+        let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut uuid = [0u8; 16];
+        getrandom::fill(&mut uuid).expect("the system has randomness");
+        let uuid: String = uuid.iter().map(|b| format!("{b:02x}")).collect();
+        Ok(self.conn.query_row(
+            "INSERT INTO saved_search (uuid, name, query, position, updated_at)
+             VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(position), 0) + 1 FROM saved_search), ?4)
+             ON CONFLICT (name) DO UPDATE SET query = excluded.query, updated_at = excluded.updated_at
+             RETURNING id",
+            params![uuid, name, query, crate::pending::now()],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// Renames a saved search. False when another one has that name.
+    pub fn rename_saved_search(&self, id: i64, name: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE saved_search SET name = ?2, updated_at = ?3
+              WHERE id = ?1 AND NOT EXISTS
+                (SELECT 1 FROM saved_search WHERE name = ?2 AND id <> ?1)",
+            params![id, name.trim(), crate::pending::now()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Forgets a saved search.
+    pub fn delete_saved_search(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM saved_search WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Queues letting go of every whole message and picture kept for an
+    /// account, done by [`Self::maintain`]: "Clear cached mail". The mail
+    /// stays on the server and in the lists; drafts are kept.
+    pub fn queue_clear_cached(&self, account: AccountId) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO maintenance (job) VALUES (?1)",
+            [format!("clear:{}", account.0)],
+        )?;
+        // The copy from before the last update holds the same bodies.
+        self.drop_update_backup();
+        Ok(())
+    }
+
+    /// Whether giving room back first needs the database written anew
+    /// once ([`Self::compact`]): until then it can't free pages a few at a
+    /// time ([`Self::give_back_room`]).
+    pub fn needs_compacting(&self) -> Result<bool> {
+        let mode: i64 = self
+            .conn
+            .pragma_query_value(None, "auto_vacuum", |r| r.get(0))?;
+        Ok(mode != 2)
+    }
+
+    /// Makes the database able to give room back to the system a few
+    /// pages at a time ([`Self::give_back_room`], incremental
+    /// auto_vacuum). That takes writing it anew once (VACUUM), which holds
+    /// the database for as long as copying it takes and needs about twice
+    /// its size free on the disk: refused ([`StoreError::NoRoom`]) when the
+    /// disk hasn't that much, and a no-op once done. Before, messages get a
+    /// column of their own for the number the search index keys on, since
+    /// VACUUM may number rows again (see [`Self::give_messages_an_id`]).
+    /// Run it in the background, when asked.
+    pub fn compact(&mut self) -> Result<()> {
+        if !self.needs_compacting()? {
+            return Ok(());
+        }
+        if let Some(path) = self.conn.path().filter(|p| !p.is_empty()) {
+            let path = Path::new(path);
+            let size = std::fs::metadata(path).map_or(0, |m| m.len())
+                + std::fs::metadata(beside(path, "-wal")).map_or(0, |m| m.len());
+            // VACUUM writes a copy, then the copy goes through the log.
+            let need = size.saturating_mul(2);
+            if let Some(free) = path.parent().and_then(free_space) {
+                if free < need {
+                    return Err(StoreError::NoRoom { need, free });
+                }
+            }
+        }
+        self.give_messages_an_id()?;
+        // 2: INCREMENTAL. It takes effect with the VACUUM below.
+        self.conn.pragma_update(None, "auto_vacuum", 2)?;
+        self.conn.execute_batch("VACUUM")?;
+        self.checkpoint()?;
+        *self.tally.borrow_mut() = None;
+        Ok(())
+    }
+
+    /// Gives back up to `pages` free pages, when the database frees pages
+    /// as it goes (after [`Self::compact`]); cheap otherwise. True while
+    /// free pages are left to give back: call it again, a short write each
+    /// time, so a sync gets the database in between.
+    pub fn give_back_room(&self, pages: u32) -> Result<bool> {
+        if self.needs_compacting()? {
+            return Ok(false);
+        }
+        self.conn
+            .execute_batch(&format!("PRAGMA incremental_vacuum({pages})"))?;
+        let free: i64 = self
+            .conn
+            .pragma_query_value(None, "freelist_count", |r| r.get(0))?;
+        Ok(free > 0)
+    }
+
+    /// Writes the log back into the database and cuts it to nothing, so
+    /// the room given back shows on the disk.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    /// Makes `message`'s row number a column of its own (`id INTEGER
+    /// PRIMARY KEY`), keeping every number: the search index keys on it,
+    /// and VACUUM renumbers the rows of a table without one. (account,
+    /// mailbox, uid) stays unique, so every lookup and foreign key is as
+    /// before. Done once, before the first [`Self::compact`].
+    fn give_messages_an_id(&mut self) -> Result<()> {
+        let has_id: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('message')
+                             WHERE name = 'id' AND pk = 1)",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_id {
+            return Ok(());
+        }
+        let create: String = self.conn.query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'message'",
+            [],
+            |r| r.get(0),
+        )?;
+        const KEY: &str = "PRIMARY KEY (account, mailbox, uid)";
+        if !create.starts_with("CREATE TABLE message (") || create.matches(KEY).count() != 1 {
+            // Not the table the migrations made: left as it is.
+            return Err(StoreError::Sqlite(rusqlite::Error::InvalidQuery));
+        }
+        let create = create
+            .replacen(
+                "CREATE TABLE message (",
+                "CREATE TABLE message_new (
+        id INTEGER PRIMARY KEY,",
+                1,
+            )
+            .replacen(KEY, "UNIQUE (account, mailbox, uid)", 1);
+        let columns: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT name FROM pragma_table_info('message') ORDER BY cid")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let columns = columns.join(", ");
+        // Its indexes and triggers go with the old table; made again.
+        let schema: Vec<String> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT sql FROM sqlite_schema
+                 WHERE tbl_name = 'message' AND type IN ('index', 'trigger') AND sql IS NOT NULL
+                 ORDER BY type, name",
+            )?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        // SQLite's own recipe for changing a table: foreign keys off, and
+        // the old way of renaming, which leaves the other tables' triggers
+        // and references to "message" as they are.
+        self.conn.pragma_update(None, "foreign_keys", "OFF")?;
+        self.conn.pragma_update(None, "legacy_alter_table", "ON")?;
+        let rebuilt = (|| -> Result<()> {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(&create)?;
+            tx.execute_batch(&format!(
+                "INSERT INTO message_new (id, {columns}) SELECT rowid, {columns} FROM message;
+                 DROP TABLE message;
+                 ALTER TABLE message_new RENAME TO message;"
+            ))?;
+            for sql in &schema {
+                tx.execute_batch(sql)?;
+            }
+            let broken: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_foreign_key_check)",
+                [],
+                |r| r.get(0),
+            )?;
+            if broken {
+                // Rolled back: the table stays as it was.
+                return Err(StoreError::Sqlite(rusqlite::Error::InvalidQuery));
+            }
+            tx.commit()?;
+            Ok(())
+        })();
+        self.conn.pragma_update(None, "legacy_alter_table", "OFF")?;
+        self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        rebuilt
+    }
+
+    /// Builds the search index again from the messages. The words of a
+    /// body let go of (format -1) are kept from the index as it was.
+    pub fn rebuild_search_index(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute_batch(
+            "CREATE TEMP TABLE kept_words (id INTEGER PRIMARY KEY, body TEXT);
+             INSERT INTO kept_words (id, body)
+                 SELECT f.rowid, f.body FROM message_fts f
+                 JOIN message m ON m.rowid = f.rowid
+                 JOIN message_body b USING (account, mailbox, uid)
+                 WHERE b.format < 0;
+             DELETE FROM message_fts;
+             INSERT INTO message_fts (rowid, subject, sender, preview, body)
+             SELECT m.rowid, m.subject, m.from_name || ' ' || m.from_email, m.preview,
+                    COALESCE((SELECT k.body FROM kept_words k WHERE k.id = m.rowid),
+                             b.text, '')
+             FROM message m LEFT JOIN message_body b USING (account, mailbox, uid);
+             DROP TABLE kept_words;",
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+/// A search kept under a name, shown in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedSearch {
+    pub id: i64,
+    /// The same on every device, for the sync space to carry it later.
+    pub uuid: String,
+    pub name: String,
+    /// What was typed, operators included.
+    pub query: String,
+}
+
+/// The setting with how many days whole messages are kept; "0" for good.
+const KEEP_BODIES: &str = "storage.keep_days";
+
+/// How many days whole messages and their pictures are kept for reading
+/// offline, unless the person picks otherwise in Settings → Storage.
+pub const KEEP_BODIES_DAYS: u32 = 90;
+
+/// Bodies let go of per step of a clean-up.
+const LET_GO_ROWS: i64 = 500;
+
+/// Lets go of up to [`LET_GO_ROWS`] cached bodies of messages received
+/// before `before` (of one account, or all), their inline pictures and file
+/// previews. Their words stay in the search index. The body's row stays,
+/// emptied with format -1, so prefetching doesn't fetch it again and
+/// whether its sender was verified is kept; opening the message fetches
+/// it. Drafts are kept. Returns how many went.
+fn let_go_of_bodies(
+    tx: &rusqlite::Transaction,
+    account: Option<i64>,
+    before: i64,
+) -> Result<usize> {
+    let rows: Vec<(i64, String, u32)> = {
+        let mut stmt = tx.prepare_cached(
+            "SELECT b.account, b.mailbox, b.uid
+             FROM message_body b INDEXED BY message_body_kept
+             JOIN message m USING (account, mailbox, uid)
+             WHERE b.format >= 0 AND (?1 IS NULL OR b.account = ?1)
+               AND m.received_at < ?2 AND m.folder <> 'drafts'
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![account, before, LET_GO_ROWS], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (account, mailbox, uid) in &rows {
+        let key = params![account, mailbox, uid];
+        tx.execute(
+            "UPDATE message_body SET text = '', html = NULL, calendar = NULL, format = -1
+             WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            key,
+        )?;
+        tx.execute(
+            "DELETE FROM inline_image WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            key,
+        )?;
+        tx.execute(
+            "DELETE FROM attachment_thumb WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            key,
+        )?;
+        // Its words stay in the search index: local search still finds
+        // an old message by what it said, and opening it downloads it.
+    }
+    Ok(rows.len())
+}
+
+/// How much room the mail takes on this device ([`Store::storage`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Storage {
+    /// Bytes of the database file.
+    pub file: u64,
+    /// Of which free, waiting to be reused or given back.
+    pub free: u64,
+    /// Bytes of the copy kept before the last update, beside the file
+    /// ([`Store::drop_update_backup`]); 0 when there is none.
+    pub backup: u64,
+    pub accounts: Vec<AccountStorage>,
+}
+
+/// One account's part of [`Storage`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountStorage {
+    pub account: AccountId,
+    pub messages: u64,
+    /// Bytes of the whole messages kept for reading offline.
+    pub bodies: u64,
+    /// Bytes of their pictures and file previews.
+    pub pictures: u64,
 }
 
 /// A search's answer.
@@ -7622,72 +9456,6 @@ pub struct Found {
     /// How many messages match in all; `hits` holds the newest of them.
     pub total: u32,
     pub hits: Vec<Hit>,
-}
-
-/// The FROM and WHERE of a search over `from` (which names the message
-/// `m`), its arguments, and whether it matches words.
-fn search_where(query: &Query, from: &str) -> (String, Vec<rusqlite::types::Value>, bool) {
-    let fts = query.fts();
-    let mut sql = String::from(from);
-    let mut args: Vec<rusqlite::types::Value> = Vec::new();
-    // Numbered placeholders, so the account filter can use its value twice.
-    if let Some(expr) = &fts {
-        args.push(expr.clone().into());
-        sql.push_str(" JOIN message_fts ON message_fts.rowid = m.rowid WHERE message_fts MATCH ?1");
-    } else {
-        sql.push_str(" WHERE 1");
-    }
-    sql.push_str(" AND m.hidden = 0");
-    if let Some(account) = &query.account {
-        args.push(account.clone().into());
-        let n = args.len();
-        sql.push_str(&format!(
-                " AND m.account IN (SELECT id FROM account WHERE lower(name) = lower(?{n}) OR lower(email) = lower(?{n}))"
-            ));
-    }
-    if let Some(group) = query.group {
-        sql.push_str(&crate::groups::Within::Group(group).sql());
-    }
-    if let Some(label) = &query.label {
-        args.push(label.clone().into());
-        sql.push_str(&format!(
-            " AND EXISTS (SELECT 1 FROM message_labels ml
-                     WHERE ml.account = m.account AND ml.mailbox = m.mailbox AND ml.uid = m.uid
-                       AND instr(' ' || ml.labels || ' ',
-                                 ' ' || (SELECT keyword FROM label WHERE name = ?{} COLLATE NOCASE) || ' ') > 0)",
-            args.len()
-        ));
-    }
-    if query.unread {
-        sql.push_str(" AND (m.flags & 1) = 0");
-    }
-    if let Some(after) = query.after {
-        args.push(after.into());
-        sql.push_str(&format!(" AND m.received_at >= ?{}", args.len()));
-    }
-    if let Some(before) = query.before {
-        args.push(before.into());
-        sql.push_str(&format!(" AND m.received_at < ?{}", args.len()));
-    }
-    if query.attachment {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM attachment a
-                     WHERE a.account = m.account AND a.mailbox = m.mailbox AND a.uid = m.uid)",
-        );
-    }
-    if query.vault {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM vault_card v
-                     WHERE v.account = m.account AND v.mailbox = m.mailbox AND v.uid = m.uid)",
-        );
-    }
-    if query.newsletter {
-        sql.push_str(" AND (m.newsletter = 1 OR m.folder = 'newsletters')");
-    }
-    if query.people {
-        sql.push_str(&format!(" AND {PEOPLE}"));
-    }
-    (sql, args, fts.is_some())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8435,6 +10203,56 @@ From: <help@bank.example>\r\nSubject: x\r\n\r\nHi\r\n";
     }
 
     #[test]
+    fn the_domains_known_follow_hiding_and_verification() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let from = |uid: u32, email: &str| MessageSummary {
+            from_name: "Luca".into(),
+            from_email: email.into(),
+            ..msg(a, uid, uid as i64 * 100, false)
+        };
+        store
+            .upsert_messages(&[
+                from(1, "anna@ferramentabianchi.it"),
+                from(2, "luca@ferramentabianchi.it"),
+                from(3, "luca@ferramentabianci.it"),
+                from(4, "sara@ferramentabianchi.it"),
+            ])
+            .unwrap();
+        let body = |raw: &str| crate::imap::parse_body(raw.as_bytes());
+        let pass = "Authentication-Results: mx.example.org; dmarc=pass header.from=ferramentabianchi.it\r\n\
+From: <anna@ferramentabianchi.it>\r\n\r\nHi";
+        store.set_full_body(a, "INBOX", 1, &body(pass)).unwrap();
+        store
+            .set_full_body(a, "INBOX", 3, &body("From: <x@y.example>\r\n\r\nHi"))
+            .unwrap();
+        let kind = |store: &Store| store.sender_warning(a, "INBOX", 3).unwrap().map(|w| w.kind);
+        let looks_like = |count| {
+            Some(WarningKind::LooksLike {
+                like: "ferramentabianchi.it".into(),
+                count,
+            })
+        };
+        assert_eq!(kind(&store), looks_like(3));
+        // Mail hidden inside its Undo window still came from there.
+        store.set_hidden(a, "INBOX", 2, true).unwrap();
+        assert_eq!(kind(&store), looks_like(3));
+        // The only verified body kept again without the server's word:
+        // the domain is no longer one the person gets verified mail from.
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                1,
+                &body("From: <anna@ferramentabianchi.it>\r\n\r\nHi"),
+            )
+            .unwrap();
+        assert_eq!(kind(&store), None);
+    }
+
+    #[test]
     fn senders_who_arent_who_they_say_get_a_warning() {
         let mut store = Store::open_in_memory().unwrap();
         let a = store
@@ -8573,6 +10391,8 @@ From: <help@bank.example>\r\n\r\nHi";
             .pragma_update(None, "user_version", (CLEAN_PREVIEWS - 1) as i64)
             .unwrap();
         store.migrate().unwrap();
+        // Cleaned in the background, not inside the migration.
+        store.maintain_all().unwrap();
         let preview = |uid: u32| -> String {
             store
                 .conn
@@ -11560,6 +13380,315 @@ From: <help@bank.example>\r\n\r\nHi";
     }
 
     #[test]
+    fn search_finds_by_every_operator() {
+        let (mut store, p, w) = search_store();
+        // Recipients: To names, every address.
+        store
+            .set_recipients(
+                w,
+                "INBOX",
+                &[(1, "lume@tipografia.it w@example.org".into())],
+            )
+            .unwrap();
+        assert_eq!(subjects(&store, "to:lume"), ["Autumn catalog print quote"]);
+        assert_eq!(
+            subjects(&store, "cc:LUME@tipo"),
+            ["Autumn catalog print quote"]
+        );
+        assert_eq!(subjects(&store, "to:matteo").len(), 5);
+        assert!(subjects(&store, "cc:matteo").is_empty());
+        assert!(subjects(&store, "to:100%_").is_empty());
+        // Bcc is the server's to answer.
+        assert!(subjects(&store, "bcc:lume").is_empty());
+        // Subject only, and words left out.
+        assert_eq!(
+            subjects(&store, "subject:quote"),
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
+        );
+        assert_eq!(
+            subjects(&store, "quote -subject:print"),
+            ["Dinner on Friday?", "Service quote"]
+        );
+        assert_eq!(subjects(&store, "-quote"), ["Perché così"]);
+        // OR, also across kinds of terms.
+        assert_eq!(
+            subjects(&store, "from:sara OR from:davide"),
+            [
+                "Re: Print quote",
+                "Service quote",
+                "Autumn catalog print quote"
+            ]
+        );
+        assert_eq!(
+            subjects(&store, "subject:dinner OR is:unread -print"),
+            ["Perché così", "Dinner on Friday?", "Service quote"]
+        );
+        // Read, unread, starred.
+        assert_eq!(
+            subjects(&store, "is:read"),
+            ["Dinner on Friday?", "Re: Print quote"]
+        );
+        assert_eq!(subjects(&store, "-is:unread"), subjects(&store, "is:read"));
+        store
+            .update_flags(
+                w,
+                "INBOX",
+                &[(
+                    2,
+                    Flags {
+                        seen: true,
+                        flagged: true,
+                        answered: false,
+                    },
+                )],
+            )
+            .unwrap();
+        assert_eq!(subjects(&store, "is:starred"), ["Re: Print quote"]);
+        assert_eq!(subjects(&store, "is:flagged"), ["Re: Print quote"]);
+        assert_eq!(
+            subjects(&store, "from:sara -is:starred"),
+            ["Autumn catalog print quote"]
+        );
+        // Files: by name, and sizes.
+        store
+            .set_listed_files(
+                w,
+                "INBOX",
+                &[(
+                    1,
+                    vec![Attachment {
+                        part: 2,
+                        name: "Quote-2026.PDF".into(),
+                        mime: "application/pdf".into(),
+                        size: 3 << 20,
+                        section: Some("2".into()),
+                        encoding: Some("base64".into()),
+                    }],
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            subjects(&store, "filename:pdf"),
+            ["Autumn catalog print quote"]
+        );
+        assert_eq!(
+            subjects(&store, "filename:quote-2026"),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "filename:%").is_empty());
+        assert_eq!(
+            subjects(&store, "larger:2M"),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "larger:4M").is_empty());
+        assert_eq!(subjects(&store, "smaller:1M").len(), 4);
+        assert_eq!(subjects(&store, "has:attachment -filename:doc").len(), 1);
+        // Labels, known or not.
+        let read = store.add_label("To read", "amber").unwrap();
+        store
+            .label_message(w, "INBOX", 2, &read.keyword, true)
+            .unwrap();
+        assert_eq!(subjects(&store, r#"label:"to read""#), ["Re: Print quote"]);
+        assert_eq!(
+            subjects(&store, r#"from:sara -label:"To read""#),
+            ["Autumn catalog print quote"]
+        );
+        assert!(subjects(&store, "label:nope").is_empty());
+        assert_eq!(subjects(&store, "from:sara -label:nope").len(), 2);
+        // Folders: jobs, names, paths, server names.
+        let mut acme = written(w, 7, 50, ("Ada", "ada@acme.com"), "Acme brief");
+        acme.mailbox = "INBOX.Clients.Acme".into();
+        let mut sent = written(p, 8, 60, ("Me", "p@example.org"), "Sent brief");
+        sent.mailbox = "Sent".into();
+        store.set_folder_role(p, Folder::Sent, "Sent").unwrap();
+        store.upsert_messages(&[acme, sent]).unwrap();
+        store
+            .set_account_folders(
+                w,
+                &[
+                    AccountFolder {
+                        mailbox: "INBOX.Clients".into(),
+                        name: "Clients".into(),
+                        depth: 0,
+                        selectable: false,
+                        unread: 0,
+                        total: 0,
+                        subscribed: true,
+                        delimiter: ".".into(),
+                    },
+                    AccountFolder {
+                        mailbox: "INBOX.Clients.Acme".into(),
+                        name: "Acme".into(),
+                        depth: 1,
+                        selectable: true,
+                        unread: 0,
+                        total: 0,
+                        subscribed: true,
+                        delimiter: ".".into(),
+                    },
+                ],
+            )
+            .unwrap();
+        for typed in [
+            "in:acme",
+            "in:Clients/Acme",
+            "in:CLIENTS/ACME/",
+            "in:INBOX/Clients/Acme",
+            "in:inbox.clients.acme",
+            "brief -in:inbox -in:sent",
+        ] {
+            assert_eq!(subjects(&store, typed), ["Acme brief"], "{typed}");
+        }
+        assert!(subjects(&store, "in:clients").is_empty());
+        assert!(subjects(&store, "in:nowhere").is_empty());
+        assert_eq!(subjects(&store, "in:sent"), ["Sent brief"]);
+        assert_eq!(subjects(&store, "brief in:sent OR in:acme").len(), 2);
+        assert_eq!(subjects(&store, "in:inbox").len(), 5);
+        assert_eq!(
+            store.folders_named("Acme").unwrap(),
+            [(w, "INBOX.Clients.Acme".to_owned())]
+        );
+        // Unicode words and senders.
+        assert_eq!(subjects(&store, "perche"), ["Perché così"]);
+        assert_eq!(subjects(&store, "from:città"), ["Perché così"]);
+    }
+
+    #[test]
+    fn saved_searches_and_server_finds() {
+        let (store, p, w) = search_store();
+        let a = store.save_search("Quotes", "  quote   from:sara ").unwrap();
+        let b = store.save_search("Unread", "is:unread").unwrap();
+        // The same name, in any case, keeps one search with the new query.
+        assert_eq!(store.save_search("quotes", "quote").unwrap(), a);
+        let saved = store.saved_searches().unwrap();
+        assert_eq!(
+            saved
+                .iter()
+                .map(|s| (s.id, s.name.as_str(), s.query.as_str()))
+                .collect::<Vec<_>>(),
+            [(a, "Quotes", "quote"), (b, "Unread", "is:unread")]
+        );
+        assert_eq!(saved[0].uuid.len(), 32);
+        assert_ne!(saved[0].uuid, saved[1].uuid);
+        assert!(!store.rename_saved_search(b, "QUOTES").unwrap());
+        assert!(store.rename_saved_search(b, " New mail ").unwrap());
+        assert_eq!(store.saved_searches().unwrap()[1].name, "New mail");
+        store.delete_saved_search(a).unwrap();
+        assert_eq!(store.saved_searches().unwrap().len(), 1);
+
+        // Server finds: shown newest first, gone ones left out, forgotten
+        // when their folder is renumbered.
+        let hits = store
+            .search_hits_at(&[
+                (w, "INBOX".into(), 1),
+                (p, "INBOX".into(), 4),
+                (p, "INBOX".into(), 99),
+                (w, "INBOX".into(), 1),
+            ])
+            .unwrap();
+        assert_eq!(
+            hits.iter()
+                .map(|h| h.message.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["Dinner on Friday?", "Autumn catalog print quote"]
+        );
+        store.note_server_found(w, "INBOX", &[1], 7).unwrap();
+        assert_eq!(store.forget_renumbered_found(w, "INBOX", 7).unwrap(), 0);
+        assert_eq!(store.forget_renumbered_found(w, "INBOX", 8).unwrap(), 1);
+        assert!(subjects(&store, "autumn").is_empty());
+        let left: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM server_found", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    /// What a server search brings from outside the sync stays out of
+    /// the folder's list and counts, but is found and opens; the sync
+    /// coming down to it makes it ordinary mail. It never counts as the
+    /// newest synced message (review of #88, findings 2 and 6).
+    #[test]
+    fn mail_found_on_the_server_stays_out_of_lists_until_synced() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        let mut old = msg(a, 2, 100, false);
+        old.subject = "Old invoice".into();
+        let mut newer = msg(a, 8, 900, false);
+        newer.subject = "Older than the sync, newer number".into();
+        store
+            .upsert_messages(&[msg(a, 5, 500, true), msg(a, 6, 600, true), old, newer])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[2, 8], 7).unwrap();
+        // The sync's newest and oldest leave the found ones out.
+        assert_eq!(store.newest_synced(a, "INBOX").unwrap(), Some((6, 600)));
+        assert_eq!(store.lowest_synced(a, "INBOX").unwrap(), Some(5));
+        assert_eq!(store.server_found_uids(a, "INBOX").unwrap(), [2, 8].into());
+        let listed = |store: &Store| -> Vec<u32> {
+            store
+                .unified(Folder::Inbox, None, 50)
+                .unwrap()
+                .iter()
+                .map(|m| m.uid)
+                .collect()
+        };
+        assert_eq!(listed(&store), [6, 5]);
+        assert_eq!(
+            store
+                .unread_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            0
+        );
+        // Found, and its conversation opens.
+        assert_eq!(subjects(&store, "invoice"), ["Old invoice"]);
+        assert_eq!(
+            store
+                .search_hits_at(&[(a, "INBOX".into(), 2)])
+                .unwrap()
+                .len(),
+            1
+        );
+        // An undo on it puts it back out of the list, not in it.
+        store.set_hidden(a, "INBOX", 2, true).unwrap();
+        assert!(subjects(&store, "invoice").is_empty());
+        store.set_hidden(a, "INBOX", 2, false).unwrap();
+        assert_eq!(listed(&store), [6, 5]);
+        // The sync came down to 5: 8 is inside what it covers now.
+        assert_eq!(store.adopt_server_found(a, "INBOX", 5).unwrap(), 1);
+        assert_eq!(listed(&store), [8, 6, 5]);
+        // The whole folder synced: the rest too.
+        assert_eq!(store.adopt_server_found(a, "INBOX", 0).unwrap(), 1);
+        assert_eq!(listed(&store), [8, 6, 5, 2]);
+        assert!(store.server_found_uids(a, "INBOX").unwrap().is_empty());
+    }
+
+    /// Gmail keeps one message in the inbox and All Mail: a server search
+    /// that finds both shows it once, from the inbox.
+    #[test]
+    fn one_message_in_two_folders_is_one_server_hit() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Gmail", "a@gmail.com", "#E0782F"))
+            .unwrap();
+        let mut inbox = msg(a, 3, 100, false);
+        inbox.reply.message_id = "<same@example.org>".into();
+        let mut all = inbox.clone();
+        all.mailbox = "[Gmail]/All Mail".into();
+        all.uid = 40;
+        store.upsert_messages(&[inbox, all]).unwrap();
+        let hits = store
+            .search_hits_at(&[(a, "INBOX".into(), 3), (a, "[Gmail]/All Mail".into(), 40)])
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].message.mailbox, "INBOX");
+    }
+
+    #[test]
     fn rules_sort_only_mail_that_arrives_after_the_first_look() {
         use crate::rules::{self, Action, Field, Op};
         let mut store = Store::open_in_memory().unwrap();
@@ -11904,6 +14033,59 @@ From: <help@bank.example>\r\n\r\nHi";
         let found = store.search(&Query::parse("updated"), 50).unwrap();
         assert_eq!(found.total, 50_000);
         eprintln!("searched in {:?}", start.elapsed());
+    }
+
+    /// Local search on 50,000 messages with bodies, timed (median of 9).
+    /// `cargo test --release -p piuma-core -- --ignored --nocapture
+    /// search_timings`.
+    #[test]
+    #[ignore]
+    fn search_timings() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        let words = [
+            "quote", "dinner", "invoice", "meeting", "catalog", "print", "trip", "lunch",
+        ];
+        let msgs: Vec<_> = (1..=50_000u32)
+            .map(|u| {
+                let mut m = msg(a, u, i64::from(u) * 60, false);
+                let w = words[u as usize % words.len()];
+                m.subject = format!("About the {w} {u}");
+                m.preview = format!("Here is the {w} we talked about, quickly");
+                m
+            })
+            .collect();
+        store.upsert_messages(&msgs).unwrap();
+        for m in &msgs {
+            let w = words[m.uid as usize % words.len()];
+            let body = format!(
+                "Hello, as promised here is the {w}. {} Let me know what you think \
+                 about the quote and the timing. Best, Julia",
+                "Some longer text to make the body look like real mail. ".repeat(12)
+            );
+            store.set_body(a, "INBOX", m.uid, &body).unwrap();
+        }
+        for q in [
+            "q",
+            "quote",
+            "quote OR dinner",
+            "from:julia quote",
+            "-quote is:unread",
+        ] {
+            let query = Query::parse(q);
+            let mut times: Vec<std::time::Duration> = (0..9)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let found = store.search(&query, 50).unwrap();
+                    assert!(found.hits.len() <= 50);
+                    start.elapsed()
+                })
+                .collect();
+            times.sort();
+            eprintln!("search {q:?}: {:?}", times[4]);
+        }
     }
 
     #[test]
@@ -12506,13 +14688,16 @@ From: <help@bank.example>\r\n\r\nHi";
             )
             .unwrap();
         store.conn.execute("DELETE FROM written_to", []).unwrap();
+        // As a database from before `written_to` is brought up to date: the
+        // Sent mail kept is read in the background, a step at a time.
         store
             .conn
-            .execute(
-                NOTE_WRITTEN_TO,
-                params![None::<i64>, None::<String>, None::<u32>],
-            )
+            .pragma_update(None, "user_version", (WRITTEN_TO - 1) as i64)
             .unwrap();
+        store.migrate().unwrap();
+        assert!(store.maintenance_pending().unwrap());
+        store.maintain_all().unwrap();
+        assert!(!store.maintenance_pending().unwrap());
         let mut written: Vec<String> = store
             .conn
             .prepare("SELECT email FROM written_to ORDER BY email")
@@ -13615,6 +15800,962 @@ From: <help@bank.example>\r\n\r\nHi";
         }
         // Repeating an empty snapshot remains safe.
         store.take_space_tables(&tables).unwrap();
+    }
+
+    /// The query plan of `sql` (with `args`), one line per step.
+    fn plan(store: &Store, sql: &str, args: &[&dyn rusqlite::ToSql]) -> String {
+        let mut stmt = store
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
+        let rows = stmt.query_map(args, |r| r.get::<_, String>(3)).unwrap();
+        rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn hot_lookups_use_an_index() {
+        let store = Store::open_in_memory().unwrap();
+        let a: &dyn rusqlite::ToSql = &1;
+        let email: &dyn rusqlite::ToSql = &"julia@example.org";
+        let mailbox: &dyn rusqlite::ToSql = &"INBOX";
+        let n: &dyn rusqlite::ToSql = &10;
+        // Each of these walked the whole table (`SCAN message`) before.
+        let checks: Vec<(&str, String, Vec<&dyn rusqlite::ToSql>)> =
+            vec![
+            (
+                "sender",
+                "SELECT uid FROM message WHERE lower(from_email) = lower(?1) AND hidden = 0
+                 ORDER BY received_at DESC LIMIT 20"
+                    .into(),
+                vec![email],
+            ),
+            (
+                "list address",
+                "SELECT EXISTS (SELECT 1 FROM message WHERE lower(from_email) = ?1
+                     AND (newsletter = 1 OR unsubscribe != ''))
+                 OR EXISTS (SELECT 1 FROM list_mailto WHERE email = ?1)"
+                    .into(),
+                vec![email],
+            ),
+            ("written to", NOTE_WRITTEN_TO_ONE.into(), vec![a, mailbox, n]),
+            (
+                "replies without references",
+                "SELECT thread FROM message
+                 WHERE account = ?1 AND received_at BETWEEN ?2 - ?3 AND ?2
+                 ORDER BY received_at DESC LIMIT 20"
+                    .into(),
+                vec![a, n, n],
+            ),
+            (
+                "lists to read",
+                "SELECT uid FROM message WHERE account = ?1 AND mailbox = ?2 AND list_checked = 0
+                 ORDER BY uid DESC LIMIT ?3"
+                    .into(),
+                vec![a, mailbox, n],
+            ),
+            (
+                "files to list",
+                "SELECT uid FROM message
+                 WHERE account = ?1 AND mailbox = ?2 AND files_checked = 0
+                 ORDER BY received_at DESC LIMIT ?3"
+                    .into(),
+                vec![a, mailbox, n],
+            ),
+            (
+                "hidden",
+                "SELECT uid FROM message WHERE hidden = 1".into(),
+                vec![],
+            ),
+            (
+                "verified domain",
+                "SELECT 1 FROM message_body b JOIN message m USING (account, mailbox, uid)
+                 WHERE b.verified = 1 LIMIT 1"
+                    .into(),
+                vec![],
+            ),
+        ];
+        for (what, sql, args) in checks {
+            let plan = plan(&store, &sql, &args);
+            // A walk of a whole table, not of a small partial index.
+            let walks = plan.lines().any(|l| {
+                l.starts_with("SCAN")
+                    && !l.contains("INDEX")
+                    && !l.contains("CONSTANT ROW")
+                    // The recursive split of one message's recipients.
+                    && !l.contains("split")
+            });
+            assert!(!walks, "{what}: {plan}");
+            assert!(!plan.contains("TEMP B-TREE"), "{what}: {plan}");
+        }
+        // Counting conversations reads the indexes alone.
+        let count = format!(
+            "SELECT COUNT(*) FROM message m WHERE m.folder = ?1 AND m.hidden = 0
+               AND (?2 IS NULL OR m.account = ?2) AND {NEWEST_IN_THREAD}"
+        );
+        let folder: &dyn rusqlite::ToSql = &"inbox";
+        let none: &dyn rusqlite::ToSql = &None::<i64>;
+        let plan = plan(&store, &count, &[folder, none]);
+        assert!(plan.contains("COVERING INDEX message_by_folder"), "{plan}");
+        assert!(plan.contains("COVERING INDEX message_by_thread"), "{plan}");
+    }
+
+    #[test]
+    fn labels_and_the_last_message_sent_walk_only_what_they_need() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        // A mailbox of 50,000 messages, two labelled.
+        let mail: Vec<_> = (1..=50_000).map(|u| msg(a, u, u as i64, false)).collect();
+        store.upsert_messages(&mail).unwrap();
+        store.set_labels_local(a).unwrap();
+        for uid in [7, 40_000] {
+            store
+                .label_message(a, "INBOX", uid, "worksite", true)
+                .unwrap();
+        }
+        store.conn.execute_batch("ANALYZE").unwrap();
+        let label: &dyn rusqlite::ToSql = &"worksite";
+        let n: &dyn rusqlite::ToSql = &50;
+        let page = plan(
+            &store,
+            &format!(
+                "SELECT m.uid {LABELLED} ORDER BY m.received_at DESC, m.uid DESC LIMIT ?2 OFFSET ?2"
+            ),
+            &[label, n],
+        );
+        let count = plan(&store, &format!("SELECT COUNT(*) {LABELLED}"), &[label]);
+        for plan in [&page, &count] {
+            // The labelled rows are walked, each message found by its key;
+            // never the whole message table.
+            assert!(plan.contains("SCAN ml"), "{plan}");
+            assert!(
+                plan.contains("SEARCH m USING INDEX sqlite_autoindex_message_1"),
+                "{plan}"
+            );
+            assert!(
+                !plan.contains("SCAN m\n") && !plan.ends_with("SCAN m"),
+                "{plan}"
+            );
+        }
+        assert_eq!(
+            store
+                .labelled_page("worksite", 0, 10)
+                .unwrap()
+                .iter()
+                .map(|m| m.uid)
+                .collect::<Vec<_>>(),
+            [40_000, 7]
+        );
+        assert_eq!(store.labelled_count("worksite").unwrap(), 2);
+
+        let email: &dyn rusqlite::ToSql = &"luca@example.org";
+        let sent = plan(&store, LAST_SENT_TO, &[email]);
+        assert!(sent.contains("message_by_folder (folder=?)"), "{sent}");
+        assert!(!sent.contains("TEMP B-TREE"), "{sent}");
+    }
+
+    #[test]
+    fn the_last_message_sent_is_found_while_written_to_fills() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let mut sent = msg(a, 1, 500, false);
+        sent.mailbox = "Sent".into();
+        store.set_folder_role(a, Folder::Sent, "Sent").unwrap();
+        store.upsert_messages(&[sent]).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE message SET folder = 'sent', to_list = '[\"luca@example.org\"]',
+                                    recipients = 'luca@example.org'",
+                [],
+            )
+            .unwrap();
+        // As kept before `written_to` knew this Sent mail.
+        store.conn.execute("DELETE FROM written_to", []).unwrap();
+        assert_eq!(store.last_sent_to("luca@example.org").unwrap(), None);
+        store
+            .conn
+            .execute(
+                "INSERT OR REPLACE INTO maintenance (job, cursor) VALUES ('written_to', 0)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(store.last_sent_to("Luca@example.org").unwrap(), Some(500));
+        store.maintain_all().unwrap();
+        assert_eq!(store.last_sent_to("luca@example.org").unwrap(), Some(500));
+        assert_eq!(store.last_sent_to("sara@example.org").unwrap(), None);
+    }
+
+    #[test]
+    fn a_removed_account_leaves_at_once_and_goes_in_steps() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let b = store
+            .add_account(&imap_account("Home", "b@example.org", "#E0782F"))
+            .unwrap();
+        let mut mail: Vec<_> = (1..=(REMOVAL_ROWS as u32 * 2 + 10))
+            .map(|u| msg(a, u, u as i64, false))
+            .collect();
+        mail.push(msg(b, 1, 5, false));
+        store.upsert_messages(&mail).unwrap();
+        store.set_body(a, "INBOX", 1, "the body").unwrap();
+        assert_eq!(store.unsent(a).unwrap(), (0, 0));
+
+        store.start_removing_account(a).unwrap();
+        // Gone from the lists, the search and the accounts at once.
+        assert_eq!(store.accounts().unwrap().len(), 1);
+        assert_eq!(
+            store
+                .conversation_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.search(&Query::parse("message"), 10).unwrap().total, 1);
+        // With no words too, and among what a server search brought.
+        assert_eq!(
+            store.search(&Query::parse("is:unread"), 10).unwrap().total,
+            1
+        );
+        assert!(store
+            .search_hits_at(&[(a, "INBOX".into(), 1)])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_hits_at(&[(b, "INBOX".into(), 1)])
+                .unwrap()
+                .len(),
+            1
+        );
+        // Its address can be added again meanwhile.
+        let again = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        assert_ne!(again, a);
+        assert!(store.space_tables().unwrap()["account"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["id"].as_i64() != Some(a.0)));
+
+        // A step at a time, each a short write.
+        let mut steps = 0;
+        while store.maintain().unwrap() {
+            steps += 1;
+            assert!(steps < 100);
+        }
+        assert!(steps >= 3, "{steps}");
+        let left: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM message WHERE account = ?1",
+                [a.0],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0);
+        let rows: i64 = store
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM account WHERE id = ?1)
+                      + (SELECT COUNT(*) FROM message_body WHERE account = ?1)
+                      + (SELECT COUNT(*) FROM account_removal)",
+                [a.0],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
+        assert_eq!(store.uids(b, "INBOX").unwrap(), [1]);
+    }
+
+    #[test]
+    fn old_whole_messages_are_let_go_and_fetched_again() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let day = 86_400;
+        let now = 1_000 * day;
+        store.set_folder_role(a, Folder::Drafts, "Drafts").unwrap();
+        let mut draft = msg(a, 3, now - 400 * day, true);
+        draft.mailbox = "Drafts".into();
+        store
+            .upsert_messages(&[
+                msg(a, 1, now - 400 * day, true),
+                msg(a, 2, now - day, true),
+                draft,
+            ])
+            .unwrap();
+        // The word far down the message, past its preview.
+        let long = |word: &str| format!("{}{word}", "Lorem ipsum dolor sit amet. ".repeat(20));
+        store.set_body(a, "INBOX", 1, &long("osteria")).unwrap();
+        store.set_body(a, "INBOX", 2, &long("trattoria")).unwrap();
+        store.set_body(a, "Drafts", 3, &long("pizzeria")).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO inline_image (account, mailbox, uid, cid, mime, data)
+                 VALUES (?1, 'INBOX', 1, 'logo', 'image/png', x'00')",
+                [a.0],
+            )
+            .unwrap();
+        assert_eq!(store.keep_bodies_days().unwrap(), Some(KEEP_BODIES_DAYS));
+        let before = store.storage().unwrap().accounts[0].bodies;
+
+        store.queue_body_clean_up(now).unwrap();
+        store.maintain_all().unwrap();
+        // The old one is fetched again when opened; the list row stays,
+        // and search still finds it by its subject and by its words.
+        assert_eq!(store.body(a, "INBOX", 1).unwrap(), None);
+        assert!(store.full_body(a, "INBOX", 1).unwrap().is_none());
+        assert!(store.inline_image(a, "INBOX", 1, "logo").unwrap().is_none());
+        store
+            .conn
+            .execute(
+                "INSERT INTO message_fts (message_fts) VALUES ('integrity-check')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(subjects(&store, "osteria"), ["Message 1"]);
+        assert_eq!(subjects(&store, "\"Message 1\""), ["Message 1"]);
+        // Its sender check waits for the body, rather than reading an
+        // empty one.
+        assert_eq!(store.sender_warning(a, "INBOX", 1).unwrap(), None);
+        // A search index built again keeps the words of a body let go of.
+        store.rebuild_search_index().unwrap();
+        assert_eq!(subjects(&store, "osteria"), ["Message 1"]);
+        // Not refetched ahead of time either.
+        assert!(!store
+            .inbox_without_body(a, "INBOX", 10)
+            .unwrap()
+            .contains(&1));
+        // The new one and the draft stay.
+        assert_eq!(subjects(&store, "trattoria"), ["Message 2"]);
+        assert_eq!(subjects(&store, "pizzeria"), ["Message 3"]);
+        assert!(store.storage().unwrap().accounts[0].bodies < before);
+        // Fetched again, it is whole and found again.
+        store.set_body(a, "INBOX", 1, &long("osteria")).unwrap();
+        assert_eq!(subjects(&store, "osteria"), ["Message 1"]);
+
+        // "Clear cached mail" lets go of the rest, drafts aside.
+        store.queue_clear_cached(a).unwrap();
+        store.maintain_all().unwrap();
+        assert_eq!(store.body(a, "INBOX", 2).unwrap(), None);
+        assert_eq!(store.body(a, "Drafts", 3).unwrap(), Some(long("pizzeria")));
+        // Kept for good, nothing goes.
+        store.set_keep_bodies_days(None).unwrap();
+        assert_eq!(store.keep_bodies_days().unwrap(), None);
+        store.set_body(a, "INBOX", 2, &long("trattoria")).unwrap();
+        store.queue_body_clean_up(now + 1_000 * day).unwrap();
+        store.maintain_all().unwrap();
+        assert_eq!(subjects(&store, "trattoria"), ["Message 2"]);
+    }
+
+    #[test]
+    fn compacting_keeps_every_message_and_its_search() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let mail: Vec<_> = (1..=300).map(|u| msg(a, u, u as i64, false)).collect();
+        store.upsert_messages(&mail).unwrap();
+        for uid in [5, 150, 299] {
+            store
+                .set_body(a, "INBOX", uid, &format!("word{uid} and more"))
+                .unwrap();
+        }
+        // Gaps in the row numbers, the case VACUUM numbers again.
+        store
+            .remove_messages(a, "INBOX", &(1..=100).collect::<Vec<_>>())
+            .unwrap();
+        store.compact().unwrap();
+        let id: bool = store
+            .conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info('message')
+                                 WHERE name = 'id' AND pk = 1)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(id);
+        let mode: i64 = store
+            .conn
+            .pragma_query_value(None, "auto_vacuum", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, 2);
+        assert_eq!(subjects(&store, "word150"), ["Message 150"]);
+        assert_eq!(subjects(&store, "word299"), ["Message 299"]);
+        assert!(subjects(&store, "word5").is_empty());
+        assert_eq!(store.uids(a, "INBOX").unwrap().len(), 200);
+        // Everything works as before on the new table: triggers, keys,
+        // indexes, the cascade to bodies.
+        store.upsert_messages(&[msg(a, 400, 400, false)]).unwrap();
+        store.set_body(a, "INBOX", 400, "fresh word400").unwrap();
+        assert_eq!(subjects(&store, "word400"), ["Message 400"]);
+        store.remove_messages(a, "INBOX", &[150]).unwrap();
+        assert!(subjects(&store, "word150").is_empty());
+        let orphans: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM message_body b WHERE NOT EXISTS (
+                     SELECT 1 FROM message m WHERE m.account = b.account
+                       AND m.mailbox = b.mailbox AND m.uid = b.uid)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+        let plan = plan(
+            &store,
+            "SELECT uid FROM message WHERE lower(from_email) = 'x' ORDER BY received_at DESC",
+            &[],
+        );
+        assert!(plan.contains("message_by_sender"), "{plan}");
+        // A second time, nothing more to change: from now on room is
+        // given back a few pages at a time.
+        assert!(!store.needs_compacting().unwrap());
+        store.compact().unwrap();
+        assert_eq!(subjects(&store, "word299"), ["Message 299"]);
+        let mail: Vec<_> = (500..=700).map(|u| msg(a, u, u as i64, false)).collect();
+        store.upsert_messages(&mail).unwrap();
+        for uid in 500..=700 {
+            store
+                .set_body(a, "INBOX", uid, &"filler ".repeat(400))
+                .unwrap();
+        }
+        store
+            .remove_messages(a, "INBOX", &(500..=700).collect::<Vec<_>>())
+            .unwrap();
+        let free = |s: &Store| -> i64 {
+            s.conn
+                .pragma_query_value(None, "freelist_count", |r| r.get(0))
+                .unwrap()
+        };
+        assert!(free(&store) > 2);
+        let mut steps = 0;
+        while store.give_back_room(2).unwrap() {
+            steps += 1;
+            assert!(steps < 10_000);
+        }
+        assert!(steps > 0);
+        assert_eq!(free(&store), 0);
+        store.checkpoint().unwrap();
+    }
+
+    #[test]
+    fn compacting_a_file_needs_room_on_the_disk() {
+        let dir = std::env::temp_dir().join(format!("piuma-compact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("piuma.db");
+        let (mut store, _) = Store::open_file(&path).unwrap();
+        assert!(store.needs_compacting().unwrap());
+        // The disk the database is on says how much is free.
+        #[cfg(any(unix, windows))]
+        assert!(free_space(&dir).is_some_and(|f| f > 0));
+        store.compact().unwrap();
+        assert!(!store.needs_compacting().unwrap());
+        assert!(!store.give_back_room(100).unwrap());
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_keeps_a_copy_and_goes_on_where_it_stopped() {
+        let dir = std::env::temp_dir().join(format!("piuma-update-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("piuma.db");
+        let (mut store, opened) = Store::open_file(&path).unwrap();
+        assert!(opened.migrated && !opened.backed_up);
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 1, false)]).unwrap();
+        // As if the last migration hadn't run yet.
+        store
+            .conn
+            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .unwrap();
+        drop(store);
+        let (store, opened) = Store::open_file(&path).unwrap();
+        assert!(opened.migrated && opened.backed_up);
+        assert_eq!(store.schema_version().unwrap(), MIGRATIONS.len());
+        let mut copy = path.as_os_str().to_owned();
+        copy.push(".before-update");
+        let old = Store::open_reader(std::path::Path::new(&copy)).unwrap();
+        assert_eq!(old.uids(a, "INBOX").unwrap(), [1]);
+        // Counted on the Storage page while it is there.
+        assert!(store.storage().unwrap().backup > 0);
+        drop((old, store));
+        // The start after: up to date, nothing to do, and the copy (which
+        // still holds mail deleted since) is let go of.
+        let (store, opened) = Store::open_file(&path).unwrap();
+        assert_eq!(opened, Opened::default());
+        assert!(!std::path::Path::new(&copy).exists());
+        assert_eq!(store.storage().unwrap().backup, 0);
+        // Clearing cached mail and removing an account let go of it too,
+        // and so does its age.
+        let keep_copy = || std::fs::write(&copy, b"copy").unwrap();
+        keep_copy();
+        assert_eq!(store.storage().unwrap().backup, 4);
+        store.drop_old_update_backup(UPDATE_BACKUP_DAYS);
+        assert!(std::path::Path::new(&copy).exists());
+        store.drop_old_update_backup(0);
+        assert!(!std::path::Path::new(&copy).exists());
+        keep_copy();
+        store.queue_clear_cached(a).unwrap();
+        assert!(!std::path::Path::new(&copy).exists());
+        keep_copy();
+        store.start_removing_account(a).unwrap();
+        assert!(!std::path::Path::new(&copy).exists());
+        // A database a newer Piuma wrote is refused before any copy is
+        // made, so the copy of an earlier update isn't replaced by it.
+        keep_copy();
+        store
+            .conn
+            .pragma_update(None, "user_version", (MIGRATIONS.len() + 1) as i64)
+            .unwrap();
+        drop(store);
+        assert!(matches!(
+            Store::open_file(&path).err(),
+            Some(StoreError::TooNew { .. })
+        ));
+        assert_eq!(std::fs::read(&copy).unwrap(), b"copy");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_update_cut_short_keeps_the_copy_from_before_it() {
+        let dir = std::env::temp_dir().join(format!("piuma-cut-short-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("piuma.db");
+        let copy = backup_of(&path);
+        let (store, _) = Store::open_file(&path).unwrap();
+        let back = |store: &Store, at: usize| {
+            store
+                .conn
+                .pragma_update(None, "user_version", at as i64)
+                .unwrap()
+        };
+        // Before the update: the copy is made from here.
+        store.set_setting("mark", "before").unwrap();
+        back(&store, MIGRATIONS.len() - 2);
+        drop(store);
+        let (store, opened) = Store::open_file(&path).unwrap();
+        assert!(opened.backed_up);
+        let marked = |p: &Path| {
+            Store::open_reader(p)
+                .unwrap()
+                .setting("mark")
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(marked(&copy), "before");
+        // The update stopped half way, after the database changed: the
+        // next start keeps the copy from before it.
+        store.set_setting("mark", "half updated").unwrap();
+        store
+            .set_setting(BACKUP_UPDATED_TO, &(MIGRATIONS.len() - 2).to_string())
+            .unwrap();
+        back(&store, MIGRATIONS.len() - 1);
+        drop(store);
+        let (store, opened) = Store::open_file(&path).unwrap();
+        assert!(opened.migrated && opened.backed_up);
+        assert_eq!(marked(&copy), "before");
+        assert_eq!(
+            store.setting(BACKUP_UPDATED_TO).unwrap(),
+            Some(MIGRATIONS.len().to_string())
+        );
+        // An update that went through (here, to the version before the
+        // last): the next one copies the database as it is then.
+        store.set_setting("mark", "updated").unwrap();
+        store
+            .set_setting(BACKUP_UPDATED_TO, &(MIGRATIONS.len() - 1).to_string())
+            .unwrap();
+        back(&store, MIGRATIONS.len() - 1);
+        drop(store);
+        let (store, opened) = Store::open_file(&path).unwrap();
+        assert!(opened.backed_up);
+        assert_eq!(marked(&copy), "updated");
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_account_with_unsent_mail_is_never_removed() {
+        use crate::outbox::Outgoing;
+        use crate::smtp::{ready, Draft};
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 1, false)]).unwrap();
+        let draft = Draft {
+            from_email: "a@example.org".into(),
+            to: vec!["Luca <luca@example.org>".into()],
+            subject: "Quote".into(),
+            body: "Here it is.".into(),
+            ..Draft::default()
+        };
+        let out = Outgoing {
+            account: a,
+            ready: ready(&draft).unwrap(),
+            draft,
+            saved: None,
+            send_at: None,
+            undo: false,
+            redirect: false,
+        };
+        let queued = store.queue_outgoing(&out, 100).unwrap();
+        let refused = store.queue_outgoing(&out, 110).unwrap();
+        assert!(store.claim_outgoing(refused, "me", 120).unwrap());
+        store.refused_outgoing(refused, "me", "550 no").unwrap();
+        // Sent already (its copy for Sent still to file), or maybe sent:
+        // not counted.
+        for state in ["unfiled", "filing", "unknown"] {
+            let id = store.queue_outgoing(&out, 130).unwrap();
+            store
+                .conn
+                .execute(
+                    "UPDATE outbox SET state = ?2 WHERE id = ?1",
+                    params![id, state],
+                )
+                .unwrap();
+        }
+        let waiting = store
+            .keep_waiting_draft(
+                &WaitingDraft {
+                    id: 0,
+                    account: a,
+                    raw: b"To: sara@example.org\r\nSubject: Plans\r\n\r\nSoon".to_vec(),
+                    message_id: "<d1@example.org>".into(),
+                    earlier: None,
+                    signature: None,
+                },
+                None,
+                140,
+            )
+            .unwrap();
+        assert_eq!(store.unsent(a).unwrap(), (2, 1));
+        let list = store.unsent_mail(a).unwrap();
+        assert_eq!(
+            list.iter()
+                .map(|u| (u.id, u.draft, u.subject.as_str(), u.state))
+                .collect::<Vec<_>>(),
+            [
+                (queued, false, "Quote", Some(crate::outbox::State::Waiting)),
+                (refused, false, "Quote", Some(crate::outbox::State::Refused)),
+                (waiting, true, "Plans", None),
+            ]
+        );
+        assert_eq!(list[2].to, ["sara@example.org"]);
+
+        // Refused while any of it is left, and nothing changes.
+        assert!(matches!(
+            store.start_removing_account(a),
+            Err(StoreError::Unsent {
+                outbox: 2,
+                drafts: 1
+            })
+        ));
+        assert_eq!(store.accounts().unwrap().len(), 1);
+        store.take_outgoing(queued).unwrap();
+        store.take_outgoing(refused).unwrap();
+        assert!(store.start_removing_account(a).is_err());
+        store.drop_waiting_draft(waiting).unwrap();
+        assert_eq!(store.unsent(a).unwrap(), (0, 0));
+        store.start_removing_account(a).unwrap();
+        store.maintain_all().unwrap();
+        assert!(store.accounts().unwrap().is_empty());
+
+        // A removal queued before (by an older version) with mail still
+        // to go stops, and the account comes back as it was.
+        let b = store
+            .add_account(&imap_account("Home", "b@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE account SET email = email || ' (removed ' || id || ')' WHERE id = ?1",
+                [b.0],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute("INSERT INTO account_removal (account) VALUES (?1)", [b.0])
+            .unwrap();
+        store
+            .queue_outgoing(&Outgoing { account: b, ..out }, 200)
+            .unwrap();
+        store.maintain_all().unwrap();
+        let back = store.accounts().unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].email, "b@example.org");
+        assert_eq!(store.unsent(b).unwrap(), (1, 0));
+        // Told once, to ask to sign in to it again.
+        assert_eq!(
+            store.take_restored().unwrap(),
+            [Restored {
+                account: b,
+                address_taken: false
+            }]
+        );
+        assert!(store.take_restored().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_account_given_back_keeps_a_placeholder_when_its_address_was_added_again() {
+        let mut store = Store::open_in_memory().unwrap();
+        let old = store
+            .add_account(&imap_account("Home", "b@example.org", "#E0782F"))
+            .unwrap();
+        store.start_removing_account(old).unwrap();
+        // Added again before the removal went on (older versions queued
+        // removals with unsent mail).
+        let again = store
+            .add_account(&imap_account("Home", "B@example.org", "#E0782F"))
+            .unwrap();
+        let draft = crate::smtp::Draft {
+            from_email: "b@example.org".into(),
+            to: vec!["sara@example.org".into()],
+            subject: "Quote".into(),
+            body: "Hi".into(),
+            ..crate::smtp::Draft::default()
+        };
+        store
+            .queue_outgoing(
+                &crate::outbox::Outgoing {
+                    account: old,
+                    ready: crate::smtp::ready(&draft).unwrap(),
+                    draft,
+                    saved: None,
+                    send_at: None,
+                    undo: false,
+                    redirect: false,
+                },
+                100,
+            )
+            .unwrap();
+        store.maintain_all().unwrap();
+        let emails: Vec<(AccountId, String)> = store
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.id, a.email))
+            .collect();
+        assert_eq!(
+            emails,
+            [
+                (old, format!("b@example.org (removed {})", old.0)),
+                (again, "B@example.org".into()),
+            ]
+        );
+        assert_eq!(
+            store.take_restored().unwrap(),
+            [Restored {
+                account: old,
+                address_taken: true
+            }]
+        );
+        assert!(!store.maintenance_pending().unwrap());
+    }
+
+    #[test]
+    fn a_failing_maintenance_step_holds_up_nothing_else() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.maintain_all().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#3451D1"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 1, false)]).unwrap();
+        store.start_removing_account(a).unwrap();
+        // Its messages can't be removed.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER stuck BEFORE DELETE ON message
+                 BEGIN SELECT RAISE(ABORT, 'stuck'); END;",
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO maintenance (job, cursor) VALUES ('list_mailto', 0)",
+                [],
+            )
+            .unwrap();
+        // The job runs anyway, then nothing is left but the stuck removal.
+        assert!(store.maintain().unwrap());
+        let left: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM maintenance", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+        assert!(!store.maintain().unwrap());
+        assert!(store.maintenance_pending().unwrap());
+        // Once it can, it goes on.
+        store.conn.execute_batch("DROP TRIGGER stuck").unwrap();
+        store.maintain_all().unwrap();
+        assert!(store.accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn background_jobs_of_a_newer_version_wait_for_it() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.maintain_all().unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO maintenance (job, cursor) VALUES ('from_the_future', 7)",
+                [],
+            )
+            .unwrap();
+        assert!(!store.maintenance_pending().unwrap());
+        assert!(!store.maintain().unwrap());
+        let cursor: i64 = store
+            .conn
+            .query_row(
+                "SELECT cursor FROM maintenance WHERE job = 'from_the_future'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn list_addresses_kept_before_are_found_in_the_background() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 1, false)]).unwrap();
+        // As kept by a version before `list_mailto`.
+        store
+            .conn
+            .execute(
+                "UPDATE message SET unsubscribe = '<mailto:Leave%2D7@Lists.example?subject=x>'",
+                [],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT OR REPLACE INTO maintenance (job, cursor) VALUES ('list_mailto', 0)",
+                [],
+            )
+            .unwrap();
+        assert!(!store.is_list("leave-7@lists.example").unwrap());
+        store.maintain_all().unwrap();
+        assert!(store.is_list("leave-7@lists.example").unwrap());
+        assert!(!store.is_list("leave-7@lists.exampl").unwrap());
+        assert_eq!(list_mailto("https://x.example/leave"), None);
+        assert_eq!(
+            list_mailto("mailto:a_b%25@x.example").as_deref(),
+            Some("a_b%@x.example")
+        );
+    }
+
+    #[test]
+    fn a_folder_left_as_it_was_needs_no_listing() {
+        let store = {
+            let mut store = Store::open_in_memory().unwrap();
+            let a = store
+                .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+                .unwrap();
+            let mail: Vec<_> = (1..=5).map(|u| msg(a, u, u as i64, false)).collect();
+            store.upsert_messages(&mail).unwrap();
+            store
+        };
+        let a = AccountId(1);
+        assert!(!store.mailbox_unchanged(a, "INBOX", 7, Some(6), 5).unwrap());
+        store
+            .set_mailbox_scan(a, "INBOX", Some((7, 6, 5)), Some(3))
+            .unwrap();
+        assert!(store.mailbox_unchanged(a, "INBOX", 7, Some(6), 5).unwrap());
+        // A new message, one gone, numbers renewed, no UIDNEXT: list it.
+        assert!(!store.mailbox_unchanged(a, "INBOX", 7, Some(7), 6).unwrap());
+        assert!(!store.mailbox_unchanged(a, "INBOX", 7, Some(6), 4).unwrap());
+        assert!(!store.mailbox_unchanged(a, "INBOX", 8, Some(6), 5).unwrap());
+        assert!(!store.mailbox_unchanged(a, "INBOX", 7, None, 5).unwrap());
+        assert_eq!(store.flags_below(a, "INBOX").unwrap(), Some(3));
+        assert_eq!(store.uids_below(a, "INBOX", Some(3), 10).unwrap(), [2, 1]);
+        assert_eq!(store.uids_below(a, "INBOX", None, 2).unwrap(), [5, 4]);
+        // A round that left work keeps the folder listed next time.
+        store.set_mailbox_scan(a, "INBOX", None, None).unwrap();
+        assert!(!store.mailbox_unchanged(a, "INBOX", 7, Some(6), 5).unwrap());
+        store.clear_mailbox(a, "INBOX").unwrap();
+        assert_eq!(store.flags_below(a, "INBOX").unwrap(), None);
+    }
+
+    #[test]
+    fn the_reader_pages_from_where_it_stopped_and_counts_once() {
+        let dir = std::env::temp_dir().join(format!("piuma-pages-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("piuma.db");
+        let (mut store, _) = Store::open_file(&path).unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let b = store
+            .add_account(&imap_account("Home", "b@example.org", "#E0782F"))
+            .unwrap();
+        // Ties on the time, across accounts, to test the order fully.
+        let mail: Vec<_> = (1..=500)
+            .flat_map(|u| {
+                [
+                    msg(a, u, (u / 3) as i64, false),
+                    msg(b, u, (u / 3) as i64, false),
+                ]
+            })
+            .collect();
+        store.upsert_messages(&mail).unwrap();
+        let reader = Store::open_reader(&path).unwrap();
+        let all = store
+            .conversations_page(Folder::Inbox, None, Section::All, 0, 2_000)
+            .unwrap();
+        assert_eq!(all.len(), 1_000);
+        let mut paged = Vec::new();
+        for page in 0..10 {
+            paged.extend(
+                reader
+                    .conversations_page(Folder::Inbox, None, Section::All, page * 100, 100)
+                    .unwrap(),
+            );
+        }
+        assert_eq!(paged, all);
+        // Out of order, and again after a write: the same rows.
+        let again = reader
+            .conversations_page(Folder::Inbox, None, Section::All, 450, 30)
+            .unwrap();
+        assert_eq!(again, all[450..480]);
+        assert_eq!(
+            reader
+                .conversation_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            1_000
+        );
+        store.set_hidden(a, "INBOX", 500, true).unwrap();
+        assert_eq!(
+            reader
+                .conversation_count(Folder::Inbox, None, Section::All)
+                .unwrap(),
+            999
+        );
+        let after = reader
+            .conversations_page(Folder::Inbox, None, Section::All, 100, 100)
+            .unwrap();
+        let expected = store
+            .conversations_page(Folder::Inbox, None, Section::All, 100, 100)
+            .unwrap();
+        assert_eq!(after, expected);
+        drop((reader, store));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn asking(receipt_to: &str, return_path: &str) -> Body {

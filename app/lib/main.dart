@@ -29,6 +29,7 @@ import 'outside/arrivals.dart';
 import 'outside/shell.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
+import 'updating.dart';
 import 'widgets/links.dart';
 
 Future<void> main(List<String> args) async {
@@ -59,7 +60,12 @@ Future<void> main(List<String> args) async {
 /// window or a crash at every start.
 Future<void> _start(String dir) async {
   try {
-    engine.openEngine(dbPath: '$dir/piuma.db');
+    // Off the thread that draws: after an update the database is brought
+    // up to date first, with "Updating your mail" on screen if it is slow.
+    await openEngineShowingUpdate(
+      '$dir/piuma.db',
+      show: (screen) => runApp(PiumaApp(home: (_, _) => screen)),
+    );
   } catch (e, stack) {
     // Kept for the report offered at the next start that works.
     try {

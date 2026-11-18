@@ -2015,6 +2015,57 @@ class SearchResults {
   final Duration elapsed;
 }
 
+/// What a search on the servers found (`searchServer`).
+class ServerResults {
+  const ServerResults({
+    this.hits = const [],
+    this.asked = true,
+    this.failed = 0,
+    this.partial = false,
+    this.partialAccounts = const [],
+    this.textRefused = 0,
+  });
+
+  static const empty = ServerResults();
+
+  /// Newest first, all on this device now; some may be among the hits
+  /// the search here found.
+  final List<SearchHit> hits;
+
+  /// Whether any server was asked: not for a search only this device can
+  /// answer (`in:vault`), or one of filters only.
+  final bool asked;
+
+  /// Accounts whose server couldn't be reached or refused.
+  final int failed;
+
+  /// Some accounts could be searched only in part: a folder refused,
+  /// accented text cut to plain letters, or the time ran out (what came
+  /// before stays).
+  final bool partial;
+
+  /// The accounts searched only in part, by name.
+  final List<String> partialAccounts;
+
+  /// Accounts whose server takes only plain letters, while the text has
+  /// none to ask for ("日本"): they weren't asked.
+  final int textRefused;
+}
+
+/// A search kept under a name, in the sidebar.
+class SavedSearch {
+  const SavedSearch({
+    required this.id,
+    required this.name,
+    required this.query,
+  });
+  final int id;
+  final String name;
+
+  /// What was typed, operators included.
+  final String query;
+}
+
 /// One notification: a sender's newest message, and how many came.
 class MailNotice {
   const MailNotice({
@@ -2582,6 +2633,11 @@ abstract class MailSource with ComposeExtras {
   /// Every email with a label, newest first, wherever it is.
   Future<List<MailRow>> labelled(String keyword);
 
+  /// How many emails [labelled] lists: the list asks for its rows a page
+  /// at a time, since a label the server keeps can hold tens of thousands.
+  Future<int> labelledCount(String keyword) async =>
+      (await labelled(keyword)).length;
+
   /// The account's server keeps no labels: they stay on this device.
   bool labelsLocal(int accountId) => false;
 
@@ -2895,6 +2951,34 @@ abstract class MailSource with ComposeExtras {
   /// Removes an account and its mail from this device; the mail stays on
   /// the server.
   Future<void> removeAccount(int accountId);
+
+  /// Messages written in an account that haven't gone yet: in the outbox
+  /// (waiting, on their way or refused) or drafts waiting on this device.
+  /// The account can't be removed while any is left ([removeAccount]
+  /// throws [UnsentMailLeft]): each is sent, saved or deleted first.
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => const [];
+
+  /// Sends an outbox message of [unsentMail] now, or saves its waiting
+  /// drafts on the server now. Throws when it can't (offline).
+  Future<void> sendUnsent(UnsentMessage message) async {}
+
+  /// Deletes a message of [unsentMail] without sending it: from the
+  /// outbox, or the draft waiting on this device (a copy saved on the
+  /// server before stays). Throws while it is on its way.
+  Future<void> deleteUnsent(UnsentMessage message) async {}
+
+  /// How much room the mail takes on this device (Settings › Storage).
+  Future<StorageUse> storage() async => const StorageUse();
+
+  /// Keeps whole messages for reading offline for [days] days; null keeps
+  /// them for good. Older ones are downloaded again when opened.
+  Future<void> setKeepDays(int? days) async {}
+
+  /// Removes the whole messages and pictures kept for reading offline of
+  /// an account from this device; the mail stays on the server, and search
+  /// still finds their words. Throws [NoRoomToShrink] when that worked but
+  /// the disk had no room to make the file smaller.
+  Future<StorageUse> clearCachedMail(int accountId) => storage();
 
   /// "Tell me when it can't sign in", on unless turned off.
   Future<bool> signInAlert(int accountId);
@@ -3220,9 +3304,30 @@ abstract class MailSource with ComposeExtras {
   Future<Uint8List?> attachmentData(AttachedFile file);
 
   /// Searches every message on this device. [query] is what the person
-  /// typed, operators included (`from:`, `account:`, `is:unread`,
-  /// `after:`, `before:`).
+  /// typed, operators included (see `core/src/search.rs` for all of them:
+  /// `from:`, `to:`, `subject:`, `in:`, `is:`, `has:`, `-word`, `OR`…).
   Future<SearchResults> search(String query, {int limit = 50});
+
+  /// Runs [query] on the servers and brings what they find to this device
+  /// (headers; a body comes when opened). A new one, or
+  /// [cancelServerSearch], stops the one running, which then throws.
+  Future<ServerResults> searchServer(String query, {int limit = 50});
+
+  /// Stops the server search running, if one is.
+  void cancelServerSearch();
+
+  /// The saved searches, in order.
+  Future<List<SavedSearch>> savedSearches();
+
+  /// Keeps [query] under [name]; one already under that name gets the new
+  /// query. Returns its id.
+  Future<int> saveSearch(String name, String query);
+
+  /// Renames a saved search; false when another one has that name.
+  Future<bool> renameSavedSearch(int id, String name);
+
+  /// Forgets a saved search.
+  Future<void> deleteSavedSearch(int id);
 
   /// Frequent contacts, recent searches and how much is indexed, for an
   /// empty search.
@@ -3556,4 +3661,92 @@ class SenderWarning {
   /// For Details: whose signature passed, and the server that sent it.
   final String? signedBy;
   final String? sentBy;
+}
+
+/// A message written in an account that hasn't gone yet
+/// ([MailSource.unsentMail]).
+@immutable
+class UnsentMessage {
+  const UnsentMessage({
+    required this.id,
+    required this.accountId,
+    required this.subject,
+    this.to = const [],
+    this.draft = false,
+    this.refused = false,
+    this.sending = false,
+  });
+
+  /// The outbox message's id, or the waiting draft's.
+  final int id;
+  final int accountId;
+  final String subject;
+
+  /// Addresses, as `a@b.c` or `Name <a@b.c>`.
+  final List<String> to;
+
+  /// A draft kept on this device until its server can be reached, rather
+  /// than mail in the outbox.
+  final bool draft;
+
+  /// The server refused it (outbox only).
+  final bool refused;
+
+  /// On its way now (outbox only): it can't be deleted meanwhile.
+  final bool sending;
+}
+
+/// [MailSource.removeAccount] refused: mail written in the account hasn't
+/// gone yet ([MailSource.unsentMail]).
+class UnsentMailLeft implements Exception {
+  const UnsentMailLeft();
+}
+
+/// Clearing cached mail worked, but there wasn't room on the disk to make
+/// the database file smaller ([MailSource.clearCachedMail]).
+class NoRoomToShrink implements Exception {
+  const NoRoomToShrink(this.use);
+
+  /// The room taken now.
+  final StorageUse use;
+}
+
+/// How much room the mail takes on this device (Settings › Storage).
+@immutable
+class StorageUse {
+  const StorageUse({
+    this.totalBytes = 0,
+    this.backupBytes = 0,
+    this.accounts = const [],
+    this.keepDays = 90,
+  });
+
+  /// The whole database on disk, with the copy kept from before the last
+  /// update.
+  final int totalBytes;
+
+  /// Of which the copy kept from before the last update, removed at the
+  /// next start.
+  final int backupBytes;
+  final List<AccountStorage> accounts;
+
+  /// Days whole messages are kept for reading offline; null: always.
+  final int? keepDays;
+}
+
+/// One account's part of [StorageUse].
+@immutable
+class AccountStorage {
+  const AccountStorage({
+    required this.accountId,
+    required this.messages,
+    required this.cachedBytes,
+  });
+
+  final int accountId;
+  final int messages;
+
+  /// Whole messages and pictures kept for reading offline: what clearing
+  /// the cache gives back.
+  final int cachedBytes;
 }

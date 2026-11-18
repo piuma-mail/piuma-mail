@@ -3428,6 +3428,108 @@ class AppLocalizationsIt extends AppLocalizations {
   String get accountRemoveConfirm => 'Rimuovi';
 
   @override
+  String accountRemoveBlocked(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count messaggi scritti qui non sono ancora partiti. Inviali o eliminali, poi rimuovi l\'account.',
+      one: '1 messaggio scritto qui non è ancora partito. Invialo o eliminalo, poi rimuovi l\'account.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get accountUnsentDraft => 'Bozza su questo dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Invia ora';
+
+  @override
+  String get accountUnsentSaveNow => 'Salva ora';
+
+  @override
+  String get accountUnsentFailed =>
+      'Non ha funzionato. Controlla la connessione e riprova, oppure eliminalo.';
+
+  @override
+  String get updatingMail => 'Aggiornamento della posta';
+
+  @override
+  String get updatingMailNote =>
+      'Piuma è stata aggiornata e sta preparando la tua posta. Succede una volta sola, e chiudere l\'app nel frattempo non fa perdere nulla.';
+
+  @override
+  String get storageTitle => 'Spazio';
+
+  @override
+  String get storageSubtitle =>
+      'La posta tenuta su questo dispositivo. Sul server resta tutto.';
+
+  @override
+  String storageTotal(String size) {
+    return '$size su questo dispositivo';
+  }
+
+  @override
+  String storageAccountLine(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email',
+      one: '1 email',
+    );
+    return '$_temp0 · $size tenuti per leggere offline';
+  }
+
+  @override
+  String get storageClear => 'Svuota la posta in cache';
+
+  @override
+  String get storageClearing => 'Svuotamento…';
+
+  @override
+  String storageBackup(String size) {
+    return 'Di cui $size sono una copia di prima dell\'ultimo aggiornamento, tolta al prossimo avvio.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Non è stato possibile svuotare la posta salvata. Riprova.';
+
+  @override
+  String get storageNoRoom =>
+      'Posta salvata svuotata. Non c\'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.';
+
+  @override
+  String storageClearTitle(String name) {
+    return 'Svuotare la posta in cache di $name?';
+  }
+
+  @override
+  String get storageClearNote =>
+      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.';
+
+  @override
+  String get storageKeep => 'Tieni i messaggi interi per leggere offline';
+
+  @override
+  String get storageKeepHint =>
+      'Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.';
+
+  @override
+  String get storageKeepMonth => '1 mese';
+
+  @override
+  String get storageKeepMonths => '3 mesi';
+
+  @override
+  String get storageKeepYear => '1 anno';
+
+  @override
+  String get storageKeepAlways => 'Sempre';
+
+  @override
   String get accountServersTitle => 'Server';
 
   @override
@@ -6303,6 +6405,113 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
+
+  @override
+  String get saveSearch => 'Salva ricerca';
+
+  @override
+  String get savedSearchEdit => 'Modifica ricerca salvata';
+
+  @override
+  String get savedSearchName => 'Nome';
+
+  @override
+  String get savedSearchSave => 'Salva';
+
+  @override
+  String get savedSearchDelete => 'Elimina ricerca';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Sparisce solo la ricerca salvata: le email restano dove sono.';
+
+  @override
+  String get savedSearchNameTaken =>
+      'Un\'altra ricerca salvata ha già questo nome.';
+
+  @override
+  String get savedSearchesSection => 'RICERCHE SALVATE';
+
+  @override
+  String get savedSearches => 'Ricerche salvate';
+
+  @override
+  String get searchSuggestions => 'Suggerimenti';
+
+  @override
+  String get searchOnServer => 'Cerca sul server';
+
+  @override
+  String get searchOnServerHeading => 'Sul server';
+
+  @override
+  String get searchingServers => 'Ricerca sul server…';
+
+  @override
+  String get searchServerError => 'Non è stato possibile cercare sul server.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'Questa ricerca può guardare solo su questo dispositivo.';
+
+  @override
+  String get searchServerNothing => 'Sul server non c\'è altro.';
+
+  @override
+  String get searchFromServer => 'Trovata sul server';
+
+  @override
+  String get searchServerPartial =>
+      'Alcune cartelle non sono state cercate per intero.';
+
+  @override
+  String get searchServerMaybe =>
+      'Le email più vecchie, e il testo che questo dispositivo non ha tenuto, possono essere ancora sul server.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'I server di $count account cercano solo lettere semplici (A–Z), quindi non gli è stato chiesto questo testo.',
+      one: 'Il server di 1 account cerca solo lettere semplici (A–Z), quindi non gli è stato chiesto questo testo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Cercato solo in parte: $accounts. Qui c’è quello che era stato trovato prima di fermarsi.';
+  }
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count email in più trovate sul server, ora su questo dispositivo.',
+      one: '1 email in più trovata sul server, ora su questo dispositivo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'I server di $count account non erano raggiungibili.',
+      one: 'Il server di 1 account non era raggiungibile.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Rinomina o elimina $name';
+  }
 
   @override
   String get errorNoKeyring =>
