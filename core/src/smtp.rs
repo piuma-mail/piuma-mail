@@ -306,13 +306,25 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
         for file in &draft.files {
             let kind = ContentType::parse(&file.mime)
                 .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-            mixed = mixed.singlepart(
-                Attachment::new(crate::imap::file_name(&file.name)).body(file.data.clone(), kind),
-            );
+            let name = crate::imap::file_name(&file.name);
+            mixed = mixed.singlepart(if file.mime.eq_ignore_ascii_case("message/rfc822") {
+                Attachment::new(name).body(message_body(&file.data), kind)
+            } else {
+                Attachment::new(name).body(file.data.clone(), kind)
+            });
         }
         b.multipart(mixed)
     };
     built.map_err(|e| SendError::Build(e.to_string()))
+}
+
+/// A message attached whole (Forward as attachment): RFC 2046 wants it in
+/// 7bit or 8bit, never base64, so mail apps open it as an email. Base64
+/// stays only for a message with lines too long for either.
+fn message_body(data: &[u8]) -> Body {
+    Body::new_with_encoding(data.to_vec(), ContentTransferEncoding::SevenBit)
+        .or_else(|data| Body::new_with_encoding(data, ContentTransferEncoding::EightBit))
+        .unwrap_or_else(Body::new)
 }
 
 enum Content {
@@ -570,6 +582,25 @@ mod tests {
             crate::imap::attachment_data(&raw, body.attachments[0].part).unwrap(),
             b"%PDF-1.4"
         );
+    }
+
+    #[test]
+    fn a_message_attached_whole_is_not_base64() {
+        let original = "From: Anna <anna@x.it>\r\nTo: me@x.it\r\nSubject: Caffè\r\n\r\nCiao, è tutto pronto.\r\n";
+        let mut d = draft();
+        d.files = vec![OutgoingFile {
+            name: "Caffè.eml".into(),
+            mime: "message/rfc822".into(),
+            data: original.as_bytes().to_vec(),
+        }];
+        let raw = build(&d).unwrap().formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("Content-Type: message/rfc822"), "{text}");
+        assert!(text.contains("Content-Transfer-Encoding: 8bit"), "{text}");
+        assert!(text.contains("Ciao, è tutto pronto."), "{text}");
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Caffè"));
     }
 
     #[test]

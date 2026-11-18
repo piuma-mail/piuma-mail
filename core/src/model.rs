@@ -236,6 +236,10 @@ pub struct ReplyInfo {
     /// lowercase and space separated. Rows read back from the store leave
     /// it empty: [`crate::Store::recipients`] has it.
     pub recipients: String,
+    /// To, Cc, every Reply-To, Mail-Followup-To and List-Post, for Reply
+    /// all and the reader. None when the headers weren't read (rows read
+    /// back from the store: [`crate::Store::envelope`] has it).
+    pub envelope: Option<crate::envelope::Envelope>,
 }
 
 #[cfg(test)]

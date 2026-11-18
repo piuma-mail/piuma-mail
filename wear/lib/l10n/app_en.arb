@@ -35,5 +35,8 @@
   "archived": "Archived",
   "snoozed": "Snoozed",
   "sent": "Sent",
-  "undo": "Undo"
+  "undo": "Undo",
+  "replyAll": "Reply all",
+  "replyToAll": "Reply to {name} and {count, plural, =1{1 other} other{{count} others}}",
+  "@replyToAll": {"placeholders": {"name": {"type": "String"}, "count": {"type": "int"}}}
 }

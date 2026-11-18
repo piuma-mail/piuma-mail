@@ -410,6 +410,8 @@ class _InboxScreenState extends State<InboxScreen> {
         reply: l.actionReply,
         archive: l.archive,
         snooze: l.actionSnooze,
+        delete: l.actionDelete,
+        markRead: l.markRead,
         send: l.actionSend,
         replyHint: l.noticeReplyHint,
         onAction: _noticeAction,
@@ -566,6 +568,11 @@ class _InboxScreenState extends State<InboxScreen> {
     await widget.source.setSeen([row], true).catchError((Object _) {});
     if (!mounted) return;
     switch (action) {
+      case 'read':
+        // Read already, as for every button.
+        break;
+      case 'delete':
+        await _act([row], MessageAction.delete, reopen: false);
       case 'archive':
         await _act([row], MessageAction.archive, reopen: false);
       case 'snooze':

@@ -281,10 +281,16 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeAction {
     Archive,
+    /// To the Trash, as Delete in the app.
+    Delete,
+    /// Only read: every action marks the message read first.
+    Read,
     /// Until this time, in Unix seconds.
     Snooze(i64),
     /// A short reply typed on the notice, sent from the message's account.
     Reply(String),
+    /// The same, to everyone the message went to (from the watch).
+    ReplyAll(String),
 }
 
 pub(crate) fn message_of(payload: &str) -> Option<engine::MessageRef> {
@@ -320,17 +326,23 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
         .runtime
         .block_on(engine::push_messages_seen(vec![message.clone()], true))
         .ok();
+    let all = matches!(action, NoticeAction::ReplyAll(_));
     match action {
+        NoticeAction::Read => Ok(()),
         NoticeAction::Archive => engine.runtime.block_on(engine::apply_message_action(
             vec![message],
             engine::MessageAction::Archive,
+        )),
+        NoticeAction::Delete => engine.runtime.block_on(engine::apply_message_action(
+            vec![message],
+            engine::MessageAction::Delete,
         )),
         NoticeAction::Snooze(until) => {
             engine
                 .runtime
                 .block_on(engine::snooze_messages(vec![message], until, false))
         }
-        NoticeAction::Reply(text) => {
+        NoticeAction::Reply(text) | NoticeAction::ReplyAll(text) => {
             let (row, signature) = {
                 let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
                 let account = AccountId(message.account_id);
@@ -344,10 +356,25 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .map(|s| s.id);
                 (row, signature)
             };
-            let to = if row.reply.reply_to.is_empty() {
+            let sender = if row.reply.reply_to.is_empty() {
                 row.from_email.clone()
             } else {
                 row.reply.reply_to.clone()
+            };
+            // Every Reply-To, and for Reply all everyone else: from the
+            // headers, read again when the message is older than them.
+            let envelope = engine
+                .runtime
+                .block_on(crate::api::reply::message_envelope(
+                    message.account_id,
+                    message.mailbox.clone(),
+                    message.uid,
+                ))
+                .ok();
+            let (to, cc) = match envelope {
+                Some(e) if all && !e.reply_all_to.is_empty() => (e.reply_all_to, e.reply_all_cc),
+                Some(e) if !e.reply_to.is_empty() => (e.reply_to, Vec::new()),
+                _ => (vec![sender], Vec::new()),
             };
             let mut references: Vec<String> = row
                 .reply
@@ -371,8 +398,8 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .ok()
                     .flatten(),
                     files: Vec::new(),
-                    to: vec![to],
-                    cc: Vec::new(),
+                    to,
+                    cc,
                     bcc: Vec::new(),
                     subject: reply_subject(&row.subject),
                     body: text,

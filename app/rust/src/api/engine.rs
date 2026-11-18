@@ -1557,13 +1557,16 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
     }
     let store = store.lock().unwrap_or_else(|e| e.into_inner());
     let settings = notify::Settings::load(&store).unwrap_or_default();
-    // Groups with notices off stay quiet.
+    // Groups with notices off stay quiet, and so do muted conversations.
     let mut arrived: Vec<notify::Arrival> = arrived
         .iter()
         .filter(|a| {
             store
                 .notifies(a.summary.account, &a.summary.reply.recipients)
                 .unwrap_or(true)
+                && !store
+                    .thread_muted(a.summary.account, &a.summary.mailbox, a.summary.uid)
+                    .unwrap_or(false)
         })
         .cloned()
         .collect();

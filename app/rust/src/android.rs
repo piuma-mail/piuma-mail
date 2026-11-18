@@ -131,8 +131,9 @@ pub fn network_changed<'caller>(_unowned_env: EnvUnowned<'caller>, _class: JClas
     piuma_core::network::changed();
 }
 
-/// A button on a notice: "archive", "snooze" (until `until`, Unix
-/// seconds) or "reply" with `text`. False when it could not be done.
+/// A button on a notice, or one on the watch: "archive", "delete",
+/// "read", "snooze" (until `until`, Unix seconds), or "reply" and
+/// "replyAll" with `text`. False when it could not be done.
 #[jni_mangle("mail.piuma.piuma_mail.MailNative")]
 pub fn act<'caller>(
     mut unowned_env: EnvUnowned<'caller>,
@@ -148,8 +149,11 @@ pub fn act<'caller>(
             let payload = payload.try_to_string(env)?;
             let action = match action.try_to_string(env)?.as_str() {
                 "archive" => NoticeAction::Archive,
+                "delete" => NoticeAction::Delete,
+                "read" => NoticeAction::Read,
                 "snooze" => NoticeAction::Snooze(until),
                 "reply" => NoticeAction::Reply(text.try_to_string(env)?),
+                "replyAll" => NoticeAction::ReplyAll(text.try_to_string(env)?),
                 _ => return Ok(false),
             };
             Ok(crate::background::act(&payload, action).is_ok())

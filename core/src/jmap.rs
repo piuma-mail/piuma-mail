@@ -49,7 +49,7 @@ const RESPONSE_MAX: usize = 32 * 1024 * 1024;
 /// How long to wait for a push before looking anyway.
 pub const POLL_EVERY: Duration = Duration::from_secs(5 * 60);
 
-const SUMMARY_PROPERTIES: [&str; 18] = [
+const SUMMARY_PROPERTIES: [&str; 19] = [
     "id",
     "blobId",
     "keywords",
@@ -68,6 +68,7 @@ const SUMMARY_PROPERTIES: [&str; 18] = [
     "header:List-Unsubscribe-Post",
     "header:List-Post",
     "header:Precedence",
+    crate::envelope::FOLLOWUP_TO,
 ];
 /// What tells a newsletter, for mail cached before it was asked for.
 const LIST_PROPERTIES: [&str; 10] = [
@@ -1611,6 +1612,7 @@ fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSum
                 reply_to
             },
             recipients: groups::recipients_json(e),
+            envelope: Some(crate::envelope::Envelope::from_jmap(e)),
         },
         from_email,
     }
