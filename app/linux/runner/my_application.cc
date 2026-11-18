@@ -153,9 +153,14 @@ static gint my_application_command_line(GApplication* application,
   // Strip out the first argument as it is the binary name.
   gchar** given = arguments[0] != nullptr ? arguments + 1 : arguments;
   gboolean background = FALSE;
+  gboolean link = FALSE;
   for (gchar** a = given; *a != nullptr; a++) {
     if (g_strcmp0(*a, "--background") == 0) background = TRUE;
+    if (g_ascii_strncasecmp(*a, "mailto:", 7) == 0) link = TRUE;
   }
+  // Never with a mailto: link, as on Windows: a link written to break out
+  // of its quotes could carry the flag and leave the window hidden.
+  if (link) background = FALSE;
   // The first launch's arguments start the app, Dart reads them in
   // main(); later ones never replace them (nor leak).
   if (self->dart_entrypoint_arguments == nullptr) {

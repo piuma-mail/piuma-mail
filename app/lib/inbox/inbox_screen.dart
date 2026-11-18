@@ -666,8 +666,10 @@ class _InboxScreenState extends State<InboxScreen> {
         _toast(AppLocalizations.of(context).arrivalNetworkFile);
       case final ComposeArrival a:
         if (_composing != null) {
-          // Kept like the arrivals before the inbox: never unbounded.
-          if (_arrived.length < _maxArrived) _arrived.add(a);
+          // Kept like the arrivals before the inbox: never unbounded. One
+          // past the limit is dropped, so nothing says it waits.
+          if (_arrived.length >= _maxArrived) return;
+          _arrived.add(a);
           _toast(AppLocalizations.of(context).arrivalWaits);
           return;
         }

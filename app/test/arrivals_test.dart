@@ -119,6 +119,50 @@ void main() {
       }
     });
 
+    test('Windows NT namespace paths count as another computer', () {
+      // Windows hands these to the kernel as they are: `\??\UNC\` is
+      // SMB, and the rest can reach it through a device or a link.
+      for (final p in [
+        r'\??\UNC\server\share\f.pdf',
+        r'\??\C:\Users\me\f.pdf',
+        r'/??/C:/f.pdf',
+        r'\??',
+        r'\Global??\UNC\server\f.pdf',
+        r'\\?\GLOBALROOT\Device\Mup\server\f.pdf',
+        r'\GLOBALROOT\Device\Mup\server\f.pdf',
+        r'\Device\Mup\server\share\f.pdf',
+        r'\device\LanmanRedirector\server\f.pdf',
+        r'\DosDevices\UNC\server\f.pdf',
+        r'  \??\UNC\server\f.pdf',
+      ]) {
+        expect(isNetworkPath(p), isTrue, reason: p);
+      }
+      for (final p in [
+        r'\Devices\f.pdf',
+        r'\??x\f.pdf',
+        '/device/f.pdf',
+        '/home/me/??/f.pdf',
+        r'C:\??\f.pdf',
+      ]) {
+        expect(isNetworkPath(p), isFalse, reason: p);
+      }
+      // Nothing looks at them, and they say why they didn't open.
+      final looked = <String>[];
+      final a = arrivalsFrom(
+        [
+          r'\??\UNC\server\share\f.pdf',
+          r'\??\C:\f.eml',
+          'file:///%3F%3F/UNC/server/share/f.pdf',
+        ],
+        typeOf: (p) {
+          looked.add(p);
+          return FileSystemEntityType.file;
+        },
+      );
+      expect(looked, isEmpty);
+      expect(a.single, isA<NetworkFileArrival>());
+    });
+
     test('with a mailto: link, only the link counts', () {
       // What "exe" "%1" gives for a link written to break out of its
       // quotes: more words, files and flags among them.

@@ -248,16 +248,32 @@ String? _path(String arg) {
 
 /// Whether [path] could name another computer: it starts with two
 /// separators, `/` or `\` in any order (`\\server\share`, `//server`,
-/// `\/server`, `\\?\UNC\...`, `\\.\...`). Just looking at one (whether
-/// it exists) would reach the network, and on Windows hand it the
-/// person's sign-in.
+/// `\/server`, `\\?\UNC\...`, `\\.\...`, `\\?\GLOBALROOT\...`), or with
+/// a Windows NT namespace name after one separator (`\??\UNC\server\...`,
+/// `\??\C:\...`, `\Device\Mup\...`, `\GLOBALROOT\...`), which Windows
+/// hands to the kernel as it is. Just looking at one (whether it exists)
+/// would reach the network, and on Windows hand it the person's sign-in.
 @visibleForTesting
 bool isNetworkPath(String path) {
   final p = path.trimLeft();
   if (p.length < 2) return false;
-  bool sep(int i) => p[i] == '/' || p[i] == r'\';
-  return sep(0) && sep(1);
+  bool sep(int i) => i < p.length && (p[i] == '/' || p[i] == r'\');
+  if (!sep(0)) return false;
+  if (sep(1)) return true;
+  // The first name after the separator, up to the next one.
+  var end = 1;
+  while (end < p.length && !sep(end)) {
+    end++;
+  }
+  final root = p.substring(1, end).toLowerCase();
+  // `/??/` names nothing anywhere; `/Device/` is a folder on Linux.
+  if (root == '??' || root == 'global??') return true;
+  return p[0] == r'\' && _ntNamespace.contains(root);
 }
+
+/// The roots of the Windows NT object namespace a path can start with,
+/// besides `??` and `Global??`.
+const _ntNamespace = {'device', 'globalroot', 'dosdevices'};
 
 /// The last part of [path]: only a name, never a folder.
 String fileName(String path) {
