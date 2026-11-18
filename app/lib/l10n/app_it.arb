@@ -1543,5 +1543,7 @@
   "emlNotImported": "Non è stato possibile importarlo. Controlla la connessione e riprova.",
   "emlNotMail": "Questo file non è un’email che Piuma sa leggere.",
   "emlTooLarge": "Questo file email è troppo grande da aprire.",
+  "arrivalNetworkFile": "I file nelle cartelle di rete non si aprono in Piuma. Copiali prima su questo dispositivo.",
+  "imagesOffFile": "{count, plural, =1{1 immagine è spenta, così nessuno vede quando apri questo file.} other{{count} immagini sono spente, così nessuno vede quando apri questo file.}}",
   "newMailClosedLead": "Con Piuma chiuso"
 }

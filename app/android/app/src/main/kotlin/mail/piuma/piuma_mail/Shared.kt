@@ -159,13 +159,21 @@ internal class Shared(private val activity: Activity, messenger: BinaryMessenger
     /**
      * A file Piuma may read: another app's `content:` file. Never a
      * `file:` path (it could name Piuma's own data) and never one of
-     * Piuma's own providers.
+     * Piuma's own providers, under any name or user.
      */
     private fun readable(uri: Uri): Boolean {
         if (!uri.scheme.equals("content", ignoreCase = true)) return false
         val authority = uri.authority ?: return false
-        val own = activity.packageName
-        return !(authority == own || authority.startsWith("$own."))
+        // The provider Android would ask, whatever the authority claims:
+        // a user before an `@` (`0@...`, another profile) is not part of
+        // its name. Refused when no provider answers to it.
+        val name = authority.substringAfterLast('@')
+        val provider = try {
+            activity.packageManager.resolveContentProvider(name, 0)
+        } catch (e: Exception) {
+            null
+        } ?: return false
+        return provider.packageName != activity.packageName
     }
 
     private fun streams(intent: Intent): List<Uri> {

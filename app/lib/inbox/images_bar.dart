@@ -16,14 +16,18 @@ class ImagesBar extends StatelessWidget {
   const ImagesBar({
     super.key,
     required this.count,
-    required this.sender,
+    this.sender,
     required this.onLoad,
     this.onTrust,
     this.phone = false,
   });
 
   final int count;
-  final String sender;
+
+  /// Who the bar says can't see the email being opened; null for an
+  /// email file, whose sender is only what it claims: the bar then names
+  /// no one.
+  final String? sender;
   final VoidCallback onLoad;
 
   /// "Always for this sender"; null hides it (an email file, whose sender
@@ -55,7 +59,10 @@ class ImagesBar extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final note = Text(
-      l.imagesOffBar(count, sender),
+      switch (sender) {
+        final s? => l.imagesOffBar(count, s),
+        null => l.imagesOffFile(count),
+      },
       style: TextStyle(
         fontFamily: PiumaFonts.sans,
         fontSize: 13,

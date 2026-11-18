@@ -171,7 +171,8 @@ class MailtoLink {
   /// [text] on one line, tidy, at most [max] characters.
   static String _line(String text, int max) {
     final one = text
-        .replaceAll(RegExp(r'[\r\n\t]+'), ' ')
+        // Line and paragraph separators too: a subject is one line.
+        .replaceAll(RegExp('[\r\n\t\u0085\u2028\u2029]+'), ' ')
         .replaceAll(_hidden, '')
         .trim();
     return one.length <= max ? one : one.substring(0, max);

@@ -117,6 +117,27 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
+// A later launch's words with every relative path made whole against
+// that launch's own folder (it ran somewhere else than this instance):
+// flags, URIs (mailto:, file:) and absolute paths stay as they are.
+static gchar** resolve_paths(GApplicationCommandLine* command_line,
+                             gchar** given) {
+  GPtrArray* out = g_ptr_array_new();
+  for (gchar** a = given; *a != nullptr; a++) {
+    gchar* word = nullptr;
+    g_autofree gchar* scheme = g_uri_parse_scheme(*a);
+    if ((*a)[0] != '\0' && (*a)[0] != '-' && scheme == nullptr &&
+        !g_path_is_absolute(*a) && g_strcmp0(*a, "multi_window") != 0) {
+      g_autoptr(GFile) file =
+          g_application_command_line_create_file_for_arg(command_line, *a);
+      word = g_file_get_path(file);
+    }
+    g_ptr_array_add(out, word != nullptr ? word : g_strdup(*a));
+  }
+  g_ptr_array_add(out, nullptr);
+  return reinterpret_cast<gchar**>(g_ptr_array_free(out, FALSE));
+}
+
 // Implements GApplication::command_line. Runs in the first instance only:
 // GApplication hands it the command line of every later launch (from
 // their own process, over D-Bus) instead of starting a second app.
@@ -142,7 +163,8 @@ static gint my_application_command_line(GApplication* application,
   // Signing in again has nothing to bring forward.
   if (background) return 0;
   // A later launch: a mailto: link, an .eml file, files to send.
-  shell_forward(self->shell, given);
+  g_auto(GStrv) resolved = resolve_paths(command_line, given);
+  shell_forward(self->shell, resolved);
   g_application_activate(application);
   return 0;
 }

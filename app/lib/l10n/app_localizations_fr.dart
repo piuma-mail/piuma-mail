@@ -6346,5 +6346,21 @@ class AppLocalizationsFr extends AppLocalizations {
       'Ce fichier d’e-mail est trop volumineux pour être ouvert.';
 
   @override
+  String get arrivalNetworkFile =>
+      'Les fichiers des dossiers réseau ne s’ouvrent pas dans Piuma. Copiez-les d’abord sur cet appareil.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count images sont désactivées : personne ne voit quand vous ouvrez ce fichier.',
+      one: '1 image est désactivée : personne ne voit quand vous ouvrez ce fichier.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get newMailClosedLead => 'Quand Piuma est fermé';
 }

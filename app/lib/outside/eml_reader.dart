@@ -138,7 +138,6 @@ class _EmlReaderState extends State<EmlReader> {
     final phone = MediaQuery.sizeOf(context).width < phoneWidth;
     final r = _m.readable;
     final locale = Localizations.localeOf(context).toString();
-    final sender = _m.fromName.isNotEmpty ? _m.fromName : _m.fromEmail;
     final pad = phone ? PiumaSpace.s16 : PiumaSpace.s32;
     final details = TextStyle(
       fontFamily: PiumaFonts.sans,
@@ -263,7 +262,6 @@ class _EmlReaderState extends State<EmlReader> {
                         if (r.remoteImages > 0 && !_showRemote) ...[
                           ImagesBar(
                             count: r.remoteImages,
-                            sender: sender,
                             phone: phone,
                             onLoad: () => setState(() => _showRemote = true),
                           ),

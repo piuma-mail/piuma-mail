@@ -627,6 +627,7 @@ class _InboxScreenState extends State<InboxScreen> {
   /// Messages asked for while another was being written: each opens
   /// when the one before is closed, so nothing written is replaced.
   final _arrived = <ComposeArrival>[];
+  static const _maxArrived = 16;
 
   bool _shellSet = false;
 
@@ -654,9 +655,12 @@ class _InboxScreenState extends State<InboxScreen> {
     switch (arrival) {
       case EmlArrival(:final path):
         _openEml(path).ignore();
+      case NetworkFileArrival():
+        _toast(AppLocalizations.of(context).arrivalNetworkFile);
       case final ComposeArrival a:
         if (_composing != null) {
-          _arrived.add(a);
+          // Kept like the arrivals before the inbox: never unbounded.
+          if (_arrived.length < _maxArrived) _arrived.add(a);
           _toast(AppLocalizations.of(context).arrivalWaits);
           return;
         }
@@ -676,7 +680,7 @@ class _InboxScreenState extends State<InboxScreen> {
     final (draft, left) = await draftFor(a, account);
     if (!mounted) return;
     if (_composing != null) {
-      _arrived.add(a);
+      if (_arrived.length < _maxArrived) _arrived.add(a);
       return;
     }
     _openCompose(draft);

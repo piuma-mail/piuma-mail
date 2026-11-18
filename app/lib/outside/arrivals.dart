@@ -36,6 +36,12 @@ class EmlArrival extends Arrival {
   final String path;
 }
 
+/// A file from a network folder (another computer) was left out: Piuma
+/// only opens files on this device.
+class NetworkFileArrival extends Arrival {
+  const NetworkFileArrival();
+}
+
 /// A file to attach: where it is, and the name to give it.
 class ArrivedFile {
   const ArrivedFile(this.path, this.name);
@@ -157,20 +163,31 @@ List<Arrival> arrivalsFrom(
   FileSystemEntityType Function(String path)? typeOf,
 }) {
   final type = typeOf ?? (p) => FileSystemEntity.typeSync(p);
+  final words = args.take(Arrivals.maxArgs).map((a) => a.trim()).toList();
+  // A link the system opens with Piuma comes as its one word ("%1"). A
+  // link written to break out of its quotes could add more words (files
+  // to attach, flags): with a `mailto:` there, only the link counts.
+  final link = words.firstWhere(
+    (a) => a.toLowerCase().startsWith('mailto:'),
+    orElse: () => '',
+  );
+  if (link.isNotEmpty) {
+    if (link.length > MailtoLink.maxLength) return const [];
+    final parsed = MailtoLink.parse(link);
+    return [if (parsed != null) ComposeArrival(link: parsed)];
+  }
   final out = <Arrival>[];
   final files = <ArrivedFile>[];
   var tooMany = 0;
-  for (final raw in args.take(Arrivals.maxArgs)) {
-    final arg = raw.trim();
+  var network = false;
+  for (final arg in words) {
     if (arg.isEmpty || arg.startsWith('-') || arg == 'multi_window') continue;
     if (arg.length > MailtoLink.maxLength) continue;
-    if (arg.toLowerCase().startsWith('mailto:')) {
-      final link = MailtoLink.parse(arg);
-      if (link != null) out.add(ComposeArrival(link: link));
+    final path = _path(arg);
+    if (path == null) {
+      if (isNetworkPath(arg) || _networkFileUri(arg)) network = true;
       continue;
     }
-    final path = _path(arg);
-    if (path == null) continue;
     try {
       if (type(path) != FileSystemEntityType.file) continue;
     } catch (_) {
@@ -187,14 +204,29 @@ List<Arrival> arrivalsFrom(
   if (files.isNotEmpty) {
     out.add(ComposeArrival(files: files, tooLarge: tooMany));
   }
+  if (network) out.add(const NetworkFileArrival());
   return out;
+}
+
+/// A `file:` URI that names another computer, by its host or by its path.
+bool _networkFileUri(String arg) {
+  if (!arg.toLowerCase().startsWith('file:')) return false;
+  final uri = Uri.tryParse(arg);
+  if (uri == null) return false;
+  if (uri.host.isNotEmpty && uri.host != 'localhost') return true;
+  try {
+    return isNetworkPath(uri.toFilePath());
+  } catch (_) {
+    return false;
+  }
 }
 
 /// A local path from a word of a command line: a path as it is, or a
 /// `file:` URI; null for any other URI (`http:`, `javascript:`, a custom
-/// scheme) or a path on another computer.
+/// scheme) or a path on another computer ([isNetworkPath]).
 String? _path(String arg) {
   final scheme = RegExp(r'^([a-zA-Z][a-zA-Z0-9+.-]+):').firstMatch(arg);
+  var path = arg;
   // "C:\..." is a drive, not a scheme.
   if (scheme != null && scheme.group(1)!.length > 1) {
     if (scheme.group(1)!.toLowerCase() != 'file') return null;
@@ -203,14 +235,28 @@ String? _path(String arg) {
       return null;
     }
     try {
-      return uri.toFilePath();
+      path = uri.toFilePath();
     } catch (_) {
       return null;
     }
   }
-  // A network share (\\server\share) could be reached just by looking.
-  if (arg.startsWith(r'\\') || arg.startsWith('//')) return null;
-  return arg;
+  // Checked on the path that will be looked at, after any `file:`
+  // conversion: `file:////server/share` becomes `\\server\share`.
+  if (isNetworkPath(path)) return null;
+  return path;
+}
+
+/// Whether [path] could name another computer: it starts with two
+/// separators, `/` or `\` in any order (`\\server\share`, `//server`,
+/// `\/server`, `\\?\UNC\...`, `\\.\...`). Just looking at one (whether
+/// it exists) would reach the network, and on Windows hand it the
+/// person's sign-in.
+@visibleForTesting
+bool isNetworkPath(String path) {
+  final p = path.trimLeft();
+  if (p.length < 2) return false;
+  bool sep(int i) => p[i] == '/' || p[i] == r'\';
+  return sep(0) && sep(1);
 }
 
 /// The last part of [path]: only a name, never a folder.

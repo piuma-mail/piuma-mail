@@ -1,6 +1,13 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
+// After windows.h, which it needs.
+#include <shellapi.h>
+#include <string.h>
+
+#include <cwctype>
+#include <string>
+#include <vector>
 
 #include "flutter_window.h"
 #include "mail_handler.h"
@@ -8,6 +15,75 @@
 #include "utils.h"
 
 namespace {
+
+// Whether [word] starts with a URI scheme (mailto:, file:): letters,
+// digits, "+", "-" or "." before a ":", two characters at least, so
+// "C:\..." stays a drive.
+bool HasScheme(const std::wstring& word) {
+  size_t colon = word.find(L':');
+  if (colon == std::wstring::npos || colon < 2 || !std::iswalpha(word[0])) {
+    return false;
+  }
+  for (size_t i = 1; i < colon; i++) {
+    wchar_t c = word[i];
+    if (!std::iswalnum(c) && c != L'+' && c != L'-' && c != L'.') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// [word] quoted so that CommandLineToArgvW reads it back as it is.
+std::wstring Quoted(const std::wstring& word) {
+  std::wstring out = L"\"";
+  size_t slashes = 0;
+  for (wchar_t c : word) {
+    if (c == L'\\') {
+      slashes++;
+      continue;
+    }
+    // Backslashes before a quote are doubled, and the quote escaped.
+    out.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+    slashes = 0;
+    out.push_back(c);
+  }
+  // Before the closing quote, too.
+  out.append(slashes * 2, L'\\');
+  out.push_back(L'"');
+  return out;
+}
+
+// This launch's command line with every relative path made whole
+// against this launch's folder: the running Piuma has its own, and would
+// look for the file there. Flags, URIs and absolute paths stay as they
+// are; Dart checks every word (lib/outside/arrivals.dart).
+std::wstring Resolved(const wchar_t* command_line) {
+  std::wstring line = command_line != nullptr ? command_line : L"";
+  if (line.empty()) return line;
+  int argc = 0;
+  // The first word is read as the program: a stand-in goes first.
+  const std::wstring full = L"piuma " + line;
+  wchar_t** argv = ::CommandLineToArgvW(full.c_str(), &argc);
+  if (argv == nullptr) return line;
+  std::wstring out;
+  for (int i = 1; i < argc; i++) {
+    std::wstring word = argv[i];
+    if (!word.empty() && word[0] != L'-' && !HasScheme(word) &&
+        word != L"multi_window") {
+      DWORD n = ::GetFullPathNameW(word.c_str(), 0, nullptr, nullptr);
+      if (n > 0 && n < 32768) {
+        std::vector<wchar_t> buffer(n);
+        DWORD got =
+            ::GetFullPathNameW(word.c_str(), n, buffer.data(), nullptr);
+        if (got > 0 && got < n) word.assign(buffer.data(), got);
+      }
+    }
+    if (!out.empty()) out.push_back(L' ');
+    out += Quoted(word);
+  }
+  ::LocalFree(argv);
+  return out;
+}
 
 // Hands a later launch's command line to the window already open, and
 // brings it forward. True when there was one: this launch then ends.
@@ -19,7 +95,7 @@ bool HandToRunning(const wchar_t* title, const wchar_t* command_line) {
   ::ShowWindow(running, ::IsIconic(running) ? SW_RESTORE : SW_SHOW);
   // The launch just made by the person may bring it forward.
   ::SetForegroundWindow(running);
-  std::wstring line = command_line != nullptr ? command_line : L"";
+  std::wstring line = Resolved(command_line);
   COPYDATASTRUCT data{};
   data.dwData = FlutterWindow::kForwardedCommandLine;
   data.cbData = static_cast<DWORD>((line.size() + 1) * sizeof(wchar_t));
@@ -46,10 +122,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // comes forward with the new command line (a mailto: link, a file).
   const wchar_t* title = IsDevCopy() ? L"Piuma Mail (dev)" : L"Piuma Mail";
   // Started at sign-in: only the tray until the person opens it.
+  // Never with a mailto: link: a link opens with "%1", and one written to
+  // break out of its quotes could add the flag (Dart, too, takes only the
+  // link then).
   bool background = false;
+  bool link = false;
   for (const auto& argument : GetCommandLineArguments()) {
     if (argument == "--background") background = true;
+    if (_strnicmp(argument.c_str(), "mailto:", 7) == 0) link = true;
   }
+  if (link) background = false;
   HANDLE single = ::CreateMutex(
       nullptr, TRUE,
       IsDevCopy() ? L"Local\\PiumaMail.Dev" : L"Local\\PiumaMail");

@@ -6290,5 +6290,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get emlTooLarge => 'This email file is too large to open.';
 
   @override
+  String get arrivalNetworkFile =>
+      'Files in network folders don’t open in Piuma. Copy them to this device first.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count images are off, so no one can see when you open this file.',
+      one: '1 image is off, so no one can see when you open this file.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get newMailClosedLead => 'With Piuma closed';
 }

@@ -114,32 +114,43 @@ class _AccountList extends StatelessWidget {
 /// The message an arrival asks for, from [account]: what its link fills
 /// in, and its files read in, up to what a message can carry. Also says
 /// how many files were left out.
+///
+/// The size a file reports only rules it out early: what counts is what
+/// is read, and reading stops past the cap (a file can grow meanwhile,
+/// and some, like those in `/proc`, report 0 whatever they hold).
 Future<(Draft, int)> draftFor(
   ComposeArrival arrival,
   MailAccount account, {
   Future<int> Function(String path)? sizeOf,
-  Future<List<int>> Function(String path)? read,
+  Stream<List<int>> Function(String path)? openRead,
 }) async {
   final size = sizeOf ?? (p) => File(p).length();
-  final bytes = read ?? (p) => File(p).readAsBytes();
+  final open = openRead ?? (p) => File(p).openRead();
   final files = <DraftFile>[];
   var left = arrival.tooLarge;
   var total = 0;
   for (final f in arrival.files) {
+    final room = maxDraftFilesSize - total;
     try {
-      final n = await size(f.path);
-      if (n > maxDraftFilesSize - total) {
+      if (await size(f.path) > room) {
         left++;
         continue;
       }
-      final data = await bytes(f.path);
-      // The file can grow between the two looks.
-      if (data.length > maxDraftFilesSize - total) {
+      final data = BytesBuilder(copy: false);
+      var over = false;
+      await for (final chunk in open(f.path)) {
+        if (data.length + chunk.length > room) {
+          over = true;
+          break;
+        }
+        data.add(chunk);
+      }
+      if (over) {
         left++;
         continue;
       }
       total += data.length;
-      files.add(DraftFile(safeFileName(f.name), Uint8List.fromList(data)));
+      files.add(DraftFile(safeFileName(f.name), data.takeBytes()));
     } catch (_) {
       left++;
     }

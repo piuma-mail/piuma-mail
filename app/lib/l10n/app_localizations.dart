@@ -9298,6 +9298,18 @@ abstract class AppLocalizations {
   /// **'This email file is too large to open.'**
   String get emlTooLarge;
 
+  /// No description provided for @arrivalNetworkFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Files in network folders don’t open in Piuma. Copy them to this device first.'**
+  String get arrivalNetworkFile;
+
+  /// No description provided for @imagesOffFile.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image is off, so no one can see when you open this file.} other{{count} images are off, so no one can see when you open this file.}}'**
+  String imagesOffFile(int count);
+
   /// No description provided for @newMailClosedLead.
   ///
   /// In en, this message translates to:

@@ -173,6 +173,22 @@ void main() {
     expect(find.text('This email file is too large to open.'), findsOne);
   });
 
+  testWidgets('a file from a network folder is never opened, and says so', (
+    tester,
+  ) async {
+    final (_, arrivals) = await _inbox(tester);
+    arrivals.addArgs([r'\\server\share\notes.eml']);
+    await tester.pumpAndSettle();
+    expect(find.byType(EmlReader), findsNothing);
+    expect(
+      find.text(
+        'Files in network folders don’t open in Piuma. '
+        'Copy them to this device first.',
+      ),
+      findsOne,
+    );
+  });
+
   for (final dark in [false, true]) {
     final name = dark ? 'dark' : 'light';
     testWidgets('email file golden $name', (tester) async {

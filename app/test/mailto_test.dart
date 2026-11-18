@@ -57,6 +57,13 @@ void main() {
     // The address with a header smuggled in is no address at all.
     expect(m.cc, isEmpty);
     expect(m.bcc, isEmpty);
+    // Unicode's own line and paragraph separators, and NEL, too.
+    expect(
+      parse('mailto:a@example.com?subject=a%E2%80%A8b%E2%80%A9c%C2%85d')
+          .subject,
+      'a b c d',
+    );
+    expect(MailtoLink.cleanSubject('a\u2028\u2029b'), 'a b');
   });
 
   test('addresses that are not addresses are dropped', () {

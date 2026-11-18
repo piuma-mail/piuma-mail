@@ -1533,5 +1533,7 @@
   "emlNotImported": "Import nicht möglich. Prüfe die Verbindung und versuche es erneut.",
   "emlNotMail": "Diese Datei ist keine E-Mail, die Piuma lesen kann.",
   "emlTooLarge": "Diese E-Mail-Datei ist zu groß zum Öffnen.",
+  "arrivalNetworkFile": "Dateien in Netzwerkordnern öffnen sich nicht in Piuma. Kopiere sie zuerst auf dieses Gerät.",
+  "imagesOffFile": "{count, plural, =1{1 Bild ist aus, so sieht niemand, wann du diese Datei öffnest.} other{{count} Bilder sind aus, so sieht niemand, wann du diese Datei öffnest.}}",
   "newMailClosedLead": "Wenn Piuma geschlossen ist"
 }

@@ -68,13 +68,84 @@ void main() {
         'https://example.com/x.eml',
         'javascript:alert(1)',
         'ms-settings:defaultapps',
-        r'\\server\share\notes.eml',
-        '//server/share/notes.eml',
-        'file://server/share/notes.eml',
         '',
         '   ',
       ], typeOf: typeOf);
       expect(a, isEmpty);
+    });
+
+    test('a network folder is never looked at, and the person is told', () {
+      final looked = <String>[];
+      FileSystemEntityType spy(String path) {
+        looked.add(path);
+        return FileSystemEntityType.file;
+      }
+
+      for (final arg in [
+        r'\\server\share\notes.eml',
+        '//server/share/notes.eml',
+        r'\/server/share/notes.eml',
+        r'/\server\share\notes.eml',
+        r'\\?\UNC\server\share\notes.eml',
+        r'\\.\pipe\x',
+        r'  \\server\share\notes.eml',
+        'file://server/share/notes.eml',
+        'file:////server/share/notes.eml',
+        'file://///server/share/notes.eml',
+        'file:///%5C%5Cserver/share/notes.eml',
+        'file:///%5Cserver/share/notes.eml',
+      ]) {
+        final a = arrivalsFrom([arg], typeOf: spy);
+        expect(a, [isA<NetworkFileArrival>()], reason: arg);
+      }
+      expect(looked, isEmpty);
+      // Along with files that do open: those still go, with one notice.
+      final a = arrivalsFrom([
+        '/home/me/photo.jpg',
+        r'\\server\share\a.pdf',
+        '//server/share/b.pdf',
+      ], typeOf: typeOf);
+      expect(a, hasLength(2));
+      expect((a[0] as ComposeArrival).files.single.name, 'photo.jpg');
+      expect(a[1], isA<NetworkFileArrival>());
+    });
+
+    test('two separators in any order name another computer', () {
+      for (final p in [r'\\a', '//a', r'\/a', r'/\a', r'\\?\UNC\a']) {
+        expect(isNetworkPath(p), isTrue, reason: p);
+      }
+      for (final p in ['/a/b', r'C:\a', r'\a', 'a//b', '/']) {
+        expect(isNetworkPath(p), isFalse, reason: p);
+      }
+    });
+
+    test('with a mailto: link, only the link counts', () {
+      // What "exe" "%1" gives for a link written to break out of its
+      // quotes: more words, files and flags among them.
+      final a = arrivalsFrom([
+        'mailto:a@example.com?subject=Hi',
+        '/home/me/photo.jpg',
+        '/home/me/notes.eml',
+        'mailto:b@example.com',
+      ], typeOf: typeOf);
+      final c = a.single as ComposeArrival;
+      expect(c.link.to, ['a@example.com']);
+      expect(c.files, isEmpty);
+      // Not first either.
+      final b = arrivalsFrom([
+        '/home/me/photo.jpg',
+        'MAILTO:b@example.com',
+      ], typeOf: typeOf);
+      expect((b.single as ComposeArrival).link.to, ['b@example.com']);
+      expect((b.single as ComposeArrival).files, isEmpty);
+      // A link too long is no link, and still nothing else goes.
+      expect(
+        arrivalsFrom([
+          'mailto:a@example.com?body=${'x' * MailtoLink.maxLength}',
+          '/home/me/photo.jpg',
+        ], typeOf: typeOf),
+        isEmpty,
+      );
     });
 
     test('a file that cannot be looked at is ignored', () {
@@ -270,9 +341,9 @@ void main() {
         ),
         account,
         sizeOf: (p) async => sizes[p]!,
-        read: (p) async {
+        openRead: (p) {
           if (p == '/gone') throw const FileSystemException('gone');
-          return List.filled(sizes[p]!, 1);
+          return Stream.value(List.filled(sizes[p]!, 1));
         },
       );
       expect(draft.files.map((f) => (f.name, f.data.length)), [
@@ -280,6 +351,33 @@ void main() {
         ('_c.txt', 20),
       ]);
       expect(left, 3);
+    });
+
+    test('what is read counts, not the size a file reports', () async {
+      // Like a file in /proc: it says 0 and holds more than a message.
+      const chunk = 1024 * 1024;
+      var given = 0;
+      final (draft, left) = await draftFor(
+        const ComposeArrival(
+          files: [ArrivedFile('/proc/x', 'x'), ArrivedFile('/small', 's')],
+        ),
+        account,
+        sizeOf: (p) async => 0,
+        openRead: (p) async* {
+          if (p == '/small') {
+            yield [1, 2, 3];
+            return;
+          }
+          while (true) {
+            given += chunk;
+            yield List.filled(chunk, 0);
+          }
+        },
+      );
+      expect(draft.files.map((f) => (f.name, f.data.length)), [('s', 3)]);
+      expect(left, 1);
+      // It stopped reading once past the cap.
+      expect(given, lessThanOrEqualTo(maxDraftFilesSize + chunk));
     });
   });
 }
