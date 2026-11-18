@@ -33,8 +33,9 @@ const IndicatorApi* Indicators() {
   static bool tried = false;
   if (!tried) {
     tried = true;
-    for (const char* name :
-         {"libayatana-appindicator3.so.1", "libappindicator3.so.1"}) {
+    static const char* const kLibraries[] = {"libayatana-appindicator3.so.1",
+                                             "libappindicator3.so.1"};
+    for (const char* name : kLibraries) {
       void* lib = dlopen(name, RTLD_NOW | RTLD_LOCAL);
       if (lib == nullptr) continue;
       api.make = reinterpret_cast<IndicatorNew>(
