@@ -1518,6 +1518,7 @@
   "syncExposedTitle": "Changez ces mots de passe",
   "syncExposedBody": "{name} ne peut plus lire votre espace, mais connaît encore les mots de passe de ces boîtes. Changez-les chez votre fournisseur pour l’écarter aussi de vos e-mails.",
   "syncExposedDone": "Compris",
+  "syncPaused": "En pause sur cet appareil",
   "syncConfirmTitle": "Confirmez cet appareil",
   "syncConfirmBody": "Piuma vérifie désormais quels appareils font partie de votre espace. Tant que vous ne confirmez pas celui-ci avec votre phrase de récupération, ou avec un code d’un appareil déjà mis à jour, rien n’est synchronisé ici.",
   "syncConfirm": "Confirmer",

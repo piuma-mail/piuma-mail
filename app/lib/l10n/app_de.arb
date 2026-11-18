@@ -1518,6 +1518,7 @@
   "syncExposedTitle": "Ändere diese Passwörter",
   "syncExposedBody": "{name} kann deinen Bereich nicht mehr lesen, kennt aber noch die Passwörter dieser Postfächer. Ändere sie bei deinem Anbieter, damit es auch keinen Zugriff mehr auf deine E-Mails hat.",
   "syncExposedDone": "Verstanden",
+  "syncPaused": "Auf diesem Gerät pausiert",
   "syncConfirmTitle": "Bestätige dieses Gerät",
   "syncConfirmBody": "Piuma prüft jetzt, welche Geräte zu deinem Bereich gehören. Bis du dieses mit deiner Wiederherstellungsphrase oder einem Code von einem bereits aktualisierten Gerät bestätigst, wird hier nichts synchronisiert.",
   "syncConfirm": "Bestätigen",

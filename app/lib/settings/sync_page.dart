@@ -427,6 +427,8 @@ class _SyncPageState extends State<SyncPage> {
         ?.name;
     final status = home == null
         ? _Status(dot: c.line, text: l.syncOff)
+        : s.unverified || s.conflict.isNotEmpty
+        ? _Status(dot: c.warn, text: l.syncPaused)
         : switch (s.syncedAt) {
             final at? => _Status(
               dot: c.ok,

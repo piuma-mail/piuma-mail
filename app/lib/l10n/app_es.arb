@@ -1518,6 +1518,7 @@
   "syncExposedTitle": "Cambia estas contraseñas",
   "syncExposedBody": "{name} ya no puede leer tu espacio, pero aún conoce las contraseñas de estos buzones. Cámbialas con tu proveedor para dejarlo también fuera de tu correo.",
   "syncExposedDone": "Entendido",
+  "syncPaused": "En pausa en este dispositivo",
   "syncConfirmTitle": "Confirma este dispositivo",
   "syncConfirmBody": "Piuma ahora comprueba qué dispositivos forman parte de tu espacio. Hasta que confirmes este con tu frase de recuperación, o con un código de un dispositivo ya actualizado, aquí no se sincroniza nada.",
   "syncConfirm": "Confirmar",

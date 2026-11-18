@@ -6271,6 +6271,9 @@ class AppLocalizationsPt extends AppLocalizations {
   String get syncExposedDone => 'Entendi';
 
   @override
+  String get syncPaused => 'Pausada neste dispositivo';
+
+  @override
   String get syncConfirmTitle => 'Confirme este dispositivo';
 
   @override

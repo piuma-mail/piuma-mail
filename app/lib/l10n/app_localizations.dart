@@ -9208,6 +9208,12 @@ abstract class AppLocalizations {
   /// **'Got it'**
   String get syncExposedDone;
 
+  /// No description provided for @syncPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused on this device'**
+  String get syncPaused;
+
   /// No description provided for @syncConfirmTitle.
   ///
   /// In en, this message translates to:

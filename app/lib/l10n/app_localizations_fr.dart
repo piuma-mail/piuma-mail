@@ -6294,6 +6294,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get syncExposedDone => 'Compris';
 
   @override
+  String get syncPaused => 'En pause sur cet appareil';
+
+  @override
   String get syncConfirmTitle => 'Confirmez cet appareil';
 
   @override

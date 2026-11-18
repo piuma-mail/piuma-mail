@@ -1518,6 +1518,7 @@
   "syncExposedTitle": "Troque estas senhas",
   "syncExposedBody": "{name} não consegue mais ler seu espaço, mas ainda conhece as senhas destas caixas. Troque-as no seu provedor para deixá-lo fora do seu email também.",
   "syncExposedDone": "Entendi",
+  "syncPaused": "Pausada neste dispositivo",
   "syncConfirmTitle": "Confirme este dispositivo",
   "syncConfirmBody": "O Piuma agora verifica quais dispositivos fazem parte do seu espaço. Até você confirmar este com sua frase de recuperação, ou com um código de um dispositivo já atualizado, nada é sincronizado aqui.",
   "syncConfirm": "Confirmar",

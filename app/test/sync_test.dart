@@ -584,6 +584,7 @@ void _trustTests({required bool phone}) {
     final source = _Trust(now: _now, unverified: true);
     await _settings(tester, phone: phone, demo: source);
     expect(find.text('Confirm this device'), findsOneWidget);
+    expect(find.text('Paused on this device'), findsOneWidget);
     expect(
       find.textContaining('Until you confirm this one with your recovery'),
       findsOneWidget,
@@ -600,6 +601,7 @@ void _trustTests({required bool phone}) {
     final source = _Trust(now: _now, conflict: true);
     await _settings(tester, phone: phone, demo: source);
     expect(find.text('Two devices removed each other'), findsOneWidget);
+    expect(find.text('Paused on this device'), findsOneWidget);
     expect(
       find.textContaining('Matteo’s MacBook and Old phone each removed'),
       findsOneWidget,

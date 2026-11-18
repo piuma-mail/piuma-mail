@@ -2074,6 +2074,7 @@
   "syncExposedBody": "{name} can’t read your space any more, but it still knows the passwords of these mailboxes. Change them with your provider to keep it out of your mail too.",
   "@syncExposedBody": {"placeholders": {"name": {"type": "String"}}},
   "syncExposedDone": "Got it",
+  "syncPaused": "Paused on this device",
   "syncConfirmTitle": "Confirm this device",
   "syncConfirmBody": "Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.",
   "syncConfirm": "Confirm",
