@@ -332,7 +332,7 @@ async fn settle_unknown(
         };
         match courier.was_sent(&out.ready).await {
             Some(true) => {
-                lock(store).settle_unknown(id, true)?;
+                lock(store).settle_unknown(id, true, now - ABANDONED_CLAIM)?;
             }
             Some(false) => {
                 lock(store).settle_unknown(id, false, now - ABANDONED_CLAIM)?;
