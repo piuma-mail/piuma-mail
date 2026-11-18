@@ -3403,16 +3403,29 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountRemoveConfirm => 'Remove';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count messages written here haven\'t been sent yet and will be lost.',
-      one: '1 message written here hasn\'t been sent yet and will be lost.',
+          '$count messages written here haven\'t gone yet. Send or delete them, then remove the account.',
+      one: '1 message written here hasn\'t gone yet. Send it or delete it, then remove the account.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Draft kept on this device';
+
+  @override
+  String get accountUnsentSendNow => 'Send now';
+
+  @override
+  String get accountUnsentSaveNow => 'Save now';
+
+  @override
+  String get accountUnsentFailed =>
+      'That didn\'t work. Check the connection and try again, or delete it.';
 
   @override
   String get updatingMail => 'Updating your mail';
@@ -3451,20 +3464,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get storageClearing => 'Clearing…';
 
   @override
+  String storageBackup(String size) {
+    return 'Of which $size is a copy kept from before the last update, removed at the next start.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Couldn\'t clear the cached mail. Try again.';
+
+  @override
+  String get storageNoRoom =>
+      'Cached mail cleared. There isn\'t enough free space to make the file smaller now: Piuma reuses the room.';
+
+  @override
   String storageClearTitle(String name) {
     return 'Clear the cached mail of $name?';
   }
 
   @override
   String get storageClearNote =>
-      'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, the mail stays on the server, and a message is downloaded again when you open it.';
+      'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.';
 
   @override
   String get storageKeep => 'Keep whole messages for reading offline';
 
   @override
   String get storageKeepHint =>
-      'Older ones are downloaded again when you open them.';
+      'Older ones are downloaded again when you open them. Search still finds their words.';
 
   @override
   String get storageKeepMonth => '1 month';

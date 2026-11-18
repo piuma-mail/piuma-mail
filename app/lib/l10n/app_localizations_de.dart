@@ -3427,16 +3427,29 @@ class AppLocalizationsDe extends AppLocalizations {
   String get accountRemoveConfirm => 'Entfernen';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count hier geschriebene Nachrichten wurden noch nicht gesendet und gehen verloren.',
-      one: '1 hier geschriebene Nachricht wurde noch nicht gesendet und geht verloren.',
+          '$count hier geschriebene Nachrichten sind noch nicht gesendet. Sende oder lösche sie, dann entferne das Konto.',
+      one: '1 hier geschriebene Nachricht ist noch nicht gesendet. Sende oder lösche sie, dann entferne das Konto.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Entwurf auf diesem Gerät';
+
+  @override
+  String get accountUnsentSendNow => 'Jetzt senden';
+
+  @override
+  String get accountUnsentSaveNow => 'Jetzt speichern';
+
+  @override
+  String get accountUnsentFailed =>
+      'Das hat nicht geklappt. Prüfe die Verbindung und versuche es erneut, oder lösche sie.';
 
   @override
   String get updatingMail => 'Deine E-Mails werden aktualisiert';
@@ -3475,19 +3488,33 @@ class AppLocalizationsDe extends AppLocalizations {
   String get storageClearing => 'Wird geleert…';
 
   @override
+  String storageBackup(String size) {
+    return 'Davon $size eine Kopie von vor dem letzten Update, die beim nächsten Start entfernt wird.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Die zwischengespeicherten E-Mails konnten nicht geleert werden. Versuche es erneut.';
+
+  @override
+  String get storageNoRoom =>
+      'Zwischengespeicherte E-Mails geleert. Für eine kleinere Datei ist gerade nicht genug Speicher frei: Piuma nutzt den Platz wieder.';
+
+  @override
   String storageClearTitle(String name) {
     return 'Zwischengespeicherte E-Mails von $name leeren?';
   }
 
   @override
   String get storageClearNote =>
-      'Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen.';
+      'Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die Suche findet ihre Wörter weiterhin, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen.';
 
   @override
   String get storageKeep => 'Ganze Nachrichten zum Offline-Lesen behalten';
 
   @override
-  String get storageKeepHint => 'Ältere werden beim Öffnen neu geladen.';
+  String get storageKeepHint =>
+      'Ältere werden beim Öffnen neu geladen. Die Suche findet ihre Wörter weiterhin.';
 
   @override
   String get storageKeepMonth => '1 Monat';

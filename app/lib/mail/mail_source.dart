@@ -2847,9 +2847,20 @@ abstract class MailSource {
   /// the server.
   Future<void> removeAccount(int accountId);
 
-  /// How many messages written in an account would be lost with it: in the
-  /// outbox, not sent yet, or drafts waiting on this device.
-  Future<int> unsentMail(int accountId) async => 0;
+  /// Messages written in an account that haven't gone yet: in the outbox
+  /// (waiting, on their way or refused) or drafts waiting on this device.
+  /// The account can't be removed while any is left ([removeAccount]
+  /// throws [UnsentMailLeft]): each is sent, saved or deleted first.
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => const [];
+
+  /// Sends an outbox message of [unsentMail] now, or saves its waiting
+  /// drafts on the server now. Throws when it can't (offline).
+  Future<void> sendUnsent(UnsentMessage message) async {}
+
+  /// Deletes a message of [unsentMail] without sending it: from the
+  /// outbox, or the draft waiting on this device (a copy saved on the
+  /// server before stays). Throws while it is on its way.
+  Future<void> deleteUnsent(UnsentMessage message) async {}
 
   /// How much room the mail takes on this device (Settings › Storage).
   Future<StorageUse> storage() async => const StorageUse();
@@ -2859,7 +2870,9 @@ abstract class MailSource {
   Future<void> setKeepDays(int? days) async {}
 
   /// Removes the whole messages and pictures kept for reading offline of
-  /// an account from this device; the mail stays on the server.
+  /// an account from this device; the mail stays on the server, and search
+  /// still finds their words. Throws [NoRoomToShrink] when that worked but
+  /// the disk had no room to make the file smaller.
   Future<StorageUse> clearCachedMail(int accountId) => storage();
 
   /// "Tell me when it can't sign in", on unless turned off.
@@ -3507,17 +3520,71 @@ class SenderWarning {
   final String? sentBy;
 }
 
+/// A message written in an account that hasn't gone yet
+/// ([MailSource.unsentMail]).
+@immutable
+class UnsentMessage {
+  const UnsentMessage({
+    required this.id,
+    required this.accountId,
+    required this.subject,
+    this.to = const [],
+    this.draft = false,
+    this.refused = false,
+    this.sending = false,
+  });
+
+  /// The outbox message's id, or the waiting draft's.
+  final int id;
+  final int accountId;
+  final String subject;
+
+  /// Addresses, as `a@b.c` or `Name <a@b.c>`.
+  final List<String> to;
+
+  /// A draft kept on this device until its server can be reached, rather
+  /// than mail in the outbox.
+  final bool draft;
+
+  /// The server refused it (outbox only).
+  final bool refused;
+
+  /// On its way now (outbox only): it can't be deleted meanwhile.
+  final bool sending;
+}
+
+/// [MailSource.removeAccount] refused: mail written in the account hasn't
+/// gone yet ([MailSource.unsentMail]).
+class UnsentMailLeft implements Exception {
+  const UnsentMailLeft();
+}
+
+/// Clearing cached mail worked, but there wasn't room on the disk to make
+/// the database file smaller ([MailSource.clearCachedMail]).
+class NoRoomToShrink implements Exception {
+  const NoRoomToShrink(this.use);
+
+  /// The room taken now.
+  final StorageUse use;
+}
+
 /// How much room the mail takes on this device (Settings › Storage).
 @immutable
 class StorageUse {
   const StorageUse({
     this.totalBytes = 0,
+    this.backupBytes = 0,
     this.accounts = const [],
     this.keepDays = 90,
   });
 
-  /// The whole database on disk.
+  /// The whole database on disk, with the copy kept from before the last
+  /// update.
   final int totalBytes;
+
+  /// Of which the copy kept from before the last update, removed at the
+  /// next start.
+  final int backupBytes;
   final List<AccountStorage> accounts;
 
   /// Days whole messages are kept for reading offline; null: always.

@@ -3421,16 +3421,29 @@ class AppLocalizationsPt extends AppLocalizations {
   String get accountRemoveConfirm => 'Remover';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count mensagens escritas aqui ainda não foram enviadas e serão perdidas.',
-      one: '1 mensagem escrita aqui ainda não foi enviada e será perdida.',
+          '$count mensagens escritas aqui ainda não saíram. Envie ou apague, depois remova a conta.',
+      one: '1 mensagem escrita aqui ainda não saiu. Envie ou apague, depois remova a conta.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Rascunho neste dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Enviar agora';
+
+  @override
+  String get accountUnsentSaveNow => 'Salvar agora';
+
+  @override
+  String get accountUnsentFailed =>
+      'Não funcionou. Verifique a conexão e tente de novo, ou apague.';
 
   @override
   String get updatingMail => 'Atualizando seu e-mail';
@@ -3469,20 +3482,33 @@ class AppLocalizationsPt extends AppLocalizations {
   String get storageClearing => 'Limpando…';
 
   @override
+  String storageBackup(String size) {
+    return 'Dos quais $size são uma cópia de antes da última atualização, removida no próximo início.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Não foi possível limpar o e-mail guardado. Tente de novo.';
+
+  @override
+  String get storageNoRoom =>
+      'E-mail guardado limpo. Não há espaço livre suficiente para diminuir o arquivo agora: o Piuma reutiliza o espaço.';
+
+  @override
   String storageClearTitle(String name) {
     return 'Limpar o e-mail em cache de $name?';
   }
 
   @override
   String get storageClearNote =>
-      'As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre.';
+      'As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, a busca ainda encontra suas palavras, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre.';
 
   @override
   String get storageKeep => 'Guardar as mensagens completas para ler offline';
 
   @override
   String get storageKeepHint =>
-      'As mais antigas são baixadas de novo quando você as abre.';
+      'As mais antigas são baixadas de novo quando você as abre. A busca ainda encontra suas palavras.';
 
   @override
   String get storageKeepMonth => '1 mês';

@@ -3428,16 +3428,29 @@ class AppLocalizationsIt extends AppLocalizations {
   String get accountRemoveConfirm => 'Rimuovi';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count messaggi scritti qui non sono ancora partiti e andranno persi.',
-      one: '1 messaggio scritto qui non è ancora partito e andrà perso.',
+          '$count messaggi scritti qui non sono ancora partiti. Inviali o eliminali, poi rimuovi l\'account.',
+      one: '1 messaggio scritto qui non è ancora partito. Invialo o eliminalo, poi rimuovi l\'account.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Bozza su questo dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Invia ora';
+
+  @override
+  String get accountUnsentSaveNow => 'Salva ora';
+
+  @override
+  String get accountUnsentFailed =>
+      'Non ha funzionato. Controlla la connessione e riprova, oppure eliminalo.';
 
   @override
   String get updatingMail => 'Aggiornamento della posta';
@@ -3476,20 +3489,33 @@ class AppLocalizationsIt extends AppLocalizations {
   String get storageClearing => 'Svuotamento…';
 
   @override
+  String storageBackup(String size) {
+    return 'Di cui $size sono una copia di prima dell\'ultimo aggiornamento, tolta al prossimo avvio.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Non è stato possibile svuotare la posta salvata. Riprova.';
+
+  @override
+  String get storageNoRoom =>
+      'Posta salvata svuotata. Non c\'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.';
+
+  @override
   String storageClearTitle(String name) {
     return 'Svuotare la posta in cache di $name?';
   }
 
   @override
   String get storageClearNote =>
-      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.';
+      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.';
 
   @override
   String get storageKeep => 'Tieni i messaggi interi per leggere offline';
 
   @override
   String get storageKeepHint =>
-      'Quelli più vecchi si scaricano di nuovo quando li apri.';
+      'Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.';
 
   @override
   String get storageKeepMonth => '1 mese';

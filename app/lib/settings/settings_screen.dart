@@ -1382,6 +1382,16 @@ class _StoragePageState extends State<StoragePage> {
   /// The account whose cache is being cleared.
   int? _clearing;
 
+  /// What the last Clear cached mail said, when it didn't simply work.
+  String? _problem;
+
+  /// Space between the page's parts, and inside its cards.
+  static const _gap = PiumaSpace.s24;
+  static const _inset = EdgeInsets.symmetric(
+    horizontal: PiumaSpace.s16,
+    vertical: PiumaSpace.s12,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -1396,6 +1406,7 @@ class _StoragePageState extends State<StoragePage> {
     setState(
       () => _use = StorageUse(
         totalBytes: use.totalBytes,
+        backupBytes: use.backupBytes,
         accounts: use.accounts,
         keepDays: days,
       ),
@@ -1417,8 +1428,7 @@ class _StoragePageState extends State<StoragePage> {
         children: [
           Text(
             title,
-            style: PiumaType.body.copyWith(
-              fontSize: 17,
+            style: PiumaType.subtitle.copyWith(
               fontWeight: FontWeight.w600,
               color: c.fg,
             ),
@@ -1452,13 +1462,28 @@ class _StoragePageState extends State<StoragePage> {
         ? await showPiumaSheet<bool>(context, label: title, builder: panel)
         : await showPiumaDialog<bool>(context, label: title, builder: panel);
     if (yes != true || !mounted) return;
-    setState(() => _clearing = account.id);
+    setState(() {
+      _clearing = account.id;
+      _problem = null;
+    });
+    StorageUse? use;
+    String? problem;
     try {
-      final use = await widget.source.clearCachedMail(account.id);
-      if (mounted) setState(() => _use = use);
-    } finally {
-      if (mounted) setState(() => _clearing = null);
+      use = await widget.source.clearCachedMail(account.id);
+    } on NoRoomToShrink catch (e) {
+      use = e.use;
+      problem = l.storageNoRoom;
+    } catch (_) {
+      problem = l.storageClearFailed;
+      // What is left now, as far as it can be read.
+      use = await widget.source.storage().catchError((_) => _use!);
     }
+    if (!mounted) return;
+    setState(() {
+      _use = use ?? _use;
+      _problem = problem;
+      _clearing = null;
+    });
   }
 
   @override
@@ -1469,16 +1494,19 @@ class _StoragePageState extends State<StoragePage> {
     final use = _use;
     String size(int bytes) => fileSize(bytes, locale: locale);
     final hint = PiumaType.small.copyWith(color: c.muted);
+    final problem = _problem;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SettingsHeader(title: l.storageTitle, subtitle: l.storageSubtitle),
-        const SizedBox(height: 28),
+        const SizedBox(height: _gap),
         if (use != null) ...[
           Text(
             l.storageTotal(size(use.totalBytes)),
             style: PiumaType.body.copyWith(color: c.fg),
           ),
+          if (use.backupBytes > 0)
+            Text(l.storageBackup(size(use.backupBytes)), style: hint),
           const SizedBox(height: PiumaSpace.s12),
           _Card(
             children: [
@@ -1488,18 +1516,18 @@ class _StoragePageState extends State<StoragePage> {
                         .firstOrNull
                     case final account?)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+                    padding: _inset,
                     child: Row(
                       children: [
                         Container(
-                          width: 12,
-                          height: 12,
+                          width: PiumaSpace.s12,
+                          height: PiumaSpace.s12,
                           decoration: BoxDecoration(
                             color: account.color,
                             shape: BoxShape.circle,
                           ),
                         ),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: PiumaSpace.s12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1537,11 +1565,23 @@ class _StoragePageState extends State<StoragePage> {
                   ),
             ],
           ),
-          const SizedBox(height: 28),
+          if (problem != null) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            Text(
+              problem,
+              style: hint.copyWith(
+                color: problem == l.storageNoRoom ? c.muted : c.danger,
+              ),
+            ),
+          ],
+          const SizedBox(height: _gap),
           _Card(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                padding: _inset.copyWith(
+                  top: PiumaSpace.s16,
+                  bottom: PiumaSpace.s16,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

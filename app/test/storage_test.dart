@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
@@ -8,21 +7,39 @@ import 'package:piuma_mail/updating.dart';
 
 final _now = DateTime(2026, 10, 15, 10, 30);
 
-Future<DemoMailSource> _settings(WidgetTester tester) async {
-  tester.view.physicalSize = const Size(1440, 900);
+Future<DemoMailSource> _settings(
+  WidgetTester tester, {
+  bool phone = false,
+  bool dark = false,
+  bool backup = false,
+  bool noRoom = false,
+}) async {
+  tester.view.physicalSize = phone
+      ? const Size(390, 844)
+      : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now);
+  final source = DemoMailSource(now: _now, backup: backup, noRoom: noRoom);
   await tester.pumpWidget(
     PiumaApp(
-      home: (_, _) =>
-          InboxScreen(source: source, onAddAccount: () {}, now: () => _now),
+      initialDark: dark,
+      home: (_, _) => SettingsScreen(
+        source: source,
+        onBack: () {},
+        onAddAccount: () {},
+        now: () => _now,
+      ),
     ),
   );
-  await tester.pump(const Duration(seconds: 2));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Settings'));
-  await tester.pumpAndSettle();
+  if (phone) {
+    await tester.scrollUntilVisible(
+      find.text('Storage'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+  }
   await tester.tap(find.text('Storage'));
   await tester.pumpAndSettle();
   return source;
@@ -81,6 +98,79 @@ void main() {
     );
     expect(find.textContaining('0 B kept for reading offline'), findsOneWidget);
   });
+
+  testWidgets('The copy kept from before an update is counted', (tester) async {
+    await _settings(tester, backup: true);
+    expect(
+      find.textContaining('kept from before the last update'),
+      findsOneWidget,
+    );
+  });
+
+  for (final phone in [false, true]) {
+    final where = phone ? 'phone' : 'desktop';
+    testWidgets('$where: no room to shrink the file is said, not hidden', (
+      tester,
+    ) async {
+      final source = await _settings(tester, phone: phone, noRoom: true);
+      await tester.tap(find.text('Clear cached mail').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear cached mail').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Cached mail cleared.'), findsOneWidget);
+      // The cache went all the same, and the page shows it.
+      expect((await source.storage()).accounts.first.cachedBytes, 0);
+      expect(find.text('Clearing…'), findsNothing);
+    });
+
+    testWidgets('$where: the page says search still finds old mail', (
+      tester,
+    ) async {
+      await _settings(tester, phone: phone);
+      expect(
+        find.textContaining('Search still finds their words'),
+        findsOneWidget,
+      );
+    });
+
+    for (final dark in [false, true]) {
+      final name = '${where}_${dark ? 'dark' : 'light'}';
+      testWidgets('storage_$name golden', (tester) async {
+        await _settings(tester, phone: phone, dark: dark, backup: true);
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/storage_$name.png'),
+        );
+      }, tags: ['golden']);
+
+      testWidgets('storage_clear_$name golden', (tester) async {
+        await _settings(tester, phone: phone, dark: dark);
+        await tester.tap(find.text('Clear cached mail').first);
+        await tester.pumpAndSettle();
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/storage_clear_$name.png'),
+        );
+      }, tags: ['golden']);
+
+      testWidgets('updating_$name golden', (tester) async {
+        tester.view.physicalSize = phone
+            ? const Size(390, 844)
+            : const Size(1440, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          PiumaApp(initialDark: dark, home: (_, _) => const UpdatingMail()),
+        );
+        // The bar keeps moving: one frame, not settled.
+        await tester.pump(const Duration(milliseconds: 300));
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/updating_$name.png'),
+        );
+      }, tags: ['golden']);
+    }
+  }
 
   testWidgets('Updating your mail says what is going on', (tester) async {
     await tester.pumpWidget(PiumaApp(home: (_, _) => const UpdatingMail()));

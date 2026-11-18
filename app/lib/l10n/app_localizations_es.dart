@@ -3421,16 +3421,29 @@ class AppLocalizationsEs extends AppLocalizations {
   String get accountRemoveConfirm => 'Quitar';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count mensajes escritos aquí aún no se han enviado y se perderán.',
-      one: '1 mensaje escrito aquí aún no se ha enviado y se perderá.',
+          '$count mensajes escritos aquí aún no han salido. Envíalos o bórralos y luego quita la cuenta.',
+      one: '1 mensaje escrito aquí aún no ha salido. Envíalo o bórralo y luego quita la cuenta.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Borrador en este dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Enviar ahora';
+
+  @override
+  String get accountUnsentSaveNow => 'Guardar ahora';
+
+  @override
+  String get accountUnsentFailed =>
+      'No ha funcionado. Comprueba la conexión y vuelve a intentarlo, o bórralo.';
 
   @override
   String get updatingMail => 'Actualizando tu correo';
@@ -3469,13 +3482,26 @@ class AppLocalizationsEs extends AppLocalizations {
   String get storageClearing => 'Vaciando…';
 
   @override
+  String storageBackup(String size) {
+    return 'De ello, $size es una copia de antes de la última actualización, que se quita en el próximo inicio.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'No se pudo vaciar el correo guardado. Vuelve a intentarlo.';
+
+  @override
+  String get storageNoRoom =>
+      'Correo guardado vaciado. No hay espacio libre suficiente para reducir el archivo ahora: Piuma reutiliza el espacio.';
+
+  @override
   String storageClearTitle(String name) {
     return '¿Vaciar el correo en caché de $name?';
   }
 
   @override
   String get storageClearNote =>
-      'Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo.';
+      'Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, la búsqueda sigue encontrando sus palabras, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo.';
 
   @override
   String get storageKeep =>
@@ -3483,7 +3509,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get storageKeepHint =>
-      'Los más antiguos se descargan de nuevo al abrirlos.';
+      'Los más antiguos se descargan de nuevo al abrirlos. La búsqueda sigue encontrando sus palabras.';
 
   @override
   String get storageKeepMonth => '1 mes';

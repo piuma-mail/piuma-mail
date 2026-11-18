@@ -3432,16 +3432,29 @@ class AppLocalizationsFr extends AppLocalizations {
   String get accountRemoveConfirm => 'Retirer';
 
   @override
-  String accountRemoveUnsent(int count) {
+  String accountRemoveBlocked(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
       locale: localeName,
       other:
-          '$count messages écrits ici ne sont pas encore partis et seront perdus.',
-      one: '1 message écrit ici n\'est pas encore parti et sera perdu.',
+          '$count messages écrits ici ne sont pas encore partis. Envoyez-les ou supprimez-les, puis retirez le compte.',
+      one: '1 message écrit ici n\'est pas encore parti. Envoyez-le ou supprimez-le, puis retirez le compte.',
     );
     return '$_temp0';
   }
+
+  @override
+  String get accountUnsentDraft => 'Brouillon sur cet appareil';
+
+  @override
+  String get accountUnsentSendNow => 'Envoyer maintenant';
+
+  @override
+  String get accountUnsentSaveNow => 'Enregistrer maintenant';
+
+  @override
+  String get accountUnsentFailed =>
+      'Cela n\'a pas marché. Vérifiez la connexion et réessayez, ou supprimez-le.';
 
   @override
   String get updatingMail => 'Mise à jour de vos e-mails';
@@ -3480,13 +3493,26 @@ class AppLocalizationsFr extends AppLocalizations {
   String get storageClearing => 'Vidage…';
 
   @override
+  String storageBackup(String size) {
+    return 'Dont $size pour une copie d\'avant la dernière mise à jour, retirée au prochain démarrage.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Impossible de vider les e-mails gardés. Réessayez.';
+
+  @override
+  String get storageNoRoom =>
+      'E-mails gardés vidés. Il n\'y a pas assez d\'espace libre pour réduire le fichier maintenant : Piuma réutilise la place.';
+
+  @override
   String storageClearTitle(String name) {
     return 'Vider les e-mails en cache de $name ?';
   }
 
   @override
   String get storageClearNote =>
-      'Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l\'ouvrez.';
+      'Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, la recherche trouve toujours leurs mots, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l\'ouvrez.';
 
   @override
   String get storageKeep =>
@@ -3494,7 +3520,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get storageKeepHint =>
-      'Les plus anciens sont téléchargés à nouveau quand vous les ouvrez.';
+      'Les plus anciens sont téléchargés à nouveau quand vous les ouvrez. La recherche trouve toujours leurs mots.';
 
   @override
   String get storageKeepMonth => '1 mois';
