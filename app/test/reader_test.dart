@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/design/theme.dart';
 import 'package:piuma_mail/inbox/images_bar.dart';
@@ -150,6 +152,114 @@ void main() {
     await tester.pumpAndSettle();
     expect(source.blockImages, isFalse);
     expect(find.byType(Image), findsNWidgets(3));
+  });
+
+  group('where a link goes', () {
+    late List<Uri> opened;
+    late Future<void> Function(Uri) before;
+    String? copied;
+
+    setUp(() {
+      opened = [];
+      copied = null;
+      before = openExternalLink;
+      openExternalLink = (uri) async => opened.add(uri);
+    });
+    tearDown(() => openExternalLink = before);
+
+    Future<void> watchClipboard(WidgetTester tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+    }
+
+    testWidgets('on a phone a long press shows it, to copy or open', (
+      tester,
+    ) async {
+      await _pump(tester, size: const Size(390, 844));
+      await watchClipboard(tester);
+      final link = find.text('Explore the collection');
+      await tester.ensureVisible(link);
+      await tester.pumpAndSettle();
+      await tester.longPress(link);
+      await tester.pumpAndSettle();
+      expect(find.text('Where this link goes'), findsOneWidget);
+      expect(find.text('https://bottegalume.example/autumn'), findsOneWidget);
+      expect(opened, isEmpty);
+      await tester.tap(find.text('Copy link'));
+      await tester.pumpAndSettle();
+      expect(copied, 'https://bottegalume.example/autumn');
+      expect(find.text('Link copied'), findsOneWidget);
+      expect(opened, isEmpty);
+
+      await tester.longPress(link);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open link'));
+      await tester.pumpAndSettle();
+      expect(opened, [Uri.parse('https://bottegalume.example/autumn')]);
+      // A tap still opens it at once.
+      await tester.tap(link);
+      await tester.pumpAndSettle();
+      expect(opened, hasLength(2));
+    });
+
+    testWidgets('on a desktop the pointer over it shows it', (tester) async {
+      await _pump(tester);
+      final link = find.text('Explore the collection');
+      await tester.ensureVisible(link);
+      await tester.pumpAndSettle();
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(link));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(
+          LinkTargetLine,
+          'https://bottegalume.example/autumn',
+        ),
+        findsOneWidget,
+      );
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+      expect(find.byType(LinkTargetLine), findsNothing);
+    });
+
+    testWidgets('a long press in the original layout shows it too', (
+      tester,
+    ) async {
+      originalPaper = (html, onLink) => Builder(
+        builder: (context) => GestureDetector(
+          onLongPress: () =>
+              OriginalView.pressed(context, 'https://lume.example/x'),
+          child: const Text('Long press here'),
+        ),
+      );
+      addTearDown(() => originalPaper = null);
+      await _pump(tester, size: const Size(390, 844));
+      await tester.longPress(find.text('Long press here'));
+      await tester.pumpAndSettle();
+      expect(find.text('https://lume.example/x'), findsOneWidget);
+      await tester.tap(find.text('Open link'));
+      await tester.pumpAndSettle();
+      if (find.text('Open anyway').evaluate().isNotEmpty) {
+        await tester.tap(find.text('Open anyway'));
+        await tester.pumpAndSettle();
+      }
+      expect(opened, [Uri.parse('https://lume.example/x')]);
+    });
   });
 
   group('original layout', () {

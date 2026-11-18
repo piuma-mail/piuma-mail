@@ -55,8 +55,14 @@ Future<DemoMailSource> _openDesktop(
   WidgetTester tester, {
   bool dark = false,
   bool certified = false,
+  Set<int> unsigned = const {},
 }) async {
-  final source = await _pump(tester, dark: dark, certified: certified);
+  final source = await _pump(
+    tester,
+    dark: dark,
+    certified: certified,
+    unsigned: unsigned,
+  );
   await tester.tap(find.text('Vault'));
   await _settle(tester);
   return source;
@@ -530,6 +536,24 @@ void main() {
     expect(_onPage('Delivered Tue, Oct 13, 10:42'), findsNothing);
     // The others, signed, are as before.
     expect(_onPage('Accepted Today, 9:12'), findsOneWidget);
+  });
+
+  testWidgets('on the desktop board too, an unsigned receipt isn’t proof', (
+    tester,
+  ) async {
+    await _openDesktop(tester, certified: true, unsigned: {702});
+    await tester.tap(find.text('Certified mail').first);
+    await _settle(tester);
+    expect(find.text('Lease renewal 2027'), findsOneWidget);
+    expect(find.text('Unverified'), findsOneWidget);
+    expect(
+      find.text(
+        'Says “Delivered”, but the provider’s signature couldn’t be '
+        'checked: this isn’t proof.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Delivered Tue, Oct 13, 10:42'), findsNothing);
   });
 
   testWidgets('a category emptied while open says so', (tester) async {

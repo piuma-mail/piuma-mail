@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' show SelectionArea;
 import 'package:flutter/widgets.dart';
 
@@ -202,7 +201,7 @@ class _Spans extends StatefulWidget {
 }
 
 class _SpansState extends State<_Spans> {
-  final _taps = <TapGestureRecognizer>[];
+  final _taps = <LinkPressRecognizer>[];
 
   @override
   void dispose() {
@@ -222,10 +221,16 @@ class _SpansState extends State<_Spans> {
     final children = <InlineSpan>[];
     var at = 0;
     for (final s in widget.spans) {
-      TapGestureRecognizer? tap;
+      LinkPressRecognizer? tap;
       if (s.link case final link?) {
-        tap = TapGestureRecognizer()
-          ..onTap = () => openBodyLink(context, link, s);
+        // A tap opens it; a long press, on a phone, shows where it goes.
+        tap = LinkPressRecognizer()
+          ..onTapLink = () => openBodyLink(context, link, s)
+          ..onLongPress = () => showLinkTarget(
+            context,
+            link,
+            onOpen: () => openBodyLink(context, link, s),
+          );
         _taps.add(tap);
       }
       final style = TextStyle(
@@ -503,6 +508,11 @@ class _BodyImageView extends StatelessWidget {
                 onExit: (_) => LinkTarget.show(context, null),
                 child: GestureDetector(
                   onTap: () => openBodyLink(context, image.link!),
+                  onLongPress: () => showLinkTarget(
+                    context,
+                    image.link!,
+                    onOpen: () => openBodyLink(context, image.link!),
+                  ),
                   child: framed,
                 ),
               );

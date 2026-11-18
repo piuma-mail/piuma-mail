@@ -59,6 +59,12 @@ document.addEventListener('mouseover', function (e) {
   var a = e.target.closest && e.target.closest('a[href]');
   window.chrome.webview.postMessage('#hover:' + (a ? a.href : ''));
 }, true);
+document.addEventListener('contextmenu', function (e) {
+  var a = e.target.closest && e.target.closest('a[href]');
+  if (!a || !e.isTrusted) return;
+  e.preventDefault();
+  window.chrome.webview.postMessage('#press:' + a.href);
+}, true);
 document.addEventListener('mouseleave', function () {
   window.chrome.webview.postMessage('#hover:');
 });
@@ -124,6 +130,13 @@ class _WindowsPaperState extends State<WindowsPaper> {
                   context,
                   url.isEmpty || url.length > 2048 ? null : url,
                 );
+              }
+              return;
+            }
+            if (m.startsWith('#press:')) {
+              final url = m.substring('#press:'.length);
+              if (mounted && url.isNotEmpty && url.length <= 2048) {
+                OriginalView.pressed(context, url);
               }
               return;
             }

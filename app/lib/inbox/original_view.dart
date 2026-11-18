@@ -128,6 +128,14 @@ class OriginalView extends StatefulWidget {
   /// navigation counts as theirs, as after a press ([ClickGate]).
   static void keyPressed(BuildContext context) => _scope(context)?.onKey();
 
+  /// A long press (or a right click) on a link: where it really goes,
+  /// to open or copy ([showLinkTarget]), as hovering shows on a desktop.
+  static void pressed(BuildContext context, String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !isMailLinkAllowed(uri)) return;
+    _scope(context)?.onPress(url);
+  }
+
   @override
   State<OriginalView> createState() => _OriginalViewState();
 }
@@ -177,6 +185,11 @@ class _OriginalViewState extends State<OriginalView> {
         onClicked: (link) => _open(link, clicked: true),
         onUnavailable: _unavailable,
         onKey: _gate.pressed,
+        onPress: (link) => showLinkTarget(
+          context,
+          link,
+          onOpen: () => _open(link, clicked: true),
+        ),
         child: FutureBuilder<OriginalDoc>(
           future: widget.original,
           builder: (context, snap) {
@@ -279,6 +292,7 @@ class _OriginalPaperScope extends InheritedWidget {
     required this.onClicked,
     required this.onUnavailable,
     required this.onKey,
+    required this.onPress,
     required super.child,
   });
 
@@ -286,6 +300,7 @@ class _OriginalPaperScope extends InheritedWidget {
   final ValueChanged<String> onClicked;
   final VoidCallback onUnavailable;
   final VoidCallback onKey;
+  final ValueChanged<String> onPress;
 
   @override
   bool updateShouldNotify(_OriginalPaperScope old) => old.onHeight != onHeight;
@@ -337,6 +352,16 @@ const _watchHeight = '''
       PiumaHover.postMessage(a ? a.href : '');
     }, true);
   }
+  // A long press on a link (a right click with a mouse): the app shows
+  // where it goes, in place of the web view's own menu.
+  if (window.PiumaPress) {
+    document.addEventListener('contextmenu', function (e) {
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (!a || !e.isTrusted) return;
+      e.preventDefault();
+      PiumaPress.postMessage(a.href);
+    }, true);
+  }
   // Enter or Space on a link, pressed by the person (a script's made-up
   // event isn't trusted): its navigation may open, as after a click.
   if (window.PiumaKey) {
@@ -384,6 +409,15 @@ class _WebPaperState extends State<_WebPaper> {
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..addJavaScriptChannel('PiumaPaper', onMessageReceived: _onReport)
     ..addJavaScriptChannel('PiumaHover', onMessageReceived: _onHover)
+    ..addJavaScriptChannel(
+      'PiumaPress',
+      onMessageReceived: (m) {
+        final url = m.message;
+        if (mounted && url.isNotEmpty && url.length <= 2048) {
+          OriginalView.pressed(context, url);
+        }
+      },
+    )
     ..addJavaScriptChannel(
       'PiumaKey',
       onMessageReceived: (_) {

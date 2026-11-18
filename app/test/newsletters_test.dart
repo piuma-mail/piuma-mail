@@ -258,6 +258,32 @@ void main() {
     expect(find.text('Unsubscribe'), findsOneWidget);
   });
 
+  testWidgets('on the phone a mailto unsubscribe shows its message too', (
+    tester,
+  ) async {
+    final source = await _pump(tester, phone: true);
+    source.leavable = (row) => row.subject == 'Dinner on Friday?';
+    source.leaveBy = const UnsubscribeInfo(
+      UnsubscribeKind.mail,
+      'leave@posta.example',
+      'Unsubscribe me',
+      'id=7',
+    );
+    await tester.tap(find.text('Dinner on Friday?').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('More actions').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unsubscribe'));
+    await tester.pumpAndSettle();
+    expect(find.text('To: leave@posta.example'), findsOneWidget);
+    expect(find.text('Subject: Unsubscribe me'), findsOneWidget);
+    expect(find.text('id=7'), findsOneWidget);
+    expect(source.unsubscribed, isEmpty);
+    await tester.tap(find.text('Unsubscribe').last);
+    await tester.pumpAndSettle();
+    expect(source.unsubscribed.single.subject, 'Dinner on Friday?');
+  });
+
   testWidgets('on the phone a tile opens Newsletters, and Back returns', (
     tester,
   ) async {
