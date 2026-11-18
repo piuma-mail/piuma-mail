@@ -15,6 +15,8 @@ use lettre::message::{Attachment, Body, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
+use crate::compose_image::{self, InlineImage};
+use crate::mdn::{DispositionNotificationTo, Importance, XPriority};
 use crate::rich::{self, Mark};
 use crate::signature::{self, Signature, LOGO_CID};
 
@@ -90,6 +92,16 @@ pub struct Draft {
     /// Bold, italic and links over [body]; with them, or with a list or a
     /// quote in it, the email also gets an HTML version.
     pub marks: Vec<Mark>,
+    /// Pictures inside the text, one for each
+    /// [`compose_image::PLACEHOLDER`] in [body], in order.
+    pub images: Vec<InlineImage>,
+    /// Goes as plain text only (`format=flowed`): no HTML version, the
+    /// formatting left out and any picture attached as a file.
+    pub plain_text: bool,
+    /// Asks for a read receipt (`Disposition-Notification-To`).
+    pub read_receipt: bool,
+    /// Marked important (`Importance: high`, `X-Priority: 1`).
+    pub high_priority: bool,
 }
 
 /// A file attached to a draft.
@@ -168,9 +180,13 @@ impl fmt::Debug for Ready {
 
 /// Builds a draft into the message that will go out.
 pub fn ready(draft: &Draft) -> Result<Ready> {
-    let message = build(draft)?;
+    Ok(ready_from(&build(draft)?, &draft.from_email))
+}
+
+/// A built message, ready to go; `from` when its envelope names nobody.
+pub(crate) fn ready_from(message: &Message, from: &str) -> Ready {
     let envelope = message.envelope();
-    Ok(Ready {
+    Ready {
         message_id: message
             .headers()
             .get_raw("Message-ID")
@@ -179,10 +195,10 @@ pub fn ready(draft: &Draft) -> Result<Ready> {
         from: envelope
             .from()
             .map(ToString::to_string)
-            .unwrap_or_else(|| draft.from_email.clone()),
+            .unwrap_or_else(|| from.to_owned()),
         recipients: envelope.to().iter().map(ToString::to_string).collect(),
         raw: message.formatted(),
-    })
+    }
 }
 
 /// What happened after a successful send.
@@ -263,9 +279,45 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
     if !draft.references.is_empty() {
         b = b.references(draft.references.join(" "));
     }
+    if draft.read_receipt {
+        b = b.header(DispositionNotificationTo(from.to_string()));
+    }
+    if draft.high_priority {
+        b = b.header(Importance("high".into()));
+        b = b.header(XPriority("1 (Highest)".into()));
+    }
+    if unsent && draft.plain_text {
+        b = b.header(PiumaPlain("1".into()));
+    }
     let body = draft.body.replace("\r\n", "\n");
     let sig = draft.signature.as_ref().filter(|s| !s.lines().is_empty());
-    let formatted = rich::is_formatted(signature::split_quote(&body).0, &draft.marks);
+    // Each picture with its Content-ID; those with no place in the text,
+    // and every one in plain text, go as files.
+    let placed = body.matches(compose_image::PLACEHOLDER).count();
+    let mut images: Vec<InlineImage> = Vec::new();
+    let mut files = draft.files.clone();
+    for (i, image) in draft.images.iter().enumerate() {
+        if draft.plain_text || i >= placed {
+            files.push(OutgoingFile {
+                name: image.name.clone(),
+                mime: image.mime.clone(),
+                data: image.data.clone(),
+            });
+        } else {
+            images.push(InlineImage {
+                cid: if image.cid.is_empty() {
+                    compose_image::new_cid(i)
+                } else {
+                    image.cid.clone()
+                },
+                ..image.clone()
+            });
+        }
+    }
+    let own = signature::split_quote(&body).0;
+    let formatted = !draft.plain_text
+        && (rich::is_formatted(own, &draft.marks)
+            || (!images.is_empty() && own.contains(compose_image::PLACEHOLDER)));
     if let Some(marks) =
         rich::encode(&draft.marks).filter(|m| unsent && formatted && m.len() <= rich::HEADER_MAX)
     {
@@ -289,21 +341,37 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
                         ),
                 ),
         ),
+        _ if draft.plain_text => {
+            let text = plain_text(&compose_image::without(&body), sig, &[], unsent);
+            if unsent {
+                Content::Plain(text)
+            } else {
+                Content::Flowed(crate::flowed::encode(&text))
+            }
+        }
         (None, None) if !formatted => Content::Plain(body),
-        (sig, None) => Content::Rich(rich_body(&body, sig, &draft.marks, unsent)),
+        (sig, None) => Content::Rich(rich_body(&body, sig, &draft.marks, &images, unsent)),
     };
-    let built = if draft.files.is_empty() {
+    let flowed = || {
+        ContentType::parse("text/plain; charset=utf-8; format=flowed")
+            .map_err(|e| SendError::Build(e.to_string()))
+    };
+    let built = if files.is_empty() {
         match content {
             Content::Plain(text) => b.header(ContentType::TEXT_PLAIN).body(text),
+            Content::Flowed(text) => b.header(flowed()?).body(text),
             Content::Rich(rich) => b.multipart(rich),
         }
     } else {
         let mixed = match content {
             Content::Plain(text) => MultiPart::mixed().singlepart(SinglePart::plain(text)),
+            Content::Flowed(text) => {
+                MultiPart::mixed().singlepart(SinglePart::builder().header(flowed()?).body(text))
+            }
             Content::Rich(rich) => MultiPart::mixed().multipart(rich),
         };
         let mut mixed = mixed;
-        for file in &draft.files {
+        for file in &files {
             let kind = ContentType::parse(&file.mime)
                 .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
             mixed = mixed.singlepart(
@@ -317,8 +385,31 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
 
 enum Content {
     Plain(String),
+    /// Plain text only, already in `format=flowed` lines.
+    Flowed(String),
     Rich(MultiPart),
 }
+
+/// A saved draft written as plain text only, so it opens again so.
+#[derive(Clone)]
+struct PiumaPlain(String);
+
+impl Header for PiumaPlain {
+    fn name() -> HeaderName {
+        HeaderName::new_from_ascii_str(PLAIN_HEADER)
+    }
+
+    fn parse(s: &str) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self(s.to_owned()))
+    }
+
+    fn display(&self) -> HeaderValue {
+        HeaderValue::new(Self::name(), self.0.clone())
+    }
+}
+
+/// The header a saved draft written as plain text only carries.
+pub const PLAIN_HEADER: &str = "X-Piuma-Plain";
 
 /// Where a saved draft keeps its bold, italic and links.
 #[derive(Clone)]
@@ -338,23 +429,38 @@ impl Header for PiumaFormat {
     }
 }
 
-/// The text with its formatting and the signature after it (above any
-/// quote), in both versions: plain text, and HTML with the logo inside
-/// the message. A draft kept [unsent] keeps its quote bars in the plain
-/// text, so it opens again as it was written.
-fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) -> MultiPart {
+/// The plain-text copy of `body`: the person's text (quote bars as "> ",
+/// pictures by name), the signature, then any quote. A draft kept
+/// [unsent] keeps its quote bars and pictures in place, so it opens again
+/// as it was written.
+fn plain_text(body: &str, sig: Option<&Signature>, images: &[InlineImage], unsent: bool) -> String {
     let (own, quote) = signature::split_quote(body);
     let own = own.trim_end();
     let gap = if quote.is_empty() { "" } else { "\n\n" };
     let own_text = if unsent {
         own.to_owned()
     } else {
-        rich::plain(own)
+        compose_image::plain(&rich::plain(own), images)
     };
-    let text = match sig {
+    match sig {
         Some(sig) => format!("{own_text}\n\n{}{gap}{quote}", sig.text()),
         None => format!("{own_text}{gap}{quote}"),
-    };
+    }
+}
+
+/// The text with its formatting and pictures and the signature after it
+/// (above any quote), in both versions: plain text, and HTML with the
+/// pictures and the logo inside the message.
+fn rich_body(
+    body: &str,
+    sig: Option<&Signature>,
+    marks: &[Mark],
+    images: &[InlineImage],
+    unsent: bool,
+) -> MultiPart {
+    let (own, quote) = signature::split_quote(body);
+    let own = own.trim_end();
+    let text = plain_text(body, sig, images, unsent);
     let own_html = if rich::is_formatted(own, marks) {
         rich::to_html(own, marks)
     } else {
@@ -362,7 +468,7 @@ fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) 
     };
     let html = format!(
         "<div style=\"font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55\">{}{}{}</div>",
-        own_html,
+        compose_image::html(&own_html, images),
         sig.map(Signature::html).unwrap_or_default(),
         if quote.is_empty() {
             String::new()
@@ -375,16 +481,28 @@ fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) 
     );
     let html_part = SinglePart::html(html);
     let alternative = MultiPart::alternative().singlepart(SinglePart::plain(text));
-    match sig.map(|s| (&s.logo, s.template)) {
-        Some((Some(logo), signature::Template::Logo)) => {
-            let kind = ContentType::parse(&logo.mime)
-                .unwrap_or_else(|_| ContentType::parse("image/png").unwrap());
-            alternative.multipart(MultiPart::related().singlepart(html_part).singlepart(
-                Attachment::new_inline(LOGO_CID.to_string()).body(logo.data.clone(), kind),
-            ))
-        }
-        _ => alternative.singlepart(html_part),
+    // The pictures of the text, then the signature's logo.
+    let mut inside: Vec<(String, &str, &[u8])> = images
+        .iter()
+        .map(|i| (i.cid.clone(), i.mime.as_str(), i.data.as_slice()))
+        .collect();
+    if let Some((Some(logo), signature::Template::Logo)) = sig.map(|s| (&s.logo, s.template)) {
+        inside.push((
+            LOGO_CID.to_string(),
+            logo.mime.as_str(),
+            logo.data.as_slice(),
+        ));
     }
+    if inside.is_empty() {
+        return alternative.singlepart(html_part);
+    }
+    let mut related = MultiPart::related().singlepart(html_part);
+    for (cid, mime, data) in inside {
+        let kind =
+            ContentType::parse(mime).unwrap_or_else(|_| ContentType::parse("image/png").unwrap());
+        related = related.singlepart(Attachment::new_inline(cid).body(data.to_vec(), kind));
+    }
+    alternative.multipart(related)
 }
 
 fn mailbox(name: &str, email: &str) -> Result<Mailbox> {

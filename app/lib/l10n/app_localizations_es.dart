@@ -6133,4 +6133,160 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## El correo, hecho ligero\n- Diseños originales con desplazamiento único y control de imágenes\n- Barra de formato y acceso al editor completo en las respuestas\n- Gestos de deslizamiento horizontal más precisos\n- Avisos de remitente para marcas suplantadas y dominios similares\n- Exportación CSV mensual de la Bóveda con NIF/IVA del comercio';
+
+  @override
+  String get composeOptions => 'Opciones';
+
+  @override
+  String get composePlainText => 'Texto sin formato';
+
+  @override
+  String get composeHighPriority => 'Prioridad alta';
+
+  @override
+  String get composeReadReceipt => 'Pedir confirmación de lectura';
+
+  @override
+  String get composePlainTitle => '¿Cambiar a texto sin formato?';
+
+  @override
+  String get composePlainBody =>
+      'El texto sin formato no tiene negrita, cursiva, enlaces ni imágenes. Los enlaces conservan su dirección entre paréntesis y las imágenes se adjuntan como archivos.';
+
+  @override
+  String get composePlainConfirm => 'Cambiar a texto sin formato';
+
+  @override
+  String get sendForgotAttachmentTitle => '¿Olvidaste el adjunto?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Tu mensaje menciona un adjunto, pero no hay nada adjunto.';
+
+  @override
+  String get sendNoSubjectTitle => '¿Enviar sin asunto?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Un asunto ayuda a encontrar tu mensaje más tarde.';
+
+  @override
+  String get sendAddSubject => 'Añadir un asunto';
+
+  @override
+  String get sendAnyway => 'Enviar de todos modos';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name es demasiado grande: los adjuntos pueden sumar como máximo $size.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name es demasiado grande para ir en el texto.';
+  }
+
+  @override
+  String get pastedImage => 'La imagen pegada';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count direcciones',
+      one: '1 dirección',
+      zero: 'Ninguna dirección',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Grupo';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender pidió que se le avise cuando leas este mensaje.';
+  }
+
+  @override
+  String get readReceiptSend => 'Enviar confirmación';
+
+  @override
+  String get readReceiptDontSend => 'No enviar';
+
+  @override
+  String get readReceiptNever => 'Nunca para este remitente';
+
+  @override
+  String get readReceiptSent => 'Confirmación enviada';
+
+  @override
+  String get readReceiptFailed =>
+      'No se pudo enviar la confirmación. Inténtalo más tarde.';
+
+  @override
+  String get highPriority => 'Prioridad alta';
+
+  @override
+  String get repliesTitle => 'Respuestas';
+
+  @override
+  String get replyBelowQuote => 'Responder debajo de la cita';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Desactivado, las respuestas empiezan encima del mensaje citado.';
+
+  @override
+  String get quoteSelection => 'Citar solo las palabras seleccionadas';
+
+  @override
+  String get quoteSelectionHint =>
+      'Con palabras seleccionadas en un mensaje, Responder cita solo esas.';
+
+  @override
+  String get plainTextTitle => 'Mensajes nuevos en texto sin formato';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · los mensajes nuevos empiezan en texto sin formato';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Grupos de contactos';
+
+  @override
+  String get contactGroupsHint =>
+      'Escribe el nombre de un grupo en Para, Cc o Cco para añadir a todos.';
+
+  @override
+  String get contactGroupNew => 'Nuevo grupo';
+
+  @override
+  String get contactGroupUntitled => 'Grupo sin nombre';
+
+  @override
+  String get contactGroupName => 'Nombre del grupo';
+
+  @override
+  String get contactGroupAddresses => 'Direcciones';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Una por línea, o separadas por comas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Eliminar $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insertar imagen';
+
+  @override
+  String get composePastePicture => 'Pegar imagen';
+
+  @override
+  String get noPictureToPaste => 'No hay ninguna imagen en el portapapeles.';
 }

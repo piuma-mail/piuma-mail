@@ -50,6 +50,11 @@ cd ../wear && dart format lib test && flutter analyze && flutter test   # the wa
 - **Wear OS watch:** `wear/` is a small Flutter app with no engine of its own: the phone app sends it the inbox over the watch connection (`WatchLink.kt`, `app/rust/src/watch.rs`) and does what its buttons ask. It shares the phone app's application id and key, as Wear OS requires. `cd wear && flutter test`; to try it, start a Wear OS emulator (Round, API 33 or later), pair it with a phone or phone emulator through the Wear OS app, then `flutter run -d <watch>` with the phone app installed on the phone. Its icons and tokens come from `tools/gen_icons.py` and `tools/gen_tokens.py`, like the phone's.
 - **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without them, release builds keep the local debug key. The "Release" workflow builds the same APK, with the key from repository secrets, and attaches it to the GitHub prerelease.
 
+## Platform differences in compose
+
+- **Spell check** uses the platform's own checker, in the language the text is written in (one of the app's six, detected by the engine, else the app's language): Android and, through Flutter, iOS and macOS. Flutter has no spell checker on Windows and Linux yet, so there the body and subject are not checked; nothing else is needed to build.
+- **Pasting a picture** into the text reads the system clipboard through the engine on Windows, macOS and Linux (`arboard`; on Linux it uses the X11 clipboard, which XWayland provides). On Android, pictures come from the keyboard (Gboard's clipboard, GIFs, stickers) through the text field. iOS is not wired yet.
+
 ## License and DCO sign-off
 
 - Every contribution is released under GPL-3.0-or-later plus the additional app store permission described in [`LICENSE-APPSTORE.md`](LICENSE-APPSTORE.md).

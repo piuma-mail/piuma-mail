@@ -6161,4 +6161,160 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
+
+  @override
+  String get composeOptions => 'Opzioni';
+
+  @override
+  String get composePlainText => 'Testo semplice';
+
+  @override
+  String get composeHighPriority => 'Priorità alta';
+
+  @override
+  String get composeReadReceipt => 'Chiedi conferma di lettura';
+
+  @override
+  String get composePlainTitle => 'Passare al testo semplice?';
+
+  @override
+  String get composePlainBody =>
+      'Il testo semplice non ha grassetto, corsivo, link né immagini. I link tengono l’indirizzo tra parentesi e le immagini vengono allegate come file.';
+
+  @override
+  String get composePlainConfirm => 'Passa al testo semplice';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Hai dimenticato l’allegato?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Il messaggio parla di un allegato, ma non c’è nessun file allegato.';
+
+  @override
+  String get sendNoSubjectTitle => 'Inviare senza oggetto?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Un oggetto aiuta a ritrovare il messaggio più avanti.';
+
+  @override
+  String get sendAddSubject => 'Aggiungi un oggetto';
+
+  @override
+  String get sendAnyway => 'Invia comunque';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name è troppo grande: gli allegati possono arrivare a $size in tutto.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name è troppo grande per stare nel testo.';
+  }
+
+  @override
+  String get pastedImage => 'L’immagine incollata';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count indirizzi',
+      one: '1 indirizzo',
+      zero: 'Nessun indirizzo',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Gruppo';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender ha chiesto di sapere quando leggi questo messaggio.';
+  }
+
+  @override
+  String get readReceiptSend => 'Invia conferma';
+
+  @override
+  String get readReceiptDontSend => 'Non inviare';
+
+  @override
+  String get readReceiptNever => 'Mai per questo mittente';
+
+  @override
+  String get readReceiptSent => 'Conferma inviata';
+
+  @override
+  String get readReceiptFailed =>
+      'Non sono riuscito a inviare la conferma. Riprova più tardi.';
+
+  @override
+  String get highPriority => 'Priorità alta';
+
+  @override
+  String get repliesTitle => 'Risposte';
+
+  @override
+  String get replyBelowQuote => 'Rispondi sotto la citazione';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Se spento, le risposte iniziano sopra il messaggio citato.';
+
+  @override
+  String get quoteSelection => 'Cita solo le parole selezionate';
+
+  @override
+  String get quoteSelectionHint =>
+      'Con delle parole selezionate in un messaggio, Rispondi cita solo quelle.';
+
+  @override
+  String get plainTextTitle => 'Nuovi messaggi in testo semplice';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · i nuovi messaggi partono in testo semplice';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Gruppi di contatti';
+
+  @override
+  String get contactGroupsHint =>
+      'Scrivi il nome di un gruppo in A, Cc o Ccn per aggiungere tutti i suoi indirizzi.';
+
+  @override
+  String get contactGroupNew => 'Nuovo gruppo';
+
+  @override
+  String get contactGroupUntitled => 'Gruppo senza nome';
+
+  @override
+  String get contactGroupName => 'Nome del gruppo';
+
+  @override
+  String get contactGroupAddresses => 'Indirizzi';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Uno per riga, o separati da virgole.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Elimina $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Inserisci immagine';
+
+  @override
+  String get composePastePicture => 'Incolla immagine';
+
+  @override
+  String get noPictureToPaste => 'Non c’è nessuna immagine negli appunti.';
 }

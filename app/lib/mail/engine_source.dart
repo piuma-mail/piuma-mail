@@ -24,6 +24,7 @@ import '../engine/api/labels.dart' as lbl;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
+import 'engine_compose.dart';
 import 'mail_source.dart';
 import 'recipient_suggestions.dart';
 import 'on_device_model.dart';
@@ -39,7 +40,7 @@ void refreshAndroidNotices(engine.SyncEvent e) {
 }
 
 /// The real thing: mail from the Rust engine.
-class EngineMailSource extends MailSource {
+class EngineMailSource extends MailSource with EngineCompose {
   EngineMailSource() {
     _reloadAccounts();
     _readFeatures();
@@ -2570,7 +2571,18 @@ class EngineMailSource extends MailSource {
           null => null,
         },
         marks: _engineMarks(draft.body, draft.marks),
+        images: [
+          for (final i in draft.images)
+            engine.InlineImageData(name: i.name, mime: i.mime, data: i.data),
+        ],
+        plainText: draft.plainText,
+        readReceipt: draft.readReceipt,
+        highPriority: draft.highPriority,
       );
+
+  static List<DraftImage> _draftImages(List<engine.InlineImageData> images) => [
+    for (final i in images) DraftImage(i.name, i.mime, i.data),
+  ];
 
   @override
   Future<int> draftCount() =>
@@ -2610,6 +2622,10 @@ class EngineMailSource extends MailSource {
       signaturePicked: m.signaturePicked,
       copy: DraftCopy(row.accountId, row.mailbox, row.uid),
       marks: _dartMarks(m.body.replaceAll('\r\n', '\n'), m.marks),
+      images: _draftImages(m.images),
+      plainText: m.plainText,
+      readReceipt: m.readReceipt,
+      highPriority: m.highPriority,
     );
   }
 
@@ -2745,6 +2761,10 @@ class EngineMailSource extends MailSource {
             ? null
             : DraftCopy(copy.accountId, copy.mailbox, copy.uid),
         marks: _dartMarks(m.body, m.marks),
+        images: _draftImages(m.images),
+        plainText: m.plainText,
+        readReceipt: m.readReceipt,
+        highPriority: m.highPriority,
       );
     } finally {
       _changes.add(null);

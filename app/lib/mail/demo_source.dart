@@ -35,8 +35,23 @@ class DemoMailSource extends MailSource {
     this.riskyFiles = false,
     this.impostor = false,
     bool away = false,
+    this.asks = false,
+    bool contactGroups = false,
   }) : now = now ?? DateTime.now(),
        _crashWaiting = crashed {
+    if (contactGroups) {
+      // A group typed in To brings every address.
+      saveContactGroup(
+        const ContactGroup(
+          name: 'Book club',
+          addresses: [
+            'Giulia Romano <giulia.romano@posta.it>',
+            'Sara Conti <sara@studio.it>',
+            'Luca Bianchi <luca.bianchi@example.org>',
+          ],
+        ),
+      );
+    }
     if (away) {
       // Work's, as on `RemindAwayPrintToApprove`.
       _away[2] = AwayMessage(
@@ -623,6 +638,27 @@ class DemoMailSource extends MailSource {
 
   /// "PayPal" writing from paypa1.com, as on `ProtectionToApprove`.
   final bool impostor;
+
+  /// Mail in the inbox marked high priority, asking for a read receipt.
+  final bool asks;
+
+  /// The read receipts answered: the row, sent or not, and "never".
+  final receiptAnswers = <(MailRow, bool, bool)>[];
+
+  @override
+  Future<MessageAsks> messageAsks(MailRow row) async =>
+      !asks ||
+          row.folder != MailFolder.inbox ||
+          receiptAnswers.any((a) => a.$1.key == row.key)
+      ? const MessageAsks()
+      : MessageAsks(readReceiptTo: row.fromEmail, highPriority: true);
+
+  @override
+  Future<void> answerReadReceipt(
+    MailRow row, {
+    required bool send,
+    bool never = false,
+  }) async => receiptAnswers.add((row, send, never));
   static const impostorSubject = 'Your account has been limited';
 
   /// Older filler rows, to try scrolling a big inbox.

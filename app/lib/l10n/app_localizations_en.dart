@@ -6101,4 +6101,160 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String get composeOptions => 'Options';
+
+  @override
+  String get composePlainText => 'Plain text';
+
+  @override
+  String get composeHighPriority => 'High priority';
+
+  @override
+  String get composeReadReceipt => 'Ask for a read receipt';
+
+  @override
+  String get composePlainTitle => 'Switch to plain text?';
+
+  @override
+  String get composePlainBody =>
+      'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.';
+
+  @override
+  String get composePlainConfirm => 'Switch to plain text';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Forgot the attachment?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Your message mentions an attachment, but nothing is attached.';
+
+  @override
+  String get sendNoSubjectTitle => 'Send without a subject?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'A subject helps people find your message later.';
+
+  @override
+  String get sendAddSubject => 'Add a subject';
+
+  @override
+  String get sendAnyway => 'Send anyway';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name is too big: attachments can be up to $size in all.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name is too big to go in the text.';
+  }
+
+  @override
+  String get pastedImage => 'The pasted picture';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count addresses',
+      one: '1 address',
+      zero: 'No addresses',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Group';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender asked to be told when you read this.';
+  }
+
+  @override
+  String get readReceiptSend => 'Send receipt';
+
+  @override
+  String get readReceiptDontSend => 'Don’t send';
+
+  @override
+  String get readReceiptNever => 'Never for this sender';
+
+  @override
+  String get readReceiptSent => 'Receipt sent';
+
+  @override
+  String get readReceiptFailed =>
+      'The receipt couldn’t be sent. Try again later.';
+
+  @override
+  String get highPriority => 'High priority';
+
+  @override
+  String get repliesTitle => 'Replies';
+
+  @override
+  String get replyBelowQuote => 'Reply below the quote';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Off, replies start above the quoted message.';
+
+  @override
+  String get quoteSelection => 'Quote only the selected words';
+
+  @override
+  String get quoteSelectionHint =>
+      'With words selected in a message, Reply quotes just them.';
+
+  @override
+  String get plainTextTitle => 'New messages in plain text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · new messages start as plain text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Contact groups';
+
+  @override
+  String get contactGroupsHint =>
+      'Type a group’s name in To, Cc or Bcc to add everyone in it.';
+
+  @override
+  String get contactGroupNew => 'New group';
+
+  @override
+  String get contactGroupUntitled => 'Untitled group';
+
+  @override
+  String get contactGroupName => 'Group name';
+
+  @override
+  String get contactGroupAddresses => 'Addresses';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'One per line, or separated by commas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Delete $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insert picture';
+
+  @override
+  String get composePastePicture => 'Paste picture';
+
+  @override
+  String get noPictureToPaste => 'There’s no picture on the clipboard.';
 }

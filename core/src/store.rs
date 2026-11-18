@@ -932,6 +932,40 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY (account, mailbox, uid, part) REFERENCES attachment(account, mailbox, uid, part) ON DELETE CASCADE
     );
 "#,
+    r#"
+    -- What a kept message asks of its reader, read with its body: a read
+    -- receipt (RFC 8098) and where it would go, and its priority.
+    -- `receipt` is 0 while unanswered, 1 once sent, 2 once declined.
+    CREATE TABLE IF NOT EXISTS message_asks (
+        account            INTEGER NOT NULL,
+        mailbox            TEXT NOT NULL,
+        uid                INTEGER NOT NULL,
+        receipt_to         TEXT,
+        return_path        TEXT,
+        original_recipient TEXT,
+        high_priority      INTEGER NOT NULL DEFAULT 0,
+        receipt            INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (account, mailbox, uid),
+        FOREIGN KEY (account, mailbox, uid) REFERENCES message(account, mailbox, uid) ON DELETE CASCADE
+    );
+    -- Senders an account never sends read receipts to.
+    CREATE TABLE IF NOT EXISTS receipt_never (
+        account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        email   TEXT NOT NULL COLLATE NOCASE,
+        PRIMARY KEY (account, email)
+    );
+    -- Contact groups: a name for a list of addresses, typed in To, Cc or
+    -- Bcc to add them all. A row is named by a random `uid` and carries
+    -- `updated_at` and a `deleted` mark, so a per-row merge (the sync
+    -- space's format 2) can carry it between devices later.
+    CREATE TABLE IF NOT EXISTS contact_group (
+        uid        TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        addresses  TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL,
+        deleted    INTEGER NOT NULL DEFAULT 0
+    );
+"#,
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
@@ -1306,6 +1340,8 @@ pub struct Body {
     /// What its server found about the sender, read as it is kept: see
     /// [`Store::sender_verified`].
     pub auth: crate::sender_auth::Trail,
+    /// What it asks of its reader: a read receipt, its priority.
+    pub asks: crate::mdn::Asks,
 }
 
 /// A picture that travels inside a message, shown by its HTML as
@@ -3338,6 +3374,28 @@ impl Store {
                 checked.sent_by.unwrap_or_default(),
             ],
         )?;
+        // Answered or not, a receipt asked for stays so when the body is
+        // kept again.
+        let asks = &body.asks;
+        tx.execute(
+            "INSERT INTO message_asks (account, mailbox, uid, receipt_to, return_path,
+                 original_recipient, high_priority)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+              WHERE EXISTS (SELECT 1 FROM message WHERE account = ?1 AND mailbox = ?2 AND uid = ?3)
+             ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                 receipt_to = excluded.receipt_to, return_path = excluded.return_path,
+                 original_recipient = excluded.original_recipient,
+                 high_priority = excluded.high_priority",
+            params![
+                account.0,
+                mailbox,
+                uid,
+                asks.receipt_to,
+                asks.return_path,
+                asks.original_recipient,
+                asks.high_priority,
+            ],
+        )?;
         tx.execute(
             "DELETE FROM inline_image WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
             params![account.0, mailbox, uid],
@@ -4502,6 +4560,194 @@ impl Store {
         self.conn.execute(
             "INSERT OR REPLACE INTO setting (key, value) VALUES (?1, ?2)",
             params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// What a kept message asks of its reader; nothing until its body is
+    /// kept.
+    pub fn message_asks(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<(crate::mdn::Asks, crate::mdn::Answer)> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT receipt_to, return_path, original_recipient, high_priority, receipt
+                   FROM message_asks WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![account.0, mailbox, uid],
+                |r| {
+                    Ok((
+                        crate::mdn::Asks {
+                            receipt_to: r.get(0)?,
+                            return_path: r.get(1)?,
+                            original_recipient: r.get(2)?,
+                            high_priority: r.get(3)?,
+                        },
+                        crate::mdn::Answer::from_code(r.get(4)?),
+                    ))
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Where a read receipt for a kept message would go, when the reader
+    /// should offer one: asked for, safe to answer (it goes where the
+    /// message came back from), not answered yet, not in spam, not from
+    /// one of the account's own addresses, and not from a sender the
+    /// account never sends them to.
+    pub fn receipt_offered(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<Option<String>> {
+        if crate::mdn::is_junk_mailbox(mailbox) {
+            return Ok(None);
+        }
+        let (asks, answer) = self.message_asks(account, mailbox, uid)?;
+        if answer != crate::mdn::Answer::Unanswered {
+            return Ok(None);
+        }
+        let Some(to) = asks.receipt_offered().map(str::to_owned) else {
+            return Ok(None);
+        };
+        if matches!(
+            self.folder_of(account, mailbox, uid)?,
+            Some(Folder::Sent | Folder::Drafts)
+        ) {
+            return Ok(None);
+        }
+        let own = self.own_addresses(account)?;
+        if own.iter().any(|o| o.eq_ignore_ascii_case(&to)) {
+            return Ok(None);
+        }
+        let never: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM receipt_never WHERE account = ?1 AND email = ?2)",
+            params![account.0, to],
+            |r| r.get(0),
+        )?;
+        Ok((!never).then_some(to))
+    }
+
+    /// Keeps the person's answer to a read receipt: sent, or not; with
+    /// [never], the account never offers one to that address again.
+    pub fn answer_receipt(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        answer: crate::mdn::Answer,
+        never: bool,
+    ) -> Result<()> {
+        let (asks, _) = self.message_asks(account, mailbox, uid)?;
+        self.conn.execute(
+            "UPDATE message_asks SET receipt = ?4 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![account.0, mailbox, uid, answer.code()],
+        )?;
+        if let (true, Some(to)) = (never, asks.receipt_to) {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO receipt_never (account, email) VALUES (?1, ?2)",
+                params![account.0, to.to_lowercase()],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The message a read receipt answers, and the account's address it
+    /// was written to (the receipt goes from it).
+    pub fn receipt_original(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<Option<(crate::mdn::Original, Option<String>)>> {
+        let (asks, _) = self.message_asks(account, mailbox, uid)?;
+        let row = self
+            .conn
+            .query_row(
+                "SELECT subject, message_id, refs FROM message
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![account.0, mailbox, uid],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((subject, message_id, refs)) = row else {
+            return Ok(None);
+        };
+        let own = self.own_addresses(account)?;
+        let to = crate::groups::written_to(&own, &self.recipients(account, mailbox, uid)?)
+            .map(str::to_owned);
+        Ok(Some((
+            crate::mdn::Original {
+                subject,
+                message_id,
+                references: refs.split_whitespace().map(str::to_owned).collect(),
+                original_recipient: asks.original_recipient,
+            },
+            to,
+        )))
+    }
+
+    /// Every contact group, by name.
+    pub fn contact_groups(&self) -> Result<Vec<crate::contact_groups::ContactGroup>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, name, addresses FROM contact_group WHERE deleted = 0
+              ORDER BY name COLLATE NOCASE, uid",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(crate::contact_groups::ContactGroup {
+                uid: r.get(0)?,
+                name: r.get(1)?,
+                addresses: serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default(),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Keeps a contact group, a new one when its uid is empty, with its
+    /// addresses tidied. Returns its uid.
+    pub fn save_contact_group(
+        &self,
+        group: &crate::contact_groups::ContactGroup,
+        now: i64,
+    ) -> Result<String> {
+        let uid = if group.uid.is_empty() {
+            crate::contact_groups::new_uid()
+        } else {
+            group.uid.clone()
+        };
+        let addresses = crate::contact_groups::tidy(&group.addresses);
+        self.conn.execute(
+            "INSERT INTO contact_group (uid, name, addresses, updated_at, deleted)
+             VALUES (?1, ?2, ?3, ?4, 0)
+             ON CONFLICT (uid) DO UPDATE SET name = excluded.name,
+                 addresses = excluded.addresses, updated_at = excluded.updated_at, deleted = 0",
+            params![
+                uid,
+                group.name.trim(),
+                serde_json::to_string(&addresses).unwrap_or_else(|_| "[]".into()),
+                now,
+            ],
+        )?;
+        Ok(uid)
+    }
+
+    /// Deletes a contact group. Its row stays, marked deleted and
+    /// emptied, so a merge with another device sees it went.
+    pub fn delete_contact_group(&self, uid: &str, now: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE contact_group SET deleted = 1, addresses = '[]', updated_at = ?2 WHERE uid = ?1",
+            params![uid, now],
         )?;
         Ok(())
     }
@@ -11072,6 +11318,7 @@ From: <help@bank.example>\r\n\r\nHi";
             calendar: Some("BEGIN:VCALENDAR".into()),
             inline: Vec::new(),
             auth: Default::default(),
+            asks: Default::default(),
         };
         store.set_full_body(a, "INBOX", 1, &body).unwrap();
         assert_eq!(store.full_body(a, "INBOX", 1).unwrap(), Some(body.clone()));
@@ -11672,5 +11919,182 @@ From: <help@bank.example>\r\n\r\nHi";
         }
         // Repeating an empty snapshot remains safe.
         store.take_space_tables(&tables).unwrap();
+    }
+
+    fn asking(receipt_to: &str, return_path: &str) -> Body {
+        Body {
+            text: "Hi".into(),
+            asks: crate::mdn::Asks {
+                receipt_to: Some(receipt_to.into()),
+                return_path: Some(return_path.into()),
+                high_priority: true,
+                original_recipient: None,
+            },
+            ..Body::default()
+        }
+    }
+
+    #[test]
+    fn read_receipts_are_offered_once_and_only_when_safe() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        let mut m = msg(a, 1, 100, false);
+        m.reply.recipients = "a@example.org".into();
+        m.reply.message_id = "<one@example.org>".into();
+        store
+            .upsert_messages(&[m, msg(a, 2, 101, false), msg(a, 3, 102, false)])
+            .unwrap();
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                1,
+                &asking("julia@example.org", "julia@example.org"),
+            )
+            .unwrap();
+        // Asked for somewhere else than where the mail came back from.
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                2,
+                &asking("track@other.example", "julia@example.org"),
+            )
+            .unwrap();
+        assert_eq!(
+            store.receipt_offered(a, "INBOX", 1).unwrap().as_deref(),
+            Some("julia@example.org")
+        );
+        assert_eq!(store.receipt_offered(a, "INBOX", 2).unwrap(), None);
+        assert_eq!(store.receipt_offered(a, "INBOX", 3).unwrap(), None);
+        assert!(store.message_asks(a, "INBOX", 1).unwrap().0.high_priority);
+        assert!(!store.message_asks(a, "INBOX", 3).unwrap().0.high_priority);
+        let (original, from) = store.receipt_original(a, "INBOX", 1).unwrap().unwrap();
+        assert_eq!(original.message_id, "<one@example.org>");
+        assert_eq!(from.as_deref(), Some("a@example.org"));
+
+        // Sent: not offered again, even when the body is kept again.
+        store
+            .answer_receipt(a, "INBOX", 1, crate::mdn::Answer::Sent, false)
+            .unwrap();
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                1,
+                &asking("julia@example.org", "julia@example.org"),
+            )
+            .unwrap();
+        assert_eq!(store.receipt_offered(a, "INBOX", 1).unwrap(), None);
+        assert_eq!(
+            store.message_asks(a, "INBOX", 1).unwrap().1,
+            crate::mdn::Answer::Sent
+        );
+
+        // "Never" for a sender covers that sender's other mail.
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                3,
+                &asking("julia@example.org", "julia@example.org"),
+            )
+            .unwrap();
+        assert!(store.receipt_offered(a, "INBOX", 3).unwrap().is_some());
+        store
+            .answer_receipt(a, "INBOX", 2, crate::mdn::Answer::Declined, true)
+            .unwrap();
+        assert!(store.receipt_offered(a, "INBOX", 3).unwrap().is_some());
+        store
+            .answer_receipt(a, "INBOX", 3, crate::mdn::Answer::Declined, true)
+            .unwrap();
+        let mut again = msg(a, 4, 103, false);
+        again.uid = 4;
+        store.upsert_messages(&[again]).unwrap();
+        store
+            .set_full_body(
+                a,
+                "INBOX",
+                4,
+                &asking("Julia@Example.org", "julia@example.org"),
+            )
+            .unwrap();
+        assert_eq!(store.receipt_offered(a, "INBOX", 4).unwrap(), None);
+
+        // Never in spam.
+        let mut junk = msg(a, 5, 104, false);
+        junk.mailbox = "Junk".into();
+        store.upsert_messages(&[junk]).unwrap();
+        store
+            .set_full_body(a, "Junk", 5, &asking("x@example.org", "x@example.org"))
+            .unwrap();
+        assert_eq!(store.receipt_offered(a, "Junk", 5).unwrap(), None);
+    }
+
+    #[test]
+    fn contact_groups_keep_their_addresses_and_leave_a_mark_when_deleted() {
+        use crate::contact_groups::ContactGroup;
+        let store = Store::open_in_memory().unwrap();
+        let uid = store
+            .save_contact_group(
+                &ContactGroup {
+                    uid: String::new(),
+                    name: " Book club ".into(),
+                    addresses: vec![
+                        "Luca <luca@example.org>, giulia@example.org".into(),
+                        "nope".into(),
+                    ],
+                },
+                100,
+            )
+            .unwrap();
+        store
+            .save_contact_group(
+                &ContactGroup {
+                    uid: String::new(),
+                    name: "Accountants".into(),
+                    addresses: vec!["studio@example.org".into()],
+                },
+                100,
+            )
+            .unwrap();
+        let groups = store.contact_groups().unwrap();
+        assert_eq!(
+            groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(),
+            ["Accountants", "Book club"]
+        );
+        assert_eq!(
+            groups[1].addresses,
+            ["Luca <luca@example.org>", "giulia@example.org"]
+        );
+        // Edited in place.
+        store
+            .save_contact_group(
+                &ContactGroup {
+                    uid: uid.clone(),
+                    name: "Book club".into(),
+                    addresses: vec!["marco@example.org".into()],
+                },
+                200,
+            )
+            .unwrap();
+        assert_eq!(
+            store.contact_groups().unwrap()[1].addresses,
+            ["marco@example.org"]
+        );
+        store.delete_contact_group(&uid, 300).unwrap();
+        assert_eq!(store.contact_groups().unwrap().len(), 1);
+        let (deleted, at): (bool, i64) = store
+            .conn
+            .query_row(
+                "SELECT deleted, updated_at FROM contact_group WHERE uid = ?1",
+                params![uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(deleted);
+        assert_eq!(at, 300);
     }
 }

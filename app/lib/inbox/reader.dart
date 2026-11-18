@@ -33,6 +33,7 @@ import 'print.dart';
 import 'translate_parts.dart';
 import 'message_list.dart' show initials;
 import 'risky_file.dart';
+import 'message_asks.dart';
 import 'sender_warning.dart';
 
 /// Right pane: the message being read, made safe by the engine, or its
@@ -1489,6 +1490,12 @@ class _MessageViewState extends State<MessageView> {
                   onReportSpam: widget.onReportSpam,
                 ),
               ),
+            MessageAsksBar(
+              key: ValueKey(widget.row.key),
+              source: widget.source,
+              row: widget.row,
+              phone: phone,
+            ),
             if (r.hasPrivacyNews || offer || layout)
               Padding(
                 padding: EdgeInsets.only(left: widget.chipIndent, top: 8),

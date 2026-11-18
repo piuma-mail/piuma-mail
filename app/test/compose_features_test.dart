@@ -1,0 +1,472 @@
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:piuma_mail/compose/compose_options.dart';
+import 'package:piuma_mail/compose/compose_pane.dart';
+import 'package:piuma_mail/compose/quoting.dart';
+import 'package:piuma_mail/compose/rich_body.dart';
+import 'package:piuma_mail/compose/send_checks.dart';
+import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/message_asks.dart';
+import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
+import 'package:piuma_mail/main.dart';
+
+final _now = DateTime(2026, 10, 15, 10, 30);
+
+/// A tiny PNG, as a clipboard or a dropped file would hand one.
+final _png = Uint8List.fromList([
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, //
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+]);
+
+/// The demo with a picture on the clipboard.
+class _Clipboard extends DemoMailSource {
+  _Clipboard() : super(now: _now);
+
+  @override
+  Future<DraftImage?> clipboardImage() async =>
+      DraftImage('image.png', 'image/png', _png);
+}
+
+/// A 2 GB video: its size is known, reading it is a failure.
+class _HugeFile extends XFile {
+  _HugeFile() : super('/videos/holiday.mov');
+
+  static bool read = false;
+
+  @override
+  Future<int> length() async => 2 * 1000 * 1000 * 1000;
+
+  @override
+  Future<Uint8List> readAsBytes() async {
+    read = true;
+    throw StateError('a 2 GB file was read');
+  }
+}
+
+Future<DemoMailSource> _pump(
+  WidgetTester tester, {
+  DemoMailSource? demo,
+  bool compose = true,
+  MailRow? open,
+}) async {
+  tester.view.physicalSize = const Size(1440, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final source = demo ?? DemoMailSource(now: _now);
+  await tester.pumpWidget(
+    PiumaApp(
+      home: (_, _) => InboxScreen(
+        source: source,
+        onAddAccount: () {},
+        now: () => _now,
+        initialSelection: open,
+      ),
+    ),
+  );
+  await tester.pump(const Duration(seconds: 2));
+  await tester.pumpAndSettle();
+  if (compose) {
+    await tester.tap(find.text('Compose'));
+    await tester.pumpAndSettle();
+  }
+  return source;
+}
+
+Finder _field(int i) => find
+    .descendant(of: find.byType(ComposePane), matching: find.byType(TextField))
+    .at(i);
+
+/// To, Subject and the text, in that order.
+Future<void> _write(
+  WidgetTester tester, {
+  String subject = 'Mockups approved',
+  String body = 'We start Monday.',
+}) async {
+  await tester.enterText(_field(0), 'luca@studio.it,');
+  await tester.enterText(_field(1), subject);
+  await tester.enterText(_field(2), body);
+  await tester.pump();
+}
+
+/// Send, then past the Undo window.
+Future<void> _sendAndWait(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 11));
+  await tester.pumpAndSettle();
+}
+
+RichBodyController _body(WidgetTester tester) =>
+    tester.widget<TextField>(_field(2)).controller! as RichBodyController;
+
+void main() {
+  group('forgotten attachment', () {
+    test('words in the six languages, not in the quote', () {
+      for (final words in [
+        'The contract is attached.',
+        'Ti mando in allegato il preventivo',
+        'Siehe Anhang',
+        'Voir la pièce jointe',
+        'Te adjunto la factura',
+        'Segue em anexo o recibo',
+      ]) {
+        expect(mentionsAttachment('', words), isTrue, reason: words);
+      }
+      expect(mentionsAttachment('Allegato: preventivo', 'Ciao'), isTrue);
+      expect(mentionsAttachment('', 'See you on Friday'), isFalse);
+      expect(
+        mentionsAttachment(
+          '',
+          'Sounds good.\n\nOn Oct 12, Luca wrote:\n> the file is attached',
+        ),
+        isFalse,
+      );
+      // A reply written under the quote is still read.
+      expect(
+        mentionsAttachment('', 'On Oct 12, Luca wrote:\n> Hi\n\nAttached!'),
+        isTrue,
+      );
+    });
+
+    testWidgets('asks before sending without the file, then sends anyway', (
+      tester,
+    ) async {
+      final source = await _pump(tester);
+      await _write(tester, body: 'Here is the quote, attached.');
+      await tester.tap(find.text('Send'));
+      await tester.pumpAndSettle();
+      expect(find.text('Forgot the attachment?'), findsOneWidget);
+      await tester.tap(find.text('Send anyway'));
+      await _sendAndWait(tester);
+      expect(source.sent.single.body, 'Here is the quote, attached.');
+    });
+
+    testWidgets('"Attach file" goes back to compose and opens the picker', (
+      tester,
+    ) async {
+      var picked = 0;
+      final before = pickFiles;
+      pickFiles = () async {
+        picked++;
+        return const [];
+      };
+      addTearDown(() => pickFiles = before);
+      final source = await _pump(tester);
+      await _write(tester, body: 'Ti mando il preventivo in allegato.');
+      await tester.tap(find.text('Send'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Attach file').last);
+      await tester.pumpAndSettle();
+      expect(picked, 1);
+      expect(find.byType(ComposePane), findsOneWidget);
+      await tester.pump(const Duration(seconds: 15));
+      expect(source.sent, isEmpty);
+    });
+  });
+
+  group('empty subject', () {
+    testWidgets('"Add a subject" keeps the message and goes to Subject', (
+      tester,
+    ) async {
+      final source = await _pump(tester);
+      await _write(tester, subject: '  ');
+      await tester.tap(find.text('Send'));
+      await tester.pumpAndSettle();
+      expect(find.text('Send without a subject?'), findsOneWidget);
+      await tester.tap(find.text('Add a subject'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ComposePane), findsOneWidget);
+      final subject = tester.widget<TextField>(_field(1));
+      expect(subject.focusNode!.hasFocus, isTrue);
+      await tester.pump(const Duration(seconds: 15));
+      expect(source.sent, isEmpty);
+    });
+
+    testWidgets('"Send anyway" sends it', (tester) async {
+      final source = await _pump(tester);
+      await _write(tester, subject: '');
+      await tester.tap(find.text('Send'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send anyway'));
+      await _sendAndWait(tester);
+      expect(source.sent.single.subject, '');
+    });
+  });
+
+  testWidgets('a file too big is refused before it is read', (tester) async {
+    _HugeFile.read = false;
+    final before = pickFiles;
+    pickFiles = () async => [_HugeFile()];
+    addTearDown(() => pickFiles = before);
+    await _pump(tester);
+    await tester.tap(find.byTooltip('Attach file'));
+    await tester.pumpAndSettle();
+    expect(_HugeFile.read, isFalse);
+    expect(
+      find.text(
+        'holiday.mov is too big: attachments can be up to 18 MB in all.',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  group('read receipts', () {
+    Future<(DemoMailSource, MailRow)> open(WidgetTester tester) async {
+      final demo = DemoMailSource(now: _now, asks: true);
+      final first = (await demo.page(0, 1)).first;
+      await _pump(tester, demo: demo, compose: false, open: first);
+      return (demo, first);
+    }
+
+    testWidgets('the reader asks, and Send sends one', (tester) async {
+      final (demo, first) = await open(tester);
+      expect(find.byType(ReadReceiptBand), findsOneWidget);
+      expect(
+        find.text('${first.sender} asked to be told when you read this.'),
+        findsOneWidget,
+      );
+      expect(find.text('High priority'), findsOneWidget);
+      expect(demo.receiptAnswers, isEmpty);
+      await tester.tap(find.text('Send receipt'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadReceiptBand), findsNothing);
+      expect(find.text('Receipt sent'), findsOneWidget);
+      expect(demo.receiptAnswers.single.$2, isTrue);
+    });
+
+    testWidgets('"Never for this sender" declines and remembers', (
+      tester,
+    ) async {
+      final (demo, first) = await open(tester);
+      await tester.tap(find.text('Never for this sender'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadReceiptBand), findsNothing);
+      final (row, send, never) = demo.receiptAnswers.single;
+      expect(row.key, first.key);
+      expect(send, isFalse);
+      expect(never, isTrue);
+    });
+
+    testWidgets('nothing is asked without a request', (tester) async {
+      final demo = DemoMailSource(now: _now);
+      final first = (await demo.page(0, 1)).first;
+      await _pump(tester, demo: demo, compose: false, open: first);
+      expect(find.byType(ReadReceiptBand), findsNothing);
+      expect(find.byType(HighPriorityPill), findsNothing);
+    });
+  });
+
+  group('quoting', () {
+    test('above, below, and only the selected words', () {
+      const body = 'First line.\nSecond line here.';
+      expect(quoteSource(body, 'Second line', trim: true), 'Second line');
+      expect(quoteSource(body, 'Second line', trim: false), body);
+      // A selection from another message counts for nothing.
+      expect(quoteSource(body, 'elsewhere', trim: true), body);
+      final above = replyBody(
+        text: 'Hi',
+        header: 'On Oct 1, Luca wrote:',
+        quoted: quoteLines(body),
+        below: false,
+      );
+      expect(
+        above,
+        'Hi\n\nOn Oct 1, Luca wrote:\n> First line.\n> Second '
+        'line here.',
+      );
+      expect(replyCaret(above), 2);
+      final below = replyBody(
+        text: '',
+        header: 'On Oct 1, Luca wrote:',
+        quoted: quoteLines(body),
+        below: true,
+      );
+      expect(below, startsWith('On Oct 1, Luca wrote:\n> First line.'));
+      expect(replyCaret(below), below.length);
+    });
+
+    testWidgets('Reply writes under the quote when set so', (tester) async {
+      final demo = DemoMailSource(now: _now);
+      await demo.setComposeSettings(const ComposeSettings(replyBelow: true));
+      final first = (await demo.page(0, 1)).first;
+      await _pump(tester, demo: demo, compose: false, open: first);
+      await tester.tap(find.text('Reply'));
+      await tester.pumpAndSettle();
+      final body = _body(tester);
+      expect(body.text, startsWith('On Oct 15, 2026'));
+      expect(body.selection.baseOffset, body.text.length);
+    });
+
+    testWidgets('Reply quotes only the words selected in the reader', (
+      tester,
+    ) async {
+      final demo = DemoMailSource(now: _now);
+      final first = (await demo.page(0, 1)).first;
+      await _pump(tester, demo: demo, compose: false, open: first);
+      readerSelection.value = 'I booked Osteria del Ponte';
+      addTearDown(() => readerSelection.value = null);
+      await tester.tap(find.text('Reply'));
+      await tester.pumpAndSettle();
+      final quoted = _body(tester).text
+          .split('\n')
+          .where((l) => l.startsWith('>'))
+          .toList();
+      expect(quoted, ['> I booked Osteria del Ponte']);
+    });
+  });
+
+  group('contact groups', () {
+    testWidgets('a group typed in To brings every address', (tester) async {
+      await _pump(tester, demo: DemoMailSource(now: _now, contactGroups: true));
+      await tester.enterText(_field(0), 'book club,');
+      await tester.pumpAndSettle();
+      final to = tester.widget<TextField>(_field(0));
+      expect(to.controller!.text, isEmpty);
+      for (final name in ['Giulia Romano', 'Sara Conti', 'Luca Bianchi']) {
+        expect(
+          find.descendant(
+            of: find.byType(ComposePane),
+            matching: find.textContaining(name),
+          ),
+          findsWidgets,
+        );
+      }
+    });
+
+    testWidgets('a group is suggested by its name', (tester) async {
+      await _pump(tester, demo: DemoMailSource(now: _now, contactGroups: true));
+      await tester.enterText(_field(0), 'boo');
+      await tester.pumpAndSettle();
+      expect(find.text('Book club'), findsOneWidget);
+      expect(find.text('3 addresses'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Book club'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(ComposePane),
+          matching: find.textContaining('Sara Conti'),
+        ),
+        findsWidgets,
+      );
+    });
+  });
+
+  group('plain text', () {
+    test('links written out, quotes as "> ", pictures attached', () {
+      const text = 'See the menu\n│ as you said\n￼';
+      final plain = toPlainBody(
+        text,
+        const [BodyMark(BodyMarkKind.link, 8, 12, 'https://x.it/m')],
+        [DraftImage('photo.jpg', 'image/jpeg', _png)],
+      );
+      expect(plain.text, 'See the menu (https://x.it/m)\n> as you said');
+      expect(plain.files.single.name, 'photo.jpg');
+    });
+
+    testWidgets('switching asks before formatting is lost, and sends plain', (
+      tester,
+    ) async {
+      final source = await _pump(tester);
+      await _write(tester, body: 'We start Monday.');
+      final body = _body(tester);
+      body.selection = const TextSelection(baseOffset: 3, extentOffset: 8);
+      body.toggle(BodyMarkKind.bold);
+      await tester.pump();
+      await tester.tap(find.byType(ComposeOptionsButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Plain text'));
+      await tester.pumpAndSettle();
+      expect(find.text('Switch to plain text?'), findsOneWidget);
+      await tester.tap(find.text('Switch to plain text'));
+      await tester.pumpAndSettle();
+      expect(_body(tester).marks, isEmpty);
+      await tester.tap(find.byType(ComposeOptionsButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('High priority'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(ComposeOptionsButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ask for a read receipt'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send'));
+      await _sendAndWait(tester);
+      final d = source.sent.single;
+      expect(d.plainText, isTrue);
+      expect(d.highPriority, isTrue);
+      expect(d.readReceipt, isTrue);
+      expect(d.marks, isEmpty);
+    });
+
+    testWidgets('an account set to plain text starts new mail so', (
+      tester,
+    ) async {
+      final demo = DemoMailSource(now: _now);
+      await demo.setComposeSettings(
+        const ComposeSettings(plainTextAccounts: {'matteo@posta.it'}),
+      );
+      final source = await _pump(tester, demo: demo);
+      await _write(tester);
+      await tester.tap(find.text('Send'));
+      await _sendAndWait(tester);
+      expect(source.sent.single.plainText, isTrue);
+    });
+  });
+
+  testWidgets('Insert picture in the options puts one in the text', (
+    tester,
+  ) async {
+    final before = pickPictures;
+    pickPictures = () async => [
+      XFile.fromData(_png, path: '/photos/terrace.png', name: 'terrace.png'),
+    ];
+    addTearDown(() => pickPictures = before);
+    final source = await _pump(tester);
+    await _write(tester);
+    await tester.tap(find.byType(ComposeOptionsButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Insert picture'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InlinePicture), findsOneWidget);
+    await tester.tap(find.text('Send'));
+    await _sendAndWait(tester);
+    expect(source.sent.single.images.single.name, 'terrace.png');
+  });
+
+  testWidgets('a pasted picture goes inside the text and out with it', (
+    tester,
+  ) async {
+    final source = await _pump(tester, demo: _Clipboard());
+    await _write(tester, body: 'Look:');
+    await tester.tap(_field(2));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+    await tester.pumpAndSettle();
+    expect(_body(tester).text, 'Look:\n$imagePlaceholder');
+    expect(find.byType(InlinePicture), findsOneWidget);
+    // Deleting its place takes the picture away too.
+    final body = _body(tester);
+    body.value = const TextEditingValue(
+      text: 'Look:\n',
+      selection: TextSelection.collapsed(offset: 6),
+    );
+    await tester.pump();
+    expect(body.images, isEmpty);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send'));
+    await _sendAndWait(tester);
+    final d = source.sent.single;
+    expect(d.images.single.name, 'image.png');
+    expect(d.body, contains(imagePlaceholder));
+  });
+}

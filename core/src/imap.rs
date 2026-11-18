@@ -2392,6 +2392,7 @@ pub fn parse_body(raw: &[u8]) -> Body {
         calendar: calendar(&m),
         inline,
         auth: crate::sender_auth::trail(&m, raw),
+        asks: crate::mdn::asks(&m),
     }
 }
 
@@ -2496,8 +2497,49 @@ pub fn parse_draft(raw: &[u8]) -> crate::smtp::Draft {
             .and_then(|h| std::str::from_utf8(h.raw_value()).ok())
             .map(crate::rich::decode)
             .unwrap_or_default(),
+        images: draft_images(&body),
+        plain_text: m.headers().get(crate::smtp::PLAIN_HEADER).is_some(),
+        read_receipt: m.headers().get(crate::mdn::REQUEST).is_some(),
+        high_priority: crate::mdn::asks(&m).high_priority,
         ..Default::default()
     }
+}
+
+/// The pictures a saved draft carries inside its text, in the order its
+/// HTML shows them, with the names they had.
+fn draft_images(body: &Body) -> Vec<crate::compose_image::InlineImage> {
+    let html = body.html.as_deref().unwrap_or_default();
+    let mut found: Vec<(usize, crate::compose_image::InlineImage)> = body
+        .inline
+        .iter()
+        .filter(|i| i.cid.starts_with(crate::compose_image::CID_PREFIX))
+        .filter_map(|i| {
+            let at = html.find(&format!("cid:{}", i.cid))?;
+            // The name is in the picture's alt text, as compose wrote it.
+            let name = html[at..]
+                .split_once("alt=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(name, _)| {
+                    name.replace("&quot;", "\"")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&")
+                })
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "image".into());
+            Some((
+                at,
+                crate::compose_image::InlineImage {
+                    cid: i.cid.clone(),
+                    name,
+                    mime: i.mime.clone(),
+                    data: i.data.clone(),
+                },
+            ))
+        })
+        .collect();
+    found.sort_by_key(|(at, _)| *at);
+    found.into_iter().map(|(_, i)| i).collect()
 }
 
 /// The files attached to a message. Images the HTML shows inline

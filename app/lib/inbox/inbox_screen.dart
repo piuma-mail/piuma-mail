@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../compose/quoting.dart';
 import '../compose/compose_pane.dart';
 import '../compose/remind_me.dart';
 import '../design/motion.dart';
@@ -249,6 +250,10 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// Groups and every account's aliases, for From.
   List<MailGroup> _groups = const [];
+
+  /// Settings › Writing › Replies: where a reply is written, and what it
+  /// quotes.
+  ComposeSettings _composeSettings = const ComposeSettings();
   Map<int, List<String>> _aliases = const {};
 
   /// The group, or one address of it, whose mail the inbox shows in place
@@ -1257,12 +1262,14 @@ class _InboxScreenState extends State<InboxScreen> {
     final l = AppLocalizations.of(context);
     final locale = Localizations.localeOf(context).toLanguageTag();
     final when = DateFormat.yMMMd(locale).add_Hm().format(row.receivedAt);
-    final quoted = body
-        .replaceAll('\r\n', '\n')
-        .trimRight()
-        .split('\n')
-        .map((line) => line.isEmpty ? '>' : '> $line')
-        .join('\n');
+    // Only the words selected in the reader, when the setting allows.
+    final quoted = quoteLines(
+      quoteSource(
+        body,
+        readerSelection.value,
+        trim: _composeSettings.quoteSelection,
+      ),
+    );
     final sender = row.replyTo.isNotEmpty
         ? row.replyTo
         : row.fromName.isNotEmpty
@@ -1278,7 +1285,12 @@ class _InboxScreenState extends State<InboxScreen> {
       to: to ?? [sender],
       subject: subject,
       body: quote
-          ? '$text\n\n${l.quoteHeader(when, row.sender)}\n$quoted'
+          ? replyBody(
+              text: text,
+              header: l.quoteHeader(when, row.sender),
+              quoted: quoted,
+              below: _composeSettings.replyBelow,
+            )
           : text,
       inReplyTo: row.messageId.isEmpty ? '' : row.messageId,
       references: [
@@ -1772,6 +1784,9 @@ class _InboxScreenState extends State<InboxScreen> {
   Future<void> _loadSignatures() async {
     final all = await widget.source.signatures();
     final groups = await widget.source.groups();
+    final writing = await widget.source.composeSettings().catchError(
+      (Object _) => const ComposeSettings(),
+    );
     final aliases = {
       for (final a in widget.source.accounts)
         a.id: await widget.source.aliases(a.id),
@@ -1781,6 +1796,7 @@ class _InboxScreenState extends State<InboxScreen> {
         _signatures = all;
         _groups = groups;
         _aliases = aliases;
+        _composeSettings = writing;
       });
     }
   }
@@ -2291,6 +2307,7 @@ class _InboxScreenState extends State<InboxScreen> {
         onSave: widget.source.saveDraft,
         templates: widget.source.templates,
         suggest: widget.source.suggestRecipients,
+        extras: widget.source,
         onSaveTemplate: widget.source.saveTemplate,
         onTemplateUsed: widget.source.templateUsed,
         onManageTemplates: () =>
@@ -3057,6 +3074,7 @@ class _InboxScreenState extends State<InboxScreen> {
       onSave: widget.source.saveDraft,
       templates: widget.source.templates,
       suggest: widget.source.suggestRecipients,
+      extras: widget.source,
       onSaveTemplate: widget.source.saveTemplate,
       onTemplateUsed: widget.source.templateUsed,
       onManageTemplates: () =>
