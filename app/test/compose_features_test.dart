@@ -40,6 +40,10 @@ class _Placeholders extends _Clipboard {
   @override
   Future<String> body(MailRow row) async =>
       'Look at this:\n\uFFFC\nand this \uFFFC too';
+
+  /// Forward takes the plain text, where the placeholders are.
+  @override
+  Future<Readable> readable(MailRow row) async => throw StateError('no blocks');
 }
 
 /// A 2 GB video: its size is known, reading it is a failure.
@@ -426,6 +430,24 @@ void main() {
     });
   });
 
+  testWidgets('a reply from a plain-text account goes as plain text', (
+    tester,
+  ) async {
+    final demo = DemoMailSource(now: _now);
+    final first = (await demo.page(0, 1)).first;
+    final email = demo.accounts
+        .firstWhere((a) => a.id == first.accountId)
+        .email;
+    await demo.setComposeSettings(ComposeSettings(plainTextAccounts: {email}));
+    await _pump(tester, demo: demo, compose: false, open: first);
+    await tester.tap(find.text('Reply'));
+    await tester.pumpAndSettle();
+    expect(_body(tester).text, contains('> '));
+    await tester.tap(find.text('Send'));
+    await _sendAndWait(tester);
+    expect(demo.sent.single.plainText, isTrue);
+  });
+
   testWidgets('Insert picture in the options puts one in the text', (
     tester,
   ) async {
@@ -511,6 +533,18 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Forward leaves the picture placeholders out', (tester) async {
+    final demo = _Placeholders();
+    final first = (await demo.page(0, 1)).first;
+    await _pump(tester, demo: demo, compose: false, open: first);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.pumpAndSettle();
+    final body = _body(tester);
+    expect(body.text, contains('Look at this:'));
+    expect(body.text, isNot(contains(imagePlaceholder)));
+    expect(body.images, isEmpty);
+  });
+
   test('stray picture places in a body go when it opens', () {
     final body = RichBodyController(
       text: 'a￼b￼',
@@ -593,13 +627,10 @@ void main() {
   });
 
   group('read receipt results', () {
-    Future<DemoMailSource> open(
-      WidgetTester tester,
-      DemoMailSource demo,
-    ) async {
+    Future<MailRow> open(WidgetTester tester, DemoMailSource demo) async {
       final first = (await demo.page(0, 1)).first;
       await _pump(tester, demo: demo, compose: false, open: first);
-      return demo;
+      return first;
     }
 
     testWidgets('offline it waits in the outbox, and says so', (tester) async {
@@ -608,9 +639,45 @@ void main() {
       await tester.tap(find.text('Send receipt'));
       await tester.pumpAndSettle();
       expect(
-        find.text('The receipt goes as soon as you’re back online.'),
+        find.text(
+          'The receipt is waiting in the Outbox and goes as soon as it can.',
+        ),
         findsOneWidget,
       );
+    });
+
+    testWidgets('refused, it waits in the Outbox and isn’t asked again', (
+      tester,
+    ) async {
+      final demo = DemoMailSource(now: _now, asks: true)
+        ..refuseNextReceipt = '550 not allowed';
+      final first = await open(tester, demo);
+      await tester.tap(find.text('Send receipt'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadReceiptBand), findsNothing);
+      expect(
+        find.text(
+          'The receipt is waiting in the Outbox and goes as soon as it can.',
+        ),
+        findsOneWidget,
+      );
+      final waiting = (await demo.outbox(null)).single;
+      expect(waiting.subject, 'Read: ${first.subject}');
+      expect(waiting.error, '550 not allowed');
+      expect((await demo.messageAsks(first)).readReceiptTo, isNull);
+      // Deleted there, it is not sent: the answer is taken back.
+      await demo.cancelOutgoing(waiting.id);
+      expect(demo.receiptAnswers.single.$2, isFalse);
+    });
+
+    test('"Don’t send" takes back a receipt waiting in the outbox', () async {
+      final demo = DemoMailSource(now: _now, asks: true)..offline = true;
+      final first = (await demo.page(0, 1)).first;
+      expect(await demo.answerReadReceipt(first, send: true), isTrue);
+      expect(await demo.outbox(null), hasLength(1));
+      await demo.answerReadReceipt(first, send: false);
+      expect(await demo.outbox(null), isEmpty);
+      expect(demo.receiptAnswers.single.$2, isFalse);
     });
 
     testWidgets('a failure keeps the band, with the reason', (tester) async {

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_options.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
 import 'package:piuma_mail/compose/format_bar.dart';
+import 'package:piuma_mail/compose/quoting.dart';
 import 'package:piuma_mail/compose/rich_body.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/message_asks.dart';
@@ -33,6 +34,19 @@ class _Clipboard extends DemoMailSource {
   @override
   Future<DraftImage?> clipboardImage() async =>
       DraftImage('image.png', 'image/png', _png);
+}
+
+/// A message whose plain text keeps a mailer's picture placeholders.
+class _Placeholders extends DemoMailSource {
+  _Placeholders() : super(now: _now);
+
+  @override
+  Future<String> body(MailRow row) async =>
+      'Look at this:\n\uFFFC\nand this \uFFFC too';
+
+  /// Forward takes the plain text, where the placeholders are.
+  @override
+  Future<Readable> readable(MailRow row) async => throw StateError('no blocks');
 }
 
 Future<DemoMailSource> _pump(
@@ -255,5 +269,93 @@ void main() {
     final body = _body(tester);
     expect(body.text, startsWith('On Oct 15, 2026'));
     expect(body.selection.baseOffset, body.text.length);
+  });
+
+  testWidgets('Reply on the phone quotes only the selected words', (
+    tester,
+  ) async {
+    await _pump(tester, compose: false);
+    await tester.tap(_row('Dinner on Friday?'));
+    await tester.pumpAndSettle();
+    readerSelection.value = 'I booked Osteria del Ponte';
+    addTearDown(() => readerSelection.value = null);
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reply'));
+    await tester.pumpAndSettle();
+    final quoted = _body(tester).text
+        .split('\n')
+        .where((l) => l.startsWith('>'))
+        .toList();
+    expect(quoted, ['> I booked Osteria del Ponte']);
+  });
+
+  testWidgets('a phone reply from a plain-text account is plain text', (
+    tester,
+  ) async {
+    final demo = DemoMailSource(now: _now);
+    final row = (await demo.page(
+      0,
+      50,
+    )).firstWhere((r) => r.subject == 'Dinner on Friday?');
+    final email = demo.accounts.firstWhere((a) => a.id == row.accountId).email;
+    await demo.setComposeSettings(ComposeSettings(plainTextAccounts: {email}));
+    await _pump(tester, demo: demo, compose: false);
+    await tester.tap(_row('Dinner on Friday?'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reply'));
+    await tester.pumpAndSettle();
+    // Said over the foot, and no formatting bar over selected words.
+    expect(
+      tester
+          .widget<ComposeOptionsLine>(find.byType(ComposeOptionsLine))
+          .plainText,
+      isTrue,
+    );
+    await tester.tap(_field(2));
+    _body(tester).selection = const TextSelection(
+      baseOffset: 0,
+      extentOffset: 3,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(FormatBar), findsNothing);
+  });
+
+  testWidgets('Forward on the phone leaves the picture placeholders out', (
+    tester,
+  ) async {
+    await _pump(tester, demo: _Placeholders(), compose: false);
+    await tester.tap(_row('Dinner on Friday?'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('More actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Forward'));
+    await tester.pumpAndSettle();
+    final body = _body(tester);
+    expect(body.text, contains('Look at this:'));
+    expect(body.text, isNot(contains(imagePlaceholder)));
+  });
+
+  testWidgets('a refused receipt waits in the phone’s Outbox', (tester) async {
+    final demo = await _pump(
+      tester,
+      demo: DemoMailSource(now: _now, asks: true)
+        ..refuseNextReceipt = '550 not allowed',
+      compose: false,
+    );
+    await tester.tap(_row('Dinner on Friday?'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send receipt'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReadReceiptBand), findsNothing);
+    expect(
+      find.text(
+        'The receipt is waiting in the Outbox and goes as soon as it can.',
+      ),
+      findsOneWidget,
+    );
+    expect((await demo.outbox(null)).single.subject, 'Read: Dinner on Friday?');
   });
 }

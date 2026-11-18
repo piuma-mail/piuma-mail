@@ -96,6 +96,11 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
+# The tray's icon (runner/shell.cc), found next to the program.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_64.png"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/icons" RENAME "piuma-mail-tray.png"
+  COMPONENT Runtime)
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

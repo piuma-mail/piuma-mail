@@ -12,6 +12,8 @@ pub mod calendar;
 pub mod compose_image;
 pub mod contact_groups;
 pub mod dates;
+pub mod eml;
+pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
@@ -47,6 +49,7 @@ pub mod search;
 pub mod sender_auth;
 pub mod sieve;
 pub mod signature;
+pub mod smime;
 pub mod smtp;
 pub mod space;
 pub mod space_sync;
@@ -58,8 +61,8 @@ pub mod vault;
 mod watchdog;
 
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;

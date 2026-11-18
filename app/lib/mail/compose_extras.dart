@@ -111,37 +111,6 @@ ContactGroup? contactGroupNamed(List<ContactGroup> groups, String typed) {
   return null;
 }
 
-/// [text] cut into addresses at new lines, commas and semicolons outside
-/// quotes and angle brackets: `"Rossi, Mario" <m@x.it>` stays whole.
-List<String> splitAddresses(String text) {
-  final out = <String>[];
-  var quoted = false, angle = false, escaped = false;
-  var start = 0;
-  for (var i = 0; i < text.length; i++) {
-    final c = text[i];
-    if (escaped) {
-      escaped = false;
-    } else if (c == r'\' && quoted) {
-      escaped = true;
-    } else if (c == '"') {
-      quoted = !quoted;
-    } else if (c == '<' && !quoted) {
-      angle = true;
-    } else if (c == '>' && !quoted) {
-      angle = false;
-    } else if (c == '\n' || ((c == ',' || c == ';') && !quoted && !angle)) {
-      out.add(text.substring(start, i));
-      start = i + 1;
-      if (c == '\n') quoted = angle = false;
-    }
-  }
-  out.add(text.substring(start));
-  return [
-    for (final a in out)
-      if (a.trim().isNotEmpty) a.trim(),
-  ];
-}
-
 /// What a message being read asks of its reader.
 @immutable
 class MessageAsks {

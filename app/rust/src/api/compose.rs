@@ -180,8 +180,10 @@ pub fn message_asks(
 /// The person's answer to a read receipt asked for: [send] it now, or
 /// not; with [never], the account never offers one to that sender
 /// again. Only an offered receipt is sent, never one on its own. It goes
-/// through the outbox like any message, so offline it waits there and
-/// goes once the server can be reached: returns true while it waits.
+/// through the outbox like any message: returns true while it waits
+/// there, offline or after a failed try (the Outbox shows why, and
+/// deleting it there takes the answer back). Not sending takes back one
+/// still waiting there.
 pub async fn answer_read_receipt(
     account_id: i64,
     mailbox: String,
@@ -207,6 +209,7 @@ pub async fn answer_read_receipt(
     let name = account.sender_name.trim();
     let from = lettre_mailbox(name, &email)?;
     let ready = mdn::report(&from, &to, &original)?;
+    let message_id = ready.message_id.clone();
     // What the outbox lists and Edit would open: the receipt's words.
     let draft = piuma_core::smtp::Draft {
         from_name: name.to_owned(),
@@ -223,22 +226,25 @@ pub async fn answer_read_receipt(
         saved: None,
         send_at: None,
         undo: false,
+        redirect: false,
     };
     let queued = store()?.queue_outgoing(&out, now_secs())?;
-    // Answered once it is in the outbox: it goes from there.
-    store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Sent, false)?;
-    let delivery = super::engine::deliver_outgoing(queued).await?;
-    use super::engine::DeliveryKind as K;
-    match delivery.kind {
-        K::Sent => Ok(false),
-        K::Waiting | K::MaybeSent | K::Gone => Ok(true),
-        K::WrongPassword => Err(EngineError::new(ErrorKind::WrongPassword, delivery.detail)),
-        K::Refused => Err(EngineError::new(ErrorKind::Rejected, delivery.detail)),
-        K::Insecure => Err(EngineError::new(
-            ErrorKind::InsecureConnection,
-            delivery.detail,
-        )),
-    }
+    // Answered once it is in the outbox: it goes from there, whatever this
+    // try does.
+    store()?.receipt_queued(id, &mailbox, uid, &message_id)?;
+    Ok(receipt_waits(
+        super::engine::deliver_outgoing(queued)
+            .await
+            .map(|d| d.kind),
+    ))
+}
+
+/// Whether a receipt put in the outbox still waits there after its first
+/// try. Every failure leaves it there, refused or waiting, with the reason
+/// the Outbox shows: the band never asks again for a receipt already in
+/// the outbox, which would go twice.
+fn receipt_waits(delivery: Result<super::engine::DeliveryKind, EngineError>) -> bool {
+    !matches!(delivery, Ok(super::engine::DeliveryKind::Sent))
 }
 
 fn lettre_mailbox(name: &str, email: &str) -> Result<piuma_core::mdn::Mailbox, EngineError> {
@@ -250,4 +256,29 @@ fn lettre_mailbox(name: &str, email: &str) -> Result<piuma_core::mdn::Mailbox, E
 #[frb(sync)]
 pub fn text_language(text: String) -> Option<String> {
     piuma_core::language::detect(&text).map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::engine::DeliveryKind as K;
+    use super::*;
+
+    #[test]
+    fn a_receipt_waits_in_the_outbox_after_any_failed_try() {
+        assert!(!receipt_waits(Ok(K::Sent)));
+        for kind in [
+            K::Waiting,
+            K::WrongPassword,
+            K::Refused,
+            K::Insecure,
+            K::MaybeSent,
+            K::Gone,
+        ] {
+            assert!(receipt_waits(Ok(kind)), "{kind:?}");
+        }
+        assert!(receipt_waits(Err(EngineError::new(
+            ErrorKind::Other,
+            "engine not open"
+        ))));
+    }
 }

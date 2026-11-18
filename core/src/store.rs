@@ -22,6 +22,9 @@ use crate::search::Query;
 use crate::signature::{Accent, Logo, Signature, Template};
 use crate::smtp::{Draft, OutgoingFile, Ready};
 
+mod mailbox;
+pub use mailbox::{ListSettings, Quota, RoleChoice, SwipeAction};
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("database: {0}")]
@@ -90,11 +93,32 @@ fn section_sql(filter: impl Into<ListFilter>) -> String {
         Section::People => format!(" AND {PEOPLE}"),
         Section::Notifications => format!(" AND NOT {PEOPLE}"),
     };
-    if filter.unread {
-        section + UNREAD_IN_THREAD
-    } else {
-        section
+    match (filter.unread, filter.flat) {
+        (true, false) => section + UNREAD_IN_THREAD,
+        (true, true) => section + " AND (m.flags & 1) = 0",
+        _ => section,
     }
+}
+
+/// Keeps one row per conversation, its newest message, or with `flat`
+/// every message.
+fn newest_sql(filter: &ListFilter) -> &'static str {
+    if filter.flat {
+        "1"
+    } else {
+        NEWEST_IN_THREAD
+    }
+}
+
+/// Rows as the list shows them: with `flat`, each message on its own.
+fn as_listed(filter: &ListFilter, mut rows: Vec<Conversation>) -> Vec<Conversation> {
+    if filter.flat {
+        for c in &mut rows {
+            c.thread.clear();
+            c.messages = 1;
+        }
+    }
+    rows
 }
 
 /// Keeps conversations with an unread message in the folder of `m`.
@@ -104,11 +128,11 @@ const UNREAD_IN_THREAD: &str = " AND EXISTS (SELECT 1 FROM message u
 
 /// An indexed anti-join before pagination; never merges copies within
 /// one account. Candidate eligibility is identical to the outer list.
-fn cross_account_sql(within: &Within, section: &str) -> String {
+fn cross_account_sql(within: &Within, section: &str, filter: &ListFilter) -> String {
     if within.account().is_some() {
         return String::new();
     }
-    let newest = NEWEST_IN_THREAD.replace("m.", "d.");
+    let newest = newest_sql(filter).replace("m.", "d.");
     // Group/address SQL contains quoted user addresses; change only SQL
     // identifiers, never a substring of an address such as team.example.
     let section = section
@@ -950,9 +974,32 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS outbox_state ON outbox(account, state);
 "#,
     r#"
+    -- What a kept body proves about itself: DMARC passed for the domain in
+    -- From (a brand logo needs it), and a signature of that domain covers
+    -- the list headers (one-click unsubscribe needs it). Bodies kept
+    -- before prove neither.
+    -- Their columns, and pec_receipt.verified (a receipt whose provider
+    -- signature was checked; those kept before show as unverified until
+    -- their body is read again), are added by `Store::migrate`, so that
+    -- this runs again safely.
+    -- Logos were kept per domain, whatever message asked: looked up again
+    -- for verified messages only.
+    DELETE FROM sender_picture WHERE kind = 'logo';
+"#,
+    r#"
+    -- Muted conversations: new mail in them arrives read and silent.
+    CREATE TABLE IF NOT EXISTS muted_thread (
+        account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+        thread  TEXT NOT NULL,
+        PRIMARY KEY (account, thread)
+    );
+"#,
+    r#"
     -- What a kept message asks of its reader, read with its body: a read
     -- receipt (RFC 8098) and where it would go, and its priority.
-    -- `receipt` is 0 while unanswered, 1 once sent, 2 once declined.
+    -- `receipt` is 0 while unanswered, 1 once sent, 2 once declined;
+    -- `receipt_id` is the Message-ID of the receipt put in the outbox,
+    -- so taking it out of there undoes the answer.
     CREATE TABLE IF NOT EXISTS message_asks (
         account            INTEGER NOT NULL,
         mailbox            TEXT NOT NULL,
@@ -962,6 +1009,7 @@ const MIGRATIONS: &[&str] = &[
         original_recipient TEXT,
         high_priority      INTEGER NOT NULL DEFAULT 0,
         receipt            INTEGER NOT NULL DEFAULT 0,
+        receipt_id         TEXT,
         PRIMARY KEY (account, mailbox, uid),
         FOREIGN KEY (account, mailbox, uid) REFERENCES message(account, mailbox, uid) ON DELETE CASCADE
     );
@@ -1008,7 +1056,7 @@ const OUTBOX_STATES: usize = 62;
 
 /// Number of the migration that keeps compose's options with outbox
 /// mail; its outbox columns are added before it runs (see `migrate`).
-const COMPOSE_OPTIONS: usize = OUTBOX_STATES + 1;
+const COMPOSE_OPTIONS: usize = OUTBOX_STATES + 3;
 
 /// Number of the migration after which stored previews are cleaned again.
 const CLEAN_PREVIEWS: usize = 38;
@@ -1338,6 +1386,12 @@ pub struct AccountFolder {
     pub unread: u32,
     /// How many emails it holds on the server.
     pub total: u32,
+    /// Subscribed (IMAP LSUB, JMAP `isSubscribed`): shown in the lists.
+    /// Hidden ones show on demand.
+    pub subscribed: bool,
+    /// What separates its name from its parent's ("/", "."), empty when
+    /// the server names folders by id (JMAP).
+    pub delimiter: String,
 }
 
 /// What the engine remembers about a server folder between syncs.
@@ -1388,6 +1442,9 @@ pub struct Body {
     pub auth: crate::sender_auth::Trail,
     /// What it asks of its reader: a read receipt, its priority.
     pub asks: crate::mdn::Asks,
+    /// It is a PEC receipt signed by its provider (see
+    /// [`crate::pec::signed`]).
+    pub receipt_signed: bool,
 }
 
 /// A picture that travels inside a message, shown by its HTML as
@@ -1569,6 +1626,23 @@ impl Store {
         if !bulk {
             tx.execute_batch("ALTER TABLE message ADD COLUMN bulk INTEGER NOT NULL DEFAULT 0")?;
         }
+        // What a kept body proves, and whether a PEC receipt is signed.
+        for (table, column) in [
+            ("sender_check", "dmarc_pass"),
+            ("sender_check", "list_signed"),
+            ("pec_receipt", "verified"),
+        ] {
+            let has: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+                params![table, column],
+                |r| r.get(0),
+            )?;
+            if !has {
+                tx.execute_batch(&format!(
+                    "ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                ))?;
+            }
+        }
         // Bold, italic and links of mail sent later, kept to edit it again.
         let marks: bool = tx.query_row(
             "SELECT EXISTS (SELECT 1 FROM pragma_table_info('outbox') WHERE name = 'marks')",
@@ -1578,9 +1652,30 @@ impl Store {
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
         }
+        // To, Cc, every Reply-To, Mail-Followup-To and List-Post, as JSON
+        // (`envelope::Envelope`), for Reply all and the reader; NULL until
+        // the headers are read, for mail kept before.
+        let envelope: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('message') WHERE name = 'envelope')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !envelope {
+            tx.execute_batch("ALTER TABLE message ADD COLUMN envelope TEXT")?;
+        }
+        // A Redirect waiting in the outbox: the message as it came, with no
+        // body or files of its own to edit, so it is never reopened.
+        let redirect: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('outbox') WHERE name = 'redirect')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !redirect {
+            tx.execute_batch("ALTER TABLE outbox ADD COLUMN redirect INTEGER NOT NULL DEFAULT 0")?;
+        }
         // A change the server refused waits before it is tried again, and
         // is given up only after failing for a day (pending.rs). Added
-        // here rather than in MIGRATIONS, like the two above, so it holds
+        // here rather than in MIGRATIONS, like those above, so it holds
         // when migrations run again over a newer database.
         let retries: bool = tx.query_row(
             "SELECT EXISTS (SELECT 1 FROM pragma_table_info('pending_change')
@@ -1592,6 +1687,21 @@ impl Store {
             tx.execute_batch(
                 "ALTER TABLE pending_change ADD COLUMN next_try_at INTEGER NOT NULL DEFAULT 0;
                  ALTER TABLE pending_change ADD COLUMN failing_since INTEGER;",
+            )?;
+        }
+        // Whether each of an account's folders is subscribed, and what
+        // separates its name from its parent's, to rename it (mailbox.rs).
+        // Here rather than in MIGRATIONS, like the ones above.
+        let subscribed: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('account_folder')
+                             WHERE name = 'subscribed')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !subscribed {
+            tx.execute_batch(
+                "ALTER TABLE account_folder ADD COLUMN subscribed INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE account_folder ADD COLUMN delimiter TEXT NOT NULL DEFAULT '';",
             )?;
         }
         if current < CLEAN_PREVIEWS {
@@ -1785,24 +1895,34 @@ impl Store {
     /// Inserts or updates messages in a single transaction.
     pub fn upsert_messages(&mut self, messages: &[MessageSummary]) -> Result<()> {
         let mut own: HashMap<AccountId, Vec<String>> = HashMap::new();
+        // Receipts count only on certified mailboxes: anywhere else anyone
+        // could write their headers.
+        let mut certified: HashMap<AccountId, bool> = HashMap::new();
         for m in messages {
             if bare_reply(m).is_some() && !own.contains_key(&m.account) {
                 own.insert(m.account, self.own_addresses(m.account)?);
             }
+            if m.list.receipt.is_some() && !certified.contains_key(&m.account) {
+                let pec = self.account(m.account)?.is_some_and(|a| pec::certified(&a));
+                certified.insert(m.account, pec);
+            }
         }
+        let receipt_of = |m: &MessageSummary| -> bool {
+            m.list.receipt.is_some() && certified.get(&m.account).copied().unwrap_or(false)
+        };
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare(&format!(
                 "INSERT INTO message (account, mailbox, uid, from_name, from_email, subject, preview,
                                       received_at, flags, message_id, refs, reply_to, to_list,
                                       thread, newsletter, unsubscribe, one_click, list_checked,
-                                      folder, recipients, bulk)
+                                      folder, recipients, bulk, envelope)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                          ?17, 1,
                          CASE WHEN ?2 = 'INBOX' AND ?18 THEN 'receipts'
                               WHEN ?2 = 'INBOX' THEN {} ELSE COALESCE(
                              (SELECT role FROM folder_role WHERE account = ?1 AND mailbox = ?2),
-                             '') END, ?19, ?20)
+                             '') END, ?19, ?20, ?21)
                  ON CONFLICT (account, mailbox, uid) DO UPDATE SET
                     from_name = excluded.from_name, from_email = excluded.from_email,
                     subject = excluded.subject, preview = excluded.preview,
@@ -1812,13 +1932,19 @@ impl Store {
                     thread = excluded.thread, newsletter = excluded.newsletter,
                     unsubscribe = excluded.unsubscribe, one_click = excluded.one_click,
                     list_checked = 1, folder = excluded.folder,
-                    recipients = excluded.recipients, bulk = excluded.bulk",
+                    recipients = excluded.recipients, bulk = excluded.bulk,
+                    envelope = COALESCE(excluded.envelope, envelope)",
                 inbox_zone("?5", "?15")
             ))?;
+            // An update keeps `verified`: the proof was found in the body,
+            // and a resync or a flag changing doesn't take it away.
             let mut receipt = tx.prepare(
-                "INSERT OR REPLACE INTO pec_receipt
+                "INSERT INTO pec_receipt
                     (account, mailbox, uid, kind, refers, recipients, reason)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                    kind = excluded.kind, refers = excluded.refers,
+                    recipients = excluded.recipients, reason = excluded.reason",
             )?;
             let mut known = tx.prepare(
                 "SELECT thread FROM message WHERE account = ?1 AND message_id = ?2 LIMIT 1",
@@ -1828,6 +1954,23 @@ impl Store {
             // thread (they only knew their parent) join this one's thread.
             let mut merge = tx.prepare(
                 "UPDATE message SET thread = ?3 WHERE account = ?1 AND thread = ?2 AND ?2 <> ?3",
+            )?;
+            // A conversation muted under the id it had keeps its mute.
+            let merge_muted = tx.prepare(
+                "UPDATE OR IGNORE muted_thread SET thread = ?3
+                 WHERE account = ?1 AND thread = ?2 AND ?2 <> ?3",
+            )?;
+            let mut merge_muted = merge_muted;
+            // New mail in a muted conversation arrives read, and the server
+            // is told so before the next look at its flags.
+            let mut muted =
+                tx.prepare("SELECT 1 FROM muted_thread WHERE account = ?1 AND thread = ?2")?;
+            let mut kept = tx.prepare(
+                "SELECT 1 FROM message WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            )?;
+            let mut quieted = tx.prepare(
+                "INSERT INTO pending_change (account, mailbox, uid, change, target)
+                 VALUES (?1, ?2, ?3, 'seen', '')",
             )?;
             // Replies from clients that send no References: recent mail of
             // the account whose subject holds the reply's.
@@ -1875,7 +2018,15 @@ impl Store {
                 }
                 if !m.reply.message_id.is_empty() {
                     merge.execute(params![m.account.0, m.reply.message_id, thread])?;
+                    merge_muted.execute(params![m.account.0, m.reply.message_id, thread])?;
                 }
+                let quiet = !m.flags.seen
+                    && muted.exists(params![m.account.0, thread])?
+                    && !kept.exists(params![m.account.0, m.mailbox, m.uid])?;
+                let flags = Flags {
+                    seen: m.flags.seen || quiet,
+                    ..m.flags
+                };
                 stmt.execute(params![
                     m.account.0,
                     m.mailbox,
@@ -1885,7 +2036,7 @@ impl Store {
                     m.subject,
                     m.preview,
                     m.received_at,
-                    m.flags.to_bits(),
+                    flags.to_bits(),
                     m.reply.message_id,
                     m.reply.references,
                     m.reply.reply_to,
@@ -1894,14 +2045,21 @@ impl Store {
                     m.list.newsletter,
                     m.list.unsubscribe,
                     m.list.one_click,
-                    m.list.receipt.is_some(),
+                    receipt_of(m),
                     m.reply.recipients,
-                    m.list.bulk
+                    m.list.bulk,
+                    m.reply
+                        .envelope
+                        .as_ref()
+                        .map(crate::envelope::Envelope::to_json)
                 ])?;
+                if quiet {
+                    quieted.execute(params![m.account.0, m.mailbox, m.uid])?;
+                }
                 if !m.reply.recipients.is_empty() {
                     written.execute(params![m.account.0, m.mailbox, m.uid])?;
                 }
-                if let Some(r) = &m.list.receipt {
+                if let Some(r) = m.list.receipt.as_ref().filter(|_| receipt_of(m)) {
                     receipt.execute(params![
                         m.account.0,
                         m.mailbox,
@@ -1945,8 +2103,9 @@ impl Store {
         {
             let mut stmt = tx.prepare(
                 "INSERT OR REPLACE INTO account_folder
-                    (account, mailbox, name, depth, position, selectable, unread, total)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    (account, mailbox, name, depth, position, selectable, unread, total,
+                     subscribed, delimiter)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?;
             for (i, f) in folders.iter().enumerate() {
                 stmt.execute(params![
@@ -1957,15 +2116,24 @@ impl Store {
                     i as u32,
                     f.selectable,
                     f.unread,
-                    f.total
+                    f.total,
+                    f.subscribed,
+                    f.delimiter
                 ])?;
             }
         }
+        // Trash and spam are no own folders, but their mail shows when
+        // they are opened.
         tx.execute(
             "DELETE FROM message WHERE account = ?1 AND folder = '' AND mailbox <> 'INBOX'
                AND mailbox NOT IN (SELECT mailbox FROM account_folder WHERE account = ?1)
-               AND mailbox NOT IN (SELECT mailbox FROM folder_role WHERE account = ?1)",
-            params![account.0],
+               AND mailbox NOT IN (SELECT mailbox FROM folder_role WHERE account = ?1)
+               AND mailbox NOT IN (SELECT value FROM setting WHERE key IN (?2, ?3))",
+            params![
+                account.0,
+                format!("account.{}.junk", account.0),
+                format!("account.{}.trash", account.0)
+            ],
         )?;
         tx.commit()?;
         Ok(())
@@ -1976,10 +2144,11 @@ impl Store {
     pub fn add_account_folder(&self, account: AccountId, folder: &AccountFolder) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO account_folder
-                (account, mailbox, name, depth, position, selectable, unread, total)
+                (account, mailbox, name, depth, position, selectable, unread, total,
+                 subscribed, delimiter)
              VALUES (?1, ?2, ?3, ?4,
                      (SELECT COALESCE(MAX(position) + 1, 0) FROM account_folder WHERE account = ?1),
-                     ?5, ?6, ?7)",
+                     ?5, ?6, ?7, ?8, ?9)",
             params![
                 account.0,
                 folder.mailbox,
@@ -1987,7 +2156,9 @@ impl Store {
                 folder.depth,
                 folder.selectable,
                 folder.unread,
-                folder.total
+                folder.total,
+                folder.subscribed,
+                folder.delimiter
             ],
         )?;
         Ok(())
@@ -1998,7 +2169,8 @@ impl Store {
     /// person dragged them into.
     pub fn account_folders(&self, account: AccountId) -> Result<Vec<AccountFolder>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.mailbox, f.name, f.depth, f.selectable, f.unread, f.total, o.rank
+            "SELECT f.mailbox, f.name, f.depth, f.selectable, f.unread, f.total, o.rank,
+                    f.subscribed, f.delimiter
                FROM account_folder f
                LEFT JOIN folder_order o ON o.account = f.account AND o.mailbox = f.mailbox
               WHERE f.account = ?1 ORDER BY f.position",
@@ -2012,6 +2184,8 @@ impl Store {
                     selectable: r.get(3)?,
                     unread: r.get(4)?,
                     total: r.get(5)?,
+                    subscribed: r.get(7)?,
+                    delimiter: r.get(8)?,
                 },
                 r.get::<_, Option<i64>>(6)?,
             ))
@@ -2041,9 +2215,12 @@ impl Store {
         &self,
         account: AccountId,
         mailbox: &str,
+        filter: ListFilter,
         offset: u32,
         limit: u32,
     ) -> Result<Vec<Conversation>> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
+        let order = filter.order.sql();
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -2055,8 +2232,8 @@ impl Store {
                        AND t.folder <> 'drafts')
              FROM message m
              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
-               AND {NEWEST_IN_MAILBOX}
-             ORDER BY m.received_at DESC, m.uid DESC
+               AND {newest}
+             ORDER BY {order}
              LIMIT ?3 OFFSET ?4"
         ))?;
         let rows = stmt.query_map(params![account.0, mailbox, limit, offset], |r| {
@@ -2066,7 +2243,10 @@ impl Store {
                 messages: r.get(14)?,
             })
         })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        Ok(as_listed(
+            &filter,
+            rows.collect::<std::result::Result<_, _>>()?,
+        ))
     }
 
     /// How many conversations of one account's folder had their newest
@@ -2075,15 +2255,17 @@ impl Store {
         &self,
         account: AccountId,
         mailbox: &str,
+        filter: ListFilter,
         from: i64,
         to: i64,
     ) -> Result<u32> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
                    AND m.received_at >= ?3 AND m.received_at < ?4
-                   AND {NEWEST_IN_MAILBOX}"
+                   AND {newest}"
             ),
             params![account.0, mailbox, from, to],
             |r| r.get(0),
@@ -2091,12 +2273,18 @@ impl Store {
     }
 
     /// How many conversations [`Store::mailbox_page`] lists.
-    pub fn mailbox_count(&self, account: AccountId, mailbox: &str) -> Result<u32> {
+    pub fn mailbox_count(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        filter: ListFilter,
+    ) -> Result<u32> {
+        let newest = if filter.flat { "1" } else { NEWEST_IN_MAILBOX };
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.account = ?1 AND m.mailbox = ?2 AND m.hidden = 0
-                   AND {NEWEST_IN_MAILBOX}"
+                   AND {newest}"
             ),
             params![account.0, mailbox],
             |r| r.get(0),
@@ -2474,6 +2662,13 @@ impl Store {
                 params![account.0, mailbox, uid],
             )?;
         }
+        if let Change::Flag(_) = &change {
+            self.conn.execute(
+                "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2 AND uid = ?3
+                   AND change IN ('flag', 'unflag')",
+                params![account.0, mailbox, uid],
+            )?;
+        }
         if let Change::Label { keyword, .. } = &change {
             self.conn.execute(
                 "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2 AND uid = ?3
@@ -2812,8 +3007,11 @@ impl Store {
         limit: u32,
     ) -> Result<Vec<Conversation>> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
+        let order = filter.order.sql();
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT m.account, m.mailbox, m.uid, m.from_name, m.from_email, m.subject, m.preview,
                     m.received_at, m.flags, m.message_id, m.refs, m.reply_to, m.to_list,
@@ -2825,8 +3023,8 @@ impl Store {
                        AND t.folder <> 'drafts')
              FROM message m
              WHERE m.folder = ?1 AND m.hidden = 0 AND (?4 IS NULL OR m.account = ?4)
-               AND {NEWEST_IN_THREAD}{section}{dedupe}
-             ORDER BY m.received_at DESC, m.account, m.uid DESC
+               AND {newest}{section}{dedupe}
+             ORDER BY {order}
              LIMIT ?2 OFFSET ?3"
         ))?;
         let account = within.account();
@@ -2837,7 +3035,10 @@ impl Store {
                 messages: r.get(14)?,
             })
         })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        Ok(as_listed(
+            &filter,
+            rows.collect::<std::result::Result<_, _>>()?,
+        ))
     }
 
     /// The visible server copies of a combined row. Single-account lists
@@ -2919,13 +3120,15 @@ impl Store {
         section: impl Into<ListFilter>,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND (?2 IS NULL OR m.account = ?2)
-                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
+                   AND {newest}{section}{dedupe}"
             ),
             params![folder.tag(), within.account()],
             |r| r.get(0),
@@ -2943,14 +3146,16 @@ impl Store {
         to: i64,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &section);
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(&within, &section, &filter);
+        let newest = newest_sql(&filter);
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
                  WHERE m.folder = ?1 AND m.hidden = 0 AND m.received_at >= ?2
                    AND m.received_at < ?3 AND (?4 IS NULL OR m.account = ?4)
-                   AND {NEWEST_IN_THREAD}{section}{dedupe}"
+                   AND {newest}{section}{dedupe}"
             ),
             params![folder.tag(), from, to, within.account()],
             |r| r.get(0),
@@ -3202,6 +3407,13 @@ impl Store {
                   WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('seen', 'unseen')
                   ORDER BY id DESC LIMIT 1",
             )?;
+            // A star or unstar still on its way wins over the server's,
+            // like read and unread.
+            let mut starring = tx.prepare(
+                "SELECT change FROM pending_change
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('flag', 'unflag')
+                  ORDER BY id DESC LIMIT 1",
+            )?;
             for (uid, flags) in changes {
                 let mut flags = *flags;
                 let local: Option<String> = waiting
@@ -3209,6 +3421,12 @@ impl Store {
                     .optional()?;
                 if let Some(local) = local {
                     flags.seen = local == "seen";
+                }
+                let star: Option<String> = starring
+                    .query_row(params![account.0, mailbox, uid], |r| r.get(0))
+                    .optional()?;
+                if let Some(star) = star {
+                    flags.flagged = star == "flag";
                 }
                 changed += stmt.execute(params![account.0, mailbox, uid, flags.to_bits()])?;
             }
@@ -3268,6 +3486,44 @@ impl Store {
             )
             .optional()?
             .unwrap_or(false))
+    }
+
+    /// What a cached message proves: (DMARC passed for its From domain, a
+    /// signature of that domain covers its list headers). Both false
+    /// until the body is kept.
+    pub fn sender_proofs(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<(bool, bool)> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT dmarc_pass, list_signed FROM sender_check
+                 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![account.0, mailbox, uid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((false, false)))
+    }
+
+    /// Whether a message may show its sender's brand logo: DMARC itself
+    /// passed for it (not only for some other message of its domain), and,
+    /// with [`impostor`], no sender warning hangs over it. The logo
+    /// follows the message, never the domain.
+    pub fn logo_allowed(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        impostor: bool,
+    ) -> Result<bool> {
+        if !self.sender_proofs(account, mailbox, uid)?.0 {
+            return Ok(false);
+        }
+        Ok(!impostor || self.sender_warning(account, mailbox, uid)?.is_none())
     }
 
     /// Whether a cached message's sender isn't who they say, as on
@@ -3582,8 +3838,9 @@ impl Store {
             ],
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO sender_check (account, mailbox, uid, dmarc_failed, signed_by, sent_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO sender_check
+                 (account, mailbox, uid, dmarc_failed, signed_by, sent_by, dmarc_pass, list_signed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 account.0,
                 mailbox,
@@ -3591,6 +3848,8 @@ impl Store {
                 checked.dmarc_failed,
                 checked.signed_by.unwrap_or_default(),
                 checked.sent_by.unwrap_or_default(),
+                checked.dmarc_pass,
+                checked.list_signed,
             ],
         )?;
         // Answered or not, a receipt asked for stays so when the body is
@@ -3614,6 +3873,14 @@ impl Store {
                 asks.original_recipient,
                 asks.high_priority,
             ],
+        )?;
+        // A receipt is proof only once its provider's signature checks;
+        // checked when first read, so a certificate that expires later
+        // doesn't take the proof away (see smime.rs).
+        tx.execute(
+            "UPDATE pec_receipt SET verified = MAX(verified, ?4)
+             WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![account.0, mailbox, uid, body.receipt_signed],
         )?;
         tx.execute(
             "DELETE FROM inline_image WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
@@ -4160,9 +4427,9 @@ impl Store {
             "INSERT INTO outbox (account, from_name, from_email, to_list, cc_list, bcc_list,
                  subject, body, in_reply_to, refs, signature, message_id, mail_from,
                  recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo,
-                 plain_text, read_receipt, high_priority)
+                 plain_text, read_receipt, high_priority, redirect)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 out.account.0,
                 d.from_name,
@@ -4188,6 +4455,7 @@ impl Store {
                 d.plain_text,
                 d.read_receipt,
                 d.high_priority,
+                out.redirect,
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -4212,7 +4480,8 @@ impl Store {
     /// The outbox, oldest first: one account's, or every account's.
     pub fn outbox(&self, account: Option<AccountId>) -> Result<Vec<Waiting>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, account, to_list, subject, body, queued_at, error, send_at, state, undo
+            "SELECT id, account, to_list, subject, body, queued_at, error, send_at, state, undo,
+                    redirect
                FROM outbox
               WHERE (?1 IS NULL OR account = ?1) AND state NOT IN ('unfiled', 'filing')
               ORDER BY id",
@@ -4229,6 +4498,7 @@ impl Store {
                 send_at: r.get(7)?,
                 state: crate::outbox::State::from_column(&r.get::<_, String>(8)?),
                 undo: r.get(9)?,
+                redirect: r.get(10)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -4242,7 +4512,7 @@ impl Store {
                 "SELECT account, from_name, from_email, to_list, cc_list, bcc_list, subject,
                         body, in_reply_to, refs, signature, message_id, mail_from,
                         recipients, raw, saved_mailbox, saved_uid, send_at, marks, undo,
-                        plain_text, read_receipt, high_priority
+                        plain_text, read_receipt, high_priority, redirect
                    FROM outbox WHERE id = ?1",
                 params![id],
                 |r| {
@@ -4278,11 +4548,13 @@ impl Store {
                         saved,
                         r.get::<_, Option<i64>>(17)?,
                         r.get::<_, bool>(19)?,
+                        r.get::<_, bool>(23)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((account, mut draft, signature, ready, saved, send_at, undo)) = row else {
+        let Some((account, mut draft, signature, ready, saved, send_at, undo, redirect)) = row
+        else {
             return Ok(None);
         };
         let mut stmt = self.conn.prepare(
@@ -4321,6 +4593,7 @@ impl Store {
             saved,
             send_at,
             undo,
+            redirect,
         }))
     }
 
@@ -4493,6 +4766,14 @@ impl Store {
             "DELETE FROM outbox WHERE id = ?1 AND state IN ('queued', 'refused', 'unknown')",
             params![id],
         )?;
+        if taken == 1 {
+            // A read receipt taken out of the outbox was not sent: its
+            // message counts as declined, and offers none again.
+            self.conn.execute(
+                "UPDATE message_asks SET receipt = ?2, receipt_id = NULL WHERE receipt_id = ?1",
+                params![out.ready.message_id, crate::mdn::Answer::Declined.code()],
+            )?;
+        }
         Ok((taken == 1).then_some(out))
     }
 
@@ -4693,6 +4974,17 @@ impl Store {
             )?;
         }
         Ok(())
+    }
+
+    /// The person asks to send a message of the outbox again now: waiting,
+    /// refused or maybe sent, it goes back in the queue, due at once. Not
+    /// one a sender holds. Returns whether it was there to retry.
+    pub fn retry_outgoing(&self, id: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbox SET state = 'queued', error = NULL, send_at = NULL, undo = 0
+              WHERE id = ?1 AND claim IS NULL AND state IN ('queued', 'refused', 'unknown')",
+            params![id],
+        )? == 1)
     }
 
     /// Keeps the message as it went (dated when it went), for its Sent copy.
@@ -5144,7 +5436,9 @@ impl Store {
     }
 
     /// Keeps the person's answer to a read receipt: sent, or not; with
-    /// [never], the account never offers one to that address again.
+    /// [never], the account never offers one to that address again. Not
+    /// sent takes a receipt already put in the outbox back out of it,
+    /// unless it is going right now.
     pub fn answer_receipt(
         &self,
         account: AccountId,
@@ -5153,10 +5447,62 @@ impl Store {
         answer: crate::mdn::Answer,
         never: bool,
     ) -> Result<()> {
+        self.keep_receipt_answer(account, mailbox, uid, answer, None, never)
+    }
+
+    /// The read receipt for a kept message was put in the outbox as
+    /// `message_id`: answered as sent, and taken back out with the message
+    /// should the person delete it there.
+    pub fn receipt_queued(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        message_id: &str,
+    ) -> Result<()> {
+        self.keep_receipt_answer(
+            account,
+            mailbox,
+            uid,
+            crate::mdn::Answer::Sent,
+            Some(message_id),
+            false,
+        )
+    }
+
+    fn keep_receipt_answer(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        answer: crate::mdn::Answer,
+        queued: Option<&str>,
+        never: bool,
+    ) -> Result<()> {
         let (asks, _) = self.message_asks(account, mailbox, uid)?;
+        if answer != crate::mdn::Answer::Sent {
+            let waiting: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT receipt_id FROM message_asks
+                      WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                    params![account.0, mailbox, uid],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            if let Some(message_id) = waiting {
+                self.conn.execute(
+                    "DELETE FROM outbox WHERE account = ?1 AND message_id = ?2
+                        AND state IN ('queued', 'refused', 'unknown')",
+                    params![account.0, message_id],
+                )?;
+            }
+        }
         self.conn.execute(
-            "UPDATE message_asks SET receipt = ?4 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
-            params![account.0, mailbox, uid, answer.code()],
+            "UPDATE message_asks SET receipt = ?4, receipt_id = ?5
+              WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![account.0, mailbox, uid, answer.code(), queued],
         )?;
         if let (true, Some(to)) = (never, asks.receipt_to) {
             self.conn.execute(
@@ -5386,8 +5732,13 @@ impl Store {
         section: impl Into<ListFilter>,
     ) -> Result<u32> {
         let within = within.into();
-        let section = section_sql(section) + &within.sql();
-        let dedupe = cross_account_sql(&within, &(section.clone() + " AND (m.flags & 1) = 0"));
+        let filter = section.into();
+        let section = section_sql(filter) + &within.sql();
+        let dedupe = cross_account_sql(
+            &within,
+            &(section.clone() + " AND (m.flags & 1) = 0"),
+            &filter,
+        );
         Ok(self.conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM message m
@@ -5426,7 +5777,7 @@ impl Store {
     pub fn pec_sent(&self, account: Option<AccountId>) -> Result<Vec<pec::Sent>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.account, r.mailbox, r.uid, r.kind, r.refers, r.recipients, r.reason,
-                    m.subject, m.received_at
+                    m.subject, m.received_at, r.verified
              FROM pec_receipt r
              JOIN message m ON m.account = r.account AND m.mailbox = r.mailbox AND m.uid = r.uid
              WHERE m.hidden = 0 AND (?1 IS NULL OR r.account = ?1)",
@@ -5443,6 +5794,7 @@ impl Store {
                     reason: r.get(6)?,
                     subject: r.get(7)?,
                     received_at: r.get(8)?,
+                    verified: r.get(9)?,
                 },
                 r.get::<_, String>(3)?,
             ))
@@ -5455,6 +5807,80 @@ impl Store {
             }
         }
         Ok(pec::gather(receipts))
+    }
+
+    /// To, Cc, Reply-To and the rest of [`ReplyInfo::envelope`]; None for
+    /// mail kept before they were read.
+    pub fn envelope(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<Option<crate::envelope::Envelope>> {
+        let json: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT envelope FROM message WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![account.0, mailbox, uid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(json
+            .flatten()
+            .and_then(|j| crate::envelope::Envelope::from_json(&j)))
+    }
+
+    /// Keeps the envelope read again from the whole message.
+    pub fn set_envelope(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        envelope: &crate::envelope::Envelope,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE message SET envelope = ?4 WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![account.0, mailbox, uid, envelope.to_json()],
+        )?;
+        Ok(())
+    }
+
+    /// Mutes the conversation of a message, or unmutes it: new mail in a
+    /// muted one arrives read and makes no notice. It stays in the inbox.
+    pub fn set_thread_muted(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uid: u32,
+        muted: bool,
+    ) -> Result<()> {
+        let thread = self.thread_of(account, mailbox, uid)?;
+        if thread.is_empty() {
+            return Ok(());
+        }
+        if muted {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO muted_thread (account, thread) VALUES (?1, ?2)",
+                params![account.0, thread],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM muted_thread WHERE account = ?1 AND thread = ?2",
+                params![account.0, thread],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Whether the conversation of a message is muted.
+    pub fn thread_muted(&self, account: AccountId, mailbox: &str, uid: u32) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM message m JOIN muted_thread t
+                ON t.account = m.account AND t.thread = m.thread
+              WHERE m.account = ?1 AND m.mailbox = ?2 AND m.uid = ?3)",
+            params![account.0, mailbox, uid],
+            |r| r.get(0),
+        )?)
     }
 
     /// Every address a message went to, as [`ReplyInfo::recipients`]:
@@ -7539,6 +7965,7 @@ fn row_to_summary(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageSummary> {
             references: r.get(10)?,
             reply_to: r.get(11)?,
             recipients: String::new(),
+            envelope: None,
         },
         to: r.get(12)?,
         list: ListInfo::default(),
@@ -7808,11 +8235,14 @@ mod tests {
             }
         }
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
-        // Back to before the attachment migration (the one before the
-        // outbox states).
+        // Back to just before the attachment ids changed.
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("attachment_unavailable"))
+            .unwrap();
         store
             .conn
-            .pragma_update(None, "user_version", (OUTBOX_STATES - 2) as i64)
+            .pragma_update(None, "user_version", at as i64)
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
@@ -9460,6 +9890,7 @@ From: <help@bank.example>\r\n\r\nHi";
             references: "<0@x>".into(),
             reply_to: "list@example.org".into(),
             recipients: String::new(),
+            envelope: None,
         };
         store
             .upsert_messages(&[m.clone(), msg(a, 2, 200, true)])
@@ -9515,9 +9946,7 @@ From: <help@bank.example>\r\n\r\nHi";
     #[test]
     fn pec_receipts_leave_the_inbox_for_the_vault() {
         let mut store = Store::open_in_memory().unwrap();
-        let a = store
-            .add_account(&imap_account("PEC", "matteo@pec.it", "#E0782F"))
-            .unwrap();
+        let a = store.add_account(&pec_account()).unwrap();
         let receipt = |uid, at, kind, to: &str| MessageSummary {
             from_email: "posta-certificata@pec.aruba.it".into(),
             subject: "CONSEGNA: Lease renewal".into(),
@@ -9545,12 +9974,119 @@ From: <help@bank.example>\r\n\r\nHi";
         assert_eq!(sent[0].subject, "Lease renewal");
         assert_eq!(sent[0].stage, pec::Stage::Delivered);
         assert_eq!(sent[0].proofs, [("INBOX".to_owned(), 3)]);
+        // Headers alone: the stage is not proof yet.
+        assert!(!sent[0].verified);
+        // Once the delivery's body is kept with its provider's signature
+        // checked, it is.
+        let signed = Body {
+            text: "consegnato".into(),
+            receipt_signed: true,
+            ..Body::default()
+        };
+        store.set_full_body(a, "INBOX", 3, &signed).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Listed again (a resync, marked read): still the proof it was.
+        store
+            .upsert_messages(&[receipt(3, 210, pec::Kind::Delivered, "x@pec.it")])
+            .unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Read again after its certificate expired: still the proof it was.
+        let later = Body {
+            receipt_signed: false,
+            ..signed
+        };
+        store.set_full_body(a, "INBOX", 3, &later).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
         // A receipt deleted on the server goes from the card too.
         store.remove_messages(a, "INBOX", &[3]).unwrap();
         assert_eq!(
             store.pec_sent(Some(a)).unwrap()[0].stage,
             pec::Stage::Accepted
         );
+    }
+
+    fn pec_account() -> Account {
+        let mut a = imap_account("PEC", "matteo@pec.it", "#E0782F");
+        if let AccountKind::Imap { imap, .. } = &mut a.kind {
+            imap.host = "imaps.pec.aruba.it".into();
+        }
+        a
+    }
+
+    #[test]
+    fn receipt_headers_on_an_ordinary_mailbox_stay_in_the_inbox() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "matteo@example.org", "#E0782F"))
+            .unwrap();
+        let forged = MessageSummary {
+            from_email: "posta-certificata@pec.aruba.it".into(),
+            subject: "CONSEGNA: Contract".into(),
+            list: ListInfo {
+                receipt: Some(pec::Receipt {
+                    kind: pec::Kind::Delivered,
+                    refers: "<contract@example.org>".into(),
+                    recipients: vec!["x@pec.it".into()],
+                    reason: String::new(),
+                }),
+                ..ListInfo::default()
+            },
+            ..msg(a, 1, 100, false)
+        };
+        store.upsert_messages(&[forged]).unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
+        assert!(store.pec_sent(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_logo_follows_the_message_not_the_domain() {
+        use crate::sender_auth::{Method, Step, Trail};
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "matteo@example.org", "#E0782F"))
+            .unwrap();
+        let from = |uid| MessageSummary {
+            from_email: "news@bank.example".into(),
+            ..msg(a, uid, 100 + uid as i64, false)
+        };
+        store.upsert_messages(&[from(1), from(2), from(3)]).unwrap();
+        // The account's server vouched for message 1 with DMARC.
+        let checked = |result: &str, name: &str| Body {
+            text: "Hello".into(),
+            auth: Trail {
+                from_domain: "bank.example".into(),
+                steps: vec![Step::Results {
+                    id: "mx.example.org".into(),
+                    methods: vec![Method {
+                        name: name.into(),
+                        result: result.into(),
+                        props: vec![("header.from".into(), "bank.example".into())],
+                    }],
+                }],
+                signatures: vec![],
+            },
+            ..Body::default()
+        };
+        store
+            .set_full_body(a, "INBOX", 1, &checked("pass", "dmarc"))
+            .unwrap();
+        // Message 2 claims the same From, with nothing to show for it.
+        store
+            .set_full_body(a, "INBOX", 2, &Body::default())
+            .unwrap();
+        // Message 3 is verified only by a DKIM signature: no DMARC pass.
+        let mut dkim = checked("pass", "dkim");
+        if let Step::Results { methods, .. } = &mut dkim.auth.steps[0] {
+            methods[0].props = vec![("header.d".into(), "bank.example".into())];
+        }
+        store.set_full_body(a, "INBOX", 3, &dkim).unwrap();
+        assert!(store.sender_verified(a, "INBOX", 1).unwrap());
+        assert!(store.logo_allowed(a, "INBOX", 1, true).unwrap());
+        assert!(!store.logo_allowed(a, "INBOX", 2, false).unwrap());
+        assert!(store.sender_verified(a, "INBOX", 3).unwrap());
+        assert!(!store.logo_allowed(a, "INBOX", 3, false).unwrap());
+        // Not kept yet: nothing proven.
+        assert!(!store.logo_allowed(a, "INBOX", 9, false).unwrap());
     }
 
     #[test]
@@ -10298,6 +10834,7 @@ From: <help@bank.example>\r\n\r\nHi";
             saved: None,
             send_at: Some(500),
             undo: false,
+            redirect: false,
         };
         let id = store.queue_outgoing(&out, 100).unwrap();
         let back = store.outgoing(id).unwrap().unwrap();
@@ -10356,6 +10893,7 @@ From: <help@bank.example>\r\n\r\nHi";
             saved: None,
             send_at: None,
             undo: false,
+            redirect: false,
         };
         let first = store.queue_outgoing(&out, 100).unwrap();
         let second = store.queue_outgoing(&out, 200).unwrap();
@@ -10391,6 +10929,56 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(store.outbox(None).unwrap().is_empty());
     }
 
+    #[test]
+    fn a_redirect_stays_one_in_the_outbox_and_is_retried_as_it_is() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let raw = b"From: Anna <anna@x.it>\r\nTo: me@example.org\r\nSubject: Plans\r\n\r\nHi\r\n";
+        let own = ["me@example.org".to_owned()];
+        let (draft, ready) =
+            crate::envelope::redirect(raw, "Plans", None, &own, &["bo@x.it".to_owned()], 100)
+                .unwrap();
+        let out = crate::outbox::Outgoing {
+            account: a,
+            draft,
+            ready,
+            saved: None,
+            send_at: Some(110),
+            undo: true,
+            redirect: true,
+        };
+        let id = store.queue_outgoing(&out, 100).unwrap();
+        let plain = queued(&store, a, None);
+        // What was kept comes back whole, flag and message as it came
+        // (dated when it is to go, as every message sent later).
+        let mut kept = out.clone();
+        kept.draft.date = out.send_at;
+        assert_eq!(store.outgoing(id).unwrap(), Some(kept));
+        let rows = store.outbox(Some(a)).unwrap();
+        assert_eq!(
+            rows.iter().map(|w| (w.id, w.redirect)).collect::<Vec<_>>(),
+            [(id, true), (plain, false)]
+        );
+
+        // Refused, then tried again: due now, the message unchanged.
+        assert!(store.claim_outgoing(id, "me", 200).unwrap());
+        assert!(!store.retry_outgoing(id).unwrap(), "a sender holds it");
+        store.refused_outgoing(id, "me", "550 no").unwrap();
+        assert!(store.retry_outgoing(id).unwrap());
+        let again = store.outgoing(id).unwrap().unwrap();
+        assert!(again.redirect);
+        assert_eq!(again.ready, out.ready);
+        assert_eq!((again.send_at, again.undo), (None, false));
+        let row = &store.outbox(Some(a)).unwrap()[0];
+        assert_eq!(
+            (row.state, row.error.as_deref()),
+            (crate::outbox::State::Waiting, None)
+        );
+        assert_eq!(store.due_outgoing(a, 0).unwrap(), [id, plain]);
+    }
+
     fn queued(store: &Store, account: AccountId, send_at: Option<i64>) -> i64 {
         use crate::outbox::Outgoing;
         use crate::smtp::{ready, Draft};
@@ -10407,6 +10995,7 @@ From: <help@bank.example>\r\n\r\nHi";
             saved: None,
             send_at,
             undo: false,
+            redirect: false,
         };
         store.queue_outgoing(&out, 100).unwrap()
     }
@@ -10538,6 +11127,7 @@ From: <help@bank.example>\r\n\r\nHi";
                  ALTER TABLE outbox DROP COLUMN undo;
                  UPDATE outbox SET error = '550 no' WHERE id = {refused};
                  PRAGMA user_version = {};",
+                // Just before the outbox states, whatever comes after.
                 OUTBOX_STATES - 1
             ))
             .unwrap();
@@ -11042,6 +11632,112 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(!store.is_muted("spam@shop.example").unwrap());
         store.set_blocked("spam@shop.example", false).unwrap();
         assert!(!store.is_blocked("SPAM@shop.example").unwrap());
+    }
+
+    #[test]
+    fn envelopes_are_kept_and_not_lost_to_a_flag_refresh() {
+        use crate::envelope::{Address, Envelope};
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "w@example.org", "#2F8F83"))
+            .unwrap();
+        let envelope = Envelope {
+            to: vec![
+                Address::new("", "w@example.org"),
+                Address::new("Bo", "bo@x.it"),
+            ],
+            cc: vec![Address::new("", "carla@x.it")],
+            reply_to: vec![Address::new("", "desk@x.it"), Address::new("", "help@x.it")],
+            ..Envelope::default()
+        };
+        let mut m = msg(a, 1, 100, false);
+        m.reply.envelope = Some(envelope.clone());
+        store.upsert_messages(&[m]).unwrap();
+        assert_eq!(
+            store.envelope(a, "INBOX", 1).unwrap(),
+            Some(envelope.clone())
+        );
+        // A row seen again without its headers keeps what was read.
+        store.upsert_messages(&[msg(a, 1, 100, true)]).unwrap();
+        assert_eq!(store.envelope(a, "INBOX", 1).unwrap(), Some(envelope));
+        // Mail kept before has none until it is read again.
+        store.upsert_messages(&[msg(a, 2, 100, true)]).unwrap();
+        assert_eq!(store.envelope(a, "INBOX", 2).unwrap(), None);
+        let read = Envelope {
+            list: true,
+            ..Envelope::default()
+        };
+        store.set_envelope(a, "INBOX", 2, &read).unwrap();
+        assert_eq!(store.envelope(a, "INBOX", 2).unwrap(), Some(read));
+        assert_eq!(store.envelope(a, "INBOX", 99).unwrap(), None);
+    }
+
+    #[test]
+    fn a_mute_follows_its_conversation_when_threads_merge() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "w@example.org", "#2F8F83"))
+            .unwrap();
+        // A reply arrives before the message it answers: its thread is the
+        // parent's id, and it is muted under that id.
+        let mut reply = msg(a, 2, 200, true);
+        reply.reply.message_id = "<2@x.it>".into();
+        reply.reply.references = "<1@x.it>".into();
+        store.upsert_messages(&[reply]).unwrap();
+        store.set_thread_muted(a, "INBOX", 2, true).unwrap();
+        let before = store.thread_of(a, "INBOX", 2).unwrap();
+        // The parent comes, with the conversation's real root: they merge.
+        let mut parent = msg(a, 1, 100, true);
+        parent.reply.message_id = "<1@x.it>".into();
+        parent.reply.references = "<0@x.it>".into();
+        store.upsert_messages(&[parent]).unwrap();
+        let after = store.thread_of(a, "INBOX", 2).unwrap();
+        assert_ne!(before, after, "the threads merged");
+        assert!(
+            store.thread_muted(a, "INBOX", 2).unwrap(),
+            "{before} → {after}"
+        );
+        assert!(store.thread_muted(a, "INBOX", 1).unwrap());
+    }
+
+    #[test]
+    fn new_mail_in_a_muted_conversation_arrives_read() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "w@example.org", "#2F8F83"))
+            .unwrap();
+        let mut first = msg(a, 1, 100, true);
+        first.reply.message_id = "<1@x.it>".into();
+        store.upsert_messages(&[first]).unwrap();
+        assert!(!store.thread_muted(a, "INBOX", 1).unwrap());
+        store.set_thread_muted(a, "INBOX", 1, true).unwrap();
+        assert!(store.thread_muted(a, "INBOX", 1).unwrap());
+
+        let mut reply = msg(a, 2, 200, false);
+        reply.reply.message_id = "<2@x.it>".into();
+        reply.reply.references = "<1@x.it>".into();
+        let mut other = msg(a, 3, 300, false);
+        other.reply.message_id = "<3@x.it>".into();
+        store.upsert_messages(&[reply.clone(), other]).unwrap();
+        assert!(store.thread_muted(a, "INBOX", 2).unwrap());
+        assert!(store.message(a, "INBOX", 2).unwrap().unwrap().flags.seen);
+        assert!(!store.message(a, "INBOX", 3).unwrap().unwrap().flags.seen);
+        // The server hears of it before its flags are read again.
+        let pending = store.pending_changes(a).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].uid, 2);
+        assert_eq!(pending[0].change, Change::Seen(true));
+        // Marked unread again later, it stays unread.
+        store.set_seen(a, "INBOX", 2, false).unwrap();
+        store.upsert_messages(&[reply]).unwrap();
+        assert!(!store.message(a, "INBOX", 2).unwrap().unwrap().flags.seen);
+
+        store.set_thread_muted(a, "INBOX", 2, false).unwrap();
+        assert!(!store.thread_muted(a, "INBOX", 1).unwrap());
+        let mut later = msg(a, 4, 400, false);
+        later.reply.references = "<1@x.it>".into();
+        store.upsert_messages(&[later]).unwrap();
+        assert!(!store.message(a, "INBOX", 4).unwrap().unwrap().flags.seen);
     }
 
     #[test]
@@ -11762,6 +12458,7 @@ From: <help@bank.example>\r\n\r\nHi";
         let unread = |section| ListFilter {
             section,
             unread: true,
+            ..ListFilter::default()
         };
         let uids = |filter: ListFilter| -> Vec<u32> {
             store
@@ -11887,6 +12584,7 @@ From: <help@bank.example>\r\n\r\nHi";
                 references: refs.into(),
                 reply_to: String::new(),
                 recipients: String::new(),
+                envelope: None,
             },
             ..msg(a, uid, at, true)
         };
@@ -12231,6 +12929,7 @@ From: <help@bank.example>\r\n\r\nHi";
             inline: Vec::new(),
             auth: Default::default(),
             asks: Default::default(),
+            receipt_signed: false,
         };
         store.set_full_body(a, "INBOX", 1, &body).unwrap();
         assert_eq!(store.full_body(a, "INBOX", 1).unwrap(), Some(body.clone()));
@@ -12463,6 +13162,8 @@ From: <help@bank.example>\r\n\r\nHi";
             selectable,
             unread: 0,
             total: 0,
+            subscribed: true,
+            delimiter: "/".into(),
         };
         store
             .set_account_folders(
@@ -12498,6 +13199,8 @@ From: <help@bank.example>\r\n\r\nHi";
             selectable: true,
             unread: 0,
             total: 0,
+            subscribed: true,
+            delimiter: "/".into(),
         };
         let names = |store: &Store| -> Vec<String> {
             store
@@ -12967,6 +13670,80 @@ From: <help@bank.example>\r\n\r\nHi";
             .unwrap();
         assert_eq!(store.receipt_offered(a, "Werbung", 6).unwrap(), None);
         assert_eq!(store.receipt_offered(a, "Papierkorb", 7).unwrap(), None);
+    }
+
+    #[test]
+    fn a_read_receipt_in_the_outbox_is_taken_back_with_its_answer() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 101, false)])
+            .unwrap();
+        for uid in [1, 2] {
+            store
+                .set_full_body(
+                    a,
+                    "INBOX",
+                    uid,
+                    &asking("julia@example.org", "julia@example.org"),
+                )
+                .unwrap();
+        }
+        let id = |store: &Store| -> (i64, String) {
+            let w = &store.outbox(Some(a)).unwrap()[0];
+            (
+                w.id,
+                store.outgoing(w.id).unwrap().unwrap().ready.message_id,
+            )
+        };
+
+        // Put in the outbox, its first try failed: answered, so the band
+        // doesn't ask again (a second receipt would go too).
+        queued(&store, a, None);
+        let (first, message_id) = id(&store);
+        store.receipt_queued(a, "INBOX", 1, &message_id).unwrap();
+        assert_eq!(store.receipt_offered(a, "INBOX", 1).unwrap(), None);
+        // "Don't send" now takes it back out of the outbox.
+        store
+            .answer_receipt(a, "INBOX", 1, crate::mdn::Answer::Declined, false)
+            .unwrap();
+        assert_eq!(store.outgoing(first).unwrap(), None);
+        assert_eq!(
+            store.message_asks(a, "INBOX", 1).unwrap().1,
+            crate::mdn::Answer::Declined
+        );
+
+        // Deleted from the Outbox: declined, and not offered again.
+        queued(&store, a, None);
+        let (second, message_id) = id(&store);
+        store.receipt_queued(a, "INBOX", 2, &message_id).unwrap();
+        assert!(store.take_outgoing(second).unwrap().is_some());
+        assert_eq!(
+            store.message_asks(a, "INBOX", 2).unwrap().1,
+            crate::mdn::Answer::Declined
+        );
+        assert_eq!(store.receipt_offered(a, "INBOX", 2).unwrap(), None);
+
+        // One being sent right now can't be taken back.
+        queued(&store, a, None);
+        let (third, message_id) = id(&store);
+        store.receipt_queued(a, "INBOX", 2, &message_id).unwrap();
+        assert!(store.claim_outgoing(third, "me", 200).unwrap());
+        store
+            .answer_receipt(a, "INBOX", 2, crate::mdn::Answer::Declined, false)
+            .unwrap();
+        assert!(store.outgoing(third).unwrap().is_some());
+        // Another message of the outbox leaves no answer behind.
+        store.release_outgoing(third, "me").unwrap();
+        assert!(store.take_outgoing(third).unwrap().is_some());
+        let other = queued(&store, a, None);
+        assert!(store.take_outgoing(other).unwrap().is_some());
+        assert_eq!(
+            store.message_asks(a, "INBOX", 1).unwrap().1,
+            crate::mdn::Answer::Declined
+        );
     }
 
     #[test]

@@ -37,6 +37,7 @@ class DemoMailSource extends MailSource {
     bool away = false,
     this.asks = false,
     bool contactGroups = false,
+    this.mailbox = false,
   }) : now = now ?? DateTime.now(),
        _crashWaiting = crashed {
     if (contactGroups) {
@@ -88,6 +89,33 @@ class DemoMailSource extends MailSource {
         messageId: '<demo-junk-1@piuma.mail>',
       ),
     ];
+    // Two deleted emails in Work's Trash.
+    if (mailbox) {
+      _own['Trash'] = [
+        MailRow(
+          accountId: _work.id,
+          mailbox: 'Trash',
+          uid: 9101,
+          fromName: 'Print Shop',
+          fromEmail: 'orders@printshop.it',
+          subject: 'Your proof is ready',
+          preview: 'The proof of your business cards is attached.',
+          receivedAt: this.now.subtract(const Duration(days: 2)),
+          seen: true,
+        ),
+        MailRow(
+          accountId: _work.id,
+          mailbox: 'Trash',
+          uid: 9102,
+          fromName: 'Coworking Nord',
+          fromEmail: 'hello@coworkingnord.it',
+          subject: 'Events this week',
+          preview: 'Breakfast on Tuesday, a talk on Thursday.',
+          receivedAt: this.now.subtract(const Duration(days: 4)),
+          seen: true,
+        ),
+      ];
+    }
     if (groups) {
       _groups.addAll([
         const MailGroup(
@@ -653,6 +681,10 @@ class DemoMailSource extends MailSource {
       ? const MessageAsks()
       : MessageAsks(readReceiptTo: row.fromEmail, highPriority: true);
 
+  /// Read receipts in the outbox, by the message they answer, as the
+  /// engine links them: deleted there, the answer becomes "not sent".
+  final _receiptsWaiting = <Object, int>{};
+
   @override
   Future<bool> answerReadReceipt(
     MailRow row, {
@@ -662,12 +694,60 @@ class DemoMailSource extends MailSource {
     final failure = failNextReceipt;
     failNextReceipt = null;
     if (failure != null) throw failure;
+    receiptAnswers.removeWhere((a) => a.$1.key == row.key);
     receiptAnswers.add((row, send, never));
-    return send && offline;
+    if (!send) {
+      // Not sent takes back one still waiting in the outbox.
+      if (_receiptsWaiting.remove(row.key) case final id?) {
+        _outbox.removeWhere(
+          (o) => o.id == id && o.state != OutboxState.sending,
+        );
+        _outboxDrafts.remove(id);
+        _changes.add(null);
+      }
+      return false;
+    }
+    final refused = refuseNextReceipt;
+    refuseNextReceipt = null;
+    if (!offline && refused == null) return false;
+    // It waits in the outbox, offline or refused: the band doesn't ask
+    // again, and the Outbox says why.
+    final id = _outboxId++;
+    final draft = Draft(
+      accountId: row.accountId,
+      to: [row.fromEmail],
+      subject: 'Read: ${row.subject}',
+      body: 'Your message was displayed.',
+    );
+    _outbox.add(
+      OutboxItem(
+        id: id,
+        accountId: row.accountId,
+        to: draft.recipients,
+        subject: draft.subject,
+        body: draft.body,
+        queuedAt: now,
+        state: refused == null ? OutboxState.waiting : OutboxState.refused,
+        error: refused,
+      ),
+    );
+    _outboxDrafts[id] = draft;
+    _receiptsWaiting[row.key] = id;
+    _changes.add(null);
+    return true;
   }
 
-  /// The next read receipt fails with this.
+  /// The next read receipt fails before it reaches the outbox.
   Object? failNextReceipt;
+
+  /// The server refuses the next read receipt with this reason: it stays
+  /// in the outbox.
+  String? refuseNextReceipt;
+
+  /// Mailbox management's data: two starred emails, a Trash with two, a
+  /// hidden folder, and how full each mailbox is. Off in the older
+  /// screenshots, so they stay as they were.
+  final bool mailbox;
   static const impostorSubject = 'Your account has been limited';
 
   /// Older filler rows, to try scrolling a big inbox.
@@ -936,6 +1016,264 @@ class DemoMailSource extends MailSource {
   @override
   String? junkMailbox(int accountId) => junkFolders ? 'Junk' : null;
 
+  @override
+  String? trashMailbox(int accountId) =>
+      mailbox && junkFolders ? 'Trash' : null;
+
+  /// Starred rows, by key.
+  late final Set<Object> _starred = {
+    // Two of the inbox.
+    if (mailbox)
+      for (final r in _rows.skip(1).take(2)) r.key,
+  };
+
+  /// What was starred or unstarred, for tests.
+  final List<(MailRow, bool)> starredSet = [];
+
+  @override
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {
+    for (final r in rows) {
+      starred ? _starred.add(r.key) : _starred.remove(r.key);
+      starredSet.add((r, starred));
+    }
+    _changes.add(null);
+  }
+
+  /// What was deleted for good, for tests.
+  final List<MailRow> erased = [];
+
+  @override
+  Future<void> deleteForever(List<MailRow> rows) async {
+    for (final r in rows) {
+      erased.add(r);
+      _gone.add(r.key);
+      _own[r.mailbox]?.removeWhere((o) => o.key == r.key);
+    }
+    _changes.add(null);
+  }
+
+  /// What was copied where, for tests.
+  final List<(MailRow, String)> copied = [];
+
+  @override
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {
+    for (final row in rows) {
+      copied.add((row, mailbox));
+      (_own[mailbox] ??= []).insert(
+        0,
+        row.copyWith(mailbox: mailbox, uid: 50000 + copied.length),
+      );
+    }
+    _changes.add(null);
+  }
+
+  @override
+  Future<int> folderTotal(int accountId, String mailbox) async =>
+      _ownList(accountId, mailbox).length;
+
+  /// Folders emptied, for tests.
+  final List<String> emptied = [];
+
+  @override
+  Future<int> emptyFolder(int accountId, String mailbox) async {
+    final n = _ownList(accountId, mailbox).length;
+    emptied.add(mailbox);
+    _own[mailbox]?.removeWhere((r) => r.accountId == accountId);
+    _changes.add(null);
+    return n;
+  }
+
+  /// Folders renamed (server name to name), deleted and hidden, by
+  /// account.
+  final _renamed = <String, String>{};
+  final _deletedFolders = <String>{};
+  final _hiddenFolders = <String>{'Archive 2019'};
+
+  bool _shownFolder(AccountFolder f) => mailbox || f.mailbox != 'Archive 2019';
+
+  @override
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {
+    _renamed[mailbox] = name.trim();
+    _changes.add(null);
+  }
+
+  @override
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
+    var emails = 0, subfolders = 0;
+    for (final f in _workFolders) {
+      if (f.mailbox == mailbox) emails += f.total;
+      if (f.mailbox.startsWith('$mailbox/')) {
+        emails += f.total;
+        subfolders++;
+      }
+    }
+    return (
+      emails: emails,
+      subfolders: subfolders,
+      protected: _protectedIn(accountId, mailbox),
+    );
+  }
+
+  /// A folder with a job the person put inside [mailbox], if any.
+  String? _protectedIn(int accountId, String mailbox) {
+    for (final f in specialFolders(accountId)) {
+      final m = f.mailbox;
+      if (m != null && (m == mailbox || m.startsWith('$mailbox/'))) return m;
+    }
+    return null;
+  }
+
+  @override
+  Future<void> deleteFolder(int accountId, String mailbox) async {
+    if (_protectedIn(accountId, mailbox) != null) {
+      throw StateError('protected');
+    }
+    _deletedFolders.add(mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {
+    subscribed ? _hiddenFolders.remove(mailbox) : _hiddenFolders.add(mailbox);
+    _changes.add(null);
+  }
+
+  final _chosenRoles = <(int, SpecialRole), String>{};
+
+  @override
+  List<SpecialFolder> specialFolders(int accountId) => [
+    for (final (role, found) in [
+      (SpecialRole.sent, 'Sent'),
+      (SpecialRole.drafts, 'Drafts'),
+      (SpecialRole.trash, junkFolders ? 'Trash' : null),
+      (SpecialRole.junk, junkMailbox(accountId)),
+      (SpecialRole.archive, 'Archive'),
+    ])
+      SpecialFolder(
+        role,
+        _chosenRoles[(accountId, role)] ?? found,
+        chosen: _chosenRoles.containsKey((accountId, role)),
+      ),
+  ];
+
+  @override
+  List<({String mailbox, String name})> serverFolders(int accountId) => [
+    for (final name in ['INBOX', 'Archive', 'Drafts', 'Junk', 'Sent', 'Trash'])
+      (mailbox: name, name: name),
+    if (accountId == _work.id)
+      for (final f in _workFolders) (mailbox: f.mailbox, name: f.mailbox),
+  ];
+
+  @override
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) {
+    bool deletes(SpecialRole r) =>
+        r == SpecialRole.trash || r == SpecialRole.junk;
+    return [
+      for (final f in serverFolders(accountId))
+        if (f.mailbox != 'INBOX' &&
+            !specialFolders(accountId).any(
+              (o) =>
+                  o.role != role &&
+                  o.mailbox == f.mailbox &&
+                  (deletes(role) || deletes(o.role)),
+            ))
+          f,
+    ];
+  }
+
+  @override
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {
+    if (mailbox == null) {
+      _chosenRoles.remove((accountId, role));
+    } else {
+      _chosenRoles[(accountId, role)] = mailbox;
+    }
+    _changes.add(null);
+  }
+
+  final _listPrefs = ValueNotifier(const ListPrefs());
+
+  @override
+  ValueListenable<ListPrefs> get listPrefs => _listPrefs;
+
+  @override
+  Future<void> setListPrefs(ListPrefs prefs) async {
+    _listPrefs.value = prefs;
+    _changes.add(null);
+  }
+
+  /// Rows as the list settings sort and group them.
+  List<MailRow> _arranged(List<MailRow> rows) {
+    final prefs = _listPrefs.value;
+    var out = rows;
+    if (!prefs.threads) out = [for (final r in rows) _single(r)];
+    switch (prefs.order) {
+      case ListOrder.newest:
+        break;
+      case ListOrder.oldest:
+        out = [...out]..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+      case ListOrder.sender:
+        out = [...out]
+          ..sort((a, b) {
+            final by = a.sender.toLowerCase().compareTo(b.sender.toLowerCase());
+            return by != 0 ? by : b.receivedAt.compareTo(a.receivedAt);
+          });
+    }
+    return out;
+  }
+
+  /// [r] as a row of its own, outside its conversation.
+  static MailRow _single(MailRow r) => MailRow(
+    copies: r.copies,
+    accountId: r.accountId,
+    mailbox: r.mailbox,
+    uid: r.uid,
+    fromName: r.fromName,
+    fromEmail: r.fromEmail,
+    subject: r.subject,
+    preview: r.preview,
+    receivedAt: r.receivedAt,
+    seen: r.seen,
+    messageId: r.messageId,
+    references: r.references,
+    replyTo: r.replyTo,
+    to: r.to,
+    folder: r.folder,
+    listed: r.listed,
+    snoozedUntil: r.snoozedUntil,
+    files: r.files,
+    pictures: r.pictures,
+    invite: r.invite,
+    waitingFor: r.waitingFor,
+    labels: r.labels,
+    remindAt: r.remindAt,
+    starred: r.starred,
+  );
+
+  @override
+  MailQuota? quota(int accountId) => !mailbox
+      ? null
+      : switch (accountId) {
+          // Work is nearly full, as a gentle warning shows.
+          2 => const MailQuota(14200 * 1024 * 1024, 15360 * 1024 * 1024),
+          1 => const MailQuota(2100 * 1024 * 1024, 15360 * 1024 * 1024),
+          _ => null,
+        };
+
   void _applyOne(MailRow row, MessageAction action) {
     applied.add((row, action));
     if (action == MessageAction.notJunk) {
@@ -972,8 +1310,9 @@ class DemoMailSource extends MailSource {
 
   final _movedToArchive = <MailRow>[];
 
-  /// Work's own folders, as in `AccountFolders`.
+  /// Work's own folders, as in `AccountFolders`, and one hidden.
   static const _workFolders = [
+    AccountFolder(mailbox: 'Archive 2019', name: 'Archive 2019', total: 640),
     AccountFolder(mailbox: 'Clients', name: 'Clients'),
     AccountFolder(mailbox: 'Clients/Acme', name: 'Acme', depth: 1, total: 46),
     AccountFolder(
@@ -1003,16 +1342,22 @@ class DemoMailSource extends MailSource {
 
   @override
   Future<List<AccountFolder>> folders(int accountId) async {
+    bool deleted(String m) =>
+        _deletedFolders.any((d) => m == d || m.startsWith('$d/'));
     var list = [
       if (accountId == _work.id)
         for (final f in _workFolders)
-          AccountFolder(
-            mailbox: f.mailbox,
-            name: f.name,
-            depth: f.depth,
-            unread: (_own[f.mailbox] ?? const []).where((r) => !r.seen).length,
-            total: f.total + (_own[f.mailbox]?.length ?? 0),
-          ),
+          if (!deleted(f.mailbox) && _shownFolder(f))
+            AccountFolder(
+              mailbox: f.mailbox,
+              name: _renamed[f.mailbox] ?? f.name,
+              depth: f.depth,
+              unread: (_own[f.mailbox] ?? const [])
+                  .where((r) => !r.seen)
+                  .length,
+              total: f.total + (_own[f.mailbox]?.length ?? 0),
+              subscribed: !_hiddenFolders.contains(f.mailbox),
+            ),
       ...?_made[accountId],
     ];
     for (final order in _folderOrders[accountId] ?? const <List<String>>[]) {
@@ -1239,6 +1584,13 @@ class DemoMailSource extends MailSource {
   List<MailRow> _messages(MailFolder folder) => switch (folder) {
     MailFolder.inbox => _visible,
     MailFolder.label => const [],
+    MailFolder.starred =>
+      [
+          ..._visible,
+          ..._messages(MailFolder.archive),
+          ..._messages(MailFolder.sent),
+        ].where((r) => _starred.contains(r.key)).toList()
+        ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt)),
     MailFolder.sent =>
       [
           ..._sentNow.reversed,
@@ -1628,16 +1980,13 @@ class DemoMailSource extends MailSource {
     InboxTab? tab,
     bool unread = false,
     GroupScope? group,
-  }) async =>
-      (folder == MailFolder.label
-              ? await labelled(mailbox ?? '')
-              : account != null && mailbox != null
-              ? _ownList(account, mailbox)
-              : _list(folder, account, tab, group, unread))
-          .skip(offset)
-          .take(limit)
-          .map(_withLabels)
-          .toList();
+  }) async => _arranged(
+    folder == MailFolder.label
+        ? await labelled(mailbox ?? '')
+        : account != null && mailbox != null
+        ? _ownList(account, mailbox)
+        : _list(folder, account, tab, group, unread),
+  ).skip(offset).take(limit).map(_withLabels).toList();
 
   // Labels, as on `LabelsToApprove`.
   final _labels = <MailLabel>[];
@@ -1645,7 +1994,10 @@ class DemoMailSource extends MailSource {
 
   MailRow _withLabels(MailRow r) {
     final labels = _rowLabels[r.key];
-    return labels == null ? r : r.copyWith(labels: labels);
+    final starred = _starred.contains(r.key);
+    return labels == null && !starred
+        ? r
+        : r.copyWith(labels: labels, starred: starred);
   }
 
   void _seedLabels() {
@@ -2294,6 +2646,9 @@ class DemoMailSource extends MailSource {
   /// Receipts saved, for tests.
   final List<PecMessage> savedReceipts = [];
 
+  /// Receipts whose provider signature didn't check, by uid; tests set it.
+  Set<int> unsignedReceipts = {};
+
   @override
   Future<List<PecMessage>> pecMessages({int? account}) async {
     if (!certified) return const [];
@@ -2328,6 +2683,7 @@ class DemoMailSource extends MailSource {
       reason: reason,
       failedTo: stage == PecStage.failed ? to.first : '',
       proofs: proofs.isEmpty ? [uid] : proofs,
+      verified: !unsignedReceipts.contains(uid),
     );
     return [
       if (account == null || account == _work.id) ...[
@@ -2562,8 +2918,15 @@ class DemoMailSource extends MailSource {
   /// Pictures are the board's own; other files are empty bytes of their
   /// size, as when forwarded.
   @override
-  Future<Uint8List?> attachmentData(AttachedFile file) async =>
-      await attachmentThumb(file) ?? Uint8List(file.file.size);
+  Future<Uint8List?> attachmentData(AttachedFile file) async {
+    if (failFiles.contains(file.file.name)) {
+      throw StateError('${file.file.name} is not on the server');
+    }
+    return await attachmentThumb(file) ?? Uint8List(file.file.size);
+  }
+
+  /// Files whose download fails, by name, for tests.
+  final failFiles = <String>{};
 
   /// The demo's Vault gives no notices of its own; tests set some.
   List<MailNotice> reminders = const [];
@@ -2608,13 +2971,16 @@ class DemoMailSource extends MailSource {
 
   static bool _never(MailRow row) => false;
 
+  /// How a newsletter is left; tests change it.
+  UnsubscribeInfo leaveBy = const UnsubscribeInfo(
+    UnsubscribeKind.oneClick,
+    'https://forma.example/u',
+  );
+
   @override
   Future<UnsubscribeInfo> unsubscribeInfo(MailRow row) async =>
       row.folder == MailFolder.newsletters || leavable(row)
-      ? const UnsubscribeInfo(
-          UnsubscribeKind.oneClick,
-          'https://forma.example/u',
-        )
+      ? leaveBy
       : UnsubscribeInfo.none;
 
   @override
@@ -3351,6 +3717,199 @@ class DemoMailSource extends MailSource {
     mute ? muted.add(email.toLowerCase()) : muted.remove(email.toLowerCase());
   }
 
+  /// Conversations muted, by a message of theirs, for tests.
+  final mutedThreads = <Object>{};
+
+  /// Who demo mail went to, besides the account: the reader's To and Cc
+  /// and Reply all show on these. Dad's photos came as a blind copy.
+  static const _demoRecipients =
+      <String, ({List<MailPerson> to, List<MailPerson> cc, bool you})>{
+        'Mockup v3 review': (
+          to: [MailPerson('Sara Conti', 'sara@studio.it')],
+          cc: [MailPerson('Elena Ferri', 'elena@studio.it')],
+          you: true,
+        ),
+        'Dinner on Friday?': (
+          to: [MailPerson('Elena Ferri', 'elena.ferri@icloud.com')],
+          cc: [MailPerson('Marco Riva', 'marco.riva@posta.it')],
+          you: true,
+        ),
+        'Re: Print quote': (
+          to: [],
+          cc: [MailPerson('Luca Bianchi', 'luca@studio.it')],
+          you: true,
+        ),
+        'Trip photos': (
+          to: [MailPerson('Mum', 'mamma@posta.it')],
+          cc: [],
+          you: false,
+        ),
+      };
+
+  /// Envelopes tests set, by subject, in place of the demo's own.
+  final envelopeFor = <String, MailEnvelope>{};
+
+  @override
+  Future<MailEnvelope?> envelope(MailRow row) async {
+    if (envelopeFor[row.subject] case final e?) {
+      return e.withMuted(mutedThreads.contains(row.key));
+    }
+    final account = accounts.where((a) => a.id == row.accountId).firstOrNull;
+    final own = {
+      if (account != null) account.email.toLowerCase(),
+      for (final a in _aliases[row.accountId] ?? const <String>[])
+        a.toLowerCase(),
+    };
+    final mine = own.contains(row.fromEmail.toLowerCase());
+    final me = MailPerson(
+      account?.senderName.isNotEmpty ?? false ? account!.senderName : 'Matteo',
+      writtenTo(row) ?? account?.email ?? '',
+      you: true,
+    );
+    final known = mine ? null : _demoRecipients[row.subject];
+    final List<MailPerson> to;
+    final List<MailPerson> cc;
+    if (mine) {
+      to = [
+        for (final (i, name) in row.to.split(',').indexed)
+          if (name.trim().isNotEmpty)
+            MailPerson(
+              name.trim(),
+              i < row.waitingFor.length
+                  ? row.waitingFor[i]
+                  : name.trim().contains('@')
+                  ? name.trim()
+                  : '${name.trim().split(' ').first.toLowerCase()}@studio.it',
+            ),
+      ];
+      cc = const [];
+    } else {
+      to = [if (known?.you ?? true) me, ...?known?.to];
+      cc = known?.cc ?? const [];
+    }
+    final sender = row.replyTo.isNotEmpty
+        ? row.replyTo
+        : row.fromName.isNotEmpty
+        ? '${row.fromName} <${row.fromEmail}>'
+        : row.fromEmail;
+    final reply = mine ? [for (final p in to) p.address] : [sender];
+    final seen = {for (final r in reply) bareAddress(r).toLowerCase()};
+    final allTo = [
+      ...reply,
+      for (final p in to)
+        if (!p.you && seen.add(p.email.toLowerCase())) p.address,
+    ];
+    final allCc = [
+      for (final p in cc)
+        if (!p.you && seen.add(p.email.toLowerCase())) p.address,
+    ];
+    return MailEnvelope(
+      to: to,
+      cc: cc,
+      bccYou: !mine && !to.any((p) => p.you) && !cc.any((p) => p.you),
+      replyTo: reply,
+      replyAllTo: allTo,
+      replyAllCc: allCc,
+      muted: mutedThreads.contains(row.key),
+    );
+  }
+
+  /// The raw demo message: its headers and text.
+  @override
+  Future<Uint8List> rawMessage(MailRow row) async {
+    final failure = failNextRaw;
+    failNextRaw = null;
+    if (failure != null) throw failure;
+    final e = (await envelope(row))!;
+    String line(List<MailPerson> people) =>
+        people.map((p) => p.address).join(', ');
+    final date = row.receivedAt.toUtc().toIso8601String();
+    final raw = StringBuffer()
+      ..write('Return-Path: <${row.fromEmail}>\r\n')
+      ..write('From: ${row.fromName} <${row.fromEmail}>\r\n')
+      ..write('To: ${line(e.to)}\r\n')
+      ..write(e.cc.isEmpty ? '' : 'Cc: ${line(e.cc)}\r\n')
+      ..write('Subject: ${row.subject}\r\n')
+      ..write('Date: $date\r\n')
+      ..write('Message-ID: ${row.messageId}\r\n')
+      ..write('MIME-Version: 1.0\r\n')
+      ..write('Content-Type: text/plain; charset=utf-8\r\n\r\n')
+      ..write((await body(row)).replaceAll('\n', '\r\n'))
+      ..write('\r\n');
+    return Uint8List.fromList(utf8.encode(raw.toString()));
+  }
+
+  /// Makes the next [rawMessage] fail, for tests.
+  Object? failNextRaw;
+
+  @override
+  List<MailHeader> headersOf(Uint8List raw) {
+    final text = utf8.decode(raw, allowMalformed: true);
+    final head = text.split('\r\n\r\n').first;
+    return [
+      for (final l in head.split('\r\n'))
+        if (l.indexOf(':') case final at when at > 0)
+          MailHeader(l.substring(0, at), l.substring(at + 1).trim()),
+    ];
+  }
+
+  /// What was redirected, and where, for tests.
+  final redirected = <(MailRow, List<String>)>[];
+
+  /// Makes the next [redirect] fail, for tests.
+  Object? failNextRedirect;
+
+  /// Redirect, as the engine does it: the addresses checked, then the
+  /// message in the outbox with Undo, like any other.
+  @override
+  Future<int> redirect(MailRow row, List<String> to, Duration window) async {
+    final failure = failNextRedirect;
+    failNextRedirect = null;
+    if (failure != null) throw failure;
+    if (to.every((t) => t.trim().isEmpty)) {
+      throw const SendException(SendError.noRecipients);
+    }
+    for (final t in to) {
+      if (!validAddress(t)) throw SendException(SendError.badAddress, t);
+    }
+    final bare = [for (final t in to) bareAddress(t)];
+    redirected.add((row, bare));
+    final id = await sendWithUndo(
+      Draft(accountId: row.accountId, to: bare, subject: row.subject),
+      window,
+    );
+    final i = _outbox.indexWhere((o) => o.id == id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: row.accountId,
+      to: bare,
+      subject: row.subject,
+      body: '',
+      queuedAt: _outbox[i].queuedAt,
+      sendAt: _outbox[i].sendAt,
+      undo: true,
+      redirect: true,
+    );
+    return id;
+  }
+
+  @override
+  Future<void> setThreadMuted(MailRow row, bool muted) async {
+    muted ? mutedThreads.add(row.key) : mutedThreads.remove(row.key);
+  }
+
+  /// Files saved through [saveFile], for tests.
+  final savedFiles = <String, Uint8List>{};
+
+  @override
+  Future<String> saveFile(String name, Uint8List data) async {
+    final failure = failNextSave;
+    failNextSave = null;
+    if (failure != null) throw failure;
+    savedFiles[name] = data;
+    return '/demo/Downloads/$name';
+  }
+
   /// Senders blocked, for tests.
   final blocked = <String>{};
 
@@ -3395,7 +3954,11 @@ class DemoMailSource extends MailSource {
   Future<PrivacySettings> privacySettings() async => privacy;
 
   @override
-  Future<Uint8List?> senderPicture(String email) async {
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async {
     if (!privacy.senderPictures) return null;
     final domain = email.split('@').last.toLowerCase();
     final logo = demoLogos[domain];
@@ -3849,6 +4412,79 @@ class DemoMailSource extends MailSource {
 
   /// When set, the next save fails with it.
   Object? failNextSave;
+
+  /// Email files opened ([openEml]), and imports asked for: (file,
+  /// account, folder).
+  final openedEml = <String>[];
+  final importedEml = <(String, int, String)>[];
+
+  /// What Settings keeps for the desktop.
+  DesktopSettings desktop = const DesktopSettings();
+
+  @override
+  DesktopSettings get desktopSettings => desktop;
+
+  @override
+  set desktopSettings(DesktopSettings settings) => desktop = settings;
+
+  /// A demo email file: any path ending in "notes.eml"; anything else is
+  /// not mail, and "huge.eml" is too large.
+  @override
+  Future<EmlMessage> openEml(String path) async {
+    openedEml.add(path);
+    if (path.endsWith('huge.eml')) {
+      throw const EmlException(EmlProblem.tooLarge);
+    }
+    if (!path.endsWith('notes.eml')) {
+      throw const EmlException(EmlProblem.notMail);
+    }
+    return EmlMessage(
+      path: path,
+      fromName: 'Ada Lovelace',
+      fromEmail: 'ada@example.com',
+      to: const ['Bob Moore <bob@example.com>'],
+      cc: const ['carol@example.com'],
+      subject: 'Notes on the analytical engine',
+      date: now.subtract(const Duration(days: 3, hours: 2)),
+      readable: const Readable(
+        blocks: [
+          BodyBlock.text([BodySpan('Hi Bob,')]),
+          BodyBlock.text([
+            BodySpan(
+              'Here are my notes from Thursday. The engine can weave '
+              'algebraic patterns just as the loom weaves flowers and leaves.',
+            ),
+          ]),
+          BodyBlock.text([
+            BodySpan('The full table is in the attached file, and on '),
+            BodySpan('the project page', link: 'https://example.com/engine'),
+            BodySpan('.'),
+          ]),
+          BodyBlock.text([BodySpan('Ada')]),
+        ],
+        remoteImages: 2,
+        attachments: [
+          MailAttachment(
+            part: 3,
+            name: 'Note G.pdf',
+            mime: 'application/pdf',
+            size: 184000,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) async {
+    saved.add(a.name);
+    return '/demo/Downloads/${a.name}';
+  }
+
+  @override
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) async {
+    importedEml.add((m.path, accountId, mailbox));
+  }
 
   @override
   Future<String> saveAttachment(MailRow row, MailAttachment attachment) async {
@@ -4321,11 +4957,63 @@ class DemoMailSource extends MailSource {
     if (i < 0 || _outbox[i].state == OutboxState.sending) {
       throw StateError('not in the outbox');
     }
+    // A Redirect has nothing to edit: it stays, as the engine keeps it.
+    if (_outbox[i].redirect) throw StateError('a redirect');
     _outbox.removeAt(i);
     _undoWindows.remove(id);
+    _receiptDeleted(id);
     final draft = _outboxDrafts.remove(id)!;
     _changes.add(null);
     return draft;
+  }
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    _outbox.removeAt(i);
+    _undoWindows.remove(id);
+    _outboxDrafts.remove(id);
+    _receiptDeleted(id);
+    _changes.add(null);
+  }
+
+  /// A read receipt deleted from the outbox was not sent.
+  void _receiptDeleted(int id) {
+    for (final e in [..._receiptsWaiting.entries]) {
+      if (e.value != id) continue;
+      _receiptsWaiting.remove(e.key);
+      final i = receiptAnswers.indexWhere((a) => a.$1.key == e.key);
+      if (i >= 0) {
+        final (row, _, never) = receiptAnswers[i];
+        receiptAnswers[i] = (row, false, never);
+      }
+    }
+  }
+
+  /// Messages tried again from the Outbox, for tests.
+  final List<int> retried = [];
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    retried.add(id);
+    _undoWindows.remove(id);
+    _outbox[i] = OutboxItem(
+      id: id,
+      accountId: _outbox[i].accountId,
+      to: _outbox[i].to,
+      subject: _outbox[i].subject,
+      body: _outbox[i].body,
+      queuedAt: _outbox[i].queuedAt,
+      redirect: _outbox[i].redirect,
+    );
+    _changes.add(null);
   }
 
   void _deliver(Draft draft) {

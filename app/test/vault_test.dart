@@ -22,13 +22,15 @@ Future<DemoMailSource> _pump(
   bool dark = false,
   bool phone = false,
   bool certified = false,
+  Set<int> unsigned = const {},
 }) async {
   tester.view.physicalSize = phone
       ? const Size(390, 844)
       : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now, certified: certified);
+  final source = DemoMailSource(now: _now, certified: certified)
+    ..unsignedReceipts = unsigned;
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -53,8 +55,14 @@ Future<DemoMailSource> _openDesktop(
   WidgetTester tester, {
   bool dark = false,
   bool certified = false,
+  Set<int> unsigned = const {},
 }) async {
-  final source = await _pump(tester, dark: dark, certified: certified);
+  final source = await _pump(
+    tester,
+    dark: dark,
+    certified: certified,
+    unsigned: unsigned,
+  );
   await tester.tap(find.text('Vault'));
   await _settle(tester);
   return source;
@@ -70,12 +78,14 @@ Future<DemoMailSource> _openPhone(
   WidgetTester tester, {
   bool dark = false,
   bool certified = false,
+  Set<int> unsigned = const {},
 }) async {
   final source = await _pump(
     tester,
     dark: dark,
     phone: true,
     certified: certified,
+    unsigned: unsigned,
   );
   await _reachTile(tester);
   await tester.tap(_tile);
@@ -507,6 +517,46 @@ void main() {
     await tester.pump();
     expect(source.savedReceipts.single.subject, 'Tax form, second copy');
     expect(find.text('Receipt saved in Downloads'), findsOneWidget);
+  });
+
+  testWidgets('a receipt its provider didn’t sign is never shown as proof', (
+    tester,
+  ) async {
+    await _openPhone(tester, certified: true, unsigned: {702});
+    await _openCategory(tester, 'Certified mail');
+    expect(_onPage('Lease renewal 2027'), findsOneWidget);
+    expect(_onPage('Unverified'), findsOneWidget);
+    expect(
+      _onPage(
+        'Says “Delivered”, but the provider’s signature couldn’t be '
+        'checked: this isn’t proof.',
+      ),
+      findsOneWidget,
+    );
+    expect(_onPage('Delivered Tue, Oct 13, 10:42'), findsNothing);
+    // The others, signed, are as before.
+    expect(_onPage('Accepted Today, 9:12'), findsOneWidget);
+  });
+
+  testWidgets('on the desktop board too, an unsigned receipt isn’t proof', (
+    tester,
+  ) async {
+    await _openDesktop(tester, certified: true, unsigned: {702});
+    final tile = find.text('Certified mail').first;
+    await tester.ensureVisible(tile);
+    await tester.pumpAndSettle();
+    await tester.tap(tile);
+    await _settle(tester);
+    expect(find.text('Lease renewal 2027'), findsOneWidget);
+    expect(find.text('Unverified'), findsOneWidget);
+    expect(
+      find.text(
+        'Says “Delivered”, but the provider’s signature couldn’t be '
+        'checked: this isn’t proof.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Delivered Tue, Oct 13, 10:42'), findsNothing);
   });
 
   testWidgets('a category emptied while open says so', (tester) async {
