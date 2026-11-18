@@ -241,6 +241,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Contact dco_decode_contact(dynamic raw);
 
   @protected
+  Delivery dco_decode_delivery(dynamic raw);
+
+  @protected
+  DeliveryKind dco_decode_delivery_kind(dynamic raw);
+
+  @protected
   EngineError dco_decode_engine_error(dynamic raw);
 
   @protected
@@ -611,6 +617,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OutboxItem dco_decode_outbox_item(dynamic raw);
+
+  @protected
+  OutboxState dco_decode_outbox_state(dynamic raw);
 
   @protected
   OutgoingFile dco_decode_outgoing_file(dynamic raw);
@@ -1061,6 +1070,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Contact sse_decode_contact(SseDeserializer deserializer);
+
+  @protected
+  Delivery sse_decode_delivery(SseDeserializer deserializer);
+
+  @protected
+  DeliveryKind sse_decode_delivery_kind(SseDeserializer deserializer);
 
   @protected
   EngineError sse_decode_engine_error(SseDeserializer deserializer);
@@ -1519,6 +1534,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   OutboxItem sse_decode_outbox_item(SseDeserializer deserializer);
+
+  @protected
+  OutboxState sse_decode_outbox_state(SseDeserializer deserializer);
 
   @protected
   OutgoingFile sse_decode_outgoing_file(SseDeserializer deserializer);
@@ -2061,6 +2079,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_contact(Contact self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_delivery(Delivery self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_delivery_kind(DeliveryKind self, SseSerializer serializer);
 
   @protected
   void sse_encode_engine_error(EngineError self, SseSerializer serializer);
@@ -2661,6 +2685,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_outbox_item(OutboxItem self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_outbox_state(OutboxState self, SseSerializer serializer);
 
   @protected
   void sse_encode_outgoing_file(OutgoingFile self, SseSerializer serializer);

@@ -700,6 +700,17 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Eine Webseite';
+
+  @override
+  String get riskOpenWeb => 'Diese Webseite öffnen?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name ist eine Webseite: Sie öffnet sich im Browser. Gib dort nie ein Passwort ein: Eine per E-Mail geschickte Seite kann wie jede Anmeldung aussehen.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · von $email';
   }
@@ -1571,6 +1582,24 @@ class AppLocalizationsDe extends AppLocalizations {
   String outboxRefused(String reason) {
     return 'Der Server hat sie abgelehnt: $reason';
   }
+
+  @override
+  String get outboxMaybeSent => 'Vielleicht gesendet';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'Die Verbindung brach beim Senden ab. Sieh in „Gesendet“ nach, bevor du sie noch einmal sendest.';
+
+  @override
+  String get dataProblemTitle => 'Piuma konnte seine Daten nicht öffnen';
+
+  @override
+  String get dataProblemBody =>
+      'Deine E-Mails sind sicher auf deinen Servern, und hier wurde nichts verändert. Versuche es noch einmal; passiert es wieder, melde es mit dem, was Piuma anzeigt.';
+
+  @override
+  String get dataProblemNewer =>
+      'Diese Daten stammen von einer neueren Version von Piuma. Aktualisiere Piuma, um sie zu öffnen; hier wurde nichts verändert.';
 
   @override
   String get inOutbox =>
@@ -6183,4 +6212,23 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## E-Mail, leicht gemacht\n- Original-Layouts mit durchgehendem Scrollen und Bildsteuerung\n- Formatierungsleiste und Wechsel zum vollständigen Editor beim Antworten\n- Bewusstere horizontale Wischgesten\n- Absenderwarnungen bei Markenimitation und ähnlichen Domains\n- Monatlicher Tresor-CSV-Export mit USt-IdNr. des Händlers';
+
+  @override
+  String get listFailed => 'Diese E-Mails konnten nicht angezeigt werden.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Dieser Ordner konnte nicht vom Server aktualisiert werden.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Der Server hat $count Änderungen von dir nicht übernommen, die E-Mails sind wieder wie vorher.',
+      one: 'Der Server hat eine Änderung von dir nicht übernommen, die E-Mail ist wieder wie vorher.',
+    );
+    return '$_temp0';
+  }
 }

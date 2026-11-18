@@ -698,6 +698,17 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Uma página web';
+
+  @override
+  String get riskOpenWeb => 'Abrir esta página web?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name é uma página web: abre no seu navegador. Nunca digite uma senha nela: uma página enviada por e-mail pode parecer qualquer login.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · de $email';
   }
@@ -1570,6 +1581,24 @@ class AppLocalizationsPt extends AppLocalizations {
   String outboxRefused(String reason) {
     return 'O servidor recusou: $reason';
   }
+
+  @override
+  String get outboxMaybeSent => 'Pode ter sido enviado';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'A ligação caiu durante o envio. Veja em Enviados antes de o enviar outra vez.';
+
+  @override
+  String get dataProblemTitle => 'O Piuma não conseguiu abrir os seus dados';
+
+  @override
+  String get dataProblemBody =>
+      'O seu correio está seguro nos servidores e nada foi alterado aqui. Tente de novo; se continuar a acontecer, comunique-o com o que o Piuma indica.';
+
+  @override
+  String get dataProblemNewer =>
+      'Estes dados foram escritos por uma versão mais recente do Piuma. Atualize o Piuma para os abrir; nada foi alterado aqui.';
 
   @override
   String get inOutbox =>
@@ -6161,4 +6190,23 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## O e-mail, feito leve\n- Layouts originais com rolagem única e controle de imagens\n- Barra de formatação e abertura do editor completo nas respostas\n- Gestos de deslizar horizontal mais precisos\n- Avisos de remetente para imitação de marca e domínios parecidos\n- Exportação CSV mensal do Cofre com NIF/IVA do comerciante';
+
+  @override
+  String get listFailed => 'Não foi possível mostrar estes e-mails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Não foi possível atualizar esta pasta pelo servidor.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'O servidor não aceitou $count alterações que você fez: esses e-mails voltaram a ser como eram.',
+      one: 'O servidor não aceitou uma alteração que você fez: esse e-mail voltou a ser como era.',
+    );
+    return '$_temp0';
+  }
 }

@@ -14,7 +14,9 @@ use crate::model::{
 };
 use crate::outbox::{Outgoing, Waiting};
 use crate::pec;
-use crate::pending::{Change, Pending, MAX_ATTEMPTS};
+use crate::pending::{
+    Change, Pending, Refusal, GIVE_UP_AFTER, HIDING, MAX_ATTEMPTS, REFUSED_ATTEMPTS,
+};
 use crate::rules::{Action as RuleAction, Field as RuleField, Op as RuleOp, Rule};
 use crate::search::Query;
 use crate::signature::{Accent, Logo, Signature, Template};
@@ -26,6 +28,10 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("unknown account kind in database: {0}")]
     UnknownKind(String),
+    /// The database was written by a newer Piuma: opening it here could
+    /// lose what that version keeps.
+    #[error("this data was written by a newer version of Piuma (schema {found}, this one knows {known}); update Piuma to open it")]
+    TooNew { found: usize, known: usize },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -932,11 +938,26 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY (account, mailbox, uid, part) REFERENCES attachment(account, mailbox, uid, part) ON DELETE CASCADE
     );
 "#,
+    r#"
+    -- Every message sent goes through the outbox, and where it stands is
+    -- kept (see outbox.rs): queued, sending (claimed by `claim` at
+    -- `claimed_at`), unknown, unfiled, filing or refused. `undo` marks
+    -- mail sent with Undo, whose send_at ends the Undo window.
+    -- The columns are added by `migrate` first (OUTBOX_STATES): SQLite
+    -- can't add a column only when it is missing, and this must be safe
+    -- to run again.
+    UPDATE outbox SET state = 'refused' WHERE error IS NOT NULL AND state = 'queued';
+    CREATE INDEX IF NOT EXISTS outbox_state ON outbox(account, state);
+"#,
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
 /// mail already kept.
 const WRITTEN_TO: usize = 54;
+
+/// Number of the migration that keeps where each outbox message stands;
+/// its columns are added before it runs (see `migrate`).
+const OUTBOX_STATES: usize = 62;
 
 /// Number of the migration after which stored previews are cleaned again.
 const CLEAN_PREVIEWS: usize = 38;
@@ -1154,13 +1175,21 @@ fn file_card(
         html,
         attachments: &body.attachments,
     };
-    let card = if pinned && folder != "drafts" {
-        Some(crate::vault::extract_kept(&src))
-    } else if worth {
-        crate::vault::extract(&src)
-    } else {
-        None
-    };
+    // A message the Vault can't read gets no card, and is checked all the
+    // same: it isn't read again at every sync.
+    let card = crate::guard::shielded(
+        "vault card",
+        || None,
+        || {
+            if pinned && folder != "drafts" {
+                Some(crate::vault::extract_kept(&src))
+            } else if worth {
+                crate::vault::extract(&src)
+            } else {
+                None
+            }
+        },
+    );
     match card {
         Some(card) => {
             tx.execute(
@@ -1337,6 +1366,21 @@ pub struct Attachment {
 
 /// Runs every stored preview through [`crate::imap::clean_preview`] again.
 /// One that comes out empty is filled in when its message is opened.
+/// Adds the columns a table doesn't have yet.
+fn add_columns(tx: &rusqlite::Transaction, table: &str, columns: &[(&str, &str)]) -> Result<()> {
+    for (name, kind) in columns {
+        let there: bool = tx.query_row(
+            &format!("SELECT EXISTS (SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"),
+            params![name],
+            |r| r.get(0),
+        )?;
+        if !there {
+            tx.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} {kind}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn clean_previews(tx: &rusqlite::Transaction) -> Result<()> {
     let changed: Vec<(i64, String)> = {
         let mut stmt = tx.prepare("SELECT rowid, preview FROM message WHERE preview != ''")?;
@@ -1428,8 +1472,26 @@ impl Store {
             .conn
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?
             as usize;
+        if current > MIGRATIONS.len() {
+            return Err(StoreError::TooNew {
+                found: current,
+                known: MIGRATIONS.len(),
+            });
+        }
         let tx = self.conn.transaction()?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+            if i + 1 == OUTBOX_STATES {
+                add_columns(
+                    &tx,
+                    "outbox",
+                    &[
+                        ("state", "TEXT NOT NULL DEFAULT 'queued'"),
+                        ("claim", "TEXT"),
+                        ("claimed_at", "INTEGER"),
+                        ("undo", "INTEGER NOT NULL DEFAULT 0"),
+                    ],
+                )?;
+            }
             tx.execute_batch(sql)?;
             tx.pragma_update(None, "user_version", (i + 1) as i64)?;
         }
@@ -1451,6 +1513,22 @@ impl Store {
         )?;
         if !marks {
             tx.execute_batch("ALTER TABLE outbox ADD COLUMN marks TEXT NOT NULL DEFAULT ''")?;
+        }
+        // A change the server refused waits before it is tried again, and
+        // is given up only after failing for a day (pending.rs). Added
+        // here rather than in MIGRATIONS, like the two above, so it holds
+        // when migrations run again over a newer database.
+        let retries: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('pending_change')
+                             WHERE name = 'next_try_at')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !retries {
+            tx.execute_batch(
+                "ALTER TABLE pending_change ADD COLUMN next_try_at INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE pending_change ADD COLUMN failing_since INTEGER;",
+            )?;
         }
         if current < CLEAN_PREVIEWS {
             clean_previews(&tx)?;
@@ -1963,14 +2041,17 @@ impl Store {
 
     /// Shows every hidden message again: an action that never reached the
     /// server (the app quit inside the Undo window) is simply not done.
-    /// Messages moved while offline stay hidden: that move is still on
+    /// Messages moved while offline (to Archive, Trash, spam, Snoozed, a
+    /// folder, or back from Snoozed) stay hidden: that move is still on
     /// its way.
     pub fn unhide_all(&self) -> Result<()> {
         self.conn.execute(
-            "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
-                SELECT 1 FROM pending_change p
-                 WHERE p.account = message.account AND p.mailbox = message.mailbox
-                   AND p.uid = message.uid AND p.change IN ('archive', 'trash', 'move'))",
+            &format!(
+                "UPDATE message SET hidden = 0 WHERE hidden = 1 AND NOT EXISTS (
+                    SELECT 1 FROM pending_change p
+                     WHERE p.account = message.account AND p.mailbox = message.mailbox
+                       AND p.uid = message.uid AND p.change IN ({HIDING}))"
+            ),
             [],
         )?;
         Ok(())
@@ -2346,11 +2427,28 @@ impl Store {
 
     /// An account's waiting changes, oldest first.
     pub fn pending_changes(&self, account: AccountId) -> Result<Vec<Pending>> {
+        self.due_changes(account, i64::MAX)
+    }
+
+    /// Makes every waiting change of an account due now, as if its wait
+    /// were over. For tests, which can't wait a minute.
+    #[doc(hidden)]
+    pub fn retry_changes_now(&self, account: AccountId) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pending_change SET next_try_at = 0 WHERE account = ?1",
+            params![account.0],
+        )?;
+        Ok(())
+    }
+
+    /// An account's waiting changes whose next try is due at `now`,
+    /// oldest first.
+    pub fn due_changes(&self, account: AccountId, now: i64) -> Result<Vec<Pending>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, mailbox, uid, change, attempts, target FROM pending_change
-              WHERE account = ?1 ORDER BY id",
+              WHERE account = ?1 AND next_try_at <= ?2 ORDER BY id",
         )?;
-        let rows = stmt.query_map(params![account.0], |r| {
+        let rows = stmt.query_map(params![account.0, now], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -2387,30 +2485,102 @@ impl Store {
         Ok(())
     }
 
-    /// Counts a failed try. After [`MAX_ATTEMPTS`] the change is given up:
-    /// a message that was moved shows again, and the next sync puts its
-    /// flags back to the server's.
-    pub fn failed_changes(&self, ids: &[i64]) -> Result<()> {
+    /// Counts a failed try at `now` and puts the next one off (a minute,
+    /// doubling, at most an hour). A change is given up after
+    /// [`REFUSED_ATTEMPTS`] tries the server refused for good, or after
+    /// [`MAX_ATTEMPTS`] tries over at least [`GIVE_UP_AFTER`] otherwise: a
+    /// message it had hidden shows again, and the next sync puts its flags
+    /// back to the server's. Returns how many were given up.
+    pub fn failed_changes(&self, ids: &[i64], now: i64, refusal: Refusal) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
+        let mut given_up = 0;
         for id in ids {
+            let Some(attempts) = tx
+                .query_row(
+                    "UPDATE pending_change
+                        SET attempts = attempts + 1, failing_since = COALESCE(failing_since, ?2)
+                      WHERE id = ?1 RETURNING attempts",
+                    params![id, now],
+                    |r| r.get::<_, u32>(0),
+                )
+                .optional()?
+            else {
+                continue;
+            };
+            let failing_since: i64 = tx.query_row(
+                "SELECT failing_since FROM pending_change WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )?;
+            let give_up = match refusal {
+                Refusal::Permanent => attempts >= REFUSED_ATTEMPTS,
+                Refusal::Temporary => {
+                    attempts >= MAX_ATTEMPTS && now - failing_since >= GIVE_UP_AFTER
+                }
+            };
+            if !give_up {
+                tx.execute(
+                    "UPDATE pending_change SET next_try_at = ?2 WHERE id = ?1",
+                    params![id, now + crate::pending::retry_after(attempts)],
+                )?;
+                continue;
+            }
             tx.execute(
-                "UPDATE pending_change SET attempts = attempts + 1 WHERE id = ?1",
+                &format!(
+                    "UPDATE message SET hidden = 0 WHERE EXISTS (
+                        SELECT 1 FROM pending_change p
+                         WHERE p.id = ?1
+                           AND p.account = message.account AND p.mailbox = message.mailbox
+                           AND p.uid = message.uid AND p.change IN ({HIDING}))"
+                ),
                 params![id],
             )?;
-            tx.execute(
-                "UPDATE message SET hidden = 0 WHERE EXISTS (
-                    SELECT 1 FROM pending_change p
-                     WHERE p.id = ?1 AND p.attempts >= ?2
-                       AND p.account = message.account AND p.mailbox = message.mailbox
-                       AND p.uid = message.uid AND p.change IN ('archive', 'trash', 'move'))",
-                params![id, MAX_ATTEMPTS],
-            )?;
-            tx.execute(
-                "DELETE FROM pending_change WHERE id = ?1 AND attempts >= ?2",
-                params![id, MAX_ATTEMPTS],
-            )?;
+            tx.execute("DELETE FROM pending_change WHERE id = ?1", params![id])?;
+            given_up += 1;
         }
         tx.commit()?;
+        Ok(given_up)
+    }
+
+    /// A folder's messages were renumbered (its UIDVALIDITY changed) while
+    /// changes waited for them: those changes are dropped, since their
+    /// numbers now name other messages, and the messages they had hidden
+    /// show again. The next sync rebuilds the folder.
+    pub fn drop_renumbered(&self, account: AccountId, mailbox: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE message SET hidden = 0
+              WHERE account = ?1 AND mailbox = ?2 AND hidden = 1 AND EXISTS (
+                  SELECT 1 FROM pending_change p
+                   WHERE p.account = message.account AND p.mailbox = message.mailbox
+                     AND p.uid = message.uid)",
+            params![account.0, mailbox],
+        )?;
+        tx.execute(
+            "DELETE FROM pending_change WHERE account = ?1 AND mailbox = ?2",
+            params![account.0, mailbox],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets the read or unread change queued for messages once their
+    /// server has it. A newer one the other way stays.
+    pub fn settle_seen(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        seen: bool,
+    ) -> Result<()> {
+        let tag = Change::Seen(seen).tag();
+        let mut stmt = self.conn.prepare(
+            "DELETE FROM pending_change
+              WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change = ?4",
+        )?;
+        for uid in uids {
+            stmt.execute(params![account.0, mailbox, uid, tag])?;
+        }
         Ok(())
     }
 
@@ -2947,6 +3117,9 @@ impl Store {
     }
 
     /// Applies flag changes in one transaction. Unknown UIDs are skipped.
+    /// A read or unread change made here and not yet on the server wins
+    /// over what the server said, as labels do in
+    /// [`Self::set_server_labels`]: the server's answer may predate it.
     pub fn update_flags(
         &mut self,
         account: AccountId,
@@ -2960,7 +3133,19 @@ impl Store {
                 "UPDATE message SET flags = ?4
                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND flags != ?4",
             )?;
+            let mut waiting = tx.prepare(
+                "SELECT change FROM pending_change
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3 AND change IN ('seen', 'unseen')
+                  ORDER BY id DESC LIMIT 1",
+            )?;
             for (uid, flags) in changes {
+                let mut flags = *flags;
+                let local: Option<String> = waiting
+                    .query_row(params![account.0, mailbox, uid], |r| r.get(0))
+                    .optional()?;
+                if let Some(local) = local {
+                    flags.seen = local == "seen";
+                }
                 changed += stmt.execute(params![account.0, mailbox, uid, flags.to_bits()])?;
             }
         }
@@ -3303,9 +3488,15 @@ impl Store {
         let (verified, checked) = match self.account(account)? {
             Some(a) => {
                 let trust = crate::sender_auth::Trust::for_account(&a);
-                (
-                    crate::sender_auth::verified(&body.auth, &trust),
-                    crate::sender_auth::checked(&body.auth, &trust),
+                crate::guard::shielded(
+                    "sender check",
+                    || (false, Default::default()),
+                    || {
+                        (
+                            crate::sender_auth::verified(&body.auth, &trust),
+                            crate::sender_auth::checked(&body.auth, &trust),
+                        )
+                    },
                 )
             }
             None => (false, Default::default()),
@@ -3375,7 +3566,11 @@ impl Store {
                     account.0,
                     mailbox,
                     uid,
-                    crate::newsletter::words(&body.text, body.html.as_deref())
+                    crate::guard::shielded(
+                        "reading time",
+                        || 0,
+                        || { crate::newsletter::words(&body.text, body.html.as_deref()) }
+                    )
                 ],
             )?;
         }
@@ -3878,9 +4073,9 @@ impl Store {
         tx.execute(
             "INSERT INTO outbox (account, from_name, from_email, to_list, cc_list, bcc_list,
                  subject, body, in_reply_to, refs, signature, message_id, mail_from,
-                 recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks)
+                 recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20)",
+                 ?17, ?18, ?19, ?20, ?21)",
             params![
                 out.account.0,
                 d.from_name,
@@ -3902,6 +4097,7 @@ impl Store {
                 queued_at,
                 out.send_at,
                 crate::rich::encode(&d.marks).unwrap_or_default(),
+                out.undo,
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -3919,8 +4115,10 @@ impl Store {
     /// The outbox, oldest first: one account's, or every account's.
     pub fn outbox(&self, account: Option<AccountId>) -> Result<Vec<Waiting>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, account, to_list, subject, body, queued_at, error, send_at FROM outbox
-              WHERE ?1 IS NULL OR account = ?1 ORDER BY id",
+            "SELECT id, account, to_list, subject, body, queued_at, error, send_at, state, undo
+               FROM outbox
+              WHERE (?1 IS NULL OR account = ?1) AND state NOT IN ('unfiled', 'filing')
+              ORDER BY id",
         )?;
         let rows = stmt.query_map(params![account.map(|a| a.0)], |r| {
             Ok(Waiting {
@@ -3932,6 +4130,8 @@ impl Store {
                 queued_at: r.get(5)?,
                 error: r.get(6)?,
                 send_at: r.get(7)?,
+                state: crate::outbox::State::from_column(&r.get::<_, String>(8)?),
+                undo: r.get(9)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
@@ -3944,7 +4144,7 @@ impl Store {
             .query_row(
                 "SELECT account, from_name, from_email, to_list, cc_list, bcc_list, subject,
                         body, in_reply_to, refs, signature, message_id, mail_from,
-                        recipients, raw, saved_mailbox, saved_uid, send_at, marks
+                        recipients, raw, saved_mailbox, saved_uid, send_at, marks, undo
                    FROM outbox WHERE id = ?1",
                 params![id],
                 |r| {
@@ -3976,11 +4176,12 @@ impl Store {
                         },
                         saved,
                         r.get::<_, Option<i64>>(17)?,
+                        r.get::<_, bool>(19)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((account, mut draft, signature, ready, saved, send_at)) = row else {
+        let Some((account, mut draft, signature, ready, saved, send_at, undo)) = row else {
             return Ok(None);
         };
         let mut stmt = self.conn.prepare(
@@ -4005,6 +4206,7 @@ impl Store {
             ready,
             saved,
             send_at,
+            undo,
         }))
     }
 
@@ -4144,19 +4346,254 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes a message from the outbox, whatever its state. Only for a
+    /// row nobody can be sending; the app takes rows with [Self::take_outgoing].
     pub fn drop_outgoing(&self, id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM outbox WHERE id = ?1", params![id])?;
         Ok(())
     }
 
-    /// Keeps why the server refused a message; it stays until the person
-    /// opens or deletes it.
-    pub fn refused_outgoing(&self, id: i64, reason: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE outbox SET error = ?2 WHERE id = ?1",
-            params![id, reason],
+    /// Where a message of the outbox stands (its `state`), or None when it
+    /// is not there.
+    pub fn outgoing_state(&self, id: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT state FROM outbox WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    /// Takes a message out of the outbox, to edit or delete it: only one
+    /// nobody is sending, and not yet sent. None when it can't be taken;
+    /// [Self::outgoing_state] then says why.
+    pub fn take_outgoing(&self, id: i64) -> Result<Option<Outgoing>> {
+        let Some(out) = self.outgoing(id)? else {
+            return Ok(None);
+        };
+        // An unknown row may be taken: the person was told it may have
+        // gone, and decides. Only the engine never resends one on its own
+        // while its sender could still finish (see [Self::settle_unknown]).
+        let taken = self.conn.execute(
+            "DELETE FROM outbox WHERE id = ?1 AND state IN ('queued', 'refused', 'unknown')",
+            params![id],
         )?;
+        Ok((taken == 1).then_some(out))
+    }
+
+    /// Claims a waiting message whose time has come, for sender `me`:
+    /// true when this call won it. Two senders, in one process or two,
+    /// can't both win.
+    pub fn claim_outgoing(&self, id: i64, me: &str, now: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbox SET state = 'sending', claim = ?2, claimed_at = ?3
+              WHERE id = ?1 AND state = 'queued' AND (send_at IS NULL OR send_at <= ?3)",
+            params![id, me, now],
+        )? == 1)
+    }
+
+    /// Claims a sent message whose copy for Sent is still to file.
+    pub fn claim_unfiled(&self, id: i64, me: &str, now: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbox SET state = 'filing', claim = ?2, claimed_at = ?3
+              WHERE id = ?1 AND state = 'unfiled'",
+            params![id, me, now],
+        )? == 1)
+    }
+
+    /// An account's waiting messages whose time has come, oldest first.
+    pub fn due_outgoing(&self, account: AccountId, now: i64) -> Result<Vec<i64>> {
+        self.outgoing_ids(
+            "account = ?1 AND state = 'queued' AND (send_at IS NULL OR send_at <= ?2)",
+            params![account.0, now],
+        )
+    }
+
+    /// An account's sent messages whose copy for Sent is still to file.
+    pub fn unfiled_outgoing(&self, account: AccountId) -> Result<Vec<i64>> {
+        self.outgoing_ids("account = ?1 AND state = 'unfiled'", params![account.0])
+    }
+
+    /// An account's messages that may have gone.
+    pub fn unknown_outgoing(&self, account: AccountId) -> Result<Vec<i64>> {
+        self.outgoing_ids("account = ?1 AND state = 'unknown'", params![account.0])
+    }
+
+    fn outgoing_ids(&self, filter: &str, values: impl rusqlite::Params) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT id FROM outbox WHERE {filter} ORDER BY id"))?;
+        let ids = stmt.query_map(values, |r| r.get(0))?;
+        Ok(ids.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Claims of other senders not renewed since `before` (a sender
+    /// renews its claim while it works, see `outbox::HEARTBEAT`) belong to
+    /// a sender that died or stalled: a message being sent may have gone,
+    /// so it becomes unknown, keeping who claimed it and when, and is
+    /// never queued again while that sender could still finish (see
+    /// [Self::settle_unknown]); a Sent copy being filed goes back to
+    /// unfiled.
+    pub fn expire_claims(&self, account: AccountId, me: &str, before: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET state = 'unknown'
+              WHERE account = ?1 AND state = 'sending'
+                AND (claim IS NULL OR claim <> ?2) AND claimed_at < ?3",
+            params![account.0, me, before],
+        )?;
+        self.conn.execute(
+            "UPDATE outbox SET state = 'unfiled', claim = NULL
+              WHERE account = ?1 AND state = 'filing'
+                AND (claim IS NULL OR claim <> ?2) AND claimed_at < ?3",
+            params![account.0, me, before],
+        )?;
+        Ok(())
+    }
+
+    /// Renews the claim `me` holds on a message it is working on.
+    pub fn touch_claim(&self, id: i64, me: &str, now: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET claimed_at = ?3 WHERE id = ?1 AND claim = ?2",
+            params![id, me, now],
+        )?;
+        Ok(())
+    }
+
+    /// Why a message of the outbox was refused, or why it may have gone.
+    pub fn outgoing_error(&self, id: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT error FROM outbox WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten())
+    }
+
+    /// Who claims a message of the outbox, and when they last said so.
+    pub fn outgoing_claim(&self, id: i64) -> Result<Option<(String, i64)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT claim, claimed_at FROM outbox WHERE id = ?1 AND claim IS NOT NULL",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// The server took the message `me` claimed: it leaves the outbox,
+    /// or, when its copy is not in Sent yet, stays out of sight to be filed.
+    /// Should the row no longer be ours (taken from a sender silent for
+    /// long, then queued again), it went all the same: it must not go
+    /// again, so a waiting or refused row of it is settled too; one
+    /// another sender has claimed meanwhile can't be stopped any more.
+    pub fn sent_outgoing(&self, id: i64, me: &str, filed: bool) -> Result<()> {
+        let ours = if filed {
+            self.conn.execute(
+                "DELETE FROM outbox WHERE id = ?1 AND claim = ?2",
+                params![id, me],
+            )?
+        } else {
+            self.conn.execute(
+                "UPDATE outbox SET state = 'unfiled', claim = NULL, error = NULL
+                  WHERE id = ?1 AND claim = ?2",
+                params![id, me],
+            )?
+        };
+        if ours > 0 {
+            return Ok(());
+        }
+        let settled = if filed {
+            self.conn.execute(
+                "DELETE FROM outbox WHERE id = ?1 AND state IN ('queued', 'unknown', 'refused')",
+                params![id],
+            )?
+        } else {
+            self.conn.execute(
+                "UPDATE outbox SET state = 'unfiled', claim = NULL, error = NULL
+                  WHERE id = ?1 AND state IN ('queued', 'unknown', 'refused')",
+                params![id],
+            )?
+        };
+        if settled == 0 && self.outgoing_state(id)?.is_some() {
+            crate::feedback::log(
+                crate::feedback::Level::Warn,
+                "outbox",
+                "a message went while another sender held it",
+            );
+        }
+        Ok(())
+    }
+
+    /// Puts back a message `me` claimed but could not send now (offline, a
+    /// 4xx, a refused password): it waits again.
+    pub fn release_outgoing(&self, id: i64, me: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET state = 'queued', claim = NULL WHERE id = ?1 AND claim = ?2",
+            params![id, me],
+        )?;
+        Ok(())
+    }
+
+    /// Keeps why the server refused a message `me` claimed; it stays until
+    /// the person opens or deletes it.
+    pub fn refused_outgoing(&self, id: i64, me: &str, reason: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET state = 'refused', error = ?3, claim = NULL
+              WHERE id = ?1 AND claim = ?2",
+            params![id, me, reason],
+        )?;
+        Ok(())
+    }
+
+    /// A message `me` claimed may have gone: it waits for the person.
+    pub fn uncertain_outgoing(&self, id: i64, me: &str, detail: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET state = 'unknown', error = ?3, claim = NULL
+              WHERE id = ?1 AND claim = ?2",
+            params![id, me, detail],
+        )?;
+        Ok(())
+    }
+
+    /// The server told whether a message that may have gone did: sent, it
+    /// leaves the outbox; not sent, it waits again, but only when no
+    /// sender could still be sending it: one settled by its own sender
+    /// (no claim left), or whose sender has said nothing since
+    /// `quiet_before`. A sender that only seemed dead may still finish,
+    /// and the server would then have it twice.
+    pub fn settle_unknown(&self, id: i64, sent: bool, quiet_before: i64) -> Result<()> {
+        if sent {
+            self.conn.execute(
+                "DELETE FROM outbox WHERE id = ?1 AND state = 'unknown'",
+                params![id],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE outbox SET state = 'queued', error = NULL, claim = NULL
+                  WHERE id = ?1 AND state = 'unknown'
+                    AND (claim IS NULL OR claimed_at < ?2)",
+                params![id, quiet_before],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Keeps the message as it went (dated when it went), for its Sent copy.
+    pub fn set_outgoing_raw(&self, id: i64, me: &str, raw: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "UPDATE outbox SET raw = ?3 WHERE id = ?1 AND claim = ?2",
+            params![id, me, raw],
+        )?;
+        Ok(())
+    }
+
+    /// Runs SQL on the database, for tests that need to stage a failure.
+    #[doc(hidden)]
+    pub fn execute_for_tests(&self, sql: &str) -> Result<()> {
+        self.conn.execute_batch(sql)?;
         Ok(())
     }
 
@@ -5918,7 +6355,7 @@ impl Store {
     /// next reminder after `now` (so a reply that came is known by then).
     pub fn next_due(&self, account: AccountId, now: i64) -> Result<Option<i64>> {
         let send: Option<i64> = self.conn.query_row(
-            "SELECT MIN(send_at) FROM outbox WHERE account = ?1 AND error IS NULL",
+            "SELECT MIN(send_at) FROM outbox WHERE account = ?1 AND state = 'queued'",
             params![account.0],
             |r| r.get(0),
         )?;
@@ -5927,7 +6364,13 @@ impl Store {
             params![account.0, now],
             |r| r.get(0),
         )?;
-        Ok([self.next_wake(account)?, send, remind]
+        // A change the server refused, tried again.
+        let retry: Option<i64> = self.conn.query_row(
+            "SELECT MIN(next_try_at) FROM pending_change WHERE account = ?1 AND next_try_at > 0",
+            params![account.0],
+            |r| r.get(0),
+        )?;
+        Ok([self.next_wake(account)?, send, remind, retry]
             .into_iter()
             .flatten()
             .min())
@@ -7046,9 +7489,11 @@ mod tests {
             }
         }
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
+        // Back to before the attachment migration (the one before the
+        // outbox states).
         store
             .conn
-            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .pragma_update(None, "user_version", (OUTBOX_STATES - 2) as i64)
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
@@ -9277,15 +9722,186 @@ From: <help@bank.example>\r\n\r\nHi";
         assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
 
         let move_id = store.pending_changes(a).unwrap()[1].id;
-        for _ in 0..MAX_ATTEMPTS {
-            store.failed_changes(&[move_id]).unwrap();
+        for _ in 0..REFUSED_ATTEMPTS - 1 {
+            assert_eq!(
+                store
+                    .failed_changes(&[move_id], 1_000, Refusal::Permanent)
+                    .unwrap(),
+                0
+            );
         }
+        assert_eq!(
+            store
+                .failed_changes(&[move_id], 1_000, Refusal::Permanent)
+                .unwrap(),
+            1
+        );
         assert_eq!(store.pending_changes(a).unwrap().len(), 1);
         assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
 
         let seen_id = store.pending_changes(a).unwrap()[0].id;
         store.drop_changes(&[seen_id]).unwrap();
         assert!(store.pending_changes(a).unwrap().is_empty());
+    }
+
+    /// A busy server (THROTTLED, UNAVAILABLE) costs a change nothing for a
+    /// day: tries are spaced out, and only many tries over a whole day
+    /// give it up.
+    #[test]
+    fn refused_for_now_waits_longer_each_time_and_gives_up_only_after_a_day() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store.upsert_messages(&[msg(a, 1, 100, false)]).unwrap();
+        store.set_hidden(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Move(FolderRole::Trash))
+            .unwrap();
+        let id = store.pending_changes(a).unwrap()[0].id;
+        let start = 1_000_000;
+        // Five refusals within a minute, as five IDLE wakes would bring.
+        let mut at = start;
+        let mut waits = Vec::new();
+        for _ in 0..5 {
+            assert_eq!(
+                store.failed_changes(&[id], at, Refusal::Temporary).unwrap(),
+                0
+            );
+            // Not due again until its wait is over.
+            assert!(store.due_changes(a, at).unwrap().is_empty());
+            let next = store.next_due(a, at).unwrap().unwrap();
+            waits.push(next - at);
+            at = next;
+            assert_eq!(store.due_changes(a, at).unwrap().len(), 1);
+        }
+        assert_eq!(waits, [60, 120, 240, 480, 960]);
+        // Still hidden, still waiting, also after a restart.
+        store.unhide_all().unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 0);
+        // Many more tries within the day: kept.
+        for _ in 0..MAX_ATTEMPTS {
+            at += 60 * 60;
+            assert!(at - start < GIVE_UP_AFTER);
+            store.failed_changes(&[id], at, Refusal::Temporary).unwrap();
+        }
+        assert_eq!(store.pending_changes(a).unwrap().len(), 1);
+        // A day after the first refusal it is given up, and the message
+        // is back.
+        assert_eq!(
+            store
+                .failed_changes(&[id], start + GIVE_UP_AFTER, Refusal::Temporary)
+                .unwrap(),
+            1
+        );
+        assert!(store.pending_changes(a).unwrap().is_empty());
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 1);
+    }
+
+    /// Spam, Snooze and the way back from Snoozed hide their message like
+    /// Archive and Trash: kept hidden across a restart while on their way,
+    /// shown again when given up.
+    #[test]
+    fn every_move_kind_stays_hidden_while_queued_and_shows_when_given_up() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        for (uid, change) in [
+            (1, Change::Move(FolderRole::Junk)),
+            (2, Change::Snooze(5_000)),
+        ] {
+            store.set_hidden(a, "INBOX", uid, true).unwrap();
+            store.queue_change(a, "INBOX", uid, change).unwrap();
+        }
+        store.unhide_all().unwrap();
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 0);
+        let ids: Vec<i64> = store
+            .pending_changes(a)
+            .unwrap()
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        for _ in 0..REFUSED_ATTEMPTS {
+            store
+                .failed_changes(&ids, 1_000, Refusal::Permanent)
+                .unwrap();
+        }
+        assert!(store.pending_changes(a).unwrap().is_empty());
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
+    }
+
+    /// A folder renumbered on the server takes its waiting changes with it,
+    /// and what they had hidden shows again; other folders keep theirs.
+    #[test]
+    fn a_renumbered_folder_drops_its_changes_and_shows_their_messages() {
+        use crate::imap::FolderRole;
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        store.set_hidden(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Move(FolderRole::Archive))
+            .unwrap();
+        store
+            .queue_change(a, "INBOX", 2, Change::Seen(true))
+            .unwrap();
+        store
+            .queue_change(a, "Work", 7, Change::Seen(true))
+            .unwrap();
+        store.drop_renumbered(a, "INBOX").unwrap();
+        let left: Vec<_> = store
+            .pending_changes(a)
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.mailbox, p.uid))
+            .collect();
+        assert_eq!(left, [("Work".to_owned(), 7)]);
+        assert_eq!(store.count(Folder::Inbox).unwrap(), 2);
+    }
+
+    /// Flags the server sent before a read or unread change here reached
+    /// it don't undo the change.
+    #[test]
+    fn server_flags_leave_a_waiting_read_change_alone() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Personal", "a@example.org", "#E0782F"))
+            .unwrap();
+        store
+            .upsert_messages(&[msg(a, 1, 100, false), msg(a, 2, 200, false)])
+            .unwrap();
+        store.set_seen(a, "INBOX", 1, true).unwrap();
+        store
+            .queue_change(a, "INBOX", 1, Change::Seen(true))
+            .unwrap();
+        let flagged_unread = Flags {
+            seen: false,
+            flagged: true,
+            answered: false,
+        };
+        store
+            .update_flags(a, "INBOX", &[(1, flagged_unread), (2, flagged_unread)])
+            .unwrap();
+        let one = store.message(a, "INBOX", 1).unwrap().unwrap().flags;
+        assert!(one.seen, "the read change waiting wins");
+        assert!(one.flagged, "the rest is the server's");
+        assert!(!store.message(a, "INBOX", 2).unwrap().unwrap().flags.seen);
+        // Once the server has it, its word counts again.
+        store.settle_seen(a, "INBOX", &[1], true).unwrap();
+        store
+            .update_flags(a, "INBOX", &[(1, flagged_unread)])
+            .unwrap();
+        assert!(!store.message(a, "INBOX", 1).unwrap().unwrap().flags.seen);
     }
 
     #[test]
@@ -9368,6 +9984,7 @@ From: <help@bank.example>\r\n\r\nHi";
             draft,
             saved: None,
             send_at: None,
+            undo: false,
         };
         let first = store.queue_outgoing(&out, 100).unwrap();
         let second = store.queue_outgoing(&out, 200).unwrap();
@@ -9382,18 +9999,188 @@ From: <help@bank.example>\r\n\r\nHi";
         );
         assert_eq!(waiting[0].subject, "Re: Mockup v3");
 
-        store.refused_outgoing(first, "550 no such user").unwrap();
+        assert!(store.claim_outgoing(first, "me", 300).unwrap());
+        store
+            .refused_outgoing(first, "me", "550 no such user")
+            .unwrap();
         assert_eq!(
             store.outbox(None).unwrap()[0].error.as_deref(),
             Some("550 no such user")
         );
-        store.drop_outgoing(first).unwrap();
+        assert_eq!(
+            store.outbox(None).unwrap()[0].state,
+            crate::outbox::State::Refused
+        );
+        assert!(store.take_outgoing(first).unwrap().is_some());
         assert_eq!(store.outgoing(first).unwrap(), None);
         assert_eq!(store.outbox(None).unwrap().len(), 1);
 
         // Removing the account takes its outbox with it.
         store.remove_account(a).unwrap();
         assert!(store.outbox(None).unwrap().is_empty());
+    }
+
+    fn queued(store: &Store, account: AccountId, send_at: Option<i64>) -> i64 {
+        use crate::outbox::Outgoing;
+        use crate::smtp::{ready, Draft};
+        let draft = Draft {
+            from_email: "me@example.org".into(),
+            to: vec!["luca@example.org".into()],
+            subject: "Plans".into(),
+            ..Draft::default()
+        };
+        let out = Outgoing {
+            account,
+            ready: ready(&draft).unwrap(),
+            draft,
+            saved: None,
+            send_at,
+            undo: false,
+        };
+        store.queue_outgoing(&out, 100).unwrap()
+    }
+
+    #[test]
+    fn only_one_sender_claims_a_message() {
+        let dir = std::env::temp_dir().join(format!(
+            "piuma-claim-{}-{}",
+            std::process::id(),
+            crate::pending::now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("piuma.db");
+        // Two connections to one file, as two processes would have.
+        let one = Store::open(&path).unwrap();
+        let two = Store::open(&path).unwrap();
+        let a = one
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let id = queued(&one, a, None);
+        assert!(one.claim_outgoing(id, "one", 500).unwrap());
+        assert!(!two.claim_outgoing(id, "two", 500).unwrap());
+        assert!(!one.claim_outgoing(id, "one", 500).unwrap());
+        assert_eq!(two.outgoing_state(id).unwrap().as_deref(), Some("sending"));
+        // Being sent, it can be neither taken back nor deleted.
+        assert!(two.take_outgoing(id).unwrap().is_none());
+        assert_eq!(two.outgoing_state(id).unwrap().as_deref(), Some("sending"));
+        // Settling needs the claim: the other sender can't.
+        two.sent_outgoing(id, "two", true).unwrap();
+        assert_eq!(one.outgoing_state(id).unwrap().as_deref(), Some("sending"));
+        one.sent_outgoing(id, "one", true).unwrap();
+        assert_eq!(two.outgoing_state(id).unwrap(), None);
+        drop((one, two));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_claim_left_by_a_dead_sender_becomes_unknown_not_queued() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let id = queued(&store, a, None);
+        assert!(store.claim_outgoing(id, "crashed", 1_000).unwrap());
+        // Still fresh: left alone, whoever asks.
+        store.expire_claims(a, "me", 1_000 - 600).unwrap();
+        assert_eq!(
+            store.outgoing_state(id).unwrap().as_deref(),
+            Some("sending")
+        );
+        // Our own claims never expire under us.
+        store.expire_claims(a, "crashed", 5_000).unwrap();
+        assert_eq!(
+            store.outgoing_state(id).unwrap().as_deref(),
+            Some("sending")
+        );
+        store.expire_claims(a, "me", 5_000).unwrap();
+        assert_eq!(
+            store.outgoing_state(id).unwrap().as_deref(),
+            Some("unknown")
+        );
+        assert!(store.due_outgoing(a, 9_999).unwrap().is_empty());
+        assert_eq!(
+            store.outbox(None).unwrap()[0].state,
+            crate::outbox::State::Unknown
+        );
+        // The person can still take it back.
+        assert!(store.take_outgoing(id).unwrap().is_some());
+    }
+
+    #[test]
+    fn mail_sent_later_is_not_claimed_before_its_time() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let id = queued(&store, a, Some(2_000));
+        assert!(!store.claim_outgoing(id, "me", 1_999).unwrap());
+        assert!(store.due_outgoing(a, 1_999).unwrap().is_empty());
+        assert!(store.claim_outgoing(id, "me", 2_000).unwrap());
+    }
+
+    #[test]
+    fn the_outbox_states_migration_is_where_its_number_says() {
+        assert!(MIGRATIONS[OUTBOX_STATES - 1].contains("OUTBOX_STATES"));
+        assert!(MIGRATIONS[OUTBOX_STATES - 2].contains("attachment_unavailable"));
+    }
+
+    #[test]
+    fn a_newer_database_is_refused_with_a_reason() {
+        let dir = std::env::temp_dir().join(format!(
+            "piuma-newer-{}-{}",
+            std::process::id(),
+            crate::pending::now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("piuma.db");
+        drop(Store::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "user_version", (MIGRATIONS.len() + 3) as i64)
+                .unwrap();
+        }
+        let err = Store::open(&path).err().unwrap();
+        assert!(
+            matches!(err, StoreError::TooNew { found, known } if found == MIGRATIONS.len() + 3 && known == MIGRATIONS.len()),
+            "{err}"
+        );
+        assert!(err.to_string().contains("newer version of Piuma"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mail_waiting_before_the_outbox_kept_states_migrates_to_queued() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "me@example.org", "#2F8F83"))
+            .unwrap();
+        let waiting = queued(&store, a, None);
+        let refused = queued(&store, a, None);
+        // As the previous version left them: no state, refusals by error.
+        store
+            .conn
+            .execute_batch(&format!(
+                "DROP INDEX outbox_state;
+                 ALTER TABLE outbox DROP COLUMN state;
+                 ALTER TABLE outbox DROP COLUMN claim;
+                 ALTER TABLE outbox DROP COLUMN claimed_at;
+                 ALTER TABLE outbox DROP COLUMN undo;
+                 UPDATE outbox SET error = '550 no' WHERE id = {refused};
+                 PRAGMA user_version = {};",
+                MIGRATIONS.len() - 1
+            ))
+            .unwrap();
+        let mut store = store;
+        store.migrate().unwrap();
+        assert_eq!(
+            store.outgoing_state(waiting).unwrap().as_deref(),
+            Some("queued")
+        );
+        assert_eq!(
+            store.outgoing_state(refused).unwrap().as_deref(),
+            Some("refused")
+        );
+        assert_eq!(store.due_outgoing(a, 1_000).unwrap(), [waiting]);
     }
 
     fn written(

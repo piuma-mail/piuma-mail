@@ -695,6 +695,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'A web page';
+
+  @override
+  String get riskOpenWeb => 'Open this web page?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · from $email';
   }
@@ -1561,6 +1572,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String outboxRefused(String reason) {
     return 'The server refused it: $reason';
   }
+
+  @override
+  String get outboxMaybeSent => 'May have been sent';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'The connection broke as it went. Check Sent before sending it again.';
+
+  @override
+  String get dataProblemTitle => 'Piuma couldn’t open its data';
+
+  @override
+  String get dataProblemBody =>
+      'Your mail is safe on your servers, and nothing here was changed. Try again; if it keeps happening, report it and attach what Piuma says.';
+
+  @override
+  String get dataProblemNewer =>
+      'This data was written by a newer version of Piuma. Update Piuma to open it; nothing here was changed.';
 
   @override
   String get inOutbox => 'In the Outbox · it goes once you’re back online';
@@ -6133,4 +6162,23 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String get listFailed => 'Couldn’t show these emails.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Couldn’t refresh this folder from the server.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'The server didn’t take $count changes you made, so those emails are back as they were.',
+      one: 'The server didn’t take a change you made, so that email is back as it was.',
+    );
+    return '$_temp0';
+  }
 }

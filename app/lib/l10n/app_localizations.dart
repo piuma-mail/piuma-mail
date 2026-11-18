@@ -1216,6 +1216,24 @@ abstract class AppLocalizations {
   /// **'{name} is locked with a password, so nothing can look inside it. Open it only if you were expecting it.'**
   String riskBodyLocked(String name);
 
+  /// No description provided for @riskWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'A web page'**
+  String get riskWeb;
+
+  /// No description provided for @riskOpenWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'Open this web page?'**
+  String get riskOpenWeb;
+
+  /// No description provided for @riskBodyWeb.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} is a web page: it opens in your browser. Never type a password there: a page sent by email can look like any sign-in.'**
+  String riskBodyWeb(String name);
+
   /// No description provided for @riskFileFrom.
   ///
   /// In en, this message translates to:
@@ -2499,6 +2517,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The server refused it: {reason}'**
   String outboxRefused(String reason);
+
+  /// No description provided for @outboxMaybeSent.
+  ///
+  /// In en, this message translates to:
+  /// **'May have been sent'**
+  String get outboxMaybeSent;
+
+  /// No description provided for @outboxMaybeSentCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'The connection broke as it went. Check Sent before sending it again.'**
+  String get outboxMaybeSentCheck;
+
+  /// No description provided for @dataProblemTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma couldn’t open its data'**
+  String get dataProblemTitle;
+
+  /// No description provided for @dataProblemBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Your mail is safe on your servers, and nothing here was changed. Try again; if it keeps happening, report it and attach what Piuma says.'**
+  String get dataProblemBody;
+
+  /// No description provided for @dataProblemNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'This data was written by a newer version of Piuma. Update Piuma to open it; nothing here was changed.'**
+  String get dataProblemNewer;
 
   /// No description provided for @inOutbox.
   ///
@@ -9075,6 +9123,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
+
+  /// No description provided for @listFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t show these emails.'**
+  String get listFailed;
+
+  /// No description provided for @folderRefreshFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t refresh this folder from the server.'**
+  String get folderRefreshFailed;
+
+  /// No description provided for @changesDropped.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{The server didn’t take a change you made, so that email is back as it was.} other{The server didn’t take {count} changes you made, so those emails are back as they were.}}'**
+  String changesDropped(int count);
 }
 
 class _AppLocalizationsDelegate

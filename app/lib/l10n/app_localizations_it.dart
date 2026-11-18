@@ -697,6 +697,17 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String get riskWeb => 'Una pagina web';
+
+  @override
+  String get riskOpenWeb => 'Aprire questa pagina web?';
+
+  @override
+  String riskBodyWeb(String name) {
+    return '$name è una pagina web: si apre nel browser. Non scriverci mai una password: una pagina arrivata per email può somigliare a qualsiasi accesso.';
+  }
+
+  @override
   String riskFileFrom(String name, String size, String email) {
     return '$name · $size · da $email';
   }
@@ -1568,6 +1579,24 @@ class AppLocalizationsIt extends AppLocalizations {
   String outboxRefused(String reason) {
     return 'Il server l’ha rifiutato: $reason';
   }
+
+  @override
+  String get outboxMaybeSent => 'Forse inviato';
+
+  @override
+  String get outboxMaybeSentCheck =>
+      'La connessione si è interrotta durante l’invio. Controlla in Inviati prima di inviarlo di nuovo.';
+
+  @override
+  String get dataProblemTitle => 'Piuma non è riuscita ad aprire i suoi dati';
+
+  @override
+  String get dataProblemBody =>
+      'La tua posta è al sicuro sui server e qui non è cambiato nulla. Riprova; se succede ancora, segnalalo allegando quello che dice Piuma.';
+
+  @override
+  String get dataProblemNewer =>
+      'Questi dati sono stati scritti da una versione più recente di Piuma. Aggiorna Piuma per aprirli; qui non è cambiato nulla.';
 
   @override
   String get inOutbox => 'In uscita · parte appena torni online';
@@ -6193,4 +6222,23 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
+
+  @override
+  String get listFailed => 'Impossibile mostrare queste email.';
+
+  @override
+  String get folderRefreshFailed =>
+      'Impossibile aggiornare questa cartella dal server.';
+
+  @override
+  String changesDropped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Il server non ha accettato $count modifiche fatte da te: quelle email sono tornate com’erano.',
+      one: 'Il server non ha accettato una modifica fatta da te: quell’email è tornata com’era.',
+    );
+    return '$_temp0';
+  }
 }
