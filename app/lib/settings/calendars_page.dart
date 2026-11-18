@@ -263,26 +263,30 @@ class _CalendarsPageState extends State<CalendarsPage> {
             onPressed: () => showPiumaSheet<void>(
               context,
               label: l.calConnect,
-              builder: (sheet) => StatefulBuilder(
-                builder: (sheet, setSheet) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                  child: _Connect(
-                    source: widget.source,
-                    way: _way,
-                    phone: true,
-                    suggestions: _suggestions,
-                    linked: _linked,
-                    accountColors: accountColors,
-                    onWay: (w) => setSheet(() => _way = _way == w ? null : w),
-                    onClose: () => Navigator.of(sheet).pop(),
-                    onAdded: () {
-                      Navigator.of(sheet).pop();
-                      _added();
-                    },
-                    onLink: (s) async {
-                      await _link(s);
-                      setSheet(() {});
-                    },
+              // Material, for the text fields of the CalDAV and URL forms.
+              builder: (sheet) => Material(
+                type: MaterialType.transparency,
+                child: StatefulBuilder(
+                  builder: (sheet, setSheet) => Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: _Connect(
+                      source: widget.source,
+                      way: _way,
+                      phone: true,
+                      suggestions: _suggestions,
+                      linked: _linked,
+                      accountColors: accountColors,
+                      onWay: (w) => setSheet(() => _way = _way == w ? null : w),
+                      onClose: () => Navigator.of(sheet).pop(),
+                      onAdded: () {
+                        Navigator.of(sheet).pop();
+                        _added();
+                      },
+                      onLink: (s) async {
+                        await _link(s);
+                        setSheet(() {});
+                      },
+                    ),
                   ),
                 ),
               ),

@@ -613,6 +613,31 @@ void _layouts() {
         expect(find.text('Gmail needs an app password'), findsOneWidget);
       });
 
+      for (final (error, says) in [
+        (AddAccountError.signInCancelled, 'was closed before it finished'),
+        (AddAccountError.signInDenied, 'didn’t allow the sign-in'),
+      ]) {
+        testWidgets('a failed sign-in on the provider’s page is said: $error', (
+          tester,
+        ) async {
+          final source = _Scripted(
+            fail: AddAccountException(error),
+            oauthProviders: const [_microsoft],
+          );
+          await _pump(tester, source, size: size);
+          await tester.tap(find.text('Outlook'));
+          await tester.pumpAndSettle();
+          await tester.enterText(_field('Email address'), 'anna@outlook.com');
+          await tester.pump();
+          await _tap(tester, 'Sign in with Microsoft', last: true);
+          // The error comes in after its stagger.
+          await tester.pump(const Duration(seconds: 1));
+          await tester.pumpAndSettle();
+          expect(source.adds, 1);
+          expect(find.textContaining(says), findsOneWidget);
+        });
+      }
+
       testWidgets('a self-signed certificate is shown and trusted', (
         tester,
       ) async {
