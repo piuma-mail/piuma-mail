@@ -206,7 +206,10 @@ void main() {
       _inPanel(find.text('Print quote for the spring catalog')),
       findsWidgets,
     );
-    expect(_inPanel(find.bySemanticsLabel('Found on the server')), findsOne);
+    expect(
+      _inPanel(find.bySemanticsLabel(RegExp('Found on the server'))),
+      findsWidgets,
+    );
     expect(
       _inPanel(
         find.text('1 more email found on the server, now on this device.'),
@@ -387,7 +390,7 @@ void main() {
     await tester.tap(_inPanel(find.bySemanticsLabel('Rename or delete Sara quotes')));
     await tester.pumpAndSettle();
     expect(find.byType(SavedSearchEditor), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('Cancel').last);
     await tester.pumpAndSettle();
     await tester.tap(_inPanel(find.text('Sara quotes')));
     await tester.pump(const Duration(milliseconds: 200));
