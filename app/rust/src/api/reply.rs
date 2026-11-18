@@ -4,7 +4,7 @@
 
 use flutter_rust_bridge::frb;
 use piuma_core::envelope::{self, Address, Envelope, ReplyMode};
-use piuma_core::remote::{self, Remote, RemoteError};
+use piuma_core::remote::{self, Remote};
 use piuma_core::smtp::Ready;
 use piuma_core::{AccountId, Store};
 
@@ -114,7 +114,7 @@ async fn raw_message(id: AccountId, mailbox: String, uid: u32) -> Result<Vec<u8>
             let mut conn = Remote::open(&account, &password).await?;
             let raw = conn.raw(&shared, id, &mailbox, uid).await;
             conn.close().await;
-            Ok::<_, RemoteError>(raw?)
+            raw
         })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?

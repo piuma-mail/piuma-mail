@@ -284,6 +284,8 @@ void main() {
     await tester.tap(find.text('Reply all'));
     await tester.pumpAndSettle();
     expect(find.text('Reply to Giulia Romano and 2 others'), findsOneWidget);
+    // The templates are further down the round screen.
+    await _toEnd(tester);
     await tester.tap(find.text('Thanks, got it'));
     await tester.pumpAndSettle();
     await tester.pump(DoneScreen.undoFor);
