@@ -484,7 +484,12 @@ async fn request_target(tcp: &mut TcpStream) -> Option<String> {
     .await
     .ok()?;
     let line = String::from_utf8_lossy(&head);
-    let target = line.lines().next()?.strip_prefix("GET ")?.split(' ').next()?;
+    let target = line
+        .lines()
+        .next()?
+        .strip_prefix("GET ")?
+        .split(' ')
+        .next()?;
     Some(target.to_owned())
 }
 
