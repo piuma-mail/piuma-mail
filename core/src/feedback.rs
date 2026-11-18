@@ -201,12 +201,60 @@ pub fn set_personal(words: Vec<String>) {
 /// Name parts that are also ordinary words in a log: a sender called
 /// "Amazon Web Services" mustn't hide every "services".
 const COMMON_NAME_WORDS: &[&str] = &[
-    "account", "accounts", "admin", "alert", "alerts", "amazon", "apple", "billing", "calendar",
-    "contact", "customer", "daily", "digest", "error", "github", "google", "group", "hello",
-    "help", "inbox", "info", "mail", "mailer", "microsoft", "news", "newsletter", "noreply",
-    "no-reply", "notification", "notifications", "office", "order", "orders", "people", "piuma",
-    "reply", "sales", "security", "server", "service", "services", "shop", "store", "support",
-    "sync", "team", "the", "update", "updates", "user", "weekly", "with", "from", "your",
+    "account",
+    "accounts",
+    "admin",
+    "alert",
+    "alerts",
+    "amazon",
+    "apple",
+    "billing",
+    "calendar",
+    "contact",
+    "customer",
+    "daily",
+    "digest",
+    "error",
+    "github",
+    "google",
+    "group",
+    "hello",
+    "help",
+    "inbox",
+    "info",
+    "mail",
+    "mailer",
+    "microsoft",
+    "news",
+    "newsletter",
+    "noreply",
+    "no-reply",
+    "notification",
+    "notifications",
+    "office",
+    "order",
+    "orders",
+    "people",
+    "piuma",
+    "reply",
+    "sales",
+    "security",
+    "server",
+    "service",
+    "services",
+    "shop",
+    "store",
+    "support",
+    "sync",
+    "team",
+    "the",
+    "update",
+    "updates",
+    "user",
+    "weekly",
+    "with",
+    "from",
+    "your",
 ];
 
 /// Sets the people [`clean`] hides as `<person>`: correspondents' display
@@ -356,8 +404,8 @@ const CODE_EXTENSIONS: &[&str] = &[
 /// Type names that error messages quote: kept, they say what went wrong.
 const CODE_WORDS: &[&str] = &[
     "Null", "String", "int", "double", "num", "bool", "List", "Map", "Set", "Object", "dynamic",
-    "Iterable", "Future", "Stream", "None", "Some", "Ok", "Err", "Option", "Result", "Vec",
-    "str", "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f64",
+    "Iterable", "Future", "Stream", "None", "Some", "Ok", "Err", "Option", "Result", "Vec", "str",
+    "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f64",
 ];
 
 /// Whether quoted text reads as code (a type or a call) rather than words:
@@ -418,8 +466,14 @@ pub fn clean(text: &str) -> String {
             None => format!("{} <reply>", &c[1]),
         })
         .into_owned();
-    s = r.imap_error.replace_all(&s, "$1 Response: <reply>").into_owned();
-    s = r.smtp_error.replace_all(&s, "$1 error ($2): <reply>").into_owned();
+    s = r
+        .imap_error
+        .replace_all(&s, "$1 Response: <reply>")
+        .into_owned();
+    s = r
+        .smtp_error
+        .replace_all(&s, "$1 error ($2): <reply>")
+        .into_owned();
     s = r.smtp_answer.replace_all(&s, "$1 $2 <reply>").into_owned();
     s = r.message_id.replace_all(&s, "<message-id>").into_owned();
     s = r.email.replace_all(&s, "<email>").into_owned();
@@ -461,7 +515,9 @@ pub fn clean(text: &str) -> String {
         .into_owned();
     s = r
         .single_quoted
-        .replace_all(&s, |c: &Captures| format!("{}'{}'", &c[1], keep_code(&c[2])))
+        .replace_all(&s, |c: &Captures| {
+            format!("{}'{}'", &c[1], keep_code(&c[2]))
+        })
         .into_owned();
     r.typographic
         .replace_all(&s, |c: &Captures| {
@@ -1153,7 +1209,10 @@ pub fn erasure_email(report: &Report) -> (String, String) {
     };
     let subject = format!("Erase my Piuma report {which}");
     let body = [
-        format!("Please erase the report I sent from the app, {which}: \"{}\", with its attachments.", report.title),
+        format!(
+            "Please erase the report I sent from the app, {which}: \"{}\", with its attachments.",
+            report.title
+        ),
         String::new(),
         format!("Report id on my device: {}", report.id),
     ]
@@ -2119,7 +2178,10 @@ mod tests {
     async fn small_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
         scripted_relay(OPEN_TICKET.into(), |body| {
             if body.contains("name=\"attachment-1\"") {
-                ("413 Payload Too Large".into(), r#"{"error":"too large"}"#.into())
+                (
+                    "413 Payload Too Large".into(),
+                    r#"{"error":"too large"}"#.into(),
+                )
             } else {
                 ("201 Created".into(), r#"{"url":"u","number":7}"#.into())
             }
@@ -2236,8 +2298,15 @@ mod tests {
     #[test]
     fn realistic_logs_keep_the_step_and_lose_the_person() {
         set_known_people(
-            &["Giulia Bianchi".into(), "Amazon Web Services".into(), "Lia".into()],
-            &["giulia.bianchi@example.org".into(), "info@shop.example".into()],
+            &[
+                "Giulia Bianchi".into(),
+                "Amazon Web Services".into(),
+                "Lia".into(),
+            ],
+            &[
+                "giulia.bianchi@example.org".into(),
+                "info@shop.example".into(),
+            ],
         );
         let cases = [
             (
@@ -2326,7 +2395,10 @@ mod tests {
         record_crash(&dir, "StateError: one");
         record_crash(&dir, "StateError: two");
         record_crash(&dir, "StateError: one");
-        assert_eq!(pending_crash(&dir).unwrap(), "StateError: one\n\nStateError: two");
+        assert_eq!(
+            pending_crash(&dir).unwrap(),
+            "StateError: one\n\nStateError: two"
+        );
         for i in 0..2000 {
             record_crash(&dir, &format!("StateError: number {i} {}", "x".repeat(40)));
         }
@@ -2352,7 +2424,10 @@ mod tests {
             .split("\n\n")
             .find(|e| e.starts_with("Rust panic at feedback.rs:"))
             .expect("the panic is kept");
-        assert!(!entry.contains("Giulia") && !entry.contains("Caff"), "{entry}");
+        assert!(
+            !entry.contains("Giulia") && !entry.contains("Caff"),
+            "{entry}"
+        );
         assert!(recent_log().contains("Rust panic at feedback.rs:"));
         assert!(!recent_log().contains("Giulia"));
         let _ = std::fs::remove_dir_all(dir);
@@ -2381,7 +2456,10 @@ mod tests {
         assert!(p.url.starts_with("https://"));
         assert_eq!(p.files_days, DEFAULT_FILES_DAYS);
         if relay_url() == DEFAULT_RELAY {
-            assert_eq!(p.relay_host, "piuma-report-relay.matte-maraffio.workers.dev");
+            assert_eq!(
+                p.relay_host,
+                "piuma-report-relay.matte-maraffio.workers.dev"
+            );
         }
     }
 
@@ -2399,7 +2477,10 @@ mod tests {
 
     /// A report sent to `answer`, once; returns it as saved after the try
     /// and how many uploads the relay saw.
-    async fn one_try(challenge: &str, answer: impl Fn(&str) -> Answer + Send + Sync + 'static) -> (Report, usize, String) {
+    async fn one_try(
+        challenge: &str,
+        answer: impl Fn(&str) -> Answer + Send + Sync + 'static,
+    ) -> (Report, usize, String) {
         let (base, seen) = scripted_relay(challenge.into(), answer).await;
         let reports = Reports::new(temp_dir("try"));
         let r = reports.submit(&draft(), None, &[], None).unwrap();
@@ -2432,7 +2513,10 @@ mod tests {
     #[tokio::test]
     async fn too_early_with_retry_after_keeps_the_ticket() {
         let (after, uploads, _) = one_try(OPEN_TICKET, |_| {
-            ("403 Forbidden\r\nretry-after: 40".into(), r#"{"error":"early"}"#.into())
+            (
+                "403 Forbidden\r\nretry-after: 40".into(),
+                r#"{"error":"early"}"#.into(),
+            )
         })
         .await;
         assert_eq!(uploads, 1);
@@ -2444,12 +2528,18 @@ mod tests {
     #[tokio::test]
     async fn every_try_carries_the_report_id() {
         let (after, _, body) = one_try(OPEN_TICKET, |_| {
-            ("201 Created".into(), r#"{"url":"u","number":9,"existing":true}"#.into())
+            (
+                "201 Created".into(),
+                r#"{"url":"u","number":9,"existing":true}"#.into(),
+            )
         })
         .await;
         assert_eq!(after.status, Status::Sent);
         assert_eq!(after.issue, Some(9));
-        assert!(body.contains(&format!("\"reportId\":\"{}\"", after.id)), "{body}");
+        assert!(
+            body.contains(&format!("\"reportId\":\"{}\"", after.id)),
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -2463,7 +2553,11 @@ mod tests {
             ahead + 1_805_000
         );
         let (base, _) = scripted_relay(challenge, |_| ("201 Created".into(), "{}".into())).await;
-        let t = Relay::new(&base).unwrap().ticket("0123456789abcdef0123456789abcdef").await.unwrap();
+        let t = Relay::new(&base)
+            .unwrap()
+            .ticket("0123456789abcdef0123456789abcdef")
+            .await
+            .unwrap();
         let wait = t.nbf - now;
         assert!((4_000..=6_000).contains(&wait), "waits {wait} ms");
         assert!(!t.expired(now));
