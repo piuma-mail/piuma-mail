@@ -432,7 +432,12 @@ void main() {
       }
       // In the menu, and by the reply box.
       expect(find.text('Reply all'), findsNWidgets(2));
-      await tester.tap(find.text('Reply all').last);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(MenuItemButton),
+          matching: find.text('Reply all'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.byType(ComposePane), findsOneWidget);
       expect(source.sent, isEmpty);
