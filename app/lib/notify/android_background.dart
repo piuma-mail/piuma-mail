@@ -42,6 +42,24 @@ class AndroidBackground {
     }
   }
 
+  /// Has Android send outbox message [id] at [at], online, even if the app
+  /// is swiped away meanwhile (`OutboxJob.kt`): the end of an Undo window,
+  /// a Send later time. The app sends it itself while it is open; the
+  /// engine keeps it from going twice.
+  static Future<void> outboxAt(int id, DateTime at) async {
+    if (!on) return;
+    try {
+      await _background.invokeMethod<void>('outboxAt', {
+        'id': id,
+        'at': at.millisecondsSinceEpoch ~/ 1000,
+      });
+    } on PlatformException {
+      // It goes at the app's next start, as on the desktop.
+    } on MissingPluginException {
+      // The same.
+    }
+  }
+
   /// Asks Android to leave the service out of battery saving.
   static Future<void> askBattery() async {
     if (on) await _background.invokeMethod<void>('askBattery');

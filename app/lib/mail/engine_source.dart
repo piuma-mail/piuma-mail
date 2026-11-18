@@ -2673,6 +2673,8 @@ class EngineMailSource extends MailSource {
         message: _outgoing(draft),
         undoSeconds: window.inSeconds,
       );
+      // Should the app be swiped away in the window, Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
       _changes.add(null);
       return id;
     } on engine.EngineError catch (e) {
@@ -2714,6 +2716,7 @@ class EngineMailSource extends MailSource {
         message: _outgoing(draft),
         sendAt: at.millisecondsSinceEpoch ~/ 1000,
       );
+      AndroidBackground.outboxAt(id, at).ignore();
       _changes.add(null);
       return id;
     } on engine.EngineError catch (e) {

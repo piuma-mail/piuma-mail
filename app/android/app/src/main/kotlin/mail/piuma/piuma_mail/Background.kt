@@ -36,6 +36,9 @@ object MailNative {
     /** One look at every inbox; the notices as JSON. */
     @JvmStatic external fun checkOnce(minute: Int): String
 
+    /** Sends what waits in the outbox, once. */
+    @JvmStatic external fun sendOutbox()
+
     /** The device moved to another network: connections start over. */
     @JvmStatic external fun networkChanged()
 
@@ -116,6 +119,10 @@ object Background {
     const val INSTANT = "instant"
     const val PERIODIC = "periodic"
     private const val JOB = 1
+    // One outbox job per message (by its id), so a later one doesn't
+    // replace an earlier one's.
+    private const val OUTBOX_JOB = 1000
+    private const val OUTBOX_JOBS = 1000L
     private const val MAIL_CHANNEL = "mail"
     // Quiet hours: shown in the shade, without a sound.
     private const val QUIET_CHANNEL = "mail_quiet"
@@ -150,6 +157,24 @@ object Background {
                 if (jobs.getPendingJob(JOB) == null) jobs.schedule(job)
             }
         }
+    }
+
+    /**
+     * Sends outbox message [id] at [atSeconds] (Unix seconds), once the
+     * phone is online, whether or not the app is still open.
+     */
+    fun outboxAt(context: Context, id: Long, atSeconds: Long) {
+        val jobs = context.getSystemService(JobScheduler::class.java)
+        val wait = (atSeconds * 1000L - System.currentTimeMillis()).coerceAtLeast(0L)
+        val job = JobInfo.Builder(
+            OUTBOX_JOB + (id % OUTBOX_JOBS).toInt(),
+            ComponentName(context, OutboxJob::class.java),
+        )
+            .setMinimumLatency(wait)
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+            .setPersisted(true)
+            .build()
+        jobs.schedule(job)
     }
 
     /** Opens the engine with every password; how many accounts it has. */

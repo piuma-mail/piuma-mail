@@ -39,6 +39,24 @@ void main() {
     expect(opened.single.query, contains('disk%20I%2FO%20error'));
   });
 
+  testWidgets('on the phone it fits, with both buttons', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var retried = 0;
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) =>
+            DataProblem(detail: 'x', onRetry: () => retried++),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('Try again'));
+    expect(retried, 1);
+    expect(find.text('Report this problem'), findsOneWidget);
+  });
+
   testWidgets('data from a newer Piuma asks for an update', (tester) async {
     await tester.pumpWidget(
       PiumaApp(
