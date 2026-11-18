@@ -1629,6 +1629,68 @@ class LogoException implements Exception {
   final LogoError error;
 }
 
+/// An email file opened from outside the app, read for the reader.
+class EmlMessage {
+  const EmlMessage({
+    required this.path,
+    required this.readable,
+    this.fromName = '',
+    this.fromEmail = '',
+    this.to = const [],
+    this.cc = const [],
+    this.subject = '',
+    this.date,
+  });
+
+  /// Where the file is: the engine reads it again to save or import.
+  final String path;
+  final String fromName;
+  final String fromEmail;
+
+  /// `Name <a@b.c>` or `a@b.c`.
+  final List<String> to;
+  final List<String> cc;
+  final String subject;
+  final DateTime? date;
+  final Readable readable;
+}
+
+enum EmlProblem { notMail, tooLarge }
+
+class EmlException implements Exception {
+  const EmlException(this.problem);
+  final EmlProblem problem;
+
+  @override
+  String toString() => 'EmlException($problem)';
+}
+
+/// How the desktop app behaves when its window is closed, and at sign-in.
+class DesktopSettings {
+  const DesktopSettings({this.keepRunning = true, this.startAtLogin = false});
+
+  /// Closing the window leaves Piuma in the tray, still notifying.
+  final bool keepRunning;
+
+  /// Piuma starts at sign-in, without its window.
+  final bool startAtLogin;
+
+  DesktopSettings copyWith({bool? keepRunning, bool? startAtLogin}) =>
+      DesktopSettings(
+        keepRunning: keepRunning ?? this.keepRunning,
+        startAtLogin: startAtLogin ?? this.startAtLogin,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DesktopSettings &&
+      other.keepRunning == keepRunning &&
+      other.startAtLogin == startAtLogin;
+
+  @override
+  int get hashCode => Object.hash(keepRunning, startAtLogin);
+}
+
 /// A file attached to a draft.
 class DraftFile {
   const DraftFile(this.name, this.data);
@@ -2347,6 +2409,24 @@ abstract class MailSource {
 
   /// The message made safe to read, with what was stopped.
   Future<Readable> readable(MailRow row);
+
+  /// Reads an email file (`.eml`) opened from outside the app, made safe
+  /// exactly like a synced message; nothing is stored or fetched. Throws
+  /// an [EmlException] when it isn't one, or is too large.
+  Future<EmlMessage> openEml(String path) async =>
+      throw const EmlException(EmlProblem.notMail);
+
+  /// Saves one of an email file's attachments in Downloads; returns where.
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) =>
+      throw UnimplementedError();
+
+  /// Puts an email file in one of an account's folders on its server.
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) =>
+      throw UnimplementedError();
+
+  /// Keeping running with the window closed, and starting at sign-in.
+  DesktopSettings get desktopSettings => const DesktopSettings();
+  set desktopSettings(DesktopSettings settings) {}
 
   /// The message's original layout, made safe; with [loadImages] its
   /// remote images come in too.
