@@ -108,7 +108,12 @@ void main() {
       expect(inserts('has:'), ['has:attachment']);
       expect(inserts('label:to'), ['label:"To read"']);
       expect(inserts('account:p'), ['account:Personal']);
-      expect(inserts('larger:'), ['larger:1M', 'larger:5M', 'larger:10M', 'larger:25M']);
+      expect(inserts('larger:'), [
+        'larger:1M',
+        'larger:5M',
+        'larger:10M',
+        'larger:25M',
+      ]);
       expect(inserts('after:'), [
         'after:2026-10-08',
         'after:2026-09-15',
@@ -119,14 +124,20 @@ void main() {
       ]);
       expect(inserts('-from:lu'), ['-from:luca@studio.it']);
       expect(inserts('foo:'), isEmpty);
-      expect(inserts('in:"cli'), ['in:Clients/Acme', 'in:"Clients/Studio Nord"']);
+      expect(inserts('in:"cli'), [
+        'in:Clients/Acme',
+        'in:"Clients/Studio Nord"',
+      ]);
     });
 
     test('the token at the caret, quotes and all', () {
       expect(typedToken('quote fr', 8), (start: 6, typed: 'fr'));
       expect(typedToken('quote ', 6), isNull);
       expect(typedToken('"print qu', 9), isNull);
-      expect(typedToken('from:"Sara Co', 13), (start: 0, typed: 'from:"Sara Co'));
+      expect(typedToken('from:"Sara Co', 13), (
+        start: 0,
+        typed: 'from:"Sara Co',
+      ));
       expect(typedToken('a b', 1), (start: 0, typed: 'a'));
       expect(typedToken('', 0), isNull);
       expect(typedToken('abc', 9), isNull);
@@ -153,7 +164,11 @@ void main() {
       );
       expect(v.text, 'in:inbox rest');
       expect(v.selection.baseOffset, 9);
-      v = applySuggestion(at('is:u', 2), 0, const SearchSuggestion('is:unread'));
+      v = applySuggestion(
+        at('is:u', 2),
+        0,
+        const SearchSuggestion('is:unread'),
+      );
       expect(v.text, 'is:unread ');
       expect(
         folderPaths(const [
@@ -182,7 +197,10 @@ void main() {
 
     // People, from what is typed.
     await _type(tester, 'from:sa');
-    expect(_inPanel(find.textContaining('from:sara@studio.it')), findsOneWidget);
+    expect(
+      _inPanel(find.textContaining('from:sara@studio.it')),
+      findsOneWidget,
+    );
     await tester.tap(_inPanel(find.textContaining('from:sara@studio.it')));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
@@ -296,9 +314,7 @@ void main() {
     expect(_inPanel(find.text('Couldn’t search on the server.')), findsOne);
     await tester.tap(_inPanel(find.text('Try again')));
     await tester.pump();
-    source.pending!.complete(
-      const ServerResults(failed: 2, partial: true),
-    );
+    source.pending!.complete(const ServerResults(failed: 2, partial: true));
     await tester.pump();
     await tester.pumpAndSettle();
     expect(_inPanel(find.text('Nothing more on the server.')), findsOne);
@@ -387,7 +403,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(_inPanel(find.text('Saved searches')), findsOneWidget);
     expect(_inPanel(find.text('Sara quotes')), findsOneWidget);
-    await tester.tap(_inPanel(find.bySemanticsLabel('Rename or delete Sara quotes')));
+    await tester.tap(
+      _inPanel(find.bySemanticsLabel('Rename or delete Sara quotes')),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(SavedSearchEditor), findsOneWidget);
     await tester.tap(find.text('Cancel').last);

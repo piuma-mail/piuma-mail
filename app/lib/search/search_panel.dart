@@ -1660,19 +1660,19 @@ class _Operator extends StatelessWidget {
         child: Center(
           widthFactor: 1,
           child: Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: op,
-                style: PiumaType.mono.copyWith(fontSize: 13, color: c.fg),
-              ),
-              if (hint.isNotEmpty)
+            TextSpan(
+              children: [
                 TextSpan(
-                  text: ' $hint',
-                  style: PiumaType.small.copyWith(color: c.muted),
+                  text: op,
+                  style: PiumaType.mono.copyWith(fontSize: 13, color: c.fg),
                 ),
-            ],
-          ),
+                if (hint.isNotEmpty)
+                  TextSpan(
+                    text: ' $hint',
+                    style: PiumaType.small.copyWith(color: c.muted),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
