@@ -730,7 +730,11 @@ async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
     let listed = store.lock().unwrap().outbox(None).unwrap();
     assert_eq!(listed[0].state, outbox::State::Refused);
     assert!(
-        listed[0].error.as_deref().unwrap().contains("not valid SMTP"),
+        listed[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("not valid SMTP"),
         "{:?}",
         listed[0].error
     );
