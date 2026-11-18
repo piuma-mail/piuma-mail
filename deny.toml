@@ -61,6 +61,8 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # clipboard-win and error-code (through arboard): Boost, permissive.
+    "BSL-1.0",
     "CC0-1.0",
     # webpki-roots: Mozilla's list of certificate authorities, as data.
     "CDLA-Permissive-2.0",
