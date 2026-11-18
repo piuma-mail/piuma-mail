@@ -16,16 +16,29 @@ fetched too, only to check (with `openssl verify`) that each AgID CA
 really is issued by them, and are not anchors, since Actalis certifies far
 more than PEC providers.
 
-TSL-IT is signed (XMLDSig). The certificate it is signed with must be one
-the EU's list of trusted lists (LOTL_URL) publishes for Italy, and the
-signature itself is checked with xmlsec1 when it is installed
-(`apt install xmlsec1`); without it the script stops, unless
---no-signature-check is given, and then the file says it wasn't checked.
+Integrity, checked every time and required for the files in the
+repository (CI refuses an anchors file that doesn't say so):
+- the EU's list of trusted lists (LOTL_URL) is signed (XMLDSig) with a
+  certificate pinned here (LOTL_SIGNERS, SHA-256), and its signature is
+  checked; only what it signs is read;
+- TSL-IT is signed with a certificate that verified LOTL lists for Italy,
+  and its signature is checked; only what it signs is read;
+- AgID's PEC CAs chain, by `openssl verify`, to the Actalis roots of the
+  same page.
+XML signatures are checked with the `signxml` package (with lxml); the
+easiest way to run the script with it, no install needed beyond uv:
+
+    uv run --no-project --with signxml python3 tools/gen_pec_trust.py
+
+When the EU changes its LOTL signing certificate (it publishes the new one
+in the Official Journal of the EU, series C), the script stops: check the
+publication, then update LOTL_SIGNERS.
 
 Refresh with every release (CI warns when the files are over 90 days old):
 
-    python3 tools/gen_pec_trust.py
-    python3 tools/gen_pec_trust.py --check   # only: are they older than 90 days?
+    uv run --no-project --with signxml python3 tools/gen_pec_trust.py
+    python3 tools/gen_pec_trust.py --check            # older than 90 days?
+    python3 tools/gen_pec_trust.py --check-integrity  # were the signatures checked?
 """
 
 import argparse
@@ -43,6 +56,11 @@ import xml.etree.ElementTree as ET
 
 TSL_URL = "https://eidas.agid.gov.it/TL/TSL-IT.xml"
 LOTL_URL = "https://ec.europa.eu/tools/lotl/eu-lotl.xml"
+# SHA-256 of the certificates the LOTL may be signed with (as of
+# 2026-11-18).
+LOTL_SIGNERS = {"e0a620fbb6747362bb933ac44169d676a553444716cf5f31605f12a22b8396b1"}
+# What the anchors header says when every check above was made.
+VERIFIED = "signatures checked"
 AGID_CA_URL = (
     "https://www.agid.gov.it/it/piattaforme/posta-elettronica-certificata/"
     "certificati-gestori-pec-siti-web"
@@ -89,8 +107,45 @@ def english(node, path):
     return (names[0].text or "").strip() if names else ""
 
 
+def signed_part(data, allowed, what):
+    """The element an XMLDSig signature in `data` covers, checked with
+    signxml, by a signing certificate whose base64 is in `allowed` (or
+    whose SHA-256 is, for the LOTL). Stops on anything else."""
+    import hashlib
+
+    try:
+        from lxml import etree
+        from signxml import XMLVerifier
+    except ImportError:
+        sys.exit("signxml is not installed: run this with "
+                 "`uv run --no-project --with signxml python3 tools/gen_pec_trust.py`")
+    root = etree.fromstring(data)
+    key = root.find("{%s}Signature/{%s}KeyInfo//{%s}X509Certificate" % (DS_NS, DS_NS, DS_NS))
+    if key is None:
+        sys.exit("%s carries no signing certificate" % what)
+    cert = "".join((key.text or "").split())
+    digest = hashlib.sha256(base64.b64decode(cert)).hexdigest()
+    if cert not in allowed and digest not in allowed:
+        sys.exit("%s is signed with a certificate not trusted for it (SHA-256 %s)" % (what, digest))
+    pem = "-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n" % "\n".join(
+        cert[i : i + 64] for i in range(0, len(cert), 64)
+    )
+    try:
+        results = XMLVerifier().verify(data, x509_cert=pem, expect_references=2)
+    except Exception as e:  # noqa: BLE001 - any failure stops the script
+        sys.exit("%s signature does not verify: %s" % (what, e))
+    results = results if isinstance(results, list) else [results]
+    # The list itself must be what is signed, not some part of it.
+    signed = [r.signed_xml for r in results if r.signed_xml is not None
+              and r.signed_xml.tag == root.tag]
+    if len(signed) != 1:
+        sys.exit("%s signature doesn't cover the whole list" % what)
+    return etree.tostring(signed[0])
+
+
 def italian_signers(lotl):
-    """The certificates the LOTL says TSL-IT is signed with, base64."""
+    """The certificates the (verified) LOTL says TSL-IT is signed with,
+    base64."""
     root = ET.fromstring(lotl)
     certs = set()
     for pointer in root.iter(t("OtherTSLPointer")):
@@ -100,40 +155,6 @@ def italian_signers(lotl):
         for c in pointer.iter(t("X509Certificate")):
             certs.add("".join((c.text or "").split()))
     return certs
-
-
-def check_signature(tsl, signers, skip):
-    root = ET.fromstring(tsl)
-    key = root.find(".//{%s}Signature/{%s}KeyInfo//{%s}X509Certificate" % (DS_NS, DS_NS, DS_NS))
-    if key is None:
-        sys.exit("TSL-IT carries no signing certificate")
-    cert = "".join((key.text or "").split())
-    if cert not in signers:
-        sys.exit("TSL-IT is signed with a certificate the EU list doesn't publish for Italy")
-    xmlsec = shutil.which("xmlsec1")
-    if xmlsec is None:
-        if skip:
-            return "signer certificate matches the EU list; signature NOT checked (no xmlsec1)"
-        sys.exit("xmlsec1 is not installed: install it, or pass --no-signature-check")
-    with tempfile.TemporaryDirectory() as tmp:
-        pem = os.path.join(tmp, "signer.pem")
-        doc = os.path.join(tmp, "tsl.xml")
-        with open(pem, "w") as f:
-            f.write("-----BEGIN CERTIFICATE-----\n")
-            for i in range(0, len(cert), 64):
-                f.write(cert[i : i + 64] + "\n")
-            f.write("-----END CERTIFICATE-----\n")
-        with open(doc, "wb") as f:
-            f.write(tsl)
-        done = subprocess.run(
-            [xmlsec, "--verify", "--pubkey-cert-pem", pem,
-             "--id-attr:Id", "TrustServiceStatusList", doc],
-            capture_output=True,
-            text=True,
-        )
-        if done.returncode != 0:
-            sys.exit("TSL-IT signature does not verify:\n" + done.stderr)
-    return "signature checked with xmlsec1 against the certificate the EU list publishes for Italy"
 
 
 def anchors(tsl):
@@ -210,7 +231,7 @@ def write_pem(f, b64):
     f.write("-----END CERTIFICATE-----\n")
 
 
-def agid_cas(skip):
+def agid_cas():
     """The PEC network's CAs from AgID's page, each checked against the
     Actalis roots the same page publishes: [(name, base64)], and how."""
     import io
@@ -239,9 +260,7 @@ def agid_cas(skip):
     chain = [b for n in AGID_CHAIN for b in certs(n)]
     openssl = shutil.which("openssl")
     if openssl is None:
-        if skip:
-            return cas, "chain to the Actalis roots NOT checked (no openssl)"
-        sys.exit("openssl is not installed: install it, or pass --no-signature-check")
+        sys.exit("openssl is not installed")
     with tempfile.TemporaryDirectory() as tmp:
         bundle = os.path.join(tmp, "chain.pem")
         with open(bundle, "w") as f:
@@ -270,6 +289,18 @@ def generated(path):
     return None
 
 
+def check_integrity():
+    """Fails unless the anchors file says every signature was checked."""
+    with open(ANCHORS, encoding="utf-8") as f:
+        head = "".join(line for line in f if line.startswith("#"))
+    if "# Integrity: %s" % VERIFIED not in head:
+        rel = os.path.relpath(ANCHORS, ROOT)
+        print("::error file=%s::%s was written without checking the trust lists' "
+              "signatures: run tools/gen_pec_trust.py with signxml" % (rel, rel))
+        return 1
+    return 0
+
+
 def check():
     old = False
     for path in (ANCHORS, PROVIDERS):
@@ -286,14 +317,18 @@ def check():
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="only report files older than 90 days")
-    parser.add_argument("--no-signature-check", action="store_true")
+    parser.add_argument("--check-integrity", action="store_true",
+                        help="only check the anchors were written with every signature checked")
     args = parser.parse_args()
     if args.check:
         return check()
+    if args.check_integrity:
+        return check_integrity()
 
-    pec_cas, pec_how = agid_cas(args.no_signature_check)
-    tsl = fetch(TSL_URL)
-    how = check_signature(tsl, italian_signers(fetch(LOTL_URL)), args.no_signature_check)
+    pec_cas, pec_how = agid_cas()
+    lotl = signed_part(fetch(LOTL_URL), LOTL_SIGNERS, "The EU list of trusted lists")
+    tsl = signed_part(fetch(TSL_URL), italian_signers(lotl), "TSL-IT")
+    how = "XML signature checked against the certificate the signed EU list gives for Italy"
     issued, cas = anchors(tsl)
     if len(cas) < 20:
         sys.exit("TSL-IT came back with only %d qualified CAs" % len(cas))
@@ -308,6 +343,8 @@ def main():
         f.write("# Generated: %s\n" % today)
         f.write("# Source: %s (%s)\n" % (AGID_CA_URL, pec_how))
         f.write("# Source: %s (issued %s; %s)\n" % (TSL_URL, issued, how))
+        f.write("# Source: %s (XML signature checked, signer pinned)\n" % LOTL_URL)
+        f.write("# Integrity: %s\n" % VERIFIED)
         for name, b64 in pec_cas:
             f.write("\n# AgID, PEC network: %s\n" % name)
             write_pem(f, b64)

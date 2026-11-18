@@ -42,6 +42,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Anchors written without checking the lists' signatures are refused.
+      - run: python3 tools/gen_pec_trust.py --check-integrity
       - run: python3 tools/gen_pec_trust.py --check || true
 
   # THIRD_PARTY_RUST.md lists every crate the engine ships. CI checks it on

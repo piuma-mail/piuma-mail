@@ -1794,10 +1794,15 @@ impl Store {
                     recipients = excluded.recipients, bulk = excluded.bulk",
                 inbox_zone("?5", "?15")
             ))?;
+            // An update keeps `verified`: the proof was found in the body,
+            // and a resync or a flag changing doesn't take it away.
             let mut receipt = tx.prepare(
-                "INSERT OR REPLACE INTO pec_receipt
+                "INSERT INTO pec_receipt
                     (account, mailbox, uid, kind, refers, recipients, reason)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (account, mailbox, uid) DO UPDATE SET
+                    kind = excluded.kind, refers = excluded.refers,
+                    recipients = excluded.recipients, reason = excluded.reason",
             )?;
             let mut known = tx.prepare(
                 "SELECT thread FROM message WHERE account = ?1 AND message_id = ?2 LIMIT 1",
@@ -9327,6 +9332,11 @@ From: <help@bank.example>\r\n\r\nHi";
             ..Body::default()
         };
         store.set_full_body(a, "INBOX", 3, &signed).unwrap();
+        assert!(store.pec_sent(None).unwrap()[0].verified);
+        // Listed again (a resync, marked read): still the proof it was.
+        store
+            .upsert_messages(&[receipt(3, 210, pec::Kind::Delivered, "x@pec.it")])
+            .unwrap();
         assert!(store.pec_sent(None).unwrap()[0].verified);
         // Read again after its certificate expired: still the proof it was.
         let later = Body {
