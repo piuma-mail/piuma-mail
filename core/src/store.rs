@@ -7443,7 +7443,14 @@ mod tests {
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
         store
             .conn
-            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .pragma_update(
+                None,
+                "user_version",
+                MIGRATIONS
+                    .iter()
+                    .position(|m| m.contains("attachment_unavailable"))
+                    .unwrap() as i64,
+            )
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
