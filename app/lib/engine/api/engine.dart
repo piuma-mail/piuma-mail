@@ -8,13 +8,18 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_images`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `image_data`, `in_conversation`, `inbox_row`, `invite_info`, `keep_account`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `bulk_reader`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_images`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `image_data`, `in_conversation`, `inbox_row`, `invite_info`, `keep_account`, `keep_following`, `keep_outcome`, `kept_outcome`, `kick_maintenance`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `start_maintenance`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `take_restored`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
-/// Opens (or creates) the local database. Call once at startup.
-void openEngine({required String dbPath}) =>
+/// Opens (or creates) the local database. Call once at startup, and wait
+/// for it: when the app was updated, the database is copied
+/// (`piuma.db.before-update`) and its schema brought up to date first,
+/// which on a big mailbox takes a while ("Updating your mail"). Work on
+/// many messages is then done in the background, a step at a time
+/// ([`Store::maintain`]).
+Future<void> openEngine({required String dbPath}) =>
     RustLib.instance.api.crateApiEngineOpenEngine(dbPath: dbPath);
 
 /// Whether `from`→`to` translates on this device with Firefox's models:
@@ -606,8 +611,9 @@ Future<OutgoingMessage> openDraft({required MessageRef draft}) =>
     RustLib.instance.api.crateApiEngineOpenDraft(draft: draft);
 
 /// Hides a message from the lists while its action can be undone, or
-/// shows it again after Undo.
-void setMessageHidden({
+/// shows it again after Undo. Not on the thread that draws: a sync writing
+/// a batch holds the database for a moment.
+Future<void> setMessageHidden({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,
@@ -1568,6 +1574,13 @@ enum ErrorKind {
   /// first: the space can't be joined until the mailbox holds only one
   /// side.
   conflict,
+
+  /// An account still has mail written in it that hasn't gone (see
+  /// `account_unsent`): it isn't removed until that is sent or deleted.
+  unsent,
+
+  /// Not enough free room on the disk for what was asked.
+  diskFull,
   other,
 }
 

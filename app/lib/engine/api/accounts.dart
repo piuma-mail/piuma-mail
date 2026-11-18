@@ -9,7 +9,7 @@ import 'engine.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `account`, `alert_key`, `server`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 AccountServers accountServers({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiAccountsAccountServers(accountId: accountId);
@@ -44,9 +44,32 @@ Future<void> setAccountServers({
   trusted: trusted,
 );
 
+/// What removing an account waits on: its outbox mail that hasn't gone
+/// (not the mail the server took, nor what may have gone) and its drafts
+/// waiting on this device, outbox first.
+Future<List<UnsentMessage>> accountUnsent({required PlatformInt64 accountId}) =>
+    RustLib.instance.api.crateApiAccountsAccountUnsent(accountId: accountId);
+
+/// Tries now to save an account's drafts waiting on this device on its
+/// server; [super::engine::SyncEventKind::Synced] follows when they went.
+Future<void> saveWaitingDraftsNow({required PlatformInt64 accountId}) => RustLib
+    .instance
+    .api
+    .crateApiAccountsSaveWaitingDraftsNow(accountId: accountId);
+
+/// Deletes a draft waiting on this device without saving it on the
+/// server; a copy saved there before stays.
+Future<void> deleteWaitingDraft({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiAccountsDeleteWaitingDraft(id: id);
+
 /// Removes an account from this device: its mail here, its password and
-/// the calendars that used it. Its mail stays on the server.
-void removeAccount({required PlatformInt64 accountId}) =>
+/// the calendars that used it. Its mail stays on the server. The account
+/// leaves every list at once; its messages are removed in the background,
+/// a few thousand at a time (and the removal goes on at the next start if
+/// the app stops first), so nothing waits on it. Refused
+/// ([ErrorKind::Unsent]) while mail written in it hasn't gone
+/// ([account_unsent]): nothing unsent is ever removed with it.
+Future<void> removeAccount({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiAccountsRemoveAccount(accountId: accountId);
 
 /// "Tell me when it can't sign in": on unless turned off.
@@ -93,4 +116,61 @@ class AccountServers {
           smtp == other.smtp &&
           username == other.username &&
           jmapUrl == other.jmapUrl;
+}
+
+/// A message written in an account that hasn't gone yet: removing the
+/// account waits until each is sent, saved on the server or deleted.
+class UnsentMessage {
+  /// The outbox message's id ([super::engine::retry_outgoing],
+  /// [super::engine::delete_outgoing]), or the waiting draft's
+  /// ([save_waiting_drafts_now], [delete_waiting_draft]).
+  final PlatformInt64 id;
+
+  /// A draft waiting on this device to be saved on the server, rather
+  /// than mail in the outbox.
+  final bool draft;
+  final List<String> to;
+  final String subject;
+
+  /// The server refused it (outbox only).
+  final bool refused;
+
+  /// On its way now (outbox only): it can't be deleted.
+  final bool sending;
+
+  /// When it was queued or saved, in Unix seconds.
+  final PlatformInt64 at;
+
+  const UnsentMessage({
+    required this.id,
+    required this.draft,
+    required this.to,
+    required this.subject,
+    required this.refused,
+    required this.sending,
+    required this.at,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      draft.hashCode ^
+      to.hashCode ^
+      subject.hashCode ^
+      refused.hashCode ^
+      sending.hashCode ^
+      at.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UnsentMessage &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          draft == other.draft &&
+          to == other.to &&
+          subject == other.subject &&
+          refused == other.refused &&
+          sending == other.sending &&
+          at == other.at;
 }

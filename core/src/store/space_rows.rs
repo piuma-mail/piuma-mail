@@ -133,6 +133,14 @@ impl Store {
         let mut index = Index::new();
         // rowid -> gid, by table, for references.
         let mut gids: HashMap<&str, HashMap<i64, String>> = HashMap::new();
+        // An account being removed is gone for the space at once (its
+        // address carries " (removed N)" meanwhile, which must never
+        // travel): with it go the rows and settings that name it.
+        let removing: BTreeSet<i64> = {
+            let mut stmt = self.conn.prepare("SELECT account FROM account_removal")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
         for spec in SYNCED {
             let cols = columns(&self.conn, spec.table)?;
             if cols.is_empty() {
@@ -170,6 +178,9 @@ impl Store {
             drop(stmt);
             let mut seen = HashMap::new();
             'rows: for (rowid, mut v) in rows {
+                if spec.table == "account" && removing.contains(&rowid) {
+                    continue;
+                }
                 for col in spec.local {
                     v.remove(*col);
                 }

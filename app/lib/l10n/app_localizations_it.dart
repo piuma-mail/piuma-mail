@@ -3428,6 +3428,108 @@ class AppLocalizationsIt extends AppLocalizations {
   String get accountRemoveConfirm => 'Rimuovi';
 
   @override
+  String accountRemoveBlocked(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count messaggi scritti qui non sono ancora partiti. Inviali o eliminali, poi rimuovi l\'account.',
+      one: '1 messaggio scritto qui non è ancora partito. Invialo o eliminalo, poi rimuovi l\'account.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get accountUnsentDraft => 'Bozza su questo dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Invia ora';
+
+  @override
+  String get accountUnsentSaveNow => 'Salva ora';
+
+  @override
+  String get accountUnsentFailed =>
+      'Non ha funzionato. Controlla la connessione e riprova, oppure eliminalo.';
+
+  @override
+  String get updatingMail => 'Aggiornamento della posta';
+
+  @override
+  String get updatingMailNote =>
+      'Piuma è stata aggiornata e sta preparando la tua posta. Succede una volta sola, e chiudere l\'app nel frattempo non fa perdere nulla.';
+
+  @override
+  String get storageTitle => 'Spazio';
+
+  @override
+  String get storageSubtitle =>
+      'La posta tenuta su questo dispositivo. Sul server resta tutto.';
+
+  @override
+  String storageTotal(String size) {
+    return '$size su questo dispositivo';
+  }
+
+  @override
+  String storageAccountLine(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email',
+      one: '1 email',
+    );
+    return '$_temp0 · $size tenuti per leggere offline';
+  }
+
+  @override
+  String get storageClear => 'Svuota la posta in cache';
+
+  @override
+  String get storageClearing => 'Svuotamento…';
+
+  @override
+  String storageBackup(String size) {
+    return 'Di cui $size sono una copia di prima dell\'ultimo aggiornamento, tolta al prossimo avvio.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Non è stato possibile svuotare la posta salvata. Riprova.';
+
+  @override
+  String get storageNoRoom =>
+      'Posta salvata svuotata. Non c\'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.';
+
+  @override
+  String storageClearTitle(String name) {
+    return 'Svuotare la posta in cache di $name?';
+  }
+
+  @override
+  String get storageClearNote =>
+      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.';
+
+  @override
+  String get storageKeep => 'Tieni i messaggi interi per leggere offline';
+
+  @override
+  String get storageKeepHint =>
+      'Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.';
+
+  @override
+  String get storageKeepMonth => '1 mese';
+
+  @override
+  String get storageKeepMonths => '3 mesi';
+
+  @override
+  String get storageKeepYear => '1 anno';
+
+  @override
+  String get storageKeepAlways => 'Sempre';
+
+  @override
   String get accountServersTitle => 'Server';
 
   @override

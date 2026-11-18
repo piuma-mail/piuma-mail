@@ -24,6 +24,7 @@ Future<DemoMailSource> _settings(
   WidgetTester tester, {
   bool phone = false,
   bool dark = false,
+  bool unsent = false,
   SyncStatus status = SyncStatus.idle,
 }) async {
   tester.view.physicalSize = phone
@@ -31,7 +32,8 @@ Future<DemoMailSource> _settings(
       : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now)..status.value = status;
+  final source = DemoMailSource(now: _now, unsent: unsent)
+    ..status.value = status;
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -147,6 +149,93 @@ void main() {
     expect(find.byType(AccountPage), findsNothing);
     expect(find.text('Work'), findsNothing);
   });
+
+  for (final phone in [false, true]) {
+    final where = phone ? 'phone' : 'desktop';
+    testWidgets('$where: an account with unsent mail is removed only once '
+        'each message is sent or deleted', (tester) async {
+      final source = await _settings(tester, phone: phone, unsent: true);
+      await tester.ensureVisible(find.text('Remove account'));
+      await tester.tap(find.text('Remove account'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RemoveAccountPanel), findsOneWidget);
+      expect(
+        find.textContaining("3 messages written here haven't gone yet"),
+        findsOneWidget,
+      );
+      expect(find.text('Quote for the Rossi kitchen'), findsOneWidget);
+      expect(find.textContaining('Not sent · To Luca Ferri'), findsOneWidget);
+      expect(
+        find.textContaining('Waiting · To Sara Conti, giulia@studio.it'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Draft kept on this device · To Anna Bianchi'),
+        findsOneWidget,
+      );
+      expect(find.text('Save now'), findsOneWidget);
+      // Remove is off: tapping it changes nothing.
+      Finder remove() => find.descendant(
+        of: find.byType(RemoveAccountPanel),
+        matching: find.text('Remove'),
+      );
+      await tester.tap(remove());
+      await tester.pumpAndSettle();
+      expect(find.byType(RemoveAccountPanel), findsOneWidget);
+      expect(source.accounts.map((a) => a.name), contains('Work'));
+      // Each one sent, saved or deleted leaves the list.
+      await tester.tap(find.text('Send now').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Quote for the Rossi kitchen'), findsNothing);
+      expect(
+        find.textContaining("2 messages written here haven't gone yet"),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Delete').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save now'));
+      await tester.pumpAndSettle();
+      expect(await source.unsentMail(_work), isEmpty);
+      expect(find.textContaining("haven't gone yet"), findsNothing);
+      await tester.tap(remove());
+      await tester.pumpAndSettle();
+      expect(source.accounts.map((a) => a.name), ['Personal', 'iCloud']);
+      expect(find.byType(AccountPage), findsNothing);
+    });
+
+    testWidgets('$where: Cancel keeps an account with unsent mail', (
+      tester,
+    ) async {
+      final source = await _settings(tester, phone: phone, unsent: true);
+      await tester.ensureVisible(find.text('Remove account'));
+      await tester.tap(find.text('Remove account'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RemoveAccountPanel), findsNothing);
+      expect(source.accounts.map((a) => a.name), contains('Work'));
+      expect(await source.unsentMail(_work), hasLength(3));
+      // And the check holds without the dialog too.
+      await expectLater(
+        source.removeAccount(_work),
+        throwsA(isA<UnsentMailLeft>()),
+      );
+    });
+
+    for (final dark in [false, true]) {
+      final name = '${where}_${dark ? 'dark' : 'light'}';
+      testWidgets('account_remove_unsent_$name golden', (tester) async {
+        await _settings(tester, phone: phone, dark: dark, unsent: true);
+        await tester.ensureVisible(find.text('Remove account'));
+        await tester.tap(find.text('Remove account'));
+        await tester.pumpAndSettle();
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/account_remove_unsent_$name.png'),
+        );
+      }, tags: ['golden']);
+    }
+  }
 
   testWidgets('Default signature opens Signatures', (tester) async {
     await _settings(tester);

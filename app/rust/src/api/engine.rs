@@ -35,13 +35,22 @@ use crate::frb_generated::StreamSink;
 
 pub(crate) struct Engine {
     pub(crate) store: Arc<Mutex<Store>>,
-    /// A second connection for what the app asks while it draws, so a
-    /// sync writing never holds up a frame; none for a database in memory.
+    /// A connection of its own for what the app asks while it draws (the
+    /// calls answered on the thread that draws), so neither a sync writing
+    /// nor a long count or search ever holds up a frame; none for a
+    /// database in memory.
     reader: Option<Mutex<Store>>,
+    /// Connections for the longer reads, run off the thread that draws:
+    /// counts, pages, search. Two, so one long count doesn't hold up the
+    /// next page.
+    readers: Vec<Mutex<Store>>,
     pub(crate) runtime: tokio::runtime::Runtime,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
+
+/// How many connections [`bulk_reader`] keeps.
+const BULK_READERS: usize = 2;
 
 pub(crate) fn engine() -> Result<&'static Engine, EngineError> {
     ENGINE
@@ -54,12 +63,34 @@ pub(crate) fn store() -> Result<std::sync::MutexGuard<'static, Store>, EngineErr
 }
 
 /// The database for reading only, for the calls the app makes while it
-/// draws a frame: they don't wait for a write to finish.
+/// draws a frame: they wait neither for a write nor for a long read.
 pub(crate) fn reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
     let engine = engine()?;
     Ok(engine
         .reader
         .as_ref()
+        .unwrap_or(&engine.store)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()))
+}
+
+/// The database for reading only, for the longer reads the app asks for
+/// off the thread that draws (counts, pages, search): the first of the
+/// connections kept for them that is free, or the first one when none is.
+/// Never [`reader`]'s, so the calls made while drawing don't wait on them.
+pub(crate) fn bulk_reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
+    let engine = engine()?;
+    for r in &engine.readers {
+        match r.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Ok(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+    }
+    Ok(engine
+        .readers
+        .first()
+        .or(engine.reader.as_ref())
         .unwrap_or(&engine.store)
         .lock()
         .unwrap_or_else(|e| e.into_inner()))
@@ -123,6 +154,11 @@ pub enum ErrorKind {
     /// first: the space can't be joined until the mailbox holds only one
     /// side.
     Conflict,
+    /// An account still has mail written in it that hasn't gone (see
+    /// `account_unsent`): it isn't removed until that is sent or deleted.
+    Unsent,
+    /// Not enough free room on the disk for what was asked.
+    DiskFull,
     Other,
 }
 
@@ -157,7 +193,12 @@ impl std::error::Error for EngineError {}
 
 impl From<piuma_core::StoreError> for EngineError {
     fn from(e: piuma_core::StoreError) -> Self {
-        EngineError::new(ErrorKind::Other, e.to_string())
+        let kind = match e {
+            piuma_core::StoreError::Unsent { .. } => ErrorKind::Unsent,
+            piuma_core::StoreError::NoRoom { .. } => ErrorKind::DiskFull,
+            _ => ErrorKind::Other,
+        };
+        EngineError::new(kind, e.to_string())
     }
 }
 
@@ -519,8 +560,12 @@ pub fn init_app() {
     piuma_core::guard::install();
 }
 
-/// Opens (or creates) the local database. Call once at startup.
-#[frb(sync)]
+/// Opens (or creates) the local database. Call once at startup, and wait
+/// for it: when the app was updated, the database is copied
+/// (`piuma.db.before-update`) and its schema brought up to date first,
+/// which on a big mailbox takes a while ("Updating your mail"). Work on
+/// many messages is then done in the background, a step at a time
+/// ([`Store::maintain`]).
 pub fn open_engine(db_path: String) -> Result<(), EngineError> {
     if ENGINE.get().is_some() {
         return Ok(());
@@ -529,7 +574,11 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
     piuma_core::guard::install();
     // Before the database: a failure opening it is kept for a report.
     super::feedback::opened(&db_path);
-    let store = Store::open(&db_path)?;
+    let store = if db_path == ":memory:" {
+        Store::open(&db_path)?
+    } else {
+        Store::open_file(&db_path)?.0
+    };
     // Actions still inside their Undo window when the app quit never
     // happened: show those messages again.
     store.unhide_all()?;
@@ -539,13 +588,18 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         .enable_all()
         .build()
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
-    let reader = (db_path != ":memory:")
-        .then(|| Store::open_reader(&db_path).ok())
-        .flatten()
-        .map(Mutex::new);
+    let open_reader = || {
+        (db_path != ":memory:")
+            .then(|| Store::open_reader(&db_path).ok())
+            .flatten()
+            .map(Mutex::new)
+    };
+    let reader = open_reader();
+    let readers = (0..BULK_READERS).filter_map(|_| open_reader()).collect();
     let _ = ENGINE.set(Engine {
         store: Arc::new(Mutex::new(store)),
         reader,
+        readers,
         runtime,
     });
     let models = std::path::Path::new(&db_path)
@@ -554,7 +608,98 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         .unwrap_or_else(|| "translation".into());
     let _ = TRANSLATOR.set(piuma_core::translate::Translator::new(models));
     super::feedback::opened(&db_path);
+    start_maintenance();
     Ok(())
+}
+
+/// The thread that does the database's background work: the rest of an
+/// account being removed, jobs left by an update, letting go of old
+/// whole messages once a day. One short write per step, so syncs and taps
+/// get the database in between.
+static MAINTENANCE: OnceLock<std::thread::Thread> = OnceLock::new();
+
+/// How long the background work rests between steps...
+const MAINTENANCE_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
+/// ...and how often it looks for old whole messages to let go of.
+const CLEAN_UP_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+fn start_maintenance() {
+    if MAINTENANCE.get().is_some() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("piuma-maintenance".into())
+        .spawn(|| {
+            // The first look a minute after starting, out of the way.
+            let mut clean_up_at = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                if std::time::Instant::now() >= clean_up_at {
+                    clean_up_at = std::time::Instant::now() + CLEAN_UP_EVERY;
+                    if let Ok(store) = store() {
+                        let _ = store.queue_body_clean_up(now_secs());
+                        store.drop_old_update_backup(piuma_core::store::UPDATE_BACKUP_DAYS);
+                    }
+                }
+                let more = match store() {
+                    Ok(mut store) => store.maintain().unwrap_or_else(|e| {
+                        log::warn!("background work: {e}");
+                        false
+                    }),
+                    Err(_) => false,
+                };
+                take_restored();
+                if more {
+                    std::thread::sleep(MAINTENANCE_PAUSE);
+                } else {
+                    if let Ok(store) = store() {
+                        let _ = store.give_back_room(1024);
+                    }
+                    std::thread::park_timeout(
+                        clean_up_at.saturating_duration_since(std::time::Instant::now()),
+                    );
+                }
+            }
+        });
+    if let Ok(handle) = spawned {
+        let _ = MAINTENANCE.set(handle.thread().clone());
+    }
+}
+
+/// Accounts a removal gave back, because mail written in them hadn't
+/// gone (see `Store::maintain`): followed again, and since their password
+/// and sign-in went with the removal, the app asks to sign in to them
+/// again, as for a password the server refused.
+pub(crate) fn take_restored() {
+    let restored = match store().and_then(|s| Ok(s.take_restored()?)) {
+        Ok(restored) => restored,
+        Err(e) => {
+            log::warn!("accounts given back: {e}");
+            return;
+        }
+    };
+    for back in restored {
+        if back.address_taken {
+            log::warn!(
+                "account {} given back with a placeholder address: another account has its own",
+                back.account.0
+            );
+        }
+        let account = store()
+            .and_then(|s| Ok(s.accounts()?))
+            .map(|accounts| accounts.into_iter().find(|a| a.id == back.account));
+        if let Ok(Some(account)) = account {
+            // Without a password, its watcher asks to sign in again.
+            let _ = watch_account(account);
+            crate::background::sign_in_failed(back.account, false);
+        }
+    }
+}
+
+/// Wakes the background work: something was queued for it.
+pub(crate) fn kick_maintenance() {
+    if let Some(thread) = MAINTENANCE.get() {
+        thread.unpark();
+    }
 }
 
 /// Firefox's translation models, kept next to the database.
@@ -936,7 +1081,7 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    let store = store()?;
+    let store = bulk_reader()?;
     Ok(store.conversation_count(
         folder.into(),
         within(account, group, address),
@@ -951,7 +1096,7 @@ pub fn folder_unread(
     address: Option<String>,
     tab: Option<InboxTab>,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.unread_count(
+    Ok(bulk_reader()?.unread_count(
         folder.into(),
         within(account, group, address),
         tab.map_or(Section::All, Section::from),
@@ -973,7 +1118,8 @@ pub fn folder_page(
     offset: u32,
     limit: u32,
 ) -> Result<Vec<InboxRow>, EngineError> {
-    let store = store()?;
+    // The reader: paging never waits on a sync's write, nor holds it up.
+    let store = bulk_reader()?;
     let scope = within(account, group, address);
     let view = filter(&store, tab, unread);
     store
@@ -1329,7 +1475,7 @@ pub fn folder_counts_between(
     unread: bool,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = store()?;
+    let store = bulk_reader()?;
     let within = within(account, group, address);
     let section = filter(&store, tab, unread);
     edges
@@ -1997,6 +2143,60 @@ mod credential_recovery_tests {
     }
 
     #[test]
+    fn an_account_a_removal_gives_back_asks_to_sign_in_again() {
+        memory_keychain();
+        open_engine(":memory:".into()).unwrap();
+        let id = store()
+            .unwrap()
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Home".into(),
+                email: "given.back@studio.it".into(),
+                sender_name: "Matteo".into(),
+                color: "#3451D1".into(),
+                kind: piuma_core::AccountKind::Jmap {
+                    session_url: "https://jmap.studio.invalid/session".into(),
+                    username: "matteo".into(),
+                },
+            })
+            .unwrap();
+        {
+            let mut store = store().unwrap();
+            store.start_removing_account(id).unwrap();
+            // A draft kept for it before the removal went on.
+            store
+                .keep_waiting_draft(
+                    &piuma_core::store::WaitingDraft {
+                        id: 0,
+                        account: id,
+                        raw: b"Subject: Plans\r\n\r\nHi".to_vec(),
+                        message_id: "<plans@studio.it>".into(),
+                        earlier: None,
+                        signature: None,
+                    },
+                    None,
+                    100,
+                )
+                .unwrap();
+            store.maintain_all().unwrap();
+            assert!(store.accounts().unwrap().iter().any(|a| a.id == id));
+        }
+        take_restored();
+        let asked = || {
+            WAITING
+                .lock()
+                .unwrap()
+                .contains(&(id.0, SyncEventKind::SignInFailed))
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !asked() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(asked());
+        stop_watching(id);
+    }
+
+    #[test]
     fn a_watcher_waiting_for_its_password_stops_cleanly() {
         memory_keychain();
         open_engine(":memory:".into()).unwrap();
@@ -2559,7 +2759,7 @@ pub fn sender_warning(
     uid: u32,
 ) -> Result<Option<SenderWarning>, EngineError> {
     use piuma_core::store::WarningKind;
-    let store = reader()?;
+    let store = bulk_reader()?;
     Ok(store
         .sender_warning(AccountId(account_id), &mailbox, uid)?
         .map(|w| {
@@ -4326,7 +4526,7 @@ static SAVING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 /// Puts the drafts that waited on this device in the account's Drafts
 /// folder, each in place of its earlier copy, and says so with
 /// [SyncEventKind::Synced].
-fn save_waiting_drafts(account: Account, password: Login) {
+pub(crate) fn save_waiting_drafts(account: Account, password: Login) {
     let Ok(engine) = engine() else { return };
     let id = account.id;
     let waiting = lock_store(&engine.store)
@@ -4490,8 +4690,8 @@ fn lock_store(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
 }
 
 /// Hides a message from the lists while its action can be undone, or
-/// shows it again after Undo.
-#[frb(sync)]
+/// shows it again after Undo. Not on the thread that draws: a sync writing
+/// a batch holds the database for a moment.
 pub fn set_message_hidden(
     account_id: i64,
     mailbox: String,
@@ -4882,7 +5082,7 @@ pub fn mailbox_counts_between(
     mailbox: String,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = store()?;
+    let store = bulk_reader()?;
     let account = AccountId(account_id);
     edges
         .windows(2)
@@ -5299,7 +5499,7 @@ const SEARCH_FILES: u32 = 6;
 pub fn search(query: String, limit: u32) -> Result<SearchResult, EngineError> {
     let start = std::time::Instant::now();
     let query = Query::parse(&query);
-    let store = store()?;
+    let store = bulk_reader()?;
     let found = store.search(&query, limit)?;
     let people = store.search_people(&query, 3)?;
     let files = store.search_files(&query, SEARCH_FILES)?;
@@ -5454,7 +5654,7 @@ pub async fn newsletter_cover(
     uid: u32,
 ) -> Result<Option<String>, EngineError> {
     let id = AccountId(account_id);
-    let store = reader()?;
+    let store = bulk_reader()?;
     let Some(message) = store.message(id, &mailbox, uid)? else {
         return Ok(None);
     };

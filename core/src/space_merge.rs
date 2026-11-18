@@ -413,6 +413,8 @@ const LOCAL_SETTINGS: &[&str] = &[
     "labels.local.",
     "draft.",
     "calendars.default",
+    "storage.",
+    "account_restored.",
 ];
 
 /// Settings that name an account and travel, by the account's global id:
