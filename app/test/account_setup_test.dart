@@ -95,8 +95,9 @@ Future<void> _pump(WidgetTester tester, MailSource source) async {
   await tester.pumpAndSettle();
 }
 
+/// The text field labelled [label] (a hint may follow the label).
 Finder _field(String label) => find.descendant(
-  of: find.bySemanticsLabel(label),
+  of: find.bySemanticsLabel(RegExp('^${RegExp.escape(label)}')),
   matching: find.byType(TextField),
 );
 
