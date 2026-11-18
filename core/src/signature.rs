@@ -308,7 +308,7 @@ pub fn shrink_logo(data: &[u8]) -> Result<Logo, LogoError> {
             data: data.to_vec(),
         });
     }
-    let img = image::load_from_memory(data).map_err(|_| LogoError::NotAnImage)?;
+    let img = crate::images::decode(data).ok_or(LogoError::NotAnImage)?;
     let mut size = (480u32, 144u32);
     for _ in 0..5 {
         let small = img.resize(size.0, size.1, image::imageops::FilterType::Lanczos3);

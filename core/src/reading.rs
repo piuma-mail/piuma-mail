@@ -301,17 +301,22 @@ fn from_text_with(text: &str, options: Options) -> Readable {
     out
 }
 
+/// Where the first "http://" or "https://" in `text` starts. One pass
+/// from the start: looking for each separately would scan the rest of a
+/// long text again for every link in it.
+fn link_start(text: &str) -> Option<usize> {
+    text.match_indices("http").map(|(i, _)| i).find(|&i| {
+        let after = &text[i + 4..];
+        after.starts_with("://") || after.starts_with("s://")
+    })
+}
+
 /// Words that start with http:// or https:// become (cleaned) links.
 fn autolink(text: &str, clean: bool, cleaned: &mut u32) -> Vec<Span> {
     let mut spans = Vec::new();
     let mut plain = String::new();
     let mut rest = text;
-    while let Some(start) = rest
-        .find("http://")
-        .into_iter()
-        .chain(rest.find("https://"))
-        .min()
-    {
+    while let Some(start) = link_start(rest) {
         let end = rest[start..]
             .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
             .map_or(rest.len(), |e| start + e);
@@ -542,6 +547,8 @@ struct Walker {
     heading: u8,
     marker: Option<String>,
     link: Option<(String, bool)>,
+    /// The number of the `<li>` about to be walked, given by its `<ol>`.
+    number: Option<usize>,
 }
 
 /// Rich HTML: see the module's description.
@@ -559,6 +566,7 @@ fn from_html_with(html: &str, options: Options) -> Readable {
         heading: 0,
         marker: None,
         link: None,
+        number: None,
     };
     // Styles and fonts in <head> are noticed, never loaded.
     for node in doc.tree.root().descendants() {
@@ -899,12 +907,14 @@ impl Walker {
                 return;
             };
             image.data = Some(bytes);
-        } else if src.len() > 4 && src[..4].eq_ignore_ascii_case("cid:") {
+        } else if let Some(cid) =
+            crate::guard::strip_prefix_ci(src, "cid:").filter(|c| !c.is_empty())
+        {
             // Inside the message: no request leaves the device.
             if tiny || hidden(el) {
                 return;
             }
-            image.cid = Some(src[4..].trim_matches(['<', '>']).trim().to_owned());
+            image.cid = Some(cid.trim_matches(['<', '>']).trim().to_owned());
         } else {
             let Ok(url) = Url::parse(src) else {
                 return;
@@ -1011,21 +1021,12 @@ impl Walker {
             self.heading = heading;
         }
         if name == "li" {
+            // Its number was counted by the `<ol>` walking its children:
+            // looking back at every earlier item would make a long list
+            // quadratic.
+            let number = self.number.take();
             self.marker = Some(match el.parent().and_then(ElementRef::wrap) {
-                Some(p) if p.value().name() == "ol" => {
-                    let start: usize = p
-                        .value()
-                        .attr("start")
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(1);
-                    let index = p
-                        .children()
-                        .filter_map(ElementRef::wrap)
-                        .take_while(|c| c.id() != el.id())
-                        .filter(|c| c.value().name() == "li")
-                        .count();
-                    format!("{}.", start + index)
-                }
+                Some(p) if p.value().name() == "ol" => format!("{}.", number.unwrap_or(1)),
                 _ => "•".into(),
             });
             if style.list_depth == 0 {
@@ -1046,11 +1047,22 @@ impl Walker {
             });
         }
 
+        // The number the next `<li>` of an `<ol>` shows.
+        let mut next_number = (name == "ol").then(|| {
+            el.value()
+                .attr("start")
+                .and_then(|s| s.trim().parse::<usize>().ok())
+                .unwrap_or(1)
+        });
         for child in el.children() {
             match child.value() {
                 Node::Text(t) => self.push_text(t, style),
                 Node::Element(_) => {
                     if let Some(c) = ElementRef::wrap(child) {
+                        if let Some(n) = next_number.as_mut().filter(|_| c.value().name() == "li") {
+                            self.number = Some(*n);
+                            *n = n.saturating_add(1);
+                        }
                         self.walk(c, style, depth + 1);
                     }
                 }
@@ -1129,6 +1141,48 @@ pub fn plain_text(r: &Readable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_source_cut_inside_a_character_is_no_cid() {
+        // "cid" then "é": the fourth byte falls inside the "é".
+        let r = from_html("<p>Hi</p><img src=\"cid\u{e9}x\">");
+        assert!(r
+            .blocks
+            .iter()
+            .all(|b| b.image.as_ref().is_none_or(|i| i.cid.is_none())));
+        let r = from_html("<img src=\"CID:logo@x\">");
+        let cid = r.blocks.iter().find_map(|b| b.image.as_ref()?.cid.clone());
+        assert_eq!(cid.as_deref(), Some("logo@x"));
+    }
+
+    #[test]
+    fn ordered_lists_count_from_their_start() {
+        let r = from_html(
+            "<ol start=\"7\"><li>a</li><li>b</li></ol><ol><li>c</li><li>d</li><li>e</li></ol>\
+             <ul><li>f</li></ul><ol start=\"99999999999999999999999\"><li>g</li></ol>",
+        );
+        let markers: Vec<&str> = r.blocks.iter().map(|b| b.marker.as_str()).collect();
+        assert_eq!(markers, ["7.", "8.", "1.", "2.", "3.", "•", "1."]);
+        let r = from_html(&format!(
+            "<ol start=\"{}\"><li>a</li><li>b</li></ol>",
+            usize::MAX
+        ));
+        assert_eq!(r.blocks[1].marker, format!("{}.", usize::MAX));
+    }
+
+    #[test]
+    fn a_long_list_and_many_links_read_in_linear_time() {
+        let started = std::time::Instant::now();
+        let items: String = (0..60_000).map(|_| "<li>x</li>").collect();
+        let r = from_html(&format!("<ol>{items}</ol>"));
+        assert_eq!(r.blocks.last().map(|b| b.marker.as_str()), Some("60000."));
+        // Many plain addresses and no secure one: each used to send the
+        // search for "https://" through all the rest.
+        let text: String = (0..60_000).map(|_| "http://a.example ").collect();
+        let r = from_text(&text);
+        assert!(!r.blocks.is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(60));
+    }
 
     fn texts(r: &Readable) -> Vec<String> {
         r.blocks.iter().map(Block::text).collect()

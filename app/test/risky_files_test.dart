@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/risky_file.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/widgets/attachment_chip.dart';
 import 'package:piuma_mail/widgets/links.dart';
@@ -86,6 +88,42 @@ void main() {
     await tester.tap(find.text('Don’t open'));
     await tester.pumpAndSettle();
     expect(opened, isEmpty);
+  });
+
+  testWidgets('a web page warns about passwords, not programs', (tester) async {
+    await _pump(tester);
+    final context = tester.element(find.byType(InboxScreen));
+    final row = MailRow(
+      accountId: 1,
+      mailbox: 'INBOX',
+      uid: 1,
+      fromName: 'Luca',
+      fromEmail: 'luca@example.com',
+      subject: 'Sign in',
+      preview: '',
+      receivedAt: _now,
+      seen: false,
+    );
+    const page = MailAttachment(
+      part: 9,
+      name: 'Statement.html',
+      mime: 'text/html',
+      risk: FileRisk.web,
+    );
+    final answer = mayOpenFile(
+      context,
+      DemoMailSource(now: _now),
+      row,
+      page,
+      'Statement.html',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Open this web page?'), findsOneWidget);
+    expect(find.textContaining('Never type a password there'), findsOneWidget);
+    expect(find.text('Open this program?'), findsNothing);
+    await tester.tap(find.text('Don’t open'));
+    await tester.pumpAndSettle();
+    expect(await answer, isFalse);
   });
 
   testWidgets('a safe file opens without asking', (tester) async {

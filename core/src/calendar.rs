@@ -201,9 +201,7 @@ impl CalDav {
             });
             let color = child(prop, APPLE, "calendar-color")
                 .and_then(|c| c.text())
-                .map(str::trim)
-                .filter(|c| c.starts_with('#') && c.len() >= 7)
-                .map(|c| c[..7].to_ascii_uppercase());
+                .and_then(colour);
             let url = join(&at, href.trim());
             let name = child(prop, DAV, "displayname")
                 .and_then(|n| n.text())
@@ -477,9 +475,27 @@ fn utc(unix: i64) -> String {
     )
 }
 
+/// "#RRGGBB" from a calendar's colour as the server writes it ("#3A87ADFF"
+/// or "#3a87ad"); None when it isn't one.
+pub(crate) fn colour(raw: &str) -> Option<String> {
+    let c = raw.trim().get(..7)?;
+    (c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| c.to_ascii_uppercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_are_read_without_cutting_a_character() {
+        assert_eq!(colour("#3a87adff"), Some("#3A87AD".into()));
+        assert_eq!(colour(" #3A87AD "), Some("#3A87AD".into()));
+        // The seventh byte falls inside "€".
+        assert_eq!(colour("#12345€"), None);
+        assert_eq!(colour("#12"), None);
+        assert_eq!(colour("blue"), None);
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 

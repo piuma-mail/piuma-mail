@@ -306,7 +306,7 @@ fn onset(year: i32, (month, week, weekday): (u32, i32, u32), time: i64) -> Optio
 fn by_day(value: &str) -> Option<(i32, u32)> {
     let value = value.trim();
     let split = value.len().checked_sub(2)?;
-    let (week, day) = value.split_at(split);
+    let (week, day) = value.split_at_checked(split)?;
     let weekday = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"]
         .iter()
         .position(|d| d.eq_ignore_ascii_case(day))? as u32;
@@ -735,6 +735,15 @@ pub fn for_calendar(ics: &str, me_email: &str, answer: Answer) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_weekday_rule_cut_inside_a_character_is_ignored() {
+        // Two bytes from the end falls inside "€".
+        assert_eq!(by_day("1\u{20ac}"), None);
+        assert_eq!(by_day("\u{e9}"), None);
+        assert_eq!(by_day("-1SU"), Some((-1, 0)));
+        assert_eq!(by_day("2mo"), Some((2, 1)));
+    }
 
     const GOOGLE: &str = "BEGIN:VCALENDAR\r\n\
 PRODID:-//Google Inc//Google Calendar 70.9054//EN\r\n\

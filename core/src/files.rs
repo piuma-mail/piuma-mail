@@ -179,11 +179,15 @@ pub fn thumbnail(data: &[u8], kind: ThumbKind) -> Option<Vec<u8>> {
 /// A bitmap picture, turned upright as its camera said.
 fn picture(data: &[u8]) -> Option<image::DynamicImage> {
     use image::ImageDecoder;
-    let mut decoder = image::ImageReader::new(std::io::Cursor::new(data))
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(data))
         .with_guessed_format()
-        .ok()?
-        .into_decoder()
         .ok()?;
+    reader.limits(crate::images::limits());
+    let mut decoder = reader.into_decoder().ok()?;
+    let (w, h) = decoder.dimensions();
+    if u64::from(w) * u64::from(h) > crate::images::MAX_PIXELS {
+        return None;
+    }
     let orientation = decoder.orientation().ok();
     let mut img = image::DynamicImage::from_decoder(decoder).ok()?;
     if let Some(o) = orientation {
@@ -298,6 +302,9 @@ pub enum FileRisk {
     Macros,
     /// An archive locked with a password, which no scanner can look into.
     Locked,
+    /// A web page (HTML, SVG, a saved MHT page), which opens in the
+    /// browser: the usual way a fake sign-in page arrives.
+    Web,
 }
 
 /// Extensions of programs and scripts the systems run on a double click;
@@ -353,6 +360,27 @@ const PROGRAMS: &[&str] = &[
     "rpm",
     "sh",
     "desktop",
+    "one",
+    "appref-ms",
+    "application",
+    "gadget",
+    "diagcab",
+    "ps1xml",
+    "wsc",
+    "iqy",
+    "slk",
+    "py",
+    "pyw",
+    "vb",
+    "ws",
+    "xbap",
+    "cab",
+];
+
+/// Web pages, which open in the browser, where a page made to look like a
+/// sign-in asks for a password.
+const WEB_PAGES: &[&str] = &[
+    "html", "htm", "shtml", "xhtml", "xht", "mht", "mhtml", "svg", "svgz",
 ];
 
 /// Office files that keep macros.
@@ -378,6 +406,9 @@ pub fn file_risk(name: &str) -> Option<FileRisk> {
     let ext = parts.next().filter(|_| lower.contains('.'))?;
     if MACROS.contains(&ext) {
         return Some(FileRisk::Macros);
+    }
+    if WEB_PAGES.contains(&ext) {
+        return Some(FileRisk::Web);
     }
     if !PROGRAMS.contains(&ext) {
         return None;
@@ -406,6 +437,59 @@ pub fn locked_archive(data: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_picture_that_declares_a_huge_size_gets_no_preview() {
+        let huge = crate::images::tests::png_header(20_000, 20_000);
+        assert!(thumbnail(&huge, ThumbKind::Picture).is_none());
+    }
+
+    #[test]
+    fn saving_a_device_name_keeps_the_data() {
+        let dir = std::env::temp_dir().join(format!("piuma-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = save_new(&dir, "NUL", b"data").unwrap();
+        assert_eq!(path.file_name().unwrap(), "_NUL");
+        assert_eq!(std::fs::read(&path).unwrap(), b"data");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn web_pages_and_more_programs_are_known_by_name() {
+        for name in [
+            "login.html",
+            "Invoice.HTM",
+            "page.shtml",
+            "a.xhtml",
+            "saved.mht",
+            "s.mhtml",
+            "logo.svg",
+        ] {
+            assert_eq!(file_risk(name), Some(FileRisk::Web), "{name}");
+        }
+        assert_eq!(file_risk("invoice.pdf.html"), Some(FileRisk::Web));
+        for name in [
+            "notes.one",
+            "a.appref-ms",
+            "b.application",
+            "c.gadget",
+            "d.diagcab",
+            "e.ps1xml",
+            "f.wsc",
+            "g.iqy",
+            "h.slk",
+            "i.py",
+            "j.pyw",
+            "k.vb",
+            "l.ws",
+            "m.xbap",
+            "n.cab",
+        ] {
+            assert_eq!(file_risk(name), Some(FileRisk::Program), "{name}");
+        }
+        assert_eq!(file_risk("report.pdf.py"), Some(FileRisk::Disguised));
+        assert_eq!(file_risk("photo.jpg"), None);
+    }
 
     #[test]
     fn programs_and_macros_are_known_by_name() {

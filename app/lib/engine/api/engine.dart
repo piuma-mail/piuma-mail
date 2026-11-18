@@ -595,10 +595,12 @@ Future<void> setMessagesSeen({
   seen: seen,
 );
 
-/// Tells the servers which messages were marked read or unread. When a
-/// server can't be reached the change waits and goes out once it can;
-/// on any other failure they go back to how they were here, and this
-/// fails.
+/// Tells the servers which messages were marked read or unread. The
+/// change is queued first, so a sync whose flags were read before it
+/// reached the server doesn't put the old state back meanwhile; it leaves
+/// the queue once the server has it. When a server can't be reached the
+/// change waits and goes out once it can; on any other failure they go
+/// back to how they were here, and this fails.
 Future<void> pushMessagesSeen({
   required List<MessageRef> messages,
   required bool seen,
@@ -1547,6 +1549,9 @@ enum FileRisk {
 
   /// An archive locked with a password.
   locked,
+
+  /// A web page, which opens in the browser.
+  web,
 }
 
 /// Server settings found from an email address.
@@ -3239,6 +3244,11 @@ enum SyncEventKind {
 
   /// Mail waiting in the outbox went out; `added` says how many.
   outboxSent,
+
+  /// Changes made here (a move, read or unread, a label) that the server
+  /// kept refusing were given up; `removed` says how many. Their
+  /// messages are back as the server has them.
+  changesDropped,
 }
 
 /// A run of text with one look.

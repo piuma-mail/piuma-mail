@@ -26,6 +26,7 @@ import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
 import 'mail_source.dart';
 import 'recipient_suggestions.dart';
+import 'resubscribe.dart';
 import 'on_device_model.dart';
 import 'phone_files.dart';
 
@@ -85,7 +86,10 @@ class EngineMailSource extends MailSource {
   final _changes = StreamController<void>.broadcast();
   final _notices = StreamController<List<MailNotice>>.broadcast();
   final _status = ValueNotifier(SyncStatus.idle);
-  StreamSubscription<engine.SyncEvent>? _sync;
+
+  /// The engine's sync events; opened again if they ever stop.
+  late final _sync = Resubscriber<engine.SyncEvent>(engine.startSync, _onEvent);
+  final _dropped = StreamController<int>.broadcast();
   List<MailAccount> _accounts = const [];
 
   /// Download progress per account, so the header can sum them.
@@ -112,6 +116,9 @@ class EngineMailSource extends MailSource {
 
   @override
   Stream<List<MailNotice>> get notices => _notices.stream;
+
+  @override
+  Stream<int> get changesDropped => _dropped.stream;
 
   @override
   Future<NotifySettings> notifySettings() async {
@@ -253,8 +260,7 @@ class EngineMailSource extends MailSource {
 
   /// Starts following every account. Call again after adding one.
   void startSync() {
-    _sync?.cancel();
-    _sync = engine.startSync().listen(_onEvent);
+    _sync.start();
     _startSpace().ignore();
   }
 
@@ -612,6 +618,11 @@ class EngineMailSource extends MailSource {
         _offline.add(id);
       case engine.SyncEventKind.outboxSent:
         _changes.add(null);
+      case engine.SyncEventKind.changesDropped:
+        // Their messages are back: the lists show them, and the person
+        // is told.
+        _changes.add(null);
+        _dropped.add(e.removed);
       case engine.SyncEventKind.signInFailed:
         _progress.remove(id);
         _offline.remove(id);
@@ -1651,6 +1662,7 @@ class EngineMailSource extends MailSource {
     engine.FileRisk.disguised => FileRisk.disguised,
     engine.FileRisk.macros => FileRisk.macros,
     engine.FileRisk.locked => FileRisk.locked,
+    engine.FileRisk.web => FileRisk.web,
   };
 
   @override
@@ -2940,7 +2952,8 @@ class EngineMailSource extends MailSource {
     _dirtyTimer?.cancel();
     _dirtyWatch?.cancel();
     _pairAsks.dispose();
-    _sync?.cancel();
+    _sync.cancel();
+    _dropped.close();
     _changes.close();
     _notices.close();
     _status.dispose();
