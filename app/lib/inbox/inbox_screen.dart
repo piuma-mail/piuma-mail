@@ -1876,7 +1876,7 @@ class _InboxScreenState extends State<InboxScreen> {
     return [
       if (!_inSent)
         PaletteCommand(
-          PiumaIcon.reply,
+          PiumaIcon.replyAll,
           l.actionReplyAll,
           _fromPalette(() => withBody(_replyAll)),
           meta: 'A',

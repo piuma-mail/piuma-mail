@@ -76,7 +76,7 @@ class _ReplyScreenState extends State<ReplyScreen> {
               toggled: _all,
               child: Pill(
                 label: l.replyAll,
-                icon: _all ? PiumaIcon.check : PiumaIcon.reply,
+                icon: _all ? PiumaIcon.check : PiumaIcon.replyAll,
                 trailing: _all ? null : '+${row.others}',
                 center: true,
                 onPressed: () => setState(() => _all = !_all),
