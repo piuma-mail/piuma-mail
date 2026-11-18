@@ -4714,11 +4714,22 @@ fn wire__crate__api__engine__sender_picture_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_email = <String>::sse_decode(&mut deserializer);
+            let api_account_id = <Option<i64>>::sse_decode(&mut deserializer);
+            let api_mailbox = <Option<String>>::sse_decode(&mut deserializer);
+            let api_uid = <Option<u32>>::sse_decode(&mut deserializer);
+            let api_opened = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
                 transform_result_sse::<_, crate::api::engine::EngineError>(
                     (move || async move {
-                        let output_ok = crate::api::engine::sender_picture(api_email).await?;
+                        let output_ok = crate::api::engine::sender_picture(
+                            api_email,
+                            api_account_id,
+                            api_mailbox,
+                            api_uid,
+                            api_opened,
+                        )
+                        .await?;
                         std::result::Result::Ok(output_ok)
                     })()
                     .await,
@@ -10340,6 +10351,7 @@ impl SseDecode for crate::api::engine::PecMessage {
         let mut var_failedTo = <String>::sse_decode(deserializer);
         let mut var_proofs = <Vec<u32>>::sse_decode(deserializer);
         let mut var_proofMailbox = <String>::sse_decode(deserializer);
+        let mut var_verified = <bool>::sse_decode(deserializer);
         return crate::api::engine::PecMessage {
             row: var_row,
             subject: var_subject,
@@ -10351,6 +10363,7 @@ impl SseDecode for crate::api::engine::PecMessage {
             failed_to: var_failedTo,
             proofs: var_proofs,
             proof_mailbox: var_proofMailbox,
+            verified: var_verified,
         };
     }
 }
@@ -11067,9 +11080,13 @@ impl SseDecode for crate::api::engine::Unsubscribe {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_kind = <crate::api::engine::UnsubscribeKind>::sse_decode(deserializer);
         let mut var_address = <String>::sse_decode(deserializer);
+        let mut var_subject = <String>::sse_decode(deserializer);
+        let mut var_body = <String>::sse_decode(deserializer);
         return crate::api::engine::Unsubscribe {
             kind: var_kind,
             address: var_address,
+            subject: var_subject,
+            body: var_body,
         };
     }
 }
@@ -13267,6 +13284,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::PecMessage {
             self.failed_to.into_into_dart().into_dart(),
             self.proofs.into_into_dart().into_dart(),
             self.proof_mailbox.into_into_dart().into_dart(),
+            self.verified.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -14204,6 +14222,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::Unsubscribe {
         [
             self.kind.into_into_dart().into_dart(),
             self.address.into_into_dart().into_dart(),
+            self.subject.into_into_dart().into_dart(),
+            self.body.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -16215,6 +16235,7 @@ impl SseEncode for crate::api::engine::PecMessage {
         <String>::sse_encode(self.failed_to, serializer);
         <Vec<u32>>::sse_encode(self.proofs, serializer);
         <String>::sse_encode(self.proof_mailbox, serializer);
+        <bool>::sse_encode(self.verified, serializer);
     }
 }
 
@@ -16772,6 +16793,8 @@ impl SseEncode for crate::api::engine::Unsubscribe {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <crate::api::engine::UnsubscribeKind>::sse_encode(self.kind, serializer);
         <String>::sse_encode(self.address, serializer);
+        <String>::sse_encode(self.subject, serializer);
+        <String>::sse_encode(self.body, serializer);
     }
 }
 

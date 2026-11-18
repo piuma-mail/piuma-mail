@@ -1144,6 +1144,7 @@ class EngineMailSource extends MailSource {
         reason: m.reason,
         failedTo: m.failedTo,
         proofs: m.proofs,
+        verified: m.verified,
       ),
   ];
 
@@ -1231,6 +1232,8 @@ class EngineMailSource extends MailSource {
     return UnsubscribeInfo(
       UnsubscribeKind.values.byName(u.kind.name),
       u.address,
+      u.subject,
+      u.body,
     );
   }
 
@@ -2029,13 +2032,23 @@ class EngineMailSource extends MailSource {
   bool? _picturesOn;
 
   @override
-  Future<Uint8List?> senderPicture(String email) async {
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async {
     if (ContactPhotos.supported &&
         (_picturesOn ??= (await engine.privacySettings()).senderPictures)) {
       final photo = await _contactPhotos.of(email);
       if (photo != null) return photo;
     }
-    return engine.senderPicture(email: email);
+    return engine.senderPicture(
+      email: email,
+      accountId: row?.accountId,
+      mailbox: row?.mailbox,
+      uid: row?.uid,
+      opened: opened,
+    );
   }
 
   @override

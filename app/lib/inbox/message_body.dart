@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' show SelectionArea;
 import 'package:flutter/widgets.dart';
 
@@ -13,6 +12,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
+import '../widgets/link_target.dart';
 import '../widgets/links.dart';
 import '../widgets/switch.dart';
 
@@ -202,7 +202,7 @@ class _Spans extends StatefulWidget {
 }
 
 class _SpansState extends State<_Spans> {
-  final _taps = <TapGestureRecognizer>[];
+  final _taps = <LinkPressRecognizer>[];
 
   @override
   void dispose() {
@@ -222,10 +222,16 @@ class _SpansState extends State<_Spans> {
     final children = <InlineSpan>[];
     var at = 0;
     for (final s in widget.spans) {
-      TapGestureRecognizer? tap;
+      LinkPressRecognizer? tap;
       if (s.link case final link?) {
-        tap = TapGestureRecognizer()
-          ..onTap = () => openBodyLink(context, link, s);
+        // A tap opens it; a long press, on a phone, shows where it goes.
+        tap = LinkPressRecognizer()
+          ..onTapLink = (() => openBodyLink(context, link, s))
+          ..onLongPress = (() => showLinkTarget(
+            context,
+            link,
+            onOpen: () => openBodyLink(context, link, s),
+          ));
         _taps.add(tap);
       }
       final style = TextStyle(
@@ -259,6 +265,13 @@ class _SpansState extends State<_Spans> {
             style: inMark ? style.merge(marked) : style,
             mouseCursor: tap != null ? SystemMouseCursors.click : null,
             recognizer: tap,
+            // Where it goes, whatever its text says.
+            onEnter: s.link == null
+                ? null
+                : (_) => LinkTarget.show(context, s.link),
+            onExit: s.link == null
+                ? null
+                : (_) => LinkTarget.show(context, null),
           ),
         );
       }
@@ -503,8 +516,15 @@ class _BodyImageView extends StatelessWidget {
             ? framed
             : MouseRegion(
                 cursor: SystemMouseCursors.click,
+                onEnter: (_) => LinkTarget.show(context, image.link),
+                onExit: (_) => LinkTarget.show(context, null),
                 child: GestureDetector(
                   onTap: () => openBodyLink(context, image.link!),
+                  onLongPress: () => showLinkTarget(
+                    context,
+                    image.link!,
+                    onOpen: () => openBodyLink(context, image.link!),
+                  ),
                   child: framed,
                 ),
               );

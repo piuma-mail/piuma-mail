@@ -19,7 +19,8 @@ import java.util.Calendar
 class NoticeActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.getStringExtra(ACTION) ?: return
-        val payload = intent.getStringExtra(PAYLOAD) ?: return
+        // Only a payload this app sealed: the reply's intent is mutable.
+        val payload = NoticeSeal.open(context, intent.getStringExtra(PAYLOAD)) ?: return
         val id = intent.getIntExtra(ID, 0)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(REPLY)?.toString().orEmpty()
@@ -90,7 +91,7 @@ class NoticeActions : BroadcastReceiver() {
             fun intent(action: String, code: Int, mutable: Boolean = false): PendingIntent {
                 val i = Intent(context, NoticeActions::class.java)
                     .putExtra(ACTION, action)
-                    .putExtra(PAYLOAD, payload)
+                    .putExtra(PAYLOAD, NoticeSeal.seal(context, payload))
                     .putExtra(ID, id)
                 // RemoteInput fills the reply in, so that one must be mutable.
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or

@@ -2249,6 +2249,9 @@ class DemoMailSource extends MailSource {
   /// Receipts saved, for tests.
   final List<PecMessage> savedReceipts = [];
 
+  /// Receipts whose provider signature didn't check, by uid; tests set it.
+  Set<int> unsignedReceipts = {};
+
   @override
   Future<List<PecMessage>> pecMessages({int? account}) async {
     if (!certified) return const [];
@@ -2283,6 +2286,7 @@ class DemoMailSource extends MailSource {
       reason: reason,
       failedTo: stage == PecStage.failed ? to.first : '',
       proofs: proofs.isEmpty ? [uid] : proofs,
+      verified: !unsignedReceipts.contains(uid),
     );
     return [
       if (account == null || account == _work.id) ...[
@@ -2563,13 +2567,16 @@ class DemoMailSource extends MailSource {
 
   static bool _never(MailRow row) => false;
 
+  /// How a newsletter is left; tests change it.
+  UnsubscribeInfo leaveBy = const UnsubscribeInfo(
+    UnsubscribeKind.oneClick,
+    'https://forma.example/u',
+  );
+
   @override
   Future<UnsubscribeInfo> unsubscribeInfo(MailRow row) async =>
       row.folder == MailFolder.newsletters || leavable(row)
-      ? const UnsubscribeInfo(
-          UnsubscribeKind.oneClick,
-          'https://forma.example/u',
-        )
+      ? leaveBy
       : UnsubscribeInfo.none;
 
   @override
@@ -3350,7 +3357,11 @@ class DemoMailSource extends MailSource {
   Future<PrivacySettings> privacySettings() async => privacy;
 
   @override
-  Future<Uint8List?> senderPicture(String email) async {
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async {
     if (!privacy.senderPictures) return null;
     final domain = email.split('@').last.toLowerCase();
     final logo = demoLogos[domain];
