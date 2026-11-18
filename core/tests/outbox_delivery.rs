@@ -271,7 +271,10 @@ async fn a_sender_silent_for_an_hour_may_still_finish_so_nothing_resends() {
     outbox::send(&store, &account, &mut other, "other")
         .await
         .unwrap();
-    assert!(other.sent.lock().unwrap().is_empty(), "not sent a second time");
+    assert!(
+        other.sent.lock().unwrap().is_empty(),
+        "not sent a second time"
+    );
     assert_eq!(state(&store, id).as_deref(), Some("unknown"));
     // Its sender is still known, so it can settle the row.
     assert_eq!(
@@ -279,7 +282,11 @@ async fn a_sender_silent_for_an_hour_may_still_finish_so_nothing_resends() {
         "slow"
     );
     // The slow sender finishes: the row goes, nothing is stranded.
-    store.lock().unwrap().sent_outgoing(id, "slow", true).unwrap();
+    store
+        .lock()
+        .unwrap()
+        .sent_outgoing(id, "slow", true)
+        .unwrap();
     assert_eq!(state(&store, id), None);
 }
 
@@ -298,8 +305,7 @@ async fn a_slow_send_renews_its_claim_so_no_one_takes_it() {
     let sending = {
         let (store, mut slow) = (store.clone(), slow.clone());
         tokio::spawn(async move {
-            outbox::send_one_beating(&store, id, &mut slow, "slow", Duration::from_millis(50))
-                .await
+            outbox::send_one_beating(&store, id, &mut slow, "slow", Duration::from_millis(50)).await
         })
     };
     started.notified().await;
@@ -359,7 +365,11 @@ async fn a_message_that_went_is_never_left_to_go_again() {
     assert_eq!(state(&store, id).as_deref(), Some("queued"));
     // ...when the old sender comes back and says it went: it must not go
     // again.
-    store.lock().unwrap().sent_outgoing(id, "slow", true).unwrap();
+    store
+        .lock()
+        .unwrap()
+        .sent_outgoing(id, "slow", true)
+        .unwrap();
     assert_eq!(state(&store, id), None);
     assert!(matches!(
         outbox::send_one(&store, id, &mut other, "other")

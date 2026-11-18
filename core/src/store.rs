@@ -4321,11 +4321,9 @@ impl Store {
     pub fn outgoing_error(&self, id: i64) -> Result<Option<String>> {
         Ok(self
             .conn
-            .query_row(
-                "SELECT error FROM outbox WHERE id = ?1",
-                params![id],
-                |r| r.get(0),
-            )
+            .query_row("SELECT error FROM outbox WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
             .optional()?
             .flatten())
     }
