@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::space_merge::{self, Stamp, Tables};
+
 /// The hidden folder the space lives in, in the mailbox that holds it.
 pub const FOLDER: &str = "Piuma Sync";
 
@@ -47,6 +49,9 @@ pub enum SpaceError {
     NotLinked,
     #[error("unreadable space: {0}")]
     Format(String),
+    /// Written by a newer build in a format this one doesn't know.
+    #[error("the space was written by a newer version of Piuma")]
+    Newer,
 }
 
 pub type Result<T> = std::result::Result<T, SpaceError>;
@@ -186,21 +191,50 @@ fn derive(secret: &[u8], info: &[u8]) -> Key {
     Key(k)
 }
 
-/// What the space holds. `tables` are rows of the store's own tables, by
-/// table name; `passwords` go by account address.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// What the space holds: synced rows ([crate::space_merge]), passwords
+/// among them, the linked devices and the recovery key. Sealed whole, so
+/// the generation and schema are authenticated with the rest.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Content {
-    /// The store's schema version that wrote the rows.
-    pub schema: usize,
+    /// [space_merge::FORMAT] of the writer.
+    pub format: u32,
+    /// [space_merge::SCHEMA] of the writer.
+    pub schema: u32,
+    /// Counted up on every write: a device refuses one older than what it
+    /// accepted.
+    pub generation: u64,
     pub updated_at: i64,
     /// The device that wrote it last.
     pub updated_by: String,
-    pub tables: serde_json::Map<String, serde_json::Value>,
-    pub passwords: Vec<(String, String)>,
+    pub tables: Tables,
     pub devices: Vec<Device>,
     /// The recovery key, so a linked device can show the phrase again.
     #[serde(default)]
     pub recovery: String,
+    /// Earlier content keys, in hex, the last [space_merge::KEPT_KEYS]: a
+    /// device that missed an unlink finds the key it knows among them and
+    /// follows the new one; a copy made with an old key can't name the new.
+    #[serde(default)]
+    pub previous: Vec<String>,
+    /// What a newer build wrote that this one doesn't know: kept as it is.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl std::fmt::Debug for Content {
+    // Rows carry passwords: only counts.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Content")
+            .field("format", &self.format)
+            .field("schema", &self.schema)
+            .field("generation", &self.generation)
+            .field(
+                "rows",
+                &self.tables.values().map(|t| t.len()).sum::<usize>(),
+            )
+            .field("devices", &self.devices.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Content {
@@ -219,6 +253,31 @@ impl Content {
             }),
         }
     }
+
+    /// Live rows of a table.
+    pub fn count(&self, table: &str) -> usize {
+        self.tables
+            .get(table)
+            .map_or(0, |t| t.values().filter(|r| !r.del).count())
+    }
+}
+
+/// What the old format (version 1) held: whole tables with the writer's
+/// local ids, passwords by address. Read once, to convert it.
+#[derive(Deserialize)]
+struct ContentV1 {
+    #[serde(default)]
+    updated_at: i64,
+    #[serde(default)]
+    updated_by: String,
+    #[serde(default)]
+    tables: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    passwords: Vec<(String, String)>,
+    #[serde(default)]
+    devices: Vec<Device>,
+    #[serde(default)]
+    recovery: String,
 }
 
 /// The content key, sealed for one reader: a device by its id, or the
@@ -237,19 +296,28 @@ const RECOVERY: &str = "recovery";
 /// sealed content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedSpace {
+    /// 1: the old format, read only to convert it; 2: [space_merge::FORMAT].
     version: u32,
     wraps: Vec<Wrap>,
     #[serde(with = "b64")]
     content: Vec<u8>,
     /// What a new device shows before it can open the space ("We found
-    /// your space"). In the clear, so it carries counts and device names
-    /// only.
+    /// your space"). In the clear, so only counts and kinds of device: no
+    /// names, which the mail provider could read.
     #[serde(default)]
     pub about: About,
 }
 
+impl SealedSpace {
+    /// Written by a build before per-row sync.
+    pub fn is_v1(&self) -> bool {
+        self.version < 2
+    }
+}
+
 /// The few things readable without the key: how much the space holds,
-/// when it last changed, and the devices that can approve a new one.
+/// when it last changed, and the kinds of device that can approve a new
+/// one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct About {
     pub accounts: usize,
@@ -261,17 +329,31 @@ pub struct About {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AboutDevice {
+    /// Empty from this format on: names stay sealed. Old spaces had them.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub kind: String,
     pub last_seen: i64,
 }
 
 /// An open space: its content and the content key, kept to write it again.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Space {
     pub content: Content,
     key: Key,
     recovery: Vec<u8>,
+    /// Opened from the old format: written back in this one.
+    converted: bool,
+}
+
+impl std::fmt::Debug for Space {
+    // The key and the passwords stay out.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Space")
+            .field("content", &self.content)
+            .field("converted", &self.converted)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Space {
@@ -282,11 +364,14 @@ impl Space {
         let recovery = Key::generate();
         let mut space = Space {
             content: Content {
+                format: space_merge::FORMAT,
+                schema: space_merge::SCHEMA,
                 recovery: recovery.to_hex(),
                 ..content
             },
             recovery: seal(&recovery, &key.0),
             key,
+            converted: false,
         };
         space.content.touch(device, now());
         (space, recovery)
@@ -313,10 +398,37 @@ impl Space {
     }
 
     /// Opens a stored space with its content key, as pairing hands it over.
+    /// The old format comes out converted, at generation 0.
     pub fn open_with(sealed: &SealedSpace, key: &Key) -> Result<Space> {
         let plain = open(key, &sealed.content)?;
-        let content =
-            serde_json::from_slice(&plain).map_err(|e| SpaceError::Format(e.to_string()))?;
+        let content = if sealed.is_v1() {
+            let old: ContentV1 =
+                serde_json::from_slice(&plain).map_err(|e| SpaceError::Format(e.to_string()))?;
+            let stamp = Stamp {
+                t: old.updated_at.saturating_mul(1000),
+                c: 0,
+                d: old.updated_by.clone(),
+            };
+            Content {
+                format: space_merge::FORMAT,
+                schema: space_merge::SCHEMA,
+                generation: 0,
+                updated_at: old.updated_at,
+                updated_by: old.updated_by,
+                tables: space_merge::from_v1(&old.tables, &old.passwords, &stamp),
+                devices: old.devices,
+                recovery: old.recovery,
+                previous: Vec::new(),
+                extra: serde_json::Map::new(),
+            }
+        } else {
+            let content: Content =
+                serde_json::from_slice(&plain).map_err(|e| SpaceError::Format(e.to_string()))?;
+            if content.format > space_merge::FORMAT {
+                return Err(SpaceError::Newer);
+            }
+            content
+        };
         let recovery = sealed
             .wraps
             .iter()
@@ -327,12 +439,18 @@ impl Space {
             content,
             key: key.clone(),
             recovery,
+            converted: sealed.is_v1(),
         })
     }
 
     /// The content key, to hand to a new device while pairing.
     pub fn content_key(&self) -> &Key {
         &self.key
+    }
+
+    /// Opened from the old format.
+    pub fn converted(&self) -> bool {
+        self.converted
     }
 
     /// Lets one more device open the space, or marks this one as seen.
@@ -347,9 +465,18 @@ impl Space {
 
     /// Unlinks a device: a new content key for the others, and a new
     /// recovery phrase, returned to be shown. What the device kept no
-    /// longer opens the space.
+    /// longer opens the space, and a copy it seals with the old key is
+    /// refused by every device that saw this one (the old key is among
+    /// [Content::previous], which only the new key opens).
     pub fn unlink(&mut self, device_id: &str) -> Key {
         self.content.devices.retain(|d| d.id != device_id);
+        self.content.previous.push(self.key.to_hex());
+        let extra = self
+            .content
+            .previous
+            .len()
+            .saturating_sub(space_merge::KEPT_KEYS);
+        self.content.previous.drain(..extra);
         self.key = Key::generate();
         let recovery = Key::generate();
         self.recovery = seal(&recovery, &self.key.0);
@@ -360,18 +487,6 @@ impl Space {
     /// The recovery key, to show its phrase again.
     pub fn recovery(&self) -> Option<Key> {
         Key::from_hex(&self.content.recovery)
-    }
-
-    /// Puts this device's `content` in, keeping the space's own: its
-    /// devices and recovery key.
-    pub fn replace(&mut self, content: Content) {
-        let devices = std::mem::take(&mut self.content.devices);
-        let recovery = std::mem::take(&mut self.content.recovery);
-        self.content = Content {
-            devices,
-            recovery,
-            ..content
-        };
     }
 
     /// Seals the content for storing, its key for each linked device.
@@ -390,28 +505,21 @@ impl Space {
             for_: RECOVERY.into(),
             key: self.recovery.clone(),
         });
-        let rows = |t: &str| {
-            self.content
-                .tables
-                .get(t)
-                .and_then(|v| v.as_array())
-                .map_or(0, Vec::len)
-        };
         SealedSpace {
-            version: 1,
+            version: space_merge::FORMAT,
             wraps,
             content: seal(&self.key, &plain),
             about: About {
-                accounts: rows("account"),
-                groups: rows("address_group"),
-                signatures: rows("signature"),
+                accounts: self.content.count("account"),
+                groups: self.content.count("address_group"),
+                signatures: self.content.count("signature"),
                 updated_at: self.content.updated_at,
                 devices: self
                     .content
                     .devices
                     .iter()
                     .map(|d| AboutDevice {
-                        name: d.name.clone(),
+                        name: String::new(),
                         kind: d.kind.clone(),
                         last_seen: d.last_seen,
                     })
@@ -419,6 +527,39 @@ impl Space {
             },
         }
     }
+}
+
+/// A space as builds before per-row sync stored it, for tests.
+#[cfg(test)]
+pub(crate) fn sealed_v1(devices: &[Device], key: &Key, content: &serde_json::Value) -> SealedSpace {
+    SealedSpace {
+        version: 1,
+        wraps: devices
+            .iter()
+            .map(|d| Wrap {
+                for_: d.id.clone(),
+                key: seal_for(&d.public, key),
+            })
+            .collect(),
+        content: seal(key, &serde_json::to_vec(content).expect("serializes")),
+        about: About::default(),
+    }
+}
+
+/// A key only this device can make from its secret, to keep things in its
+/// own database: the content key it accepted last, digests of passwords.
+pub fn local_key(secret: &Key, purpose: &str) -> Key {
+    derive(&secret.0, format!("piuma-mail local {purpose}").as_bytes())
+}
+
+/// A keyed digest of a password, to tell whether it changed without
+/// keeping it.
+pub fn digest(key: &Key, name: &str, value: &str) -> String {
+    let hk = hkdf::Hkdf::<sha2::Sha256>::new(Some(&key.0), value.as_bytes());
+    let mut out = [0u8; 16];
+    hk.expand(name.as_bytes(), &mut out)
+        .expect("16 bytes is a valid length");
+    out.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn unwrap(key: &Key, wrapped: &[u8]) -> Result<Key> {
@@ -596,7 +737,9 @@ pub enum Note {
 impl Note {
     fn tag(&self) -> &'static str {
         match self {
-            Note::Space(_) => "space",
+            // Old builds read "space" only: they leave this format alone.
+            Note::Space(s) if s.is_v1() => "space",
+            Note::Space(_) => "space2",
             Note::Request(_) => "request",
             Note::Answer(_) => "answer",
             Note::Refused(_) => "refused",
@@ -640,7 +783,8 @@ impl Note {
             .body_bytes()
             .or_else(|| m.attachments().next().map(|a| a.decoded()))?;
         Some(match tag.as_str() {
-            "space" => Note::Space(SealedSpace::from_bytes(&data).ok()?),
+            "space" => Note::Space(SealedSpace::from_bytes(&data).ok().filter(|s| s.is_v1())?),
+            "space2" => Note::Space(SealedSpace::from_bytes(&data).ok().filter(|s| !s.is_v1())?),
             "request" => Note::Request(serde_json::from_slice(&data).ok()?),
             "answer" => Note::Answer(serde_json::from_slice(&data).ok()?),
             "refused" => Note::Refused(String::from_utf8(data.to_vec()).ok()?),
@@ -833,17 +977,39 @@ mod tests {
         assert_eq!(Key::from_hex(&k.to_hex()).unwrap(), k);
     }
 
+    fn with_password(email: &str, password: &str) -> Content {
+        let mut tables = Tables::new();
+        let mut v = serde_json::Map::new();
+        v.insert("for".into(), "account".into());
+        v.insert("value".into(), password.into());
+        tables
+            .entry(space_merge::SECRETS.into())
+            .or_default()
+            .insert(
+                space_merge::account_id(email),
+                space_merge::Row {
+                    s: Stamp::default(),
+                    del: false,
+                    v,
+                },
+            );
+        Content {
+            tables,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn a_space_opens_for_its_devices_and_the_phrase() {
         let (mac, mac_key) = device("mac", "MacBook");
-        let content = Content {
-            passwords: vec![("matteo@posta.it".into(), "secret".into())],
-            ..Default::default()
-        };
-        let (space, recovery) = Space::create(&mac, content);
+        let (space, recovery) = Space::create(&mac, with_password("matteo@posta.it", "secret"));
         let stored = SealedSpace::from_bytes(&space.seal().to_bytes()).unwrap();
         let opened = Space::open_as(&stored, "mac", &mac_key).unwrap();
-        assert_eq!(opened.content.passwords[0].1, "secret");
+        let gid = space_merge::account_id("Matteo@Posta.it");
+        assert_eq!(
+            opened.content.tables[space_merge::SECRETS][&gid].v["value"],
+            "secret"
+        );
         assert_eq!(opened.content.devices[0].name, "MacBook");
         assert!(Space::open_recovery(&stored, &recovery).is_ok());
         assert_eq!(
@@ -854,6 +1020,67 @@ mod tests {
             Space::open_as(&stored, "mac", &Key::generate()).unwrap_err(),
             SpaceError::Sealed
         );
+    }
+
+    #[test]
+    fn nothing_secret_is_printed_or_left_in_the_clear() {
+        let (mac, _) = device("mac", "Matteo's MacBook");
+        let (space, _) = Space::create(&mac, with_password("matteo@posta.it", "hunter2-secret"));
+        let printed = format!("{space:?} {:?} {:?}", space.content, space.content.tables);
+        assert!(!printed.contains("hunter2-secret"), "{printed}");
+        // The provider reads the stored message: no device names in it.
+        let stored = String::from_utf8(space.seal().to_bytes()).unwrap();
+        assert!(!stored.contains("MacBook"));
+        assert!(!stored.contains("hunter2"));
+        assert_eq!(space.seal().about.devices[0].kind, "laptop");
+    }
+
+    #[test]
+    fn an_old_format_space_opens_converted() {
+        let (mac, mac_key) = device("mac", "MacBook");
+        let key = Key::generate();
+        let old = serde_json::json!({
+            "schema": 60, "updated_at": 1_760_000_000, "updated_by": "mac",
+            "tables": {
+                "account": [{"id": 4, "name": "P", "email": "Matteo@posta.it", "color": "#000",
+                              "kind": "imap"}],
+                "signature": [{"id": 9, "account": 4, "label": "Work", "template": "plain"}],
+                "setting": [{"key": "notify.loud.4", "value": "off"},
+                            {"key": "appearance.theme", "value": "dark"}]
+            },
+            "passwords": [["matteo@posta.it", "pw"]],
+            "devices": [mac], "recovery": ""
+        });
+        let wrapped = seal_for(&mac.public, &key);
+        let sealed = SealedSpace {
+            version: 1,
+            wraps: vec![Wrap {
+                for_: "mac".into(),
+                key: wrapped,
+            }],
+            content: seal(&key, &serde_json::to_vec(&old).unwrap()),
+            about: About::default(),
+        };
+        let note = Note::Space(sealed.clone());
+        let raw = note.to_message("matteo@posta.it", 0);
+        assert!(String::from_utf8_lossy(&raw).contains("X-Piuma-Sync: space\r\n"));
+        let space = Space::open_as(&sealed, "mac", &mac_key).unwrap();
+        assert!(space.converted());
+        let account = space_merge::account_id("matteo@posta.it");
+        let t = &space.content.tables;
+        let sig = &t["signature"][&space_merge::v1_id("signature", 9)];
+        assert_eq!(sig.v["account"], account.as_str());
+        assert_eq!(sig.s.t, 1_760_000_000_000);
+        let keys: Vec<&str> = t["setting"]
+            .values()
+            .map(|r| r.v["key"].as_str().unwrap())
+            .collect();
+        assert!(keys.contains(&format!("notify.loud.@{account}").as_str()));
+        assert!(keys.contains(&"appearance.theme"));
+        assert_eq!(t[space_merge::SECRETS][&account].v["value"], "pw");
+        // Written back, it is the new format, which old builds don't read.
+        let raw = Note::Space(space.seal()).to_message("matteo@posta.it", 0);
+        assert!(String::from_utf8_lossy(&raw).contains("X-Piuma-Sync: space2"));
     }
 
     #[test]

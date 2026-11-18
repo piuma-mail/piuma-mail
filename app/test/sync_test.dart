@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
+import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/notify/notifier.dart';
 import 'package:piuma_mail/settings/settings_screen.dart';
@@ -17,13 +18,14 @@ Future<DemoMailSource> _settings(
   bool phone = false,
   bool dark = false,
   bool synced = false,
+  DemoMailSource? demo,
 }) async {
   tester.view.physicalSize = phone
       ? const Size(390, 844)
       : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now, synced: synced);
+  final source = demo ?? DemoMailSource(now: _now, synced: synced);
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -116,8 +118,72 @@ void main() {
     expect(find.text('Your new recovery phrase'), findsOneWidget);
     await tester.tap(find.text('I wrote them down'));
     await _settle(tester);
+    // It still knows the mailboxes' passwords: the person is told which.
+    expect(find.text('Change these passwords'), findsOneWidget);
+    expect(
+      find.textContaining('iPad Air can’t read your space any more'),
+      findsOneWidget,
+    );
+    expect(find.text('matteo@studio.it'), findsWidgets);
+    await tester.tap(find.text('Got it'));
+    await _settle(tester);
+    expect(find.text('Change these passwords'), findsNothing);
     expect(find.text('iPad Air'), findsNothing);
     expect(source.syncState().devices, hasLength(2));
+  });
+
+  testWidgets('an account removed elsewhere waits here until the person says', (
+    tester,
+  ) async {
+    final source = _Held(now: _now, synced: true);
+    await _settings(tester, demo: source);
+    expect(
+      find.text('matteo@studio.it was removed on another device'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Here it still has 2 emails waiting to be sent and 1 draft not '
+        'saved to the server yet. Remove it from this device too, or keep '
+        'it on all your devices?',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Remove here'));
+    await _settle(tester);
+    expect(source.removed, [2]);
+    expect(
+      find.text('matteo@studio.it was removed on another device'),
+      findsNothing,
+    );
+  });
+
+  testWidgets('keeping an account removed elsewhere brings it back', (
+    tester,
+  ) async {
+    final source = _Held(now: _now, synced: true);
+    await _settings(tester, demo: source);
+    await tester.tap(find.text('Keep it'));
+    await _settle(tester);
+    expect(source.kept, [2]);
+  });
+
+  testWidgets('an old copy put back, and a newer version, are told', (
+    tester,
+  ) async {
+    await _settings(
+      tester,
+      demo: _Held(now: _now, synced: true, rollback: true, outdated: true),
+    );
+    expect(find.text('An older copy of your space was left out'), findsOne);
+    expect(
+      find.textContaining('Someone with access to matteo@posta.it'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Update Piuma to sync this device’s changes'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the space moves to another mailbox, devices kept', (
@@ -162,6 +228,8 @@ void main() {
       await tester.tap(find.text('Unlink').last);
       await _settle(tester);
       await tester.tap(find.text('I wrote them down'));
+      await _settle(tester);
+      await tester.tap(find.text('Got it'));
       await _settle(tester);
     }
     expect(source.syncState().devices, hasLength(1));
@@ -364,4 +432,47 @@ void main() {
     }
     tester.view.reset();
   });
+}
+
+/// A space where another device removed an account that still has mail
+/// waiting here.
+class _Held extends DemoMailSource {
+  _Held({
+    required super.now,
+    super.synced,
+    this.rollback = false,
+    this.outdated = false,
+  });
+
+  final bool rollback;
+  final bool outdated;
+  final removed = <int>[];
+  final kept = <int>[];
+
+  @override
+  SyncState syncState() {
+    final s = super.syncState();
+    return SyncState(
+      home: s.home,
+      syncedAt: s.syncedAt,
+      devices: s.devices,
+      rollback: rollback,
+      outdated: outdated,
+      held: [
+        if (!rollback && removed.isEmpty && kept.isEmpty)
+          const HeldRemoval(
+            accountId: 2,
+            email: 'matteo@studio.it',
+            outbox: 2,
+            drafts: 1,
+          ),
+      ],
+    );
+  }
+
+  @override
+  Future<void> confirmRemoval(int accountId) async => removed.add(accountId);
+
+  @override
+  Future<void> keepAccount(int accountId) async => kept.add(accountId);
 }

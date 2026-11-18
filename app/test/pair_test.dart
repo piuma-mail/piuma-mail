@@ -14,6 +14,12 @@ final _now = DateTime(2026, 10, 15, 10, 30);
 class _Joining extends DemoMailSource {
   _Joining() : super(now: _now, spaceToFind: true);
 
+  /// Where a scanned code signs in; none told by default.
+  InviteServer? server;
+
+  @override
+  Future<InviteServer?> inviteServer(ScannedPair code) async => server;
+
   @override
   Future<MailAccount> addImapAccount({
     required String name,
@@ -27,6 +33,24 @@ class _Joining extends DemoMailSource {
     required String password,
     MailServer? smtp,
   }) async => MailAccount(id: 1, name: name, email: email, color: color);
+}
+
+/// A space as the engine finds it now: its devices by kind, no names.
+class _Nameless extends _Joining {
+  @override
+  Future<SpaceFound?> findSpace(int accountId) async {
+    final f = (await super.findSpace(accountId))!;
+    return SpaceFound(
+      accounts: f.accounts,
+      groups: f.groups,
+      signatures: f.signatures,
+      updatedAt: f.updatedAt,
+      devices: [
+        for (final d in f.devices)
+          SyncDevice(id: d.id, name: '', kind: d.kind, lastSeen: d.lastSeen),
+      ],
+    );
+  }
 }
 
 /// A first run for real: no accounts until one is added, which says so.
@@ -85,13 +109,14 @@ Future<_Joining> _found(
   bool dark = false,
   ValueChanged<MailAccount>? onDone,
   bool home = false,
+  _Joining? joining,
 }) async {
   tester.view.physicalSize = phone
       ? const Size(390, 844)
       : const Size(1440, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = home ? _FirstRun() : _Joining();
+  final source = joining ?? (home ? _FirstRun() : _Joining());
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -282,6 +307,28 @@ void main() {
     );
   });
 
+  testWidgets('a space that names no device says which kind confirms', (
+    tester,
+  ) async {
+    await _found(tester, joining: _Nameless());
+    expect(
+      find.text(
+        'For security, confirm from a device that\'s already paired: '
+        'your computer, active 2 hours ago.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Show code'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      find.text('Open Piuma on your computer and enter the code.'),
+      findsOneWidget,
+    );
+    expect(find.text('Waiting for your computer to confirm…'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('desktop pair found golden', (tester) async {
     await _found(tester, phone: false);
     expect(find.text('We found your space'), findsOneWidget);
@@ -379,6 +426,41 @@ void _scanTests() {
     expect(
       find.textContaining('If it holds your space, you\'ll link this device'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('the server a code signs in at shows before the password', (
+    tester,
+  ) async {
+    final source = await _scan(tester);
+    source.server = const InviteServer(
+      host: 'imap.example-mail.net',
+      fromCode: true,
+    );
+    await tester.tap(find.text('Scan code'));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('camera')));
+    await _settle(tester);
+    expect(find.text('Signs in at imap.example-mail.net'), findsOneWidget);
+    expect(
+      find.textContaining('This server comes from the code'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the provider\'s own server shows without a caution', (
+    tester,
+  ) async {
+    final source = await _scan(tester);
+    source.server = const InviteServer(host: 'imap.posta.it', fromCode: false);
+    await tester.tap(find.text('Scan code'));
+    await _settle(tester);
+    await tester.tap(find.byKey(const ValueKey('camera')));
+    await _settle(tester);
+    expect(find.text('Signs in at imap.posta.it'), findsOneWidget);
+    expect(
+      find.textContaining('This server comes from the code'),
+      findsNothing,
     );
   });
 

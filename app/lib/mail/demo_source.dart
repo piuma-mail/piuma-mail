@@ -172,7 +172,7 @@ class DemoMailSource extends MailSource {
   Future<String> recoveryPhrase() async => demoPhrase;
 
   @override
-  Future<String> unlinkDevice(String id) async {
+  Future<Unlinked> unlinkDevice(String id) async {
     _sync = SyncState(
       home: _sync.home,
       syncedAt: _sync.syncedAt,
@@ -181,7 +181,10 @@ class DemoMailSource extends MailSource {
           if (d.id != id) d,
       ],
     );
-    return demoPhrase.split(' ').reversed.join(' ');
+    return Unlinked(
+      phrase: demoPhrase.split(' ').reversed.join(' '),
+      exposed: [for (final a in accounts) a.email],
+    );
   }
 
   @override

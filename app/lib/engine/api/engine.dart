@@ -1411,6 +1411,12 @@ enum ErrorKind {
 
   /// Sync: the mailbox to move the space to holds another one.
   taken,
+
+  /// Sync: only an older copy of the space was found, and left out.
+  rollback,
+
+  /// Sync: the space was written by a newer version of Piuma.
+  outdated,
   other,
 }
 

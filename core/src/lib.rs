@@ -41,6 +41,7 @@ pub mod sieve;
 pub mod signature;
 pub mod smtp;
 pub mod space;
+pub mod space_merge;
 pub mod space_sync;
 pub mod store;
 pub mod tls;

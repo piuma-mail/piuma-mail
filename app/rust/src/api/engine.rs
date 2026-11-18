@@ -96,6 +96,10 @@ pub enum ErrorKind {
     Refused,
     /// Sync: the mailbox to move the space to holds another one.
     Taken,
+    /// Sync: only an older copy of the space was found, and left out.
+    Rollback,
+    /// Sync: the space was written by a newer version of Piuma.
+    Outdated,
     Other,
 }
 

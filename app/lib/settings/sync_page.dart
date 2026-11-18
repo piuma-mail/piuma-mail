@@ -76,6 +76,8 @@ class _SyncPageState extends State<SyncPage> {
       ),
       SyncFailure(problem: SyncProblem.expired) => l.syncFailExpired,
       SyncFailure(problem: SyncProblem.taken) => l.syncFailTaken,
+      SyncFailure(problem: SyncProblem.rollback) => l.syncFailRollback,
+      SyncFailure(problem: SyncProblem.outdated) => l.syncFailOutdated,
       _ => l.syncFailOther,
     };
   }
@@ -210,19 +212,65 @@ class _SyncPageState extends State<SyncPage> {
     );
     if (yes != true) return;
     try {
-      final phrase = await widget.source.unlinkDevice(d.id);
+      final done = await widget.source.unlinkDevice(d.id);
       _reload();
-      if (mounted) {
-        await showRecoveryPhrase(
+      if (!mounted) return;
+      await showRecoveryPhrase(
+        context,
+        done.phrase,
+        phone: widget.phone,
+        unlinked: d.name,
+      );
+      // A new key keeps it out of the space, not out of the mailboxes
+      // whose passwords the space carried.
+      if (mounted && done.exposed.isNotEmpty) {
+        await showExposedPasswords(
           context,
-          phrase,
+          device: d.name,
+          emails: done.exposed,
           phone: widget.phone,
-          unlinked: d.name,
         );
       }
     } catch (e) {
       if (mounted) setState(() => _error = _failure(e));
     }
+  }
+
+  Future<void> _settle(HeldRemoval h, {required bool remove}) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (remove) {
+        await widget.source.confirmRemoval(h.accountId);
+      } else {
+        await widget.source.keepAccount(h.accountId);
+      }
+      _reload();
+    } catch (e) {
+      if (mounted) setState(() => _error = _failure(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// What still has to leave with an account another device removed.
+  String _heldBody(HeldRemoval h) {
+    final l = AppLocalizations.of(context);
+    if (h.home) return l.syncHeldHome;
+    final what = [
+      if (h.outbox > 0) l.syncHeldOutbox(h.outbox),
+      if (h.drafts > 0) l.syncHeldDrafts(h.drafts),
+      if (h.pending > 0) l.syncHeldPending(h.pending),
+    ];
+    final list = switch (what) {
+      [] => '',
+      [final one] => one,
+      [...final rest, final last] => '${rest.join(', ')} ${l.listAnd} $last',
+    };
+    return l.syncHeldWaiting(list);
   }
 
   Future<void> _turnOff() async {
@@ -343,6 +391,45 @@ class _SyncPageState extends State<SyncPage> {
           text: home == null ? l.syncOffBody : l.syncOnBody(homeName ?? home),
           line: home == null ? l.syncOffNote : l.syncOnLine(home),
         ),
+        if (home != null) ...[
+          for (final h in s.held) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.warning,
+              title: l.syncHeldTitle(h.email),
+              body: _heldBody(h),
+              actions: [
+                PiumaButton(
+                  label: l.syncHeldKeep,
+                  kind: PiumaButtonKind.secondary,
+                  onPressed: _busy ? null : () => _settle(h, remove: false),
+                ),
+                if (!h.home)
+                  PiumaButton(
+                    label: l.syncHeldRemove,
+                    kind: PiumaButtonKind.danger,
+                    onPressed: _busy ? null : () => _settle(h, remove: true),
+                  ),
+              ],
+            ),
+          ],
+          if (s.rollback) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.shield,
+              title: l.syncRollbackTitle,
+              body: l.syncRollbackBody(home),
+            ),
+          ],
+          if (s.outdated) ...[
+            const SizedBox(height: 14),
+            _SyncWarning(
+              icon: PiumaIcon.update,
+              title: l.syncOutdatedTitle,
+              body: l.syncOutdatedBody,
+            ),
+          ],
+        ],
         if (home == null) ...[
           const SizedBox(height: 22),
           if (_homeAccount case final a?)
@@ -597,6 +684,182 @@ class _Note extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Something on Devices & sync that needs the person: an account another
+/// device removed, an old copy refused, a newer version's space. As the
+/// inbox's sign-in notice: the warning ground and line.
+class _SyncWarning extends StatelessWidget {
+  const _SyncWarning({
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.actions = const [],
+  });
+
+  final PiumaIcon icon;
+  final String title;
+  final String body;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: c.warnSoft,
+          border: Border.all(color: c.warnLine),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: c.surface,
+                    borderRadius: BorderRadius.circular(PiumaRadius.button),
+                  ),
+                  alignment: Alignment.center,
+                  child: PiumaIconView(icon, size: 18, color: c.warn),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: PiumaType.body.copyWith(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: c.fg,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        body,
+                        style: PiumaType.body.copyWith(
+                          fontSize: 13,
+                          color: c.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (actions.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: actions,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// After unlinking a device: the mailboxes whose passwords it still knows,
+/// to change with the provider. A new key keeps it out of the space only.
+Future<void> showExposedPasswords(
+  BuildContext context, {
+  required String device,
+  required List<String> emails,
+  bool phone = false,
+}) {
+  final l = AppLocalizations.of(context);
+  Widget panel(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    return Padding(
+      padding: phone
+          ? const EdgeInsets.fromLTRB(20, 8, 20, 4)
+          : EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            header: true,
+            child: Text(
+              l.syncExposedTitle,
+              style: PiumaType.body.copyWith(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.4,
+                color: c.fg,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l.syncExposedBody(device),
+            style: PiumaType.body.copyWith(color: c.muted),
+          ),
+          const SizedBox(height: 16),
+          _Rows(
+            children: [
+              for (final e in emails)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      PiumaIconView(PiumaIcon.mail, size: 18, color: c.muted),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          e,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: PiumaType.body.copyWith(
+                            fontSize: 14,
+                            color: c.fg,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Align(
+            alignment: phone ? Alignment.center : Alignment.centerRight,
+            child: PiumaButton(
+              label: l.syncExposedDone,
+              size: phone ? PiumaButtonSize.large : PiumaButtonSize.standard,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  return phone
+      ? showPiumaSheet<void>(context, label: l.syncExposedTitle, builder: panel)
+      : showPiumaDialog<void>(
+          context,
+          label: l.syncExposedTitle,
+          width: 520,
+          builder: panel,
+        );
 }
 
 /// "Store it in" (sync off) or "Sync mailbox" (on) and the account

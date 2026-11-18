@@ -6152,4 +6152,158 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand';
+
+  @override
+  String syncHeldTitle(String email) {
+    return '$email a été supprimé sur un autre appareil';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Ici, il reste $what. Le supprimer aussi de cet appareil, ou le garder sur tous vos appareils ?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails en attente d’envoi',
+      one: '1 e-mail en attente d’envoi',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count brouillons pas encore enregistrés sur le serveur',
+      one: '1 brouillon pas encore enregistré sur le serveur',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count modifications pas encore sur le serveur',
+      one: '1 modification pas encore sur le serveur',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'Sa boîte contient votre espace de synchronisation : il reste donc ici. Gardez-le, ou déplacez d’abord l’espace vers une autre boîte.';
+
+  @override
+  String get syncHeldRemove => 'Supprimer ici';
+
+  @override
+  String get syncHeldKeep => 'Le garder';
+
+  @override
+  String get syncRollbackTitle =>
+      'Une copie plus ancienne de votre espace a été écartée';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Quelqu’un ayant accès à $email, ou un appareil que vous avez dissocié, a pu la remettre. Rien n’en a été repris. Si cela se reproduit, changez le mot de passe de cette boîte.';
+  }
+
+  @override
+  String get syncOutdatedTitle =>
+      'Mettez Piuma à jour pour synchroniser les modifications de cet appareil';
+
+  @override
+  String get syncOutdatedBody =>
+      'Un autre appareil a enregistré votre espace avec une version plus récente. Celui-ci reçoit toujours les modifications et garde les siennes jusqu’à sa mise à jour.';
+
+  @override
+  String get syncExposedTitle => 'Changez ces mots de passe';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name ne peut plus lire votre espace, mais connaît encore les mots de passe de ces boîtes. Changez-les chez votre fournisseur pour l’écarter aussi de vos e-mails.';
+  }
+
+  @override
+  String get syncExposedDone => 'Compris';
+
+  @override
+  String get syncFailRollback =>
+      'Cette boîte ne contient qu’une copie plus ancienne de votre espace. Rien n’a été modifié.';
+
+  @override
+  String get syncFailOutdated =>
+      'Votre espace a été enregistré par une version plus récente de Piuma. Mettez Piuma à jour sur cet appareil.';
+
+  @override
+  String pairServer(String host) {
+    return 'Se connecte à $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'Ce serveur vient du code, pas des réglages de votre fournisseur. Vérifiez qu’il s’agit bien du sien avant de saisir le mot de passe.';
+
+  @override
+  String get pairServerChecking => 'Vérification du serveur…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Votre téléphone a indiqué que ce n’était pas vous.',
+      'tablet': 'Votre tablette a indiqué que ce n’était pas vous.',
+      'other': 'Votre ordinateur a indiqué que ce n’était pas vous.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Ouvrez Piuma sur votre téléphone et saisissez le code.',
+      'tablet': 'Ouvrez Piuma sur votre tablette et saisissez le code.',
+      'other': 'Ouvrez Piuma sur votre ordinateur et saisissez le code.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'En attente de la confirmation de votre téléphone…',
+      'tablet': 'En attente de la confirmation de votre tablette…',
+      'other': 'En attente de la confirmation de votre ordinateur…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Votre téléphone affichera « $title »',
+      'tablet': 'Votre tablette affichera « $title »',
+      'other': 'Votre ordinateur affichera « $title »',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre téléphone, actif $ago.',
+      'tablet':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre tablette, active $ago.',
+      'other':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre ordinateur, actif $ago.',
+    });
+    return '$_temp0';
+  }
 }

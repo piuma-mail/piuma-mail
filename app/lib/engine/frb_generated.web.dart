@@ -286,6 +286,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   GroupUnread dco_decode_group_unread(dynamic raw);
 
   @protected
+  HeldAccount dco_decode_held_account(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
@@ -311,6 +314,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   InviteSent dco_decode_invite_sent(dynamic raw);
+
+  @protected
+  InviteServer dco_decode_invite_server(dynamic raw);
 
   @protected
   Joined dco_decode_joined(dynamic raw);
@@ -380,6 +386,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<GroupUnread> dco_decode_list_group_unread(dynamic raw);
+
+  @protected
+  List<HeldAccount> dco_decode_list_held_account(dynamic raw);
 
   @protected
   List<InboxRow> dco_decode_list_inbox_row(dynamic raw);
@@ -757,6 +766,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  UnlinkResult dco_decode_unlink_result(dynamic raw);
+
+  @protected
   UnopenedNewsletters dco_decode_unopened_newsletters(dynamic raw);
 
   @protected
@@ -1093,6 +1105,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   GroupUnread sse_decode_group_unread(SseDeserializer deserializer);
 
   @protected
+  HeldAccount sse_decode_held_account(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
@@ -1118,6 +1133,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   InviteSent sse_decode_invite_sent(SseDeserializer deserializer);
+
+  @protected
+  InviteServer sse_decode_invite_server(SseDeserializer deserializer);
 
   @protected
   Joined sse_decode_joined(SseDeserializer deserializer);
@@ -1209,6 +1227,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<GroupUnread> sse_decode_list_group_unread(SseDeserializer deserializer);
+
+  @protected
+  List<HeldAccount> sse_decode_list_held_account(SseDeserializer deserializer);
 
   @protected
   List<InboxRow> sse_decode_list_inbox_row(SseDeserializer deserializer);
@@ -1652,6 +1673,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  UnlinkResult sse_decode_unlink_result(SseDeserializer deserializer);
+
+  @protected
   UnopenedNewsletters sse_decode_unopened_newsletters(
     SseDeserializer deserializer,
   );
@@ -2086,6 +2110,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_group_unread(GroupUnread self, SseSerializer serializer);
 
   @protected
+  void sse_encode_held_account(HeldAccount self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
@@ -2111,6 +2138,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_invite_sent(InviteSent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_invite_server(InviteServer self, SseSerializer serializer);
 
   @protected
   void sse_encode_joined(Joined self, SseSerializer serializer);
@@ -2220,6 +2250,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_group_unread(
     List<GroupUnread> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_held_account(
+    List<HeldAccount> self,
     SseSerializer serializer,
   );
 
@@ -2807,6 +2843,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_unlink_result(UnlinkResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_unopened_newsletters(

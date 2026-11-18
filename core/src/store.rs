@@ -932,47 +932,61 @@ const MIGRATIONS: &[&str] = &[
         FOREIGN KEY (account, mailbox, uid, part) REFERENCES attachment(account, mailbox, uid, part) ON DELETE CASCADE
     );
 "#,
+    r#"
+    -- Per-row sync (space format 2). Account ids are never given again:
+    -- the highest one ever used is kept as removals happen, and new
+    -- accounts start above it. Settings left by removed accounts go.
+    CREATE TABLE IF NOT EXISTS account_id_floor (next INTEGER NOT NULL);
+    INSERT INTO account_id_floor (next)
+        SELECT COALESCE(MAX(id), 0) FROM account
+        WHERE NOT EXISTS (SELECT 1 FROM account_id_floor);
+    CREATE TRIGGER IF NOT EXISTS account_id_floor_up AFTER DELETE ON account BEGIN
+        UPDATE account_id_floor SET next = MAX(next, old.id);
+    END;
+    DELETE FROM setting WHERE
+        (key GLOB 'account.[0-9]*.*'
+            AND CAST(substr(key, 9, instr(substr(key, 9), '.') - 1) AS INTEGER)
+                NOT IN (SELECT id FROM account))
+     OR (key GLOB 'notify.loud.[0-9]*'
+            AND CAST(substr(key, 13) AS INTEGER) NOT IN (SELECT id FROM account))
+     OR (key GLOB 'rules.sorted.[0-9]*'
+            AND CAST(substr(key, 14) AS INTEGER) NOT IN (SELECT id FROM account))
+     OR (key GLOB 'labels.local.[0-9]*'
+            AND CAST(substr(key, 14) AS INTEGER) NOT IN (SELECT id FROM account))
+     OR (key GLOB 'nightly.unopened.[0-9]*'
+            AND CAST(substr(key, 18) AS INTEGER) NOT IN (SELECT id FROM account))
+     OR (key GLOB 'sign_in.told.[0-9]*'
+            AND CAST(substr(key, 14) AS INTEGER) NOT IN (SELECT id FROM account))
+     OR (key GLOB 'draft.signature.[0-9]*.*'
+            AND CAST(substr(key, 17, instr(substr(key, 17), '.') - 1) AS INTEGER)
+                NOT IN (SELECT id FROM account));
+    -- The global id of each synced row that has no natural one, and what
+    -- this device keeps of the space (space_merge::Local).
+    CREATE TABLE IF NOT EXISTS space_map (
+        tbl   TEXT NOT NULL,
+        local TEXT NOT NULL,
+        gid   TEXT NOT NULL,
+        PRIMARY KEY (tbl, gid),
+        UNIQUE (tbl, local)
+    );
+    CREATE TABLE IF NOT EXISTS space_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"#,
 ];
 
 /// Number of the migration that made `written_to`, filled from the Sent
 /// mail already kept.
 const WRITTEN_TO: usize = 54;
 
+/// Number of the migration that tagged the attachment ids of pre-1.0
+/// builds.
+#[cfg(test)]
+const LEGACY_ATTACHMENTS: usize = 61;
+
 /// Number of the migration after which stored previews are cleaned again.
 const CLEAN_PREVIEWS: usize = 38;
-
-/// The tables the sync space carries.
-const SPACE_TABLES: &[&str] = &[
-    "account",
-    "signature",
-    "message_template",
-    "address_group",
-    "group_address",
-    "account_alias",
-    "rule",
-    "calendar_source",
-    "calendar",
-    "label",
-    "setting",
-];
-
-/// Columns the sync space leaves out: what a rule did on this device.
-const SPACE_LOCAL_COLUMNS: &[(&str, &str)] = &[
-    ("rule", "last_run"),
-    ("rule", "matched"),
-    ("calendar_source", "synced"),
-];
-
-/// Settings that stay on their device.
-const LOCAL_SETTINGS: &[&str] = &[
-    "hint.",
-    "search.",
-    "space.",
-    "nightly.",
-    "rules.sorted.",
-    "sign_in.",
-    "labels.local.",
-];
 
 /// A column value as JSON; blobs as `{"blob": base64}`.
 fn to_json(v: rusqlite::types::ValueRef<'_>) -> serde_json::Value {
@@ -1273,6 +1287,9 @@ pub struct Store {
     conn: Connection,
 }
 
+mod space_rows;
+pub use space_rows::{Applied, Held, SecretIn};
+
 /// What was stopped: trackers in all (pixels among them), links cleaned,
 /// and links flagged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1498,9 +1515,14 @@ impl Store {
             ),
         };
         self.conn.execute(
-            "INSERT INTO account (name, email, color, kind, imap_host, imap_port, imap_security,
-                                  smtp_host, smtp_port, smtp_security, username, jmap_url, sender_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            // Above every id an account ever had here: settings left by a
+            // removed account can't fall to a new one.
+            "INSERT INTO account (id, name, email, color, kind, imap_host, imap_port,
+                                  imap_security, smtp_host, smtp_port, smtp_security, username,
+                                  jmap_url, sender_name)
+             VALUES (MAX(COALESCE((SELECT MAX(id) FROM account), 0),
+                         COALESCE((SELECT next FROM account_id_floor), 0)) + 1,
+                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 account.name,
                 account.email,
@@ -1629,10 +1651,29 @@ impl Store {
         Ok(())
     }
 
-    /// Removes an account and, through the foreign keys, all its mail.
+    /// Removes an account and, through the foreign keys, all its mail,
+    /// with every setting that names it.
     pub fn remove_account(&self, id: AccountId) -> Result<()> {
         self.conn
             .execute("DELETE FROM account WHERE id = ?1", params![id.0])?;
+        for (prefix, suffix) in crate::space_merge::ACCOUNT_KEYS {
+            let key = format!("{prefix}{}{suffix}", id.0);
+            if suffix.contains('%') {
+                self.conn
+                    .execute("DELETE FROM setting WHERE key LIKE ?1", params![key])?;
+            } else {
+                self.conn
+                    .execute("DELETE FROM setting WHERE key = ?1", params![key])?;
+            }
+        }
+        // "Not now" to a suggestion names the account first.
+        if let Some(not_now) = self.setting(crate::rules::NOT_NOW)? {
+            let kept: Vec<&str> = not_now
+                .lines()
+                .filter(|l| l.split(' ').next() != Some(&id.0.to_string()))
+                .collect();
+            self.set_setting(crate::rules::NOT_NOW, &kept.join("\n"))?;
+        }
         Ok(())
     }
 
@@ -4917,303 +4958,6 @@ impl Store {
             .unwrap_or(true))
     }
 
-    /// The rows the sync space carries, by table: accounts (not their
-    /// mail), signatures, templates, groups, aliases and the settings
-    /// that aren't this device's own.
-    pub fn space_tables(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
-        let mut out = serde_json::Map::new();
-        for table in SPACE_TABLES {
-            let mut stmt = self.conn.prepare(&format!("SELECT * FROM {table}"))?;
-            let names: Vec<String> = stmt.column_names().map(|s| s.to_string()).collect();
-            let rows = stmt
-                .query_map([], |r| {
-                    let mut row = serde_json::Map::new();
-                    for (i, name) in names.iter().enumerate() {
-                        if SPACE_LOCAL_COLUMNS.contains(&(*table, name.as_str())) {
-                            continue;
-                        }
-                        row.insert(name.clone(), to_json(r.get_ref(i)?));
-                    }
-                    Ok(serde_json::Value::Object(row))
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            let rows = rows
-                .into_iter()
-                .filter(|row| {
-                    *table != "setting"
-                        || row["key"]
-                            .as_str()
-                            .is_some_and(|k| !LOCAL_SETTINGS.iter().any(|p| k.starts_with(p)))
-                })
-                .collect();
-            out.insert((*table).to_owned(), serde_json::Value::Array(rows));
-        }
-        Ok(out)
-    }
-
-    /// Takes in what a sync space carries: accounts are matched by address
-    /// (new ones are added), the other tables replaced, settings merged.
-    /// Returns each account's id here by its address.
-    /// The accounts on this device that `tables` (another device's space)
-    /// no longer has: removed there. Only meaningful when nothing changed
-    /// here since the last round, which `space_sync::round` checks.
-    pub fn accounts_not_in(
-        &self,
-        tables: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Vec<AccountId>> {
-        let theirs: HashSet<String> = tables
-            .get("account")
-            .and_then(|v| v.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|r| r.get("email")?.as_str().map(str::to_lowercase))
-            .collect();
-        Ok(self
-            .accounts()?
-            .into_iter()
-            .filter(|a| !theirs.contains(&a.email.to_lowercase()))
-            .map(|a| a.id)
-            .collect())
-    }
-
-    pub fn take_space_tables(
-        &mut self,
-        tables: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<HashMap<String, AccountId>> {
-        let rows = |t: &str| -> Vec<serde_json::Map<String, serde_json::Value>> {
-            tables
-                .get(t)
-                .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|r| r.as_object().cloned()).collect())
-                .unwrap_or_default()
-        };
-        let tx = self.conn.transaction()?;
-        let columns = |t: &str| -> Result<Vec<String>> {
-            let mut stmt = tx.prepare(&format!("SELECT name FROM pragma_table_info('{t}')"))?;
-            let names = stmt
-                .query_map([], |r| r.get(0))?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            Ok(names)
-        };
-        // Accounts: by address.
-        let mut ids: HashMap<i64, i64> = HashMap::new();
-        let mut by_email = HashMap::new();
-        let account_cols = columns("account")?;
-        for row in rows("account") {
-            let (Some(remote), Some(email)) = (row["id"].as_i64(), row["email"].as_str()) else {
-                continue;
-            };
-            let cols: Vec<&String> = account_cols
-                .iter()
-                .filter(|c| *c != "id" && row.contains_key(c.as_str()))
-                .collect();
-            let values: Vec<rusqlite::types::Value> =
-                cols.iter().map(|c| from_json(&row[c.as_str()])).collect();
-            let here: Option<i64> = tx
-                .query_row(
-                    "SELECT id FROM account WHERE email = ?1 COLLATE NOCASE",
-                    params![email],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let id = match here {
-                Some(id) => {
-                    let set = cols
-                        .iter()
-                        .map(|c| format!("{c} = ?"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let mut params: Vec<rusqlite::types::Value> = values;
-                    params.push(id.into());
-                    tx.execute(
-                        &format!("UPDATE account SET {set} WHERE id = ?"),
-                        rusqlite::params_from_iter(params),
-                    )?;
-                    id
-                }
-                None => {
-                    let names = cols
-                        .iter()
-                        .map(|c| c.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let marks = vec!["?"; cols.len()].join(", ");
-                    tx.execute(
-                        &format!("INSERT INTO account ({names}) VALUES ({marks})"),
-                        rusqlite::params_from_iter(values),
-                    )?;
-                    tx.last_insert_rowid()
-                }
-            };
-            ids.insert(remote, id);
-            by_email.insert(email.to_lowercase(), AccountId(id));
-        }
-        // The rest: replaced, with account ids made local. A space written
-        // before rules synced has no rules: the ones here stay.
-        let rules = tables.contains_key("rule");
-        // The same for labels.
-        let labels = tables.contains_key("label");
-        let kept = |table: &str| match table {
-            "rule" => !rules,
-            "label" => !labels,
-            _ => false,
-        };
-        // What each rule did here, kept across the replacement.
-        let ran: Vec<(i64, Option<i64>, i64)> = {
-            let mut stmt = tx.prepare("SELECT id, last_run, matched FROM rule")?;
-            let rows = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                .collect::<std::result::Result<_, _>>()?;
-            rows
-        };
-        for table in [
-            "group_address",
-            "address_group",
-            "account_alias",
-            "signature",
-            "message_template",
-            "rule",
-            "label",
-        ] {
-            if kept(table) {
-                continue;
-            }
-            tx.execute(&format!("DELETE FROM {table}"), [])?;
-        }
-        for table in [
-            "signature",
-            "message_template",
-            "address_group",
-            "group_address",
-            "account_alias",
-            "rule",
-            "label",
-        ] {
-            if kept(table) {
-                continue;
-            }
-            let cols = columns(table)?;
-            'rows: for mut row in rows(table) {
-                if let Some(a) = row.get("account").and_then(|v| v.as_i64()) {
-                    match ids.get(&a) {
-                        Some(&here) => {
-                            row.insert("account".into(), here.into());
-                        }
-                        None => continue 'rows,
-                    }
-                }
-                let present: Vec<&String> = cols
-                    .iter()
-                    .filter(|c| row.contains_key(c.as_str()))
-                    .collect();
-                let names = present
-                    .iter()
-                    .map(|c| c.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let marks = vec!["?"; present.len()].join(", ");
-                tx.execute(
-                    &format!("INSERT OR REPLACE INTO {table} ({names}) VALUES ({marks})"),
-                    rusqlite::params_from_iter(present.iter().map(|c| from_json(&row[c.as_str()]))),
-                )?;
-            }
-        }
-        if rules {
-            let mut stmt =
-                tx.prepare("UPDATE rule SET last_run = ?2, matched = ?3 WHERE id = ?1")?;
-            for (id, last_run, matched) in ran {
-                stmt.execute(params![id, last_run, matched])?;
-            }
-        }
-        // Connected calendars: changed in place, so the events read here
-        // stay with the calendars that are still the same.
-        if tables.contains_key("calendar_source") {
-            let same: HashSet<(i64, i64, String)> = rows("calendar")
-                .iter()
-                .filter_map(|r| {
-                    Some((
-                        r.get("id")?.as_i64()?,
-                        r.get("source")?.as_i64()?,
-                        r.get("url")?.as_str()?.to_owned(),
-                    ))
-                })
-                .collect();
-            let gone: Vec<i64> = {
-                let mut stmt = tx.prepare("SELECT id, source, url FROM calendar")?;
-                let here = stmt
-                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect::<std::result::Result<Vec<(i64, i64, String)>, _>>()?;
-                here.into_iter()
-                    .filter(|c| !same.contains(c))
-                    .map(|c| c.0)
-                    .collect()
-            };
-            for id in gone {
-                tx.execute("DELETE FROM calendar WHERE id = ?1", params![id])?;
-            }
-            let sources: Vec<i64> = rows("calendar_source")
-                .iter()
-                .filter_map(|r| r.get("id")?.as_i64())
-                .collect();
-            if sources.is_empty() {
-                tx.execute("DELETE FROM calendar_source", [])?;
-            } else {
-                let marks = vec!["?"; sources.len()].join(",");
-                tx.execute(
-                    &format!("DELETE FROM calendar_source WHERE id NOT IN ({marks})"),
-                    rusqlite::params_from_iter(&sources),
-                )?;
-            }
-            for table in ["calendar_source", "calendar"] {
-                let cols = columns(table)?;
-                for mut row in rows(table) {
-                    if let Some(a) = row.get("account").and_then(|v| v.as_i64()) {
-                        row.insert("account".into(), ids.get(&a).copied().into());
-                    }
-                    let present: Vec<&String> = cols
-                        .iter()
-                        .filter(|c| row.contains_key(c.as_str()))
-                        .collect();
-                    let names = present
-                        .iter()
-                        .map(|c| c.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let marks = vec!["?"; present.len()].join(", ");
-                    let set = present
-                        .iter()
-                        .filter(|c| c.as_str() != "id")
-                        .map(|c| format!("{c} = excluded.{c}"))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    tx.execute(
-                        &format!(
-                            "INSERT INTO {table} ({names}) VALUES ({marks})
-                             ON CONFLICT (id) DO UPDATE SET {set}"
-                        ),
-                        rusqlite::params_from_iter(
-                            present.iter().map(|c| from_json(&row[c.as_str()])),
-                        ),
-                    )?;
-                }
-            }
-        }
-        for row in rows("setting") {
-            if let (Some(k), Some(v)) = (row["key"].as_str(), row["value"].as_str()) {
-                if !LOCAL_SETTINGS.iter().any(|p| k.starts_with(p)) {
-                    tx.execute(
-                        "INSERT OR REPLACE INTO setting (key, value) VALUES (?1, ?2)",
-                        params![k, v],
-                    )?;
-                }
-            }
-        }
-        // Newsletters may have been turned on or off on another device.
-        refile_inbox(&tx)?;
-        tx.commit()?;
-        Ok(by_email)
-    }
-
     /// The group an address is in, if any.
     pub fn group_of(&self, email: &str) -> Result<Option<i64>> {
         Ok(self
@@ -7048,7 +6792,7 @@ mod tests {
         store.conn.execute("INSERT INTO vault_card (account, mailbox, uid, key, data) VALUES (?1, 'INBOX', 1, 'invoice', '{\"file\":4,\"file_name\":\"invoice.pdf\"}')", params![account.0]).unwrap();
         store
             .conn
-            .pragma_update(None, "user_version", (MIGRATIONS.len() - 1) as i64)
+            .pragma_update(None, "user_version", (LEGACY_ATTACHMENTS - 1) as i64)
             .unwrap();
         store.migrate().unwrap();
         store.migrate().unwrap();
@@ -8293,6 +8037,34 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(store.notifies(b, "teo@posta.it").unwrap());
     }
 
+    /// Rows as the space carries them.
+    fn space_rows_of(s: &Store) -> crate::space_merge::Tables {
+        s.space_rows(&[], false).unwrap().0
+    }
+
+    /// One device's rows into another's, as a round of the space does.
+    fn carry(from: &mut Store, to: &mut Store) {
+        use crate::space_merge;
+        let digest = |g: &str, v: &str| format!("{g}:{v}");
+        let now = space_merge::now_ms();
+        let mut a = from.space_local().unwrap();
+        from.space_scan(&mut a, &[], &digest, "from", now, None)
+            .unwrap();
+        a.started = true;
+        from.set_space_local(&a).unwrap();
+        let mut b = to.space_local().unwrap();
+        let adopt = a.doc.clone();
+        to.space_scan(&mut b, &[], &digest, "to", now, Some(&adopt))
+            .unwrap();
+        b.observe(&a.doc);
+        let mut merged = b.doc.clone();
+        let won = space_merge::merge(&mut merged, &a.doc);
+        to.space_apply(&mut b, &merged, &won, None).unwrap();
+        b.doc = merged;
+        b.started = true;
+        to.set_space_local(&b).unwrap();
+    }
+
     #[test]
     fn the_space_tables_go_from_one_store_to_another() {
         let mut mac = Store::open_in_memory().unwrap();
@@ -8313,8 +8085,7 @@ From: <help@bank.example>\r\n\r\nHi";
             ..Default::default()
         })
         .unwrap();
-        let tables = mac.space_tables().unwrap();
-        let json = serde_json::to_string(&tables).unwrap();
+        let json = format!("{:?}", serde_json::to_string(&space_rows_of(&mac)));
         assert!(!json.contains("swipe_played"));
 
         // The phone already has another account, so ids differ.
@@ -8322,10 +8093,14 @@ From: <help@bank.example>\r\n\r\nHi";
         let p = phone
             .add_account(&imap_account("Home", "teo@posta.it", "#E0782F"))
             .unwrap();
-        let ids = phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
-            .unwrap();
-        let here = ids["matteo@studio.it"];
+        carry(&mut mac, &mut phone);
+        let here = phone
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.email == "matteo@studio.it")
+            .unwrap()
+            .id;
         assert_ne!(here, w);
         assert_eq!(phone.accounts().unwrap().len(), 2);
         assert_eq!(phone.account(p).unwrap().unwrap().email, "teo@posta.it");
@@ -8337,14 +8112,11 @@ From: <help@bank.example>\r\n\r\nHi";
             Some("all")
         );
         // Taken in twice, nothing doubles.
-        phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
-            .unwrap();
+        carry(&mut mac, &mut phone);
         assert_eq!(phone.accounts().unwrap().len(), 2);
         assert_eq!(phone.address_groups().unwrap().len(), 1);
-        // The phone's own account isn't in the Mac's space.
-        let tables = serde_json::from_str(&json).unwrap();
-        assert_eq!(phone.accounts_not_in(&tables).unwrap(), [p]);
+        // The phone's own account stays: absence removes nothing.
+        assert!(phone.account(p).unwrap().is_some());
     }
 
     #[test]
@@ -9465,7 +9237,7 @@ From: <help@bank.example>\r\n\r\nHi";
 
     #[test]
     fn labels_are_found_kept_and_sent() {
-        let (store, p, w) = search_store();
+        let (mut store, p, w) = search_store();
         let worksite = store.add_label("Worksite", "amber").unwrap();
         assert_eq!(worksite.keyword, "worksite");
         // The same name finds it; a new one takes the next free color.
@@ -9564,23 +9336,25 @@ From: <help@bank.example>\r\n\r\nHi";
 
         // The list travels in the sync space; which server keeps no
         // keywords doesn't.
-        let tables = store.space_tables().unwrap();
-        assert_eq!(tables["label"].as_array().unwrap().len(), 2);
-        assert!(!tables["setting"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|r| r["key"].as_str().unwrap().starts_with("labels.local.")));
+        let tables = space_rows_of(&store);
+        assert_eq!(tables["label"].len(), 2);
+        assert!(!tables
+            .get("setting")
+            .into_iter()
+            .flatten()
+            .any(|(_, r)| r.v["key"].as_str().unwrap().starts_with("labels.local.")));
         let mut other = Store::open_in_memory().unwrap();
         other.add_label("Mine", "coral").unwrap();
-        other.take_space_tables(&tables).unwrap();
-        let names: Vec<String> = other
+        carry(&mut store, &mut other);
+        let mut names: Vec<String> = other
             .labels()
             .unwrap()
             .into_iter()
             .map(|l| l.name)
             .collect();
-        assert_eq!(names, ["Later", "To_read"]);
+        names.sort();
+        // Merged: the other device's own label stays.
+        assert_eq!(names, ["Later", "Mine", "To_read"]);
     }
 
     #[test]
@@ -11460,12 +11234,10 @@ From: <help@bank.example>\r\n\r\nHi";
         let s = store.lock().unwrap();
         assert_eq!(s.setting(UNOPENED_ARCHIVED).unwrap().as_deref(), Some("2"));
         // Kept on this device: the sync space leaves it out.
-        let tables = s.space_tables().unwrap();
+        let tables = space_rows_of(&s);
         let keys: Vec<&str> = tables["setting"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|r| r["key"].as_str())
+            .values()
+            .filter_map(|r| r.v["key"].as_str())
             .collect();
         assert!(keys.contains(&ARCHIVE_UNOPENED_NEWSLETTERS));
         assert!(!keys.iter().any(|k| k.starts_with("nightly.")));
@@ -11485,47 +11257,66 @@ From: <help@bank.example>\r\n\r\nHi";
             last_run: None,
             matched: 0,
         };
-        let mac = Store::open_in_memory().unwrap();
+        let mut mac = Store::open_in_memory().unwrap();
         let w = mac
             .add_account(&imap_account("Work", "matteo@studio.it", "#2F8F83"))
             .unwrap();
         let mine = mac.save_rule(&rule(Some(w), "@acme.it")).unwrap();
         mac.save_rule(&rule(None, "@studio.it")).unwrap();
-        mac.set_setting("rules.sorted.1", "500").unwrap();
-        let before = serde_json::to_string(&mac.space_tables().unwrap()).unwrap();
+        mac.set_setting(&format!("rules.sorted.{}", w.0), "500")
+            .unwrap();
+        let before = format!("{:?}", space_rows_of(&mac)["rule"]);
         // What a rule did here doesn't change what the space carries.
         mac.rule_ran(mine, 3, 900).unwrap();
-        let tables = mac.space_tables().unwrap();
-        let json = serde_json::to_string(&tables).unwrap();
-        assert_eq!(json, before);
-        assert!(!json.contains("rules.sorted"));
+        let tables = space_rows_of(&mac);
+        assert_eq!(format!("{:?}", tables["rule"]), before);
+        assert!(!format!(
+            "{:?}",
+            tables.get("setting").map(|t| t.keys().collect::<Vec<_>>())
+        )
+        .contains("rules.sorted"));
+        assert!(tables
+            .get("setting")
+            .into_iter()
+            .flatten()
+            .all(|(_, r)| !r.v["key"].as_str().unwrap().starts_with("rules.sorted")));
 
         let mut phone = Store::open_in_memory().unwrap();
         phone
             .add_account(&imap_account("Home", "teo@posta.it", "#E0782F"))
             .unwrap();
-        let ids = phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
-            .unwrap();
-        let rules = phone.rules().unwrap();
+        carry(&mut mac, &mut phone);
+        let work = phone
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.email == "matteo@studio.it")
+            .unwrap()
+            .id;
+        let mut rules = phone.rules().unwrap();
+        rules.sort_by_key(|r| r.account.is_none());
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].account, Some(ids["matteo@studio.it"]));
+        assert_eq!(rules[0].account, Some(work));
         assert_eq!(rules[1].account, None);
         assert_eq!(rules[0].matched, 0);
         // The phone's own runs survive the next round.
         phone.rule_ran(rules[0].id, 2, 1000).unwrap();
-        phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
+        mac.save_rule(&Rule {
+            id: mine,
+            ..rule(Some(w), "@acme.com")
+        })
+        .unwrap();
+        carry(&mut mac, &mut phone);
+        let r = phone
+            .rules()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.account == Some(work))
             .unwrap();
-        let rules = phone.rules().unwrap();
-        assert_eq!((rules[0].matched, rules[0].last_run), (2, Some(1000)));
-
-        // A space from before rules synced leaves the phone's rules alone.
-        let mut old: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(&json).unwrap();
-        old.remove("rule");
-        phone.take_space_tables(&old).unwrap();
-        assert_eq!(phone.rules().unwrap().len(), 2);
+        assert_eq!(
+            (r.value.as_str(), r.matched, r.last_run),
+            ("@acme.com", 2, Some(1000))
+        );
     }
 
     #[test]
@@ -11571,26 +11362,38 @@ From: <help@bank.example>\r\n\r\nHi";
             .unwrap();
         mac.set_calendars(fm, &[cal("/fm/", "Personal")]).unwrap();
         mac.set_calendar_synced(icloud, 500).unwrap();
-        let before = serde_json::to_string(&mac.space_tables().unwrap()).unwrap();
+        let before = format!("{:?}", space_rows_of(&mac));
         // Reading a source again isn't a change to sync.
         mac.set_calendar_synced(icloud, 900).unwrap();
-        let json = serde_json::to_string(&mac.space_tables().unwrap()).unwrap();
-        assert_eq!(json, before);
+        assert_eq!(format!("{:?}", space_rows_of(&mac)), before);
 
         let mut phone = Store::open_in_memory().unwrap();
         phone
             .add_account(&imap_account("Home", "teo@posta.it", "#E0782F"))
             .unwrap();
-        let ids = phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
-            .unwrap();
+        carry(&mut mac, &mut phone);
+        let work = phone
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.email == "matteo@studio.it")
+            .unwrap()
+            .id;
         let sources = phone.calendar_sources().unwrap();
         assert_eq!(sources.len(), 2);
-        assert_eq!(sources[0].synced, None);
-        assert_eq!(sources[1].account, Some(ids["matteo@studio.it"]));
+        let by_name = |n: &str| sources.iter().find(|s| s.name == n).unwrap();
+        assert_eq!(by_name("iCloud").synced, None);
+        assert_eq!(by_name("Fastmail").account, Some(work));
+        let icloud_here = by_name("iCloud").id;
         assert_eq!(phone.calendars().unwrap().len(), 3);
         // What the phone read stays across the next round.
-        let home = phone.calendars().unwrap()[0].id;
+        let home = phone
+            .calendars()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.url == "/home/")
+            .unwrap()
+            .id;
         phone
             .conn
             .execute(
@@ -11599,24 +11402,22 @@ From: <help@bank.example>\r\n\r\nHi";
                 params![home],
             )
             .unwrap();
-        phone.set_calendar_synced(icloud, 700).unwrap();
+        phone.set_calendar_synced(icloud_here, 700).unwrap();
         // Meanwhile the Mac renamed one calendar and dropped Fastmail.
         mac.set_calendars(icloud, &[cal("/home/", "Casa"), cal("/work/", "Work")])
             .unwrap();
         mac.delete_calendar_source(fm).unwrap();
-        let json = serde_json::to_string(&mac.space_tables().unwrap()).unwrap();
-        phone
-            .take_space_tables(&serde_json::from_str(&json).unwrap())
-            .unwrap();
+        carry(&mut mac, &mut phone);
         let sources = phone.calendar_sources().unwrap();
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].synced, Some(700));
-        let names: Vec<String> = phone
+        let mut names: Vec<String> = phone
             .calendars()
             .unwrap()
             .into_iter()
             .map(|c| c.name)
             .collect();
+        names.sort();
         assert_eq!(names, ["Casa", "Work"]);
         let events: i64 = phone
             .conn
@@ -11626,22 +11427,24 @@ From: <help@bank.example>\r\n\r\nHi";
     }
 
     #[test]
-    fn syncing_an_empty_calendar_source_list_removes_sources_and_cached_events() {
+    fn a_calendar_source_removed_elsewhere_goes_with_its_cached_events() {
+        let mut mac = Store::open_in_memory().unwrap();
         let mut store = Store::open_in_memory().unwrap();
-        let source = store
+        let source = mac
             .add_calendar_source("ics", "Holidays", "https://h/", "", None)
             .unwrap();
-        store
-            .set_calendars(
-                source,
-                &[crate::calendar::RemoteCalendar {
-                    url: "https://h/calendar".into(),
-                    name: "Holidays".into(),
-                    color: None,
-                    read_only: true,
-                }],
-            )
-            .unwrap();
+        mac.set_calendars(
+            source,
+            &[crate::calendar::RemoteCalendar {
+                url: "https://h/calendar".into(),
+                name: "Holidays".into(),
+                color: None,
+                read_only: true,
+            }],
+        )
+        .unwrap();
+        carry(&mut mac, &mut store);
+        let here = store.calendar_sources().unwrap()[0].id;
         let calendar = store.calendars().unwrap()[0].id;
         store
             .conn
@@ -11651,16 +11454,12 @@ From: <help@bank.example>\r\n\r\nHi";
                 params![calendar],
             )
             .unwrap();
-        store.set_calendar_refresh(source, Some(3600)).unwrap();
-        let mut tables = store.space_tables().unwrap();
-        // Older snapshots without calendar tables must leave local data alone.
-        tables.remove("calendar_source");
-        tables.remove("calendar");
-        store.take_space_tables(&tables).unwrap();
+        store.set_calendar_refresh(here, Some(3600)).unwrap();
+        // A round that changes nothing leaves the local data alone.
+        carry(&mut mac, &mut store);
         assert_eq!(store.calendar_sources().unwrap().len(), 1);
-        tables.insert("calendar_source".into(), serde_json::json!([]));
-        tables.insert("calendar".into(), serde_json::json!([]));
-        store.take_space_tables(&tables).unwrap();
+        mac.delete_calendar_source(source).unwrap();
+        carry(&mut mac, &mut store);
         assert!(store.calendar_sources().unwrap().is_empty());
         assert!(store.calendars().unwrap().is_empty());
         for table in ["calendar_event", "calendar_refresh"] {
@@ -11670,7 +11469,7 @@ From: <help@bank.example>\r\n\r\nHi";
                 .unwrap();
             assert_eq!(count, 0, "{table}");
         }
-        // Repeating an empty snapshot remains safe.
-        store.take_space_tables(&tables).unwrap();
+        // Repeating it remains safe.
+        carry(&mut mac, &mut store);
     }
 }

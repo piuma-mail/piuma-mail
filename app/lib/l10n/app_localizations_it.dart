@@ -6161,4 +6161,158 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
+
+  @override
+  String syncHeldTitle(String email) {
+    return '$email è stato rimosso su un altro dispositivo';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Qui ha ancora $what. Lo rimuovi anche da questo dispositivo o lo tieni su tutti?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email in attesa di invio',
+      one: '1 email in attesa di invio',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count bozze non ancora salvate sul server',
+      one: '1 bozza non ancora salvata sul server',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count modifiche non ancora sul server',
+      one: '1 modifica non ancora sul server',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'La sua casella contiene il tuo spazio di sincronizzazione, quindi resta qui. Tienilo, oppure sposta prima lo spazio in un’altra casella.';
+
+  @override
+  String get syncHeldRemove => 'Rimuovi qui';
+
+  @override
+  String get syncHeldKeep => 'Tienilo';
+
+  @override
+  String get syncRollbackTitle =>
+      'Una copia più vecchia del tuo spazio è stata ignorata';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Potrebbe averla rimessa qualcuno con accesso a $email, o un dispositivo che hai scollegato. Non è stato preso nulla da lì. Se succede di nuovo, cambia la password di quella casella.';
+  }
+
+  @override
+  String get syncOutdatedTitle =>
+      'Aggiorna Piuma per sincronizzare le modifiche di questo dispositivo';
+
+  @override
+  String get syncOutdatedBody =>
+      'Un altro dispositivo ha salvato il tuo spazio con una versione più recente. Questo continua a ricevere le modifiche e tiene le sue finché non viene aggiornato.';
+
+  @override
+  String get syncExposedTitle => 'Cambia queste password';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name non può più leggere il tuo spazio, ma conosce ancora le password di queste caselle. Cambiale presso il tuo provider per tenerlo fuori anche dalla tua posta.';
+  }
+
+  @override
+  String get syncExposedDone => 'Ho capito';
+
+  @override
+  String get syncFailRollback =>
+      'In questa casella c’è solo una copia più vecchia del tuo spazio. Non è stato cambiato nulla.';
+
+  @override
+  String get syncFailOutdated =>
+      'Il tuo spazio è stato salvato da una versione più recente di Piuma. Aggiorna Piuma su questo dispositivo.';
+
+  @override
+  String pairServer(String host) {
+    return 'Accede a $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'Questo server arriva dal codice, non dalle impostazioni del tuo provider. Controlla che sia del tuo provider prima di scrivere la password.';
+
+  @override
+  String get pairServerChecking => 'Controllo del server…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Il tuo telefono ha detto che non eri tu.',
+      'tablet': 'Il tuo tablet ha detto che non eri tu.',
+      'other': 'Il tuo computer ha detto che non eri tu.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Apri Piuma sul tuo telefono e scrivi il codice.',
+      'tablet': 'Apri Piuma sul tuo tablet e scrivi il codice.',
+      'other': 'Apri Piuma sul tuo computer e scrivi il codice.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'In attesa della conferma del tuo telefono…',
+      'tablet': 'In attesa della conferma del tuo tablet…',
+      'other': 'In attesa della conferma del tuo computer…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Il tuo telefono mostrerà “$title”',
+      'tablet': 'Il tuo tablet mostrerà “$title”',
+      'other': 'Il tuo computer mostrerà “$title”',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo telefono, attivo $ago.',
+      'tablet':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo tablet, attivo $ago.',
+      'other':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo computer, attivo $ago.',
+    });
+    return '$_temp0';
+  }
 }

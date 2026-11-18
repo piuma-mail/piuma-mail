@@ -227,7 +227,7 @@ pub const SUGGEST_DAYS: i64 = 30;
 
 /// The setting that keeps the suggestions answered "Not now", one
 /// "account sender target" per line.
-const NOT_NOW: &str = "rules.not_now";
+pub const NOT_NOW: &str = "rules.not_now";
 
 /// "You often move emails from Ferrovia Rapida to Travel. Create a rule?":
 /// the sender moved by hand most often to one folder lately, unless a

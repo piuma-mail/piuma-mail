@@ -8,8 +8,8 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `account`, `asks`, `connect`, `home`, `invites`, `join`, `joined`, `last_seen`, `me`, `off`, `passwords`, `remember`, `run`, `set`, `setting`, `took`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These functions are ignored because they are not marked as `pub`: `account`, `asks`, `connect`, `held_here`, `home`, `invites`, `join`, `joined`, `me`, `off`, `passwords`, `remember`, `run`, `set`, `setting`, `took`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`
 
 /// Names this device for the space (at start, from what the app knows of
 /// it), making its secret the first time. Returns the new secret only on
@@ -42,9 +42,19 @@ Future<String> syncTurnOn({required PlatformInt64 accountId}) =>
 Future<void> syncMove({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiSyncSyncMove(accountId: accountId);
 
-/// One round: takes in other devices' changes or writes this one's, and
+/// One round: merges this device's changes with the other devices', and
 /// says who is asking to be linked. Does nothing while sync is off.
 Future<SyncRound> syncNow() => RustLib.instance.api.crateApiSyncSyncNow();
+
+/// "Remove it here too": an account another device removed, which waited
+/// here for mail, drafts or changes still to go, is removed now.
+Future<void> syncConfirmRemoval({required PlatformInt64 accountId}) =>
+    RustLib.instance.api.crateApiSyncSyncConfirmRemoval(accountId: accountId);
+
+/// "Keep it": an account another device removed stays, and comes back on
+/// the other devices with the next round.
+Future<void> syncKeepAccount({required PlatformInt64 accountId}) =>
+    RustLib.instance.api.crateApiSyncSyncKeepAccount(accountId: accountId);
 
 /// Who is asking to be linked, newest first.
 Future<List<PairAsk>> syncRequests() =>
@@ -61,9 +71,10 @@ Future<void> syncApprove({required String requestId, required String code}) =>
 Future<void> syncRefuse({required String requestId}) =>
     RustLib.instance.api.crateApiSyncSyncRefuse(requestId: requestId);
 
-/// Unlinks a device. Returns the new recovery phrase: the old one opens
-/// the space no more.
-Future<String> syncUnlink({required String deviceId}) =>
+/// Unlinks a device. Returns the new recovery phrase (the old one opens
+/// the space no more) and the mailboxes whose passwords the device still
+/// knows: a new key keeps it out of the space, not out of the mailboxes.
+Future<UnlinkResult> syncUnlink({required String deviceId}) =>
     RustLib.instance.api.crateApiSyncSyncUnlink(deviceId: deviceId);
 
 /// "Turn off sync on this device": leaves the space and stops syncing
@@ -146,8 +157,13 @@ ScannedInvite? syncReadCode({
   stride: stride,
 );
 
+/// Where a scanned invite would sign in: the address's own settings when
+/// it has known or published ones, the code's otherwise.
+Future<InviteServer> syncInviteServer({required String link}) =>
+    RustLib.instance.api.crateApiSyncSyncInviteServer(link: link);
+
 /// On a new phone: signs in to the mailbox a scanned invite names, with
-/// the settings it carries, and adds the account.
+/// the servers [sync_invite_server] showed, and adds the account.
 Future<AccountInfo> syncAddInviteAccount({
   required String link,
   required String name,
@@ -159,6 +175,78 @@ Future<AccountInfo> syncAddInviteAccount({
   color: color,
   password: password,
 );
+
+/// An account another device removed, kept here until the person says:
+/// what would go with it.
+class HeldAccount {
+  final PlatformInt64 accountId;
+  final String email;
+
+  /// Emails waiting to be sent.
+  final int outbox;
+
+  /// Drafts waiting to be uploaded.
+  final int drafts;
+
+  /// Changes waiting for the server.
+  final int pending;
+
+  /// Its mailbox holds the space.
+  final bool home;
+
+  const HeldAccount({
+    required this.accountId,
+    required this.email,
+    required this.outbox,
+    required this.drafts,
+    required this.pending,
+    required this.home,
+  });
+
+  @override
+  int get hashCode =>
+      accountId.hashCode ^
+      email.hashCode ^
+      outbox.hashCode ^
+      drafts.hashCode ^
+      pending.hashCode ^
+      home.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is HeldAccount &&
+          runtimeType == other.runtimeType &&
+          accountId == other.accountId &&
+          email == other.email &&
+          outbox == other.outbox &&
+          drafts == other.drafts &&
+          pending == other.pending &&
+          home == other.home;
+}
+
+/// Where a scanned invite signs in, shown before the password is typed.
+class InviteServer {
+  /// The host the password goes to.
+  final String host;
+
+  /// It comes from the code itself, not from the address's own known or
+  /// published settings: the person checks it.
+  final bool fromInvite;
+
+  const InviteServer({required this.host, required this.fromInvite});
+
+  @override
+  int get hashCode => host.hashCode ^ fromInvite.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is InviteServer &&
+          runtimeType == other.runtimeType &&
+          host == other.host &&
+          fromInvite == other.fromInvite;
+}
 
 /// A device that just joined the space.
 class Joined {
@@ -333,10 +421,33 @@ class SyncInfo {
   final PlatformInt64? syncedAt;
   final List<SyncDevice> devices;
 
-  const SyncInfo({this.home, this.syncedAt, required this.devices});
+  /// The last round found an older copy of the space and left it out.
+  final bool rollback;
+
+  /// The space was written by a newer version of Piuma: this device
+  /// takes changes in but sends none until it is updated.
+  final bool outdated;
+
+  /// Accounts removed on another device that wait for the person here.
+  final List<HeldAccount> held;
+
+  const SyncInfo({
+    this.home,
+    this.syncedAt,
+    required this.devices,
+    required this.rollback,
+    required this.outdated,
+    required this.held,
+  });
 
   @override
-  int get hashCode => home.hashCode ^ syncedAt.hashCode ^ devices.hashCode;
+  int get hashCode =>
+      home.hashCode ^
+      syncedAt.hashCode ^
+      devices.hashCode ^
+      rollback.hashCode ^
+      outdated.hashCode ^
+      held.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -345,7 +456,10 @@ class SyncInfo {
           runtimeType == other.runtimeType &&
           home == other.home &&
           syncedAt == other.syncedAt &&
-          devices == other.devices;
+          devices == other.devices &&
+          rollback == other.rollback &&
+          outdated == other.outdated &&
+          held == other.held;
 }
 
 /// The QR code "Link a new device" shows, as on `QrPairToApprove`.
@@ -393,12 +507,24 @@ class SyncRound {
   /// Accounts removed on another device, so removed here too.
   final Int64List removed;
 
+  /// Accounts removed on another device that wait for the person here.
+  final List<HeldAccount> held;
+
+  /// An older copy of the space was found and left out.
+  final bool rollback;
+
+  /// The space was written by a newer version of Piuma.
+  final bool outdated;
+
   const SyncRound({
     required this.took,
     required this.unlinked,
     required this.requests,
     required this.keep,
     required this.removed,
+    required this.held,
+    required this.rollback,
+    required this.outdated,
   });
 
   @override
@@ -407,7 +533,10 @@ class SyncRound {
       unlinked.hashCode ^
       requests.hashCode ^
       keep.hashCode ^
-      removed.hashCode;
+      removed.hashCode ^
+      held.hashCode ^
+      rollback.hashCode ^
+      outdated.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -418,5 +547,31 @@ class SyncRound {
           unlinked == other.unlinked &&
           requests == other.requests &&
           keep == other.keep &&
-          removed == other.removed;
+          removed == other.removed &&
+          held == other.held &&
+          rollback == other.rollback &&
+          outdated == other.outdated;
+}
+
+/// After unlinking a device: the new recovery phrase, and the mailboxes
+/// whose passwords that device still knows.
+class UnlinkResult {
+  final String phrase;
+
+  /// Addresses whose password to change, so the device is locked out of
+  /// the mailboxes too.
+  final List<String> exposed;
+
+  const UnlinkResult({required this.phrase, required this.exposed});
+
+  @override
+  int get hashCode => phrase.hashCode ^ exposed.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UnlinkResult &&
+          runtimeType == other.runtimeType &&
+          phrase == other.phrase &&
+          exposed == other.exposed;
 }

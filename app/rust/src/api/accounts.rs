@@ -138,12 +138,8 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     for source in sources {
         disconnect_calendar(source)?;
     }
-    let store = store()?;
-    store.remove_account(id)?;
-    // An account added later may get the same id.
-    store.set_setting(&alert_key(account_id), "")?;
-    store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
-    drop(store);
+    // With every setting that names it; ids aren't given again.
+    store()?.remove_account(id)?;
     credentials::forget(id);
     Ok(())
 }
