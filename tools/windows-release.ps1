@@ -24,8 +24,10 @@
 #
 # From the environment, never the repository:
 #   PIUMA_UPDATE_URL       the repository or web folder the app checks for
-#                          updates (https://github.com/piuma-mail/piuma-mail
-#                          when unset; a fork sets its own)
+#                          updates; unset, the GitHub repository being built
+#                          (GITHUB_REPOSITORY, else the "origin" remote)
+#   PIUMA_REPORT_RELAY     a fork's report relay, read when the engine
+#                          compiles; unset, the project's relay
 #   PIUMA_UPDATE_CHANNEL   "beta" (GitHub prereleases, the default) or
 #                          "stable" (full releases only)
 #   PIUMA_SIGN_PARAMS      signtool parameters for Authenticode, e.g.
@@ -61,7 +63,20 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path "$PSScriptRoot\.."
-$feed = if ($env:PIUMA_UPDATE_URL) { $env:PIUMA_UPDATE_URL } else { "https://github.com/piuma-mail/piuma-mail" }
+# The feed: PIUMA_UPDATE_URL, else the GitHub repository this runs for
+# (GITHUB_REPOSITORY on Actions, else the "origin" remote), so a fork's
+# build follows the fork; the upstream repository only as a last resort.
+$feed = $env:PIUMA_UPDATE_URL
+if (-not $feed -and $env:GITHUB_REPOSITORY) { $feed = "https://github.com/$env:GITHUB_REPOSITORY" }
+if (-not $feed) {
+  $origin = ""
+  try { $origin = git -C $root remote get-url origin 2>$null } catch { }
+  if ($origin -match 'github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(\.git)?$') {
+    $feed = "https://github.com/$($Matches[1])/$($Matches[2])"
+  }
+}
+if (-not $feed) { $feed = "https://github.com/piuma-mail/piuma-mail" }
+Write-Host "Update feed: $feed"
 $updateChannel = if ($env:PIUMA_UPDATE_CHANNEL) { $env:PIUMA_UPDATE_CHANNEL } else { "beta" }
 
 if (-not $Build) { $Build = [int](git -C $root rev-list --count HEAD).Trim() + 700 }

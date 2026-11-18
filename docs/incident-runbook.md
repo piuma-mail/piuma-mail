@@ -15,7 +15,9 @@ copied off a machine, or used for something we did not sign.
 1. **Stop releases**: Settings › Environments › `release`: remove every deployment branch so nothing
    can publish; cancel running "Release" workflows.
 2. **Find out what was signed**: compare every release's files with their attestations
-   (`gh attestation verify <file> --repo <owner>/<repo>`); a file without a matching attestation was
+   (`gh attestation verify <file> --repo <owner>/<repo> --signer-workflow
+   <owner>/<repo>/.github/workflows/release.yml --source-ref refs/heads/main`, and
+   `sha256sum -c SHA256SUMS`); a file without a matching attestation was
    not built by us.
 3. **Revoke**:
    - Windows: ask the certificate authority to revoke the certificate (or disable the Azure Trusted

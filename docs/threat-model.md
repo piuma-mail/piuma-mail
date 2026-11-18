@@ -94,7 +94,9 @@ From a commit on `main` to code running on users' devices:
 4. **Signing**: separate jobs that compile nothing sign the packages: Velopack with Authenticode on
    Windows, `apksigner` with the project key on Android, `codesign` and notarisation on macOS. The
    keys never reach a build step.
-5. **Provenance**: every file gets a build provenance attestation (`gh attestation verify`).
+5. **Provenance**: every file, and the `SHA256SUMS` list of their checksums, gets a build provenance
+   attestation; verify it with `gh attestation verify` naming `--signer-workflow` (the release
+   workflow) and `--source-ref refs/heads/main`, as in [SECURITY.md](../SECURITY.md).
 6. **Publication**: one job with write access uploads the files to a **draft** release and runs
    nothing from the repository; a final job un-drafts it once every platform is there. Both wait for a
    reviewer in the `release` environment. Apps never see drafts.

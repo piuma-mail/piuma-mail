@@ -30,10 +30,15 @@ above, comment on the advisory again.
 ## Checking a download
 
 Every file of a release is built by the "Release" workflow from a commit of `main` and carries a
-build provenance attestation. Check one with the GitHub CLI:
+build provenance attestation; `SHA256SUMS` in the same release lists every file's checksum and is
+attested too. Check a file with the GitHub CLI, naming the workflow and the branch it must come from
+(without them any workflow of the repository, on any branch, would pass):
 
 ```sh
-gh attestation verify PiumaMail-android-arm64.apk --repo piuma-mail/piuma-mail
+gh attestation verify PiumaMail-android-arm64.apk --repo piuma-mail/piuma-mail \
+  --signer-workflow piuma-mail/piuma-mail/.github/workflows/release.yml \
+  --source-ref refs/heads/main
+sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 How the project defends itself, and what it does when something goes wrong:
