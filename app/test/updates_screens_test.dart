@@ -207,9 +207,7 @@ void main() {
     expect(u.prefs.value.automatic, isFalse);
   });
 
-  testWidgets('the version line opens the licenses on desktop', (
-    tester,
-  ) async {
+  testWidgets('the version line opens the licenses on desktop', (tester) async {
     _use(Updates.fake(available: false));
     await _help(tester);
     await tester.tap(find.text('Piuma Mail 0.1.0 · GPL-3.0'));

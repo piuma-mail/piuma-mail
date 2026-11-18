@@ -67,9 +67,11 @@ jobs:
 
   # The engine against a real IMAP server: the tests in core/tests/ that
   # need PIUMA_TEST_IMAP (sync, IDLE, Sent copies, the sync space) and
-  # pass without doing anything elsewhere. The server is Ubuntu's Dovecot,
-  # started by the same tools/test-imap-server.sh contributors run; a
-  # service container would start before the checkout, without the script.
+  # pass without doing anything elsewhere. Dovecot 2.3 from its official
+  # image, pinned by digest, configured by the same
+  # tools/test-imap-server.sh contributors run (Ubuntu 24.04's package is
+  # 2.4, whose configuration syntax differs). Started after the checkout,
+  # with the script mounted: a service container would start before it.
   core-imap:
     name: Rust engine with an IMAP server
     if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
@@ -87,17 +89,19 @@ jobs:
       - name: Install system dependencies
         uses: ./.github/actions/apt-install
         with:
-          packages: libdbus-1-dev dovecot-imapd
+          packages: libdbus-1-dev
       - name: Start Dovecot
         run: |
-          # The package's own server is not needed.
-          sudo systemctl stop dovecot || true
-          PATH="$PATH:/usr/sbin" nohup sh tools/test-imap-server.sh > "$RUNNER_TEMP/dovecot.out" 2>&1 &
-          for _ in $(seq 30); do
+          # Host network: the script listens on 127.0.0.1.
+          docker run -d --name dovecot --network host -v "$PWD/tools:/tools:ro" \
+            --entrypoint sh \
+            dovecot/dovecot@sha256:547d28f9a893c93a1d2f6dc164880cd7bfa74009106dfa46b36a6a2ee636d921 \
+            /tools/test-imap-server.sh
+          for _ in $(seq 60); do
             if (exec 3<>/dev/tcp/127.0.0.1/31143) 2>/dev/null; then echo "Dovecot is up."; exit 0; fi
             sleep 1
           done
-          cat "$RUNNER_TEMP/dovecot.out"
+          docker logs dovecot
           exit 1
       - name: Tests against the server
         env:
@@ -105,7 +109,7 @@ jobs:
         run: cargo test -p piuma-core --tests
       - name: Server log
         if: failure()
-        run: cat "$RUNNER_TEMP/dovecot.out"
+        run: docker logs dovecot || true
 
   app:
     name: Flutter app
@@ -254,14 +258,20 @@ jobs:
   # matrix, and a pull request may run none of them.
   builds:
     name: Builds
-    needs: [changes, build]
+    needs: [app, core, changes, build]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # Builds are skipped when the app or the engine fail: that must not
+      # read as a pass.
       - env:
+          APP: ${{ needs.app.result }}
+          CORE: ${{ needs.core.result }}
           CHANGES: ${{ needs.changes.result }}
+          MATRIX: ${{ needs.changes.outputs.matrix }}
           BUILD: ${{ needs.build.result }}
         run: |
-          echo "Platforms: $CHANGES, builds: $BUILD"
-          if [ "$CHANGES" != success ] && [ "$CHANGES" != skipped ]; then exit 1; fi
-          if [ "$BUILD" != success ] && [ "$BUILD" != skipped ]; then exit 1; fi
+          echo "App: $APP, engine: $CORE, platforms: $CHANGES, builds: $BUILD"
+          [ "$APP" = success ] && [ "$CORE" = success ] && [ "$CHANGES" = success ] || exit 1
+          if [ "$MATRIX" = '{"include":[]}' ]; then exit 0; fi
+          [ "$BUILD" = success ]
