@@ -321,6 +321,16 @@ class EngineMailSource extends MailSource with EngineCompose {
     _round().ignore();
   }
 
+  /// What the last round had to say on Devices & sync.
+  (String, bool, bool, bool, bool, bool) _syncNotice = (
+    '',
+    false,
+    false,
+    false,
+    false,
+    false,
+  );
+
   Future<void> _round() async {
     if (_rounding) return;
     _rounding = true;
@@ -336,7 +346,19 @@ class EngineMailSource extends MailSource with EngineCompose {
         _forgetStatus(id);
       }
       if (r.removed.isNotEmpty) _updateStatus();
-      if (r.took || r.unlinked) {
+      // Removals waiting for the person, an old copy refused, a newer
+      // version's space: Devices & sync says so.
+      final notice = (
+        [for (final h in r.held) h.accountId.toInt()].join(','),
+        r.rollback,
+        r.outdated,
+        r.unverified,
+        r.conflict,
+        r.unlinked,
+      );
+      final changed = notice != _syncNotice;
+      _syncNotice = notice;
+      if (r.took || r.unlinked || changed) {
         _reloadAccounts();
         _changes.add(null);
       }
@@ -362,11 +384,15 @@ class EngineMailSource extends MailSource with EngineCompose {
   static SyncFailure _syncError(Object e) => SyncFailure(switch (e) {
     engine.EngineError(:final kind) => switch (kind) {
       engine.ErrorKind.wrongPhrase => SyncProblem.wrongPhrase,
+      engine.ErrorKind.oldPhrase => SyncProblem.oldPhrase,
       engine.ErrorKind.wrongCode => SyncProblem.wrongCode,
       engine.ErrorKind.expired => SyncProblem.expired,
       engine.ErrorKind.refused => SyncProblem.refused,
       engine.ErrorKind.noSpace => SyncProblem.noSpace,
       engine.ErrorKind.taken => SyncProblem.taken,
+      engine.ErrorKind.rollback => SyncProblem.rollback,
+      engine.ErrorKind.outdated => SyncProblem.outdated,
+      engine.ErrorKind.conflict => SyncProblem.conflict,
       engine.ErrorKind.unreachable => SyncProblem.offline,
       _ => SyncProblem.other,
     },
@@ -385,6 +411,25 @@ class EngineMailSource extends MailSource with EngineCompose {
   SyncState syncState() {
     final s = sync.syncInfo();
     return SyncState(
+      rollback: s.rollback,
+      outdated: s.outdated,
+      recoveryChanged: s.recoveryChanged,
+      unverified: s.unverified,
+      conflict: s.conflict,
+      unlinked: s.unlinked,
+      exposed: s.exposed,
+      exposedDevice: s.exposedDevice,
+      held: [
+        for (final h in s.held)
+          HeldRemoval(
+            accountId: h.accountId.toInt(),
+            email: h.email,
+            outbox: h.outbox,
+            drafts: h.drafts,
+            pending: h.pending,
+            home: h.home,
+          ),
+      ],
       home: s.home,
       syncedAt: switch (s.syncedAt) {
         final t? => _at(t),
@@ -418,8 +463,33 @@ class EngineMailSource extends MailSource with EngineCompose {
   Future<String> recoveryPhrase() => _syncing(sync.syncPhrase);
 
   @override
-  Future<String> unlinkDevice(String id) =>
-      _syncing(() => sync.syncUnlink(deviceId: id));
+  Future<Unlinked> unlinkDevice(String id) async {
+    final r = await _syncing(() => sync.syncUnlink(deviceId: id));
+    return Unlinked(phrase: r.phrase, exposed: r.exposed);
+  }
+
+  @override
+  Future<void> exposedChanged() async {
+    await _syncing(sync.syncExposedDone);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> confirmRemoval(int accountId) async {
+    await _syncing(() => sync.syncConfirmRemoval(accountId: accountId));
+    await AndroidPasswords.forget(accountId);
+    _forgetStatus(accountId);
+    _updateStatus();
+    _reloadAccounts();
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> keepAccount(int accountId) async {
+    await _syncing(() => sync.syncKeepAccount(accountId: accountId));
+    _changes.add(null);
+    _round().ignore();
+  }
 
   @override
   Future<void> turnOffSync() => _syncing(sync.syncTurnOff);
@@ -578,6 +648,16 @@ class EngineMailSource extends MailSource with EngineCompose {
       stride: stride,
     );
     return s == null ? null : ScannedPair(link: s.link, email: s.email);
+  }
+
+  @override
+  Future<InviteServer?> inviteServer(ScannedPair code) async {
+    try {
+      final s = await sync.syncInviteServer(link: code.link);
+      return InviteServer(host: s.host, fromCode: s.fromInvite);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override

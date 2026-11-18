@@ -4276,6 +4276,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'These words don\'t open your space. Check them and try again.';
 
   @override
+  String get pairPhraseOld =>
+      'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.';
+
+  @override
+  String get pairConflict =>
+      'Two of your devices removed each other, so this space can\'t be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.';
+
+  @override
   String get pairContinue => 'Continue';
 
   @override
@@ -6282,6 +6290,212 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
+
+  @override
+  String syncHeldTitle(String email) {
+    return '$email was removed on another device';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Here it still has $what. Remove it from this device too, or keep it on all your devices?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails waiting to be sent',
+      one: '1 email waiting to be sent',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count drafts not saved to the server yet',
+      one: '1 draft not saved to the server yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count changes not on the server yet',
+      one: '1 change not on the server yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'Its mailbox holds your sync space, so it stays here. Keep it, or move the space to another mailbox first.';
+
+  @override
+  String get syncHeldRemove => 'Remove here';
+
+  @override
+  String get syncHeldKeep => 'Keep it';
+
+  @override
+  String get syncRollbackTitle => 'An older copy of your space was left out';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Someone with access to $email, or a device you unlinked, may have put it back. Nothing was taken from it. If this happens again, change that mailbox’s password.';
+  }
+
+  @override
+  String get syncOutdatedTitle => 'Update Piuma to sync this device’s changes';
+
+  @override
+  String get syncOutdatedBody =>
+      'Another device saved your space with a newer version. This one still receives changes, and keeps its own until it is updated.';
+
+  @override
+  String get syncExposedTitle => 'Change these passwords';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name can’t read your space any more, but it still knows the passwords of these mailboxes. Change them with your provider to keep it out of your mail too.';
+  }
+
+  @override
+  String get syncExposedDone => 'Got it';
+
+  @override
+  String get syncPaused => 'Paused on this device';
+
+  @override
+  String get syncConfirmTitle => 'Confirm this device';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.';
+
+  @override
+  String get syncConfirm => 'Confirm';
+
+  @override
+  String get syncConflictTitle => 'Two devices removed each other';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names each removed the other from your space, and one of them may not be yours any more. Sync stopped on this device: link it again from a device you still have.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Link again';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name removed this device';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'Sync stopped on this device; its accounts and mail stay here. If that wasn’t you, link it again from a device you still have. Otherwise, turn sync off here.';
+
+  @override
+  String get syncExposedNowTitle => 'Change these passwords now';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name still knows these passwords. Start with $email: until its password changes, $name can still reach the folder that holds your space.';
+  }
+
+  @override
+  String get syncExposedChanged => 'I changed them';
+
+  @override
+  String get syncExposedFirst => 'First: it holds your space';
+
+  @override
+  String get syncFailRollback =>
+      'Only an older copy of your space is in this mailbox. Nothing was changed.';
+
+  @override
+  String get syncFailOutdated =>
+      'Your space was saved by a newer version of Piuma. Update Piuma on this device.';
+
+  @override
+  String pairServer(String host) {
+    return 'Signs in at $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'This server comes from the code, not from your provider’s settings. Make sure it is your provider’s before you type the password.';
+
+  @override
+  String get pairServerChecking => 'Checking the server…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Your phone said this wasn\'t you.',
+      'tablet': 'Your tablet said this wasn\'t you.',
+      'other': 'Your computer said this wasn\'t you.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Open Piuma on your phone and enter the code.',
+      'tablet': 'Open Piuma on your tablet and enter the code.',
+      'other': 'Open Piuma on your computer and enter the code.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Waiting for your phone to confirm…',
+      'tablet': 'Waiting for your tablet to confirm…',
+      'other': 'Waiting for your computer to confirm…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Your phone will show “$title”',
+      'tablet': 'Your tablet will show “$title”',
+      'other': 'Your computer will show “$title”',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'For security, confirm from a device that\'s already paired: your phone, active $ago.',
+      'tablet':
+          'For security, confirm from a device that\'s already paired: your tablet, active $ago.',
+      'other':
+          'For security, confirm from a device that\'s already paired: your computer, active $ago.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Write down your new recovery phrase';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.';
 
   @override
   String get saveSearch => 'Save search';

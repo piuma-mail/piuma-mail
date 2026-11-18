@@ -4314,6 +4314,14 @@ class AppLocalizationsFr extends AppLocalizations {
       'Ces mots n’ouvrent pas votre espace. Vérifiez-les et réessayez.';
 
   @override
+  String get pairPhraseOld =>
+      'Cette phrase de récupération a été remplacée : votre espace en a reçu une plus récente quand un appareil a été dissocié ou a désactivé la synchronisation. Utilisez la phrase la plus récente, ou un code d’un appareil associé.';
+
+  @override
+  String get pairConflict =>
+      'Deux de vos appareils se sont retirés l’un l’autre : vous ne pouvez pas encore rejoindre cet espace. Changez le mot de passe de la boîte qui le contient, synchronisez un appareil que vous avez encore, puis réessayez.';
+
+  @override
   String get pairContinue => 'Continuer';
 
   @override
@@ -6334,6 +6342,215 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get bundledReleaseNotes =>
       '## Le courrier, tout en légèreté\n- Mises en page originales avec défilement unique et contrôle des images\n- Barre de mise en forme et ouverture de l’éditeur complet dans les réponses\n- Gestes de balayage horizontal plus précis\n- Alertes d’expéditeur pour l’usurpation de marque et les domaines ressemblants\n- Export CSV mensuel du Coffre avec numéro de TVA du marchand';
+
+  @override
+  String syncHeldTitle(String email) {
+    return '$email a été supprimé sur un autre appareil';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Ici, il reste $what. Le supprimer aussi de cet appareil, ou le garder sur tous vos appareils ?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails en attente d’envoi',
+      one: '1 e-mail en attente d’envoi',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count brouillons pas encore enregistrés sur le serveur',
+      one: '1 brouillon pas encore enregistré sur le serveur',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count modifications pas encore sur le serveur',
+      one: '1 modification pas encore sur le serveur',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'Sa boîte contient votre espace de synchronisation : il reste donc ici. Gardez-le, ou déplacez d’abord l’espace vers une autre boîte.';
+
+  @override
+  String get syncHeldRemove => 'Supprimer ici';
+
+  @override
+  String get syncHeldKeep => 'Le garder';
+
+  @override
+  String get syncRollbackTitle =>
+      'Une copie plus ancienne de votre espace a été écartée';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Quelqu’un ayant accès à $email, ou un appareil que vous avez dissocié, a pu la remettre. Rien n’en a été repris. Si cela se reproduit, changez le mot de passe de cette boîte.';
+  }
+
+  @override
+  String get syncOutdatedTitle =>
+      'Mettez Piuma à jour pour synchroniser les modifications de cet appareil';
+
+  @override
+  String get syncOutdatedBody =>
+      'Un autre appareil a enregistré votre espace avec une version plus récente. Celui-ci reçoit toujours les modifications et garde les siennes jusqu’à sa mise à jour.';
+
+  @override
+  String get syncExposedTitle => 'Changez ces mots de passe';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name ne peut plus lire votre espace, mais connaît encore les mots de passe de ces boîtes. Changez-les chez votre fournisseur pour l’écarter aussi de vos e-mails.';
+  }
+
+  @override
+  String get syncExposedDone => 'Compris';
+
+  @override
+  String get syncPaused => 'En pause sur cet appareil';
+
+  @override
+  String get syncConfirmTitle => 'Confirmez cet appareil';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma vérifie désormais quels appareils font partie de votre espace. Tant que vous ne confirmez pas celui-ci avec votre phrase de récupération, ou avec un code d’un appareil déjà mis à jour, rien n’est synchronisé ici.';
+
+  @override
+  String get syncConfirm => 'Confirmer';
+
+  @override
+  String get syncConflictTitle => 'Deux appareils se sont retirés l’un l’autre';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names se sont retirés l’un l’autre de votre espace, et l’un d’eux n’est peut-être plus à vous. La synchronisation s’est arrêtée sur cet appareil : associez-le à nouveau depuis un appareil que vous avez encore.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Associer à nouveau';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name a retiré cet appareil';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'La synchronisation s’est arrêtée sur cet appareil ; ses comptes et ses e-mails restent ici. Si ce n’était pas vous, associez-le à nouveau depuis un appareil que vous avez encore. Sinon, désactivez la synchronisation ici.';
+
+  @override
+  String get syncExposedNowTitle => 'Changez ces mots de passe maintenant';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name connaît encore ces mots de passe. Commencez par $email : tant que son mot de passe n’a pas changé, $name peut encore atteindre le dossier qui contient votre espace.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Je les ai changés';
+
+  @override
+  String get syncExposedFirst => 'D’abord : il contient votre espace';
+
+  @override
+  String get syncFailRollback =>
+      'Cette boîte ne contient qu’une copie plus ancienne de votre espace. Rien n’a été modifié.';
+
+  @override
+  String get syncFailOutdated =>
+      'Votre espace a été enregistré par une version plus récente de Piuma. Mettez Piuma à jour sur cet appareil.';
+
+  @override
+  String pairServer(String host) {
+    return 'Se connecte à $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'Ce serveur vient du code, pas des réglages de votre fournisseur. Vérifiez qu’il s’agit bien du sien avant de saisir le mot de passe.';
+
+  @override
+  String get pairServerChecking => 'Vérification du serveur…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Votre téléphone a indiqué que ce n’était pas vous.',
+      'tablet': 'Votre tablette a indiqué que ce n’était pas vous.',
+      'other': 'Votre ordinateur a indiqué que ce n’était pas vous.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Ouvrez Piuma sur votre téléphone et saisissez le code.',
+      'tablet': 'Ouvrez Piuma sur votre tablette et saisissez le code.',
+      'other': 'Ouvrez Piuma sur votre ordinateur et saisissez le code.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'En attente de la confirmation de votre téléphone…',
+      'tablet': 'En attente de la confirmation de votre tablette…',
+      'other': 'En attente de la confirmation de votre ordinateur…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Votre téléphone affichera « $title »',
+      'tablet': 'Votre tablette affichera « $title »',
+      'other': 'Votre ordinateur affichera « $title »',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre téléphone, actif $ago.',
+      'tablet':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre tablette, active $ago.',
+      'other':
+          'Par sécurité, confirmez depuis un appareil déjà associé : votre ordinateur, actif $ago.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get syncRecoveryChangedTitle =>
+      'Notez votre nouvelle phrase de récupération';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Votre espace a une nouvelle clé et une nouvelle phrase de récupération, car un appareil est parti ou deux ont été dissociés en même temps. Celle que vous aviez notée ne fonctionne plus.';
 
   @override
   String get saveSearch => 'Enregistrer la recherche';
