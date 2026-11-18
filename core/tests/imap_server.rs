@@ -285,7 +285,9 @@ async fn resync_applies_deletes_flags_and_new_mail() {
 
 #[tokio::test]
 async fn an_unchanged_folder_is_not_listed_and_flags_come_without_condstore() {
-    let Some(cfg) = config("unchanged") else { return };
+    let Some(cfg) = config("unchanged") else {
+        return;
+    };
     let mut outside = Outside::open(&cfg).await;
     for day in 10..14 {
         let raw = PLAIN.replace("New website quote", &format!("Day {day}"));
@@ -312,7 +314,9 @@ async fn an_unchanged_folder_is_not_listed_and_flags_come_without_condstore() {
     // One gone and one new, with the same count: listed again.
     outside.store(2, "+FLAGS (\\Deleted)").await;
     outside.expunge().await;
-    outside.deliver(HTML_ONLY, "15-Oct-2026 08:00:00 +0200").await;
+    outside
+        .deliver(HTML_ONLY, "15-Oct-2026 08:00:00 +0200")
+        .await;
     let report = conn
         .sync_mailbox(&store, account, "INBOX", |_, _| {})
         .await
