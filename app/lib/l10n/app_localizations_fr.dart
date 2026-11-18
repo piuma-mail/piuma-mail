@@ -6401,6 +6401,169 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get composeOptions => 'Options';
+
+  @override
+  String get composePlainText => 'Texte brut';
+
+  @override
+  String get composeHighPriority => 'Priorité haute';
+
+  @override
+  String get composeReadReceipt => 'Demander un accusé de lecture';
+
+  @override
+  String get composePlainTitle => 'Passer en texte brut ?';
+
+  @override
+  String get composePlainBody =>
+      'Le texte brut n’a ni gras, ni italique, ni liens, ni images. Les liens gardent leur adresse entre parenthèses et les images sont jointes comme fichiers.';
+
+  @override
+  String get composePlainConfirm => 'Passer en texte brut';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Pièce jointe oubliée ?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Votre message parle d’une pièce jointe, mais rien n’est joint.';
+
+  @override
+  String get sendNoSubjectTitle => 'Envoyer sans objet ?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Un objet aide à retrouver votre message plus tard.';
+
+  @override
+  String get sendAddSubject => 'Ajouter un objet';
+
+  @override
+  String get sendAnyway => 'Envoyer quand même';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name est trop volumineux : les pièces jointes peuvent faire $size au total.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name est trop volumineuse pour aller dans le texte.';
+  }
+
+  @override
+  String get pastedImage => 'L’image collée';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count adresses',
+      one: '1 adresse',
+      zero: 'Aucune adresse',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Groupe';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender demande à être prévenu quand vous lirez ce message.';
+  }
+
+  @override
+  String get readReceiptSend => 'Envoyer l’accusé';
+
+  @override
+  String get readReceiptDontSend => 'Ne pas envoyer';
+
+  @override
+  String get readReceiptNever => 'Jamais pour cet expéditeur';
+
+  @override
+  String get readReceiptSent => 'Accusé envoyé';
+
+  @override
+  String get readReceiptFailed =>
+      'L’accusé n’a pas pu être envoyé. Réessayez plus tard.';
+
+  @override
+  String get highPriority => 'Priorité haute';
+
+  @override
+  String get repliesTitle => 'Réponses';
+
+  @override
+  String get replyBelowQuote => 'Répondre sous la citation';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Désactivé, les réponses commencent au-dessus du message cité.';
+
+  @override
+  String get quoteSelection => 'Ne citer que les mots sélectionnés';
+
+  @override
+  String get quoteSelectionHint =>
+      'Si des mots sont sélectionnés dans un message, Répondre ne cite qu’eux.';
+
+  @override
+  String get plainTextTitle => 'Nouveaux messages en texte brut';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · les nouveaux messages commencent en texte brut';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Groupes de contacts';
+
+  @override
+  String get contactGroupsHint =>
+      'Tapez le nom d’un groupe dans À, Cc ou Cci pour ajouter tous ses membres.';
+
+  @override
+  String get contactGroupNew => 'Nouveau groupe';
+
+  @override
+  String get contactGroupUntitled => 'Groupe sans nom';
+
+  @override
+  String get contactGroupName => 'Nom du groupe';
+
+  @override
+  String get contactGroupAddresses => 'Adresses';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Une par ligne, ou séparées par des virgules.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Supprimer $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insérer une image';
+
+  @override
+  String get composePastePicture => 'Coller une image';
+
+  @override
+  String get noPictureToPaste => 'Il n’y a pas d’image dans le presse-papiers.';
+
+  @override
+  String get composeReadReceiptAsked => 'Accusé de lecture demandé';
+
+  @override
+  String get readReceiptQueued =>
+      'L’accusé attend dans la Boîte d’envoi et partira dès que possible.';
+
+  @override
   String oauthOwnClientNotHere(String provider) {
     return 'Sur Android, cette application ne peut se connecter à $provider qu’avec le client avec lequel elle a été compilée. Utilisez un mot de passe d’application, ou une version compilée avec votre client.';
   }

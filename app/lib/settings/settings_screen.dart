@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../compose/writing_settings.dart';
 import '../design/icons.dart';
 import '../design/look.dart';
 import '../design/motion.dart';
@@ -293,10 +294,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         phone: true,
         onBack: _close,
         openTemplates: open == SettingsSection.templates,
-        templates: TemplatesPage(
+        templates: WritingExtras(
           source: widget.source,
           phone: true,
-          embedded: true,
+          templates: TemplatesPage(
+            source: widget.source,
+            phone: true,
+            embedded: true,
+          ),
         ),
       );
     } else {
@@ -522,7 +527,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       source: widget.source,
                       initial: _signature,
                       openTemplates: _section == SettingsSection.templates,
-                      templates: TemplatesPage(source: widget.source),
+                      templates: WritingExtras(
+                        source: widget.source,
+                        templates: TemplatesPage(source: widget.source),
+                      ),
                     ),
                   ),
                 )

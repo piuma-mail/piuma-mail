@@ -103,6 +103,11 @@ Piuma Mail is free software: you can build, sign and ship your own copy. Nothing
 
 Also yours to change: the application ids (`mail.piuma.piuma_mail` in `app/android`, `wear/android`, `app/linux/CMakeLists.txt`, `app/macos`, `app/ios`) if your build should install next to the upstream app, the Velopack package id (`PiumaMail` in `tools/windows-release.ps1`), `.github/CODEOWNERS` and the contact in `SECURITY.md`.
 
+## Platform differences in compose
+
+- **Spell check** uses the platform's own checker, in the language the text is written in (one of the app's six, detected by the engine, else the app's language): Android and, through Flutter, iOS and macOS. Flutter has no spell checker on Windows and Linux yet, so there the body and subject are not checked; nothing else is needed to build.
+- **Pasting a picture** into the text reads the system clipboard through the engine on Windows, macOS and Linux (`arboard`; on Linux it uses the X11 clipboard, which XWayland provides). On Android, pictures come from the keyboard (Gboard's clipboard, GIFs, stickers) through the text field. iOS is not wired yet.
+
 ## Sign-in with Microsoft and Google
 
 Microsoft 365 and Outlook.com no longer accept passwords from mail apps, and Gmail takes them only as app passwords. Piuma Mail signs in to them with OAuth 2.0 instead: Authorization Code with PKCE in the system browser (never a web view of the app's own), as RFC 8252 asks of native apps. The engine side is `core/src/oauth.rs`; the providers are data in `core/src/oauth_providers.json` (endpoints, scopes, servers, domains and MX hosts), so another provider is a new entry there, not new code.
