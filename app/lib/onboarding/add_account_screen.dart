@@ -16,13 +16,15 @@ import '../widgets/brand.dart';
 import '../widgets/button.dart';
 import '../widgets/progress.dart';
 import '../widgets/text_field.dart';
+import 'account_errors.dart';
 import 'pair_screen.dart';
 import 'providers.dart';
 import 'scan_pair.dart';
 
 /// The address; the settings found, or typed in; or, from "Or start
-/// from", the PEC provider and a provider's app password.
-enum _Step { email, found, manual, pec, provider }
+/// from", the PEC provider and a provider's app password; or a
+/// provider's own sign-in page (Microsoft, Google).
+enum _Step { email, found, manual, pec, provider, oauth }
 
 /// Adding an IMAP account, laid out like the desktop `OnboardingDesktop`
 /// mockup and following the steps of the phone `Onboarding` flow: the
@@ -79,6 +81,21 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   bool _busy = false;
   AddAccountError? _error;
 
+  /// With [AddAccountError.certificate]: the certificate refused.
+  CertificateProblem? _certificate;
+
+  /// Certificates the person chose to trust for this account.
+  final _trusted = <TrustedCertificate>[];
+
+  /// The provider of [_Step.oauth]: `microsoft`, `google`.
+  String? _oauth;
+
+  /// "Advanced: your own client ID" is open.
+  bool _advanced = false;
+  final _clientId = TextEditingController();
+  final _tenant = TextEditingController();
+  final _clientSecret = TextEditingController();
+
   /// The account just connected: "Account connected" shows it until Go to
   /// inbox or Add another account.
   MailAccount? _added;
@@ -129,10 +146,14 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _name,
     _sender,
     _jmapServer,
+    _clientId,
+    _tenant,
+    _clientSecret,
   ];
 
   @override
   void dispose() {
+    if (_busy && _step == _Step.oauth) widget.source.cancelOAuth();
     for (final c in _controllers) {
       c.dispose();
     }
@@ -155,6 +176,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _Step.found => _password.text.isNotEmpty,
     _Step.provider => _emailReady && _password.text.trim().isNotEmpty,
     _Step.pec => false,
+    _Step.oauth => _emailReady && _oauthAvailable,
     _Step.manual when _jmap =>
       _password.text.isNotEmpty && _jmapServer.text.trim().isNotEmpty,
     _Step.manual =>
@@ -162,14 +184,52 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _username.text.trim().isNotEmpty &&
           _imapHost.text.trim().isNotEmpty &&
           _smtpHost.text.trim().isNotEmpty &&
-          int.tryParse(_imapPort.text) != null &&
-          int.tryParse(_smtpPort.text) != null,
+          validPort(_imapPort.text) != null &&
+          validPort(_smtpPort.text) != null,
   };
+
+  /// A port field holds something that isn't a port.
+  bool get _badPort => [
+    _imapPort,
+    _smtpPort,
+  ].any((c) => c.text.trim().isNotEmpty && validPort(c.text) == null);
+
+  OAuthProviderInfo? _oauthInfo(String id) =>
+      widget.source.oauthProviders.where((p) => p.id == id).firstOrNull;
+
+  /// "Microsoft", "Google": as the provider calls itself.
+  String _oauthName(String id) =>
+      _oauthInfo(id)?.name ??
+      switch (id) {
+        'microsoft' => 'Microsoft',
+        'google' => 'Google',
+        _ => id,
+      };
+
+  /// The client of the person's own, from Advanced; null for the build's.
+  OAuthClientConfig? get _ownClient {
+    final id = _clientId.text.trim();
+    if (id.isEmpty || !(_oauthInfo(_oauth ?? '')?.ownClient ?? true)) {
+      return null;
+    }
+    String? opt(TextEditingController c) =>
+        c.text.trim().isEmpty ? null : c.text.trim();
+    return OAuthClientConfig(
+      clientId: id,
+      tenant: opt(_tenant),
+      clientSecret: opt(_clientSecret),
+    );
+  }
+
+  /// This build signs in with the provider, or a client ID was given.
+  bool get _oauthAvailable =>
+      (_oauthInfo(_oauth ?? '')?.builtIn ?? false) || _ownClient != null;
 
   void _go(_Step step) => setState(() {
     _step = step;
     _welcome = false;
     _error = null;
+    _certificate = null;
   });
 
   /// Step 1: look the address up.
@@ -184,13 +244,25 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       found = null;
     }
     if (!mounted) return;
+    // Providers that sign in with their own page: Microsoft always (it
+    // takes no passwords any more), Google when this build can.
+    final oauth = found?.oauth;
+    final useOAuth =
+        oauth != null &&
+        (oauth == 'microsoft' || (_oauthInfo(oauth)?.builtIn ?? false));
     setState(() {
       _busy = false;
       _found = found;
       _notFound = found == null;
       _fillServers(found);
-      _step = found == null ? _Step.manual : _Step.found;
+      _oauth = useOAuth ? oauth : null;
+      _step = useOAuth
+          ? _Step.oauth
+          : found == null
+          ? _Step.manual
+          : _Step.found;
       _error = null;
+      _certificate = null;
     });
   }
 
@@ -206,11 +278,30 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _jmap = s?.jmapUrl != null;
   }
 
-  /// "Or start from": Gmail, iCloud and Fastmail ask for their app
-  /// password right away, PEC first for its provider.
-  void _startFrom(int i) {
-    if (i == 3) return _go(_Step.pec);
-    _pick([MailProvider.gmail, MailProvider.icloud, MailProvider.fastmail][i]);
+  /// "Or start from": Outlook signs in on Microsoft's page, Gmail on
+  /// Google's when this build can (else with an app password), iCloud and
+  /// Fastmail ask for their app password right away, PEC first for its
+  /// provider.
+  void _startFrom(int i) => switch (i) {
+    0 when _oauthInfo('google')?.builtIn ?? false => _pickOAuth('google'),
+    0 => _pick(MailProvider.gmail),
+    1 => _pickOAuth('microsoft'),
+    2 => _pick(MailProvider.icloud),
+    3 => _pick(MailProvider.fastmail),
+    _ => _go(_Step.pec),
+  };
+
+  static const _startFromLabels = [
+    'Gmail',
+    'Outlook',
+    'iCloud',
+    'Fastmail',
+    'PEC',
+  ];
+
+  void _pickOAuth(String provider) {
+    _oauth = provider;
+    _go(_Step.oauth);
   }
 
   void _pick(MailProvider provider) {
@@ -232,8 +323,70 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   void _submit() => switch (_step) {
     _Step.email => _lookUp(),
     _Step.pec => null,
+    _Step.oauth => _connectOAuth(),
     _ => _connect(),
   };
+
+  /// Trusts the certificate just refused, for this account, and tries
+  /// again.
+  void _trustAndRetry() {
+    final cert = _certificate;
+    if (cert == null || _busy) return;
+    _trusted
+      ..removeWhere((t) => t.host == cert.host)
+      ..add(cert.trusted);
+    _connect();
+  }
+
+  void _failed(Object e) {
+    if (!mounted) return;
+    setState(() {
+      if (e is AddAccountException) {
+        _error = e.error;
+        _certificate = e.certificate;
+      } else {
+        // A Keystore that refused the password, a plugin missing: still
+        // said, never a silent stop.
+        _error = AddAccountError.other;
+        _certificate = null;
+      }
+    });
+  }
+
+  /// Opens the provider's page in the browser and waits for the person
+  /// to sign in there.
+  Future<void> _connectOAuth() async {
+    final provider = _oauth;
+    if (provider == null || !_ready || _busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _certificate = null;
+    });
+    try {
+      final account = await widget.source.addOAuthAccount(
+        provider: provider,
+        name: _name.text.trim().isEmpty
+            ? (provider == 'google' ? 'Gmail' : 'Outlook')
+            : _name.text.trim(),
+        email: _email.text.trim(),
+        senderName: _sender.text.trim(),
+        color: _color,
+        client: _ownClient,
+      );
+      final found = await _lookForSpace(account);
+      if (mounted) {
+        setState(() {
+          _added = account;
+          _space = found;
+        });
+      }
+    } catch (e) {
+      _failed(e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   /// From "Account connected" back to an empty address, for the next one.
   void _another() {
@@ -244,6 +397,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       _added = null;
       _found = null;
       _provider = null;
+      _oauth = null;
+      _trusted.clear();
       _notFound = false;
       _color = _freeColor();
     });
@@ -256,6 +411,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     setState(() {
       _busy = true;
       _error = null;
+      _certificate = null;
     });
     final provider = _step == _Step.provider ? _provider : null;
     if (provider != null) return _connectProvider(provider);
@@ -273,8 +429,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               email: _email.text.trim(),
               senderName: _sender.text.trim(),
               color: _color,
-              sessionUrl: jmapUrl,
+              sessionUrl: jmapUrl.trim(),
               password: _password.text,
+              trusted: List.of(_trusted),
             )
           : await widget.source.addImapAccount(
               name: _name.text.trim().isEmpty
@@ -284,15 +441,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               senderName: _sender.text.trim(),
               color: _color,
               host: _imapHost.text.trim(),
-              port: int.parse(_imapPort.text),
+              port: validPort(_imapPort.text)!,
               security: _imapSecurity,
               username: _username.text.trim(),
               password: _password.text,
               smtp: MailServer(
                 _smtpHost.text.trim(),
-                int.parse(_smtpPort.text),
+                validPort(_smtpPort.text)!,
                 _smtpSecurity,
               ),
+              trusted: List.of(_trusted),
             );
       final found = await _lookForSpace(account);
       if (mounted) {
@@ -302,8 +460,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _password.clear();
         });
       }
-    } on AddAccountException catch (e) {
-      if (mounted) setState(() => _error = e.error);
+    } catch (e) {
+      _failed(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -336,6 +494,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               username: email,
               password: password,
               smtp: p.smtp,
+              trusted: List.of(_trusted),
             );
       final found = await _lookForSpace(account);
       if (mounted) {
@@ -345,8 +504,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _password.clear();
         });
       }
-    } on AddAccountException catch (e) {
-      if (mounted) setState(() => _error = e.error);
+    } catch (e) {
+      _failed(e);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -483,6 +642,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       _Step.manual => (2, l.setUpManually),
       _Step.pec => (2, l.pecWhichProvider),
       _Step.provider => (2, _provider!.title(l)),
+      _Step.oauth => (2, l.oauthSignInWith(_oauthName(_oauth!))),
     };
     return Padding(
       padding: const EdgeInsets.fromLTRB(48, 40, 48, 36),
@@ -519,6 +679,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
             _Step.manual => _manualStep(context),
             _Step.pec => _pecStep(context),
             _Step.provider => _providerStep(context),
+            _Step.oauth => _oauthStep(context),
           },
           if (_step != _Step.pec) ...[
             const SizedBox(height: 24),
@@ -526,14 +687,10 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           ],
           if (_error != null) ...[
             const SizedBox(height: 14),
-            PiumaEnter(
-              child: Text(switch (_error!) {
-                AddAccountError.wrongPassword => l.errorWrongPassword,
-                AddAccountError.unreachable => l.errorUnreachable,
-                AddAccountError.insecure => l.errorInsecure,
-                AddAccountError.keychain => l.errorKeychain,
-                AddAccountError.other => l.errorOther,
-              }, style: TextStyle(fontSize: 14, color: c.danger)),
+            AccountErrorView(
+              error: _error!,
+              certificate: _certificate,
+              onTrust: _busy ? null : _trustAndRetry,
             ),
             _reportLink(context),
           ],
@@ -568,7 +725,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       Text(l.orStartFrom, style: TextStyle(fontSize: 13, color: c.muted)),
       const SizedBox(height: 10),
       ProviderGrid(
-        labels: const ['Gmail', 'iCloud', 'Fastmail', 'PEC'],
+        labels: _startFromLabels,
         phone: phone,
         onPick: _busy ? (_) {} : _startFrom,
       ),
@@ -642,6 +799,122 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
         hint: p.example,
       ),
     ];
+  }
+
+  /// A provider's own sign-in page: the address, what happens next, and
+  /// a client ID of the person's own under Advanced.
+  List<Widget> _oauthStep(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final id = _oauth!;
+    final name = _oauthName(id);
+    final info = _oauthInfo(id);
+    final builtIn = info?.builtIn ?? false;
+    final ownClient = info?.ownClient ?? true;
+    final muted = TextStyle(fontSize: 13, height: 1.4, color: c.muted);
+    return [
+      Text(
+        l.oauthLead(name),
+        style: TextStyle(fontSize: 15, height: 1.45, color: c.muted),
+      ),
+      if (!builtIn && !(info?.appPasswords ?? id == 'google')) ...[
+        const SizedBox(height: 12),
+        Text(l.oauthMicrosoftNoClient, style: muted),
+      ],
+      const SizedBox(height: 20),
+      PiumaTextField(
+        label: l.emailAddress,
+        controller: _email,
+        autofocus: !_emailReady,
+        keyboardType: TextInputType.emailAddress,
+        autofillHints: const [AutofillHints.email],
+        onSubmitted: (_) => _submit(),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 16,
+        children: [
+          if (id == 'google')
+            SizedBox(
+              height: 44,
+              child: Align(
+                widthFactor: 1,
+                child: _TextLink(
+                  label: l.oauthUseAppPassword,
+                  onTap: () => _pick(MailProvider.gmail),
+                ),
+              ),
+            ),
+          if (ownClient)
+            SizedBox(
+              height: 44,
+              child: Align(
+                widthFactor: 1,
+                child: _TextLink(
+                  label: l.oauthAdvanced,
+                  onTap: () => setState(() => _advanced = !_advanced),
+                ),
+              ),
+            ),
+        ],
+      ),
+      if (!ownClient) Text(l.oauthOwnClientNotHere(name), style: muted),
+      if (ownClient &&
+          (_advanced || (!builtIn && _clientId.text.isNotEmpty))) ...[
+        PiumaEnter(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(l.oauthAdvancedHint(name), style: muted),
+              const SizedBox(height: 12),
+              PiumaTextField(
+                label: l.oauthClientId,
+                controller: _clientId,
+                mono: true,
+                onSubmitted: (_) => _submit(),
+              ),
+              if (info?.hasTenant ?? id == 'microsoft') ...[
+                const SizedBox(height: 12),
+                PiumaTextField(
+                  label: l.oauthTenant,
+                  controller: _tenant,
+                  mono: true,
+                  hint: 'common',
+                  onSubmitted: (_) => _submit(),
+                ),
+              ],
+              if (id == 'google') ...[
+                const SizedBox(height: 12),
+                PiumaTextField(
+                  label: l.oauthClientSecret,
+                  controller: _clientSecret,
+                  mono: true,
+                  onSubmitted: (_) => _submit(),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    ];
+  }
+
+  /// "A port is a number from 1 to 65535", while one isn't.
+  Widget _portWarning(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    return ListenableBuilder(
+      listenable: Listenable.merge([_imapPort, _smtpPort]),
+      builder: (context, _) => _badPort
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+              child: Text(
+                l.errorPort,
+                style: TextStyle(fontSize: 12, color: c.danger),
+              ),
+            )
+          : const SizedBox.shrink(),
+    );
   }
 
   List<Widget> _foundStep(BuildContext context) {
@@ -783,6 +1056,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _smtpPort.text = s == ServerSecurity.tls ? '465' : '587';
         }),
       ),
+      _portWarning(context),
       gap,
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -868,15 +1142,18 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     );
   }
 
+  (String, String) _actionLabels(AppLocalizations l) => switch (_step) {
+    _Step.email => (l.continueAction, l.lookingUp),
+    _Step.found => (l.connect, l.connecting),
+    _Step.manual => (l.verifyAndConnect, l.connecting),
+    _Step.pec || _Step.provider => (l.connect, l.connecting),
+    _Step.oauth => (l.oauthSignInWith(_oauthName(_oauth!)), l.oauthWaiting),
+  };
+
   Widget _actions(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final (label, busyLabel) = switch (_step) {
-      _Step.email => (l.continueAction, l.lookingUp),
-      _Step.found => (l.connect, l.connecting),
-      _Step.manual => (l.verifyAndConnect, l.connecting),
-      _Step.pec || _Step.provider => (l.connect, l.connecting),
-    };
+    final (label, busyLabel) = _actionLabels(l);
     return Row(
       children: [
         ListenableBuilder(
@@ -887,6 +1164,15 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
             onPressed: _ready && !_busy ? _submit : null,
           ),
         ),
+        if (_step == _Step.oauth && _busy) ...[
+          const SizedBox(width: 12),
+          PiumaButton(
+            label: l.cancel,
+            kind: PiumaButtonKind.tertiary,
+            size: PiumaButtonSize.touch,
+            onPressed: widget.source.cancelOAuth,
+          ),
+        ],
         if (_step == _Step.email || _step == _Step.found) ...[
           const SizedBox(width: 12),
           ListenableBuilder(
@@ -1126,13 +1412,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       _Step.manual => (2, l.setUpManually),
       _Step.pec => (2, l.pecWhichProvider),
       _Step.provider => (2, _provider!.title(l)),
+      _Step.oauth => (2, l.oauthSignInWith(_oauthName(_oauth!))),
     };
-    final (label, busyLabel) = switch (_step) {
-      _Step.email => (l.continueAction, l.lookingUp),
-      _Step.found => (l.connect, l.connecting),
-      _Step.manual => (l.verifyAndConnect, l.connecting),
-      _Step.pec || _Step.provider => (l.connect, l.connecting),
-    };
+    final (label, busyLabel) = _actionLabels(l);
     final action = ListenableBuilder(
       listenable: Listenable.merge(_controllers),
       builder: (context, _) => PiumaButton(
@@ -1235,14 +1517,14 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   _Step.manual => _phoneManual(context),
                   _Step.pec => _pecStep(context, phone: true),
                   _Step.provider => _providerStep(context),
+                  _Step.oauth => _oauthStep(context),
                 },
                 if (_error != null) ...[
                   const SizedBox(height: 16),
-                  PiumaEnter(
-                    child: Text(
-                      _errorText(l),
-                      style: TextStyle(fontSize: 14, color: c.danger),
-                    ),
+                  AccountErrorView(
+                    error: _error!,
+                    certificate: _certificate,
+                    onTrust: _busy ? null : _trustAndRetry,
                   ),
                   _reportLink(context),
                 ],
@@ -1266,6 +1548,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
             child: action,
+          ),
+        if (_step == _Step.oauth && _busy)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+            child: PiumaButton(
+              label: l.cancel,
+              kind: PiumaButtonKind.tertiary,
+              size: PiumaButtonSize.large,
+              onPressed: widget.source.cancelOAuth,
+            ),
           ),
         const SizedBox(height: 16),
       ],
@@ -1447,6 +1739,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           _smtpPort.text = s == ServerSecurity.tls ? '465' : '587';
         }),
       ),
+      _portWarning(context),
       const SizedBox(height: 18),
       _PhoneCard(
         rows: [
@@ -1492,14 +1785,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       ),
     );
   }
-
-  String _errorText(AppLocalizations l) => switch (_error!) {
-    AddAccountError.wrongPassword => l.errorWrongPassword,
-    AddAccountError.unreachable => l.errorUnreachable,
-    AddAccountError.insecure => l.errorInsecure,
-    AddAccountError.keychain => l.errorKeychain,
-    AddAccountError.other => l.errorOther,
-  };
 }
 
 /// A grouped card of the phone's manual form: one setting per row.

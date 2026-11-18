@@ -272,8 +272,9 @@ mixin ComposeExtras {
 
   /// The person's answer to the read receipt [row] asks for: [send] it,
   /// or not; with [never], none is offered for that sender again. True
-  /// when the receipt waits in the outbox for the connection.
-  Future<bool> answerReadReceipt(
+  /// when the receipt waits in the outbox for the connection, false once
+  /// sent, null when it was deleted from the Outbox before it went.
+  Future<bool?> answerReadReceipt(
     MailRow row, {
     required bool send,
     bool never = false,

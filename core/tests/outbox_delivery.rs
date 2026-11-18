@@ -681,7 +681,7 @@ fn smtp(port: u16, security: Security) -> SmtpConfig {
         port,
         security,
         username: "me".into(),
-        password: "test".into(),
+        login: "test".into(),
     }
 }
 
@@ -711,7 +711,7 @@ async fn a_lost_answer_after_the_message_is_shown_as_may_have_been_sent() {
         let sent = outbox::send(
             &store,
             &online,
-            &mut AccountCourier::new(&online, "test"),
+            &mut AccountCourier::new(&online, &"test".into()),
             "me",
         )
         .await
@@ -781,7 +781,12 @@ async fn a_certificate_error_shows_and_does_not_wait_as_offline() {
     let err = send(&smtp(port, Security::Tls), &ready(&draft("Plans")).unwrap())
         .await
         .unwrap_err();
-    assert!(matches!(err, SendError::Tls { .. }), "{err:?}");
+    // Our own TLS says which certificate it refused (the person may trust
+    // it); either way it shows rather than waits.
+    assert!(
+        matches!(err, SendError::Tls { .. } | SendError::Certificate(_)),
+        "{err:?}"
+    );
     assert!(!err.is_offline());
 
     let store = Store::open_in_memory().unwrap();
@@ -795,7 +800,7 @@ async fn a_certificate_error_shows_and_does_not_wait_as_offline() {
     let sent = outbox::send(
         &store,
         &secure,
-        &mut AccountCourier::new(&secure, "test"),
+        &mut AccountCourier::new(&secure, &"test".into()),
         "me",
     )
     .await

@@ -8,8 +8,8 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_invite`, `default_calendar`, `finish`, `fnv`, `found_dates`, `fresh_for`, `info`, `password`, `refresh_source`, `server_name`, `source_info`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These functions are ignored because they are not marked as `pub`: `add_invite`, `dav`, `default_calendar`, `finish`, `fnv`, `found_dates`, `fresh_for`, `info`, `password`, `refresh_source`, `server_name`, `source_info`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Every connected calendar, by where it comes from.
 List<CalendarSourceInfo> calendarSources() =>

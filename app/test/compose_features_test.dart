@@ -826,6 +826,19 @@ void main() {
       expect(demo.receiptAnswers.single.$2, isFalse);
     });
 
+    testWidgets('deleted from the Outbox before it went, it says nothing', (
+      tester,
+    ) async {
+      final demo = DemoMailSource(now: _now, asks: true)
+        ..goneNextReceipt = true;
+      await open(tester, demo);
+      await tester.tap(find.text('Send receipt'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ReadReceiptBand), findsNothing);
+      expect(find.textContaining('waiting in the Outbox'), findsNothing);
+      expect(find.text('Receipt sent'), findsNothing);
+    });
+
     testWidgets('a failure keeps the band, with the reason', (tester) async {
       final demo = DemoMailSource(now: _now, asks: true)
         ..failNextReceipt = StateError('refused');

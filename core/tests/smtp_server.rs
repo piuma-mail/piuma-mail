@@ -188,7 +188,7 @@ fn smtp(port: u16, password: &str) -> SmtpConfig {
         port,
         security: Security::None,
         username: "me".into(),
-        password: password.into(),
+        login: password.into(),
     }
 }
 
@@ -251,7 +251,7 @@ async fn files_a_copy_in_sent() {
         port: imap_port.parse().unwrap(),
         security: Security::None,
         username: format!("sender-{stamp}"),
-        password: "test".into(),
+        login: "test".into(),
     };
     let (port, inbox) = smtp_sink(false).await;
 
@@ -326,7 +326,9 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
 
     // Offline: the send can't reach the server, so it waits.
     let offline = account(id, down, no_imap);
-    let err = remote::send(&offline, "test", &draft()).await.unwrap_err();
+    let err = remote::send(&offline, &"test".into(), &draft())
+        .await
+        .unwrap_err();
     assert!(err.is_offline(), "{err:?}");
     let out = Outgoing {
         account: id,
@@ -341,7 +343,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     assert!(outbox::send(
         &store,
         &offline,
-        &mut AccountCourier::new(&offline, "test"),
+        &mut AccountCourier::new(&offline, &"test".into()),
         "me"
     )
     .await
@@ -358,7 +360,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     assert!(outbox::send(
         &store,
         &online,
-        &mut AccountCourier::new(&online, "nope"),
+        &mut AccountCourier::new(&online, &"nope".into()),
         "me"
     )
     .await
@@ -370,7 +372,7 @@ async fn mail_sent_offline_waits_in_the_outbox_and_goes_later() {
     let sent = outbox::send(
         &store,
         &online,
-        &mut AccountCourier::new(&online, "test"),
+        &mut AccountCourier::new(&online, &"test".into()),
         "me",
     )
     .await
@@ -411,7 +413,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     assert!(outbox::send(
         &store,
         &deferring,
-        &mut AccountCourier::new(&deferring, "test"),
+        &mut AccountCourier::new(&deferring, &"test".into()),
         "me"
     )
     .await
@@ -428,7 +430,7 @@ async fn mail_deferred_by_the_server_keeps_waiting_and_goes_later() {
     let sent = outbox::send(
         &store,
         &online,
-        &mut AccountCourier::new(&online, "test"),
+        &mut AccountCourier::new(&online, &"test".into()),
         "me",
     )
     .await
@@ -489,7 +491,7 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_when_it_goes() {
     let sent = outbox::send(
         &store,
         &online,
-        &mut AccountCourier::new(&online, "test"),
+        &mut AccountCourier::new(&online, &"test".into()),
         "me",
     )
     .await
@@ -709,7 +711,7 @@ async fn a_broken_reply_after_the_message_is_may_have_been_sent_not_resent() {
         let sent = outbox::send(
             &store,
             &online,
-            &mut AccountCourier::new(&online, "test"),
+            &mut AccountCourier::new(&online, &"test".into()),
             "me",
         )
         .await
@@ -749,7 +751,7 @@ async fn a_broken_reply_before_the_message_is_a_visible_refusal() {
         outbox::send(
             &store,
             &online,
-            &mut AccountCourier::new(&online, "test"),
+            &mut AccountCourier::new(&online, &"test".into()),
             "me",
         )
         .await

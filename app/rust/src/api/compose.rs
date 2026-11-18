@@ -182,19 +182,20 @@ pub fn message_asks(
 /// again. Only an offered receipt is sent, never one on its own. It goes
 /// through the outbox like any message: returns true while it waits
 /// there, offline or after a failed try (the Outbox shows why, and
-/// deleting it there takes the answer back). Not sending takes back one
-/// still waiting there.
+/// deleting it there takes the answer back), false once sent, and null
+/// when it was deleted from the Outbox before it went. Not sending takes
+/// back one still waiting there.
 pub async fn answer_read_receipt(
     account_id: i64,
     mailbox: String,
     uid: u32,
     send: bool,
     never: bool,
-) -> Result<bool, EngineError> {
+) -> Result<Option<bool>, EngineError> {
     let id = AccountId(account_id);
     if !send {
         store()?.answer_receipt(id, &mailbox, uid, mdn::Answer::Declined, never)?;
-        return Ok(false);
+        return Ok(Some(false));
     }
     let Some(to) = reader()?.receipt_offered(id, &mailbox, uid)? else {
         return Err(EngineError::new(ErrorKind::Other, "no receipt to send"));
@@ -209,7 +210,6 @@ pub async fn answer_read_receipt(
     let name = account.sender_name.trim();
     let from = lettre_mailbox(name, &email)?;
     let ready = mdn::report(&from, &to, &original)?;
-    let message_id = ready.message_id.clone();
     // What the outbox lists and Edit would open: the receipt's words.
     let draft = piuma_core::smtp::Draft {
         from_name: name.to_owned(),
@@ -228,10 +228,14 @@ pub async fn answer_read_receipt(
         undo: false,
         redirect: false,
     };
-    let queued = store()?.queue_outgoing(&out, now_secs())?;
-    // Answered once it is in the outbox: it goes from there, whatever this
-    // try does.
-    store()?.receipt_queued(id, &mailbox, uid, &message_id)?;
+    // Queued and answered in one go: it goes from the outbox, whatever
+    // this try does, and a second answer queues none.
+    let Some(queued) = store()?.queue_receipt(&out, now_secs(), &mailbox, uid)? else {
+        return Err(EngineError::new(
+            ErrorKind::Other,
+            "receipt answered already",
+        ));
+    };
     Ok(receipt_waits(
         super::engine::deliver_outgoing(queued)
             .await
@@ -240,11 +244,17 @@ pub async fn answer_read_receipt(
 }
 
 /// Whether a receipt put in the outbox still waits there after its first
-/// try. Every failure leaves it there, refused or waiting, with the reason
-/// the Outbox shows: the band never asks again for a receipt already in
-/// the outbox, which would go twice.
-fn receipt_waits(delivery: Result<super::engine::DeliveryKind, EngineError>) -> bool {
-    !matches!(delivery, Ok(super::engine::DeliveryKind::Sent))
+/// try: Some(false) once sent, Some(true) while it waits there. Every
+/// failure leaves it there, refused or waiting, with the reason the Outbox
+/// shows: the band never asks again for a receipt already in the outbox,
+/// which would go twice. None when it is no longer there and not sent
+/// (deleted from the Outbox meanwhile, which counts as not sending it).
+fn receipt_waits(delivery: Result<super::engine::DeliveryKind, EngineError>) -> Option<bool> {
+    match delivery {
+        Ok(super::engine::DeliveryKind::Sent) => Some(false),
+        Ok(super::engine::DeliveryKind::Gone) => None,
+        _ => Some(true),
+    }
 }
 
 fn lettre_mailbox(name: &str, email: &str) -> Result<piuma_core::mdn::Mailbox, EngineError> {
@@ -265,20 +275,24 @@ mod tests {
 
     #[test]
     fn a_receipt_waits_in_the_outbox_after_any_failed_try() {
-        assert!(!receipt_waits(Ok(K::Sent)));
+        assert_eq!(receipt_waits(Ok(K::Sent)), Some(false));
         for kind in [
             K::Waiting,
             K::WrongPassword,
             K::Refused,
             K::Insecure,
             K::MaybeSent,
-            K::Gone,
         ] {
-            assert!(receipt_waits(Ok(kind)), "{kind:?}");
+            assert_eq!(receipt_waits(Ok(kind)), Some(true), "{kind:?}");
         }
-        assert!(receipt_waits(Err(EngineError::new(
-            ErrorKind::Other,
-            "engine not open"
-        ))));
+        assert_eq!(
+            receipt_waits(Err(EngineError::new(ErrorKind::Other, "engine not open"))),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_receipt_deleted_from_the_outbox_is_not_said_to_wait_there() {
+        assert_eq!(receipt_waits(Ok(K::Gone)), None);
     }
 }

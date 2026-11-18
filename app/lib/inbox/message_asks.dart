@@ -53,7 +53,9 @@ class _MessageAsksBarState extends State<MessageAsksBar> {
         send: send,
         never: never,
       );
-      if (mounted && send) {
+      // Deleted from the Outbox before it went (null): not sent, and
+      // nothing to say.
+      if (mounted && send && waits != null) {
         setState(
           () => _result = waits ? l.readReceiptQueued : l.readReceiptSent,
         );

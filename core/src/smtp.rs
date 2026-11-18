@@ -12,8 +12,15 @@ use lettre::message::header::{
     ContentTransferEncoding, ContentType, Header, HeaderName, HeaderValue,
 };
 use lettre::message::{Attachment, Body, Mailbox, MultiPart, SinglePart};
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism as LettreMechanism};
+use lettre::transport::smtp::client::{AsyncSmtpConnection, AsyncTokioStream};
+use lettre::transport::smtp::extension::ClientId;
 use lettre::Message;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::net::TcpStream;
+
+use crate::auth::{sasl_abort, sasl_initial_base64, sasl_name, Credential, Login};
+use crate::oauth::{Mechanism, TokenError};
 
 use crate::compose_image::{self, InlineImage};
 use crate::mdn::{DispositionNotificationTo, Importance, XPriority};
@@ -29,7 +36,8 @@ pub struct SmtpConfig {
     pub port: u16,
     pub security: Security,
     pub username: String,
-    pub password: String,
+    /// The password or OAuth sign-in, and the certificates trusted.
+    pub login: Login,
 }
 
 impl fmt::Debug for SmtpConfig {
@@ -45,14 +53,14 @@ impl fmt::Debug for SmtpConfig {
 
 impl SmtpConfig {
     /// The SMTP settings of an account, or None for non-IMAP accounts.
-    pub fn for_account(account: &Account, password: &str) -> Option<Self> {
+    pub fn for_account(account: &Account, login: &Login) -> Option<Self> {
         match &account.kind {
             AccountKind::Imap { smtp, username, .. } => Some(SmtpConfig {
                 host: smtp.host.clone(),
                 port: smtp.port,
                 security: smtp.security,
                 username: username.clone(),
-                password: password.to_owned(),
+                login: login.clone(),
             }),
             AccountKind::Jmap { .. } => None,
         }
@@ -137,6 +145,10 @@ pub enum SendError {
     Connect { host: String, detail: String },
     #[error("the server rejected the user name or password")]
     Auth,
+    /// The server's certificate was refused; the person may trust it.
+    /// Kept in the outbox as an insecure connection ([insecure_reason]).
+    #[error("could not make a secure connection: {0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server refused the message: {0}")]
     Rejected(String),
     /// The server did not take the message now (a 4xx: greylisting, an
@@ -173,6 +185,11 @@ impl SendError {
     /// outbox and go once the connection is back.
     pub fn is_offline(&self) -> bool {
         matches!(self, SendError::Connect { .. })
+    }
+
+    /// Only the person can mend it: a refused sign-in or certificate.
+    pub fn needs_person(&self) -> bool {
+        matches!(self, SendError::Auth | SendError::Certificate(_))
     }
 }
 
@@ -757,11 +774,8 @@ impl Limits {
 /// [send], with its own limits (tests use short ones).
 #[doc(hidden)]
 pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Result<()> {
-    use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
     use lettre::transport::smtp::commands::{Data, Ehlo, Mail, Rcpt};
-    use lettre::transport::smtp::extension::{
-        ClientId, Extension, MailBodyParameter, MailParameter,
-    };
+    use lettre::transport::smtp::extension::{Extension, MailBodyParameter, MailParameter};
 
     let address = |a: &str| {
         a.parse::<lettre::Address>()
@@ -790,33 +804,12 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
             }
         }
     };
-    let tls = match cfg.security {
-        Security::None => None,
-        Security::Tls | Security::StartTls => Some(
-            TlsParameters::new(cfg.host.clone()).map_err(|e| classify(host, Step::Connect, e))?,
-        ),
-    };
+    // Our own TLS, as for IMAP: certificates the person trusted for this
+    // server count, a refused one says why, and STARTTLS is required.
+    let mut conn = tokio::time::timeout(limits.step, connect(cfg))
+        .await
+        .map_err(|_| stalled(Step::Connect))??;
     let hello = ClientId::default();
-    let wrapper = tls.clone().filter(|_| cfg.security == Security::Tls);
-    let mut conn = tokio::time::timeout(
-        limits.step,
-        AsyncSmtpConnection::connect_tokio1(
-            (host, cfg.port),
-            Some(limits.step),
-            &hello,
-            wrapper,
-            None,
-        ),
-    )
-    .await
-    .map_err(|_| stalled(Step::Connect))?
-    .map_err(|e| classify(host, Step::Connect, e))?;
-    if let (Security::StartTls, Some(tls)) = (cfg.security, tls) {
-        tokio::time::timeout(limits.step, conn.starttls(tls, &hello))
-            .await
-            .map_err(|_| stalled(Step::Connect))?
-            .map_err(|e| classify(host, Step::Connect, e))?;
-    }
     // What the server takes at most (RFC 1870), from its EHLO: lettre
     // keeps the extensions it uses, not this one.
     let ehlo = tokio::time::timeout(limits.step, conn.command(Ehlo::new(hello.clone())))
@@ -834,17 +827,15 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
             )));
         }
     }
-    let credentials = Credentials::new(cfg.username.clone(), cfg.password.clone());
-    tokio::time::timeout(
-        limits.step,
-        conn.auth(
-            lettre::transport::smtp::authentication::DEFAULT_MECHANISMS,
-            &credentials,
-        ),
-    )
-    .await
-    .map_err(|_| stalled(Step::Auth))?
-    .map_err(|e| classify(host, Step::Auth, e))?;
+    // The password, or an OAuth token renewed once if refused.
+    let signed = tokio::time::timeout(limits.step, sign_in(&mut conn, cfg))
+        .await
+        .map_err(|_| stalled(Step::Auth))
+        .and_then(|r| r);
+    if let Err(e) = signed {
+        abort(&mut conn, limits.step).await;
+        return Err(e);
+    }
     let mut options = Vec::new();
     let wide = !ready.from.is_ascii() || ready.recipients.iter().any(|r| !r.is_ascii());
     if wide && conn.server_info().supports_feature(Extension::SmtpUtfEight) {
@@ -902,6 +893,261 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
         }
         Err(_) => Err(stalled(Step::Message)),
     }
+}
+
+/// A secure stream lettre can drive. The TLS is ours, as for IMAP, so a
+/// certificate the person trusted for this server works here too, and a
+/// refused one says why.
+#[derive(Debug)]
+struct Stream<S> {
+    inner: S,
+    /// Bytes to read before the stream's own: after STARTTLS the server
+    /// sends no new greeting, but lettre reads one first.
+    greeting: Vec<u8>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Stream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if !self.greeting.is_empty() {
+            let n = self.greeting.len().min(buf.remaining());
+            let rest = self.greeting.split_off(n);
+            buf.put_slice(&self.greeting);
+            self.greeting = rest;
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Stream<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+impl<S> AsyncTokioStream for Stream<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + fmt::Debug,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+fn unreachable(host: &str, detail: impl fmt::Display) -> SendError {
+    SendError::Connect {
+        host: host.to_owned(),
+        detail: detail.to_string(),
+    }
+}
+
+/// Connects, greets and, but on local test servers, encrypts.
+async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
+    let mut tcp = TcpStream::connect((cfg.host.as_str(), cfg.port))
+        .await
+        .map_err(|e| unreachable(&cfg.host, e))?;
+    tcp.set_nodelay(true).ok();
+    let hello = ClientId::default();
+    let wrap = |e: crate::tls::Failure| match e {
+        crate::tls::Failure::Certificate(r) => SendError::Certificate(r),
+        crate::tls::Failure::Stalled => unreachable(&cfg.host, crate::tls::Failure::Stalled),
+        // Waiting won't make the connection secure: shown, as lettre's were.
+        crate::tls::Failure::Other(detail) => SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        },
+    };
+    let stream: Box<dyn AsyncTokioStream> = match cfg.security {
+        Security::None => Box::new(Stream {
+            inner: tcp,
+            greeting: Vec::new(),
+        }),
+        Security::Tls => Box::new(Stream {
+            inner: crate::tls::connect(&cfg.host, &cfg.login.pins, tcp)
+                .await
+                .map_err(wrap)?,
+            greeting: Vec::new(),
+        }),
+        Security::StartTls => {
+            // The plain part by hand, then TLS of our own (RFC 3207).
+            expect(&mut tcp, &cfg.host, None, "220").await?;
+            let ehlo = expect(&mut tcp, &cfg.host, Some(&format!("EHLO {hello}")), "250").await?;
+            if !ehlo.lines().any(|l| {
+                l.get(4..)
+                    .is_some_and(|w| w.trim().eq_ignore_ascii_case("STARTTLS"))
+            }) {
+                // Never a password in the clear.
+                return Err(SendError::Tls {
+                    host: cfg.host.clone(),
+                    detail: "the server does not offer STARTTLS".into(),
+                });
+            }
+            expect(&mut tcp, &cfg.host, Some("STARTTLS"), "220").await?;
+            Box::new(Stream {
+                inner: crate::tls::connect(&cfg.host, &cfg.login.pins, tcp)
+                    .await
+                    .map_err(wrap)?,
+                greeting: b"220 encrypted\r\n".to_vec(),
+            })
+        }
+    };
+    AsyncSmtpConnection::connect_with_transport(stream, &hello)
+        .await
+        .map_err(|e| classify(&cfg.host, Step::Connect, e))
+}
+
+/// Sends `command` (if any) and reads the whole reply, which must start
+/// with `code`.
+async fn expect(
+    tcp: &mut TcpStream,
+    host: &str,
+    command: Option<&str>,
+    code: &str,
+) -> Result<String> {
+    if let Some(command) = command {
+        tcp.write_all(format!("{command}\r\n").as_bytes())
+            .await
+            .map_err(|e| unreachable(host, e))?;
+    }
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = tcp.read(&mut buf).await.map_err(|e| unreachable(host, e))?;
+        if n == 0 {
+            return Err(unreachable(host, "the server closed the connection"));
+        }
+        reply.extend_from_slice(&buf[..n]);
+        if reply.len() > 64 * 1024 {
+            return Err(unreachable(host, "the server's reply is too long"));
+        }
+        let text = String::from_utf8_lossy(&reply);
+        // A reply ends with a line whose code is followed by a space.
+        if text.ends_with("\r\n")
+            && text
+                .trim_end()
+                .lines()
+                .last()
+                .is_some_and(|l| l.as_bytes().get(3) != Some(&b'-'))
+        {
+            return if text.starts_with(code) {
+                Ok(text.into_owned())
+            } else {
+                Err(unreachable(host, text.trim()))
+            };
+        }
+    }
+}
+
+/// One SMTP command line, as lettre writes its own.
+struct Line<'a>(&'a str);
+
+impl fmt::Display for Line<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}\r\n", self.0)
+    }
+}
+
+/// Signs in with the password, or with an OAuth token: a refused token
+/// gets one new one and one more try, never more.
+async fn sign_in(conn: &mut AsyncSmtpConnection, cfg: &SmtpConfig) -> Result<()> {
+    cfg.login
+        .may_send_to(&cfg.host, cfg.security != Security::None)
+        .map_err(|detail| SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        })?;
+    match cfg
+        .login
+        .credential()
+        .await
+        .map_err(|e| token_error(cfg, e))?
+    {
+        Credential::Password(password) => conn
+            .auth(
+                &[LettreMechanism::Plain, LettreMechanism::Login],
+                &Credentials::new(cfg.username.clone(), password.to_string()),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| classify(&cfg.host, Step::Auth, e)),
+        Credential::Token { mechanism, token } => {
+            match authenticate(conn, cfg, mechanism, &token).await {
+                Err(SendError::Auth) => {}
+                done => return done,
+            }
+            let Some(renewed) = cfg.login.renew().await else {
+                return Err(SendError::Auth);
+            };
+            match renewed.map_err(|e| token_error(cfg, e))? {
+                Credential::Token { mechanism, token } => {
+                    authenticate(conn, cfg, mechanism, &token).await
+                }
+                Credential::Password(_) => Err(SendError::Auth),
+            }
+        }
+    }
+}
+
+fn token_error(cfg: &SmtpConfig, e: TokenError) -> SendError {
+    match e {
+        TokenError::Rejected(_) => SendError::Auth,
+        TokenError::Offline(why) => unreachable(&cfg.host, why),
+    }
+}
+
+/// `AUTH XOAUTH2` or `AUTH OAUTHBEARER` with the initial response. A
+/// refused token gets an error challenge (334), answered so the server
+/// ends with its 535.
+async fn authenticate(
+    conn: &mut AsyncSmtpConnection,
+    cfg: &SmtpConfig,
+    mechanism: Mechanism,
+    token: &str,
+) -> Result<()> {
+    use base64::Engine;
+    let initial = sasl_initial_base64(mechanism, &cfg.username, token, &cfg.host, cfg.port);
+    let command = zeroize::Zeroizing::new(format!(
+        "AUTH {} {}",
+        sasl_name(mechanism),
+        initial.as_str()
+    ));
+    let reply = conn
+        .command(Line(&command))
+        .await
+        .map_err(|e| classify(&cfg.host, Step::Auth, e))?;
+    if reply.has_code(235) {
+        return Ok(());
+    }
+    if reply.has_code(334) {
+        let abort = base64::engine::general_purpose::STANDARD.encode(sasl_abort(mechanism));
+        return match conn.command(Line(&abort)).await {
+            Err(e) => Err(classify(&cfg.host, Step::Auth, e)),
+            Ok(_) => Err(SendError::Auth),
+        };
+    }
+    Err(SendError::Auth)
 }
 
 /// Ends a connection that went wrong, without waiting on a server that

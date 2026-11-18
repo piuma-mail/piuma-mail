@@ -407,7 +407,9 @@ class _InboxScreenState extends State<InboxScreen> {
         SystemNotice(
           id: Object.hash('sign-in', id) & 0x7fffffff,
           title: l.noticeSignInTitle(account.name),
-          subject: l.accountPasswordRefused,
+          subject: widget.source.accountHealth(id).certificate
+              ? l.accountCertificateRefused
+              : l.accountPasswordRefused,
           preview: '',
           payload: 'account\n$id',
           silent: false,
@@ -1887,7 +1889,7 @@ class _InboxScreenState extends State<InboxScreen> {
     return [
       if (!_inSent)
         PaletteCommand(
-          PiumaIcon.reply,
+          PiumaIcon.replyAll,
           l.actionReplyAll,
           _fromPalette(() => withBody(_replyAll)),
           meta: 'A',

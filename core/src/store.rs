@@ -4420,61 +4420,50 @@ impl Store {
     /// Keeps a message to send once the server can be reached. Returns
     /// its id in the outbox.
     pub fn queue_outgoing(&self, out: &Outgoing, queued_at: i64) -> Result<i64> {
-        let json = |v: &Vec<String>| serde_json::to_string(v).unwrap_or_default();
-        let d = &out.draft;
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO outbox (account, from_name, from_email, to_list, cc_list, bcc_list,
-                 subject, body, in_reply_to, refs, signature, message_id, mail_from,
-                 recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo,
-                 plain_text, read_receipt, high_priority, redirect)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
-            params![
-                out.account.0,
-                d.from_name,
-                d.from_email,
-                json(&d.to),
-                json(&d.cc),
-                json(&d.bcc),
-                d.subject,
-                d.body,
-                d.in_reply_to,
-                json(&d.references),
-                d.signature.as_ref().map(|s| s.id),
-                out.ready.message_id,
-                out.ready.from,
-                json(&out.ready.recipients),
-                out.ready.raw,
-                out.saved.as_ref().map(|s| s.0.as_str()),
-                out.saved.as_ref().map(|s| s.1),
-                queued_at,
-                out.send_at,
-                crate::rich::encode(&d.marks).unwrap_or_default(),
-                out.undo,
-                d.plain_text,
-                d.read_receipt,
-                d.high_priority,
-                out.redirect,
-            ],
-        )?;
-        let id = tx.last_insert_rowid();
-        for (i, f) in d.files.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO outbox_file (outbox, position, name, mime, data)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, i as i64, f.name, f.mime, f.data],
-            )?;
-        }
-        for (i, image) in d.images.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO outbox_image (outbox, position, cid, name, mime, data)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, i as i64, image.cid, image.name, image.mime, image.data],
-            )?;
-        }
+        let id = insert_outgoing(&tx, out, queued_at)?;
         tx.commit()?;
         Ok(id)
+    }
+
+    /// Puts the read receipt for a kept message in the outbox and answers
+    /// it as sent, in one go: taken back out with the message should the
+    /// person delete it there. None, and nothing queued, when the message
+    /// was answered already (a second tap, or another window): a receipt
+    /// never goes twice.
+    pub fn queue_receipt(
+        &self,
+        out: &Outgoing,
+        queued_at: i64,
+        mailbox: &str,
+        uid: u32,
+    ) -> Result<Option<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let answer: Option<i64> = tx
+            .query_row(
+                "SELECT receipt FROM message_asks
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+                params![out.account.0, mailbox, uid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if answer != Some(crate::mdn::Answer::Unanswered.code()) {
+            return Ok(None);
+        }
+        let id = insert_outgoing(&tx, out, queued_at)?;
+        tx.execute(
+            "UPDATE message_asks SET receipt = ?4, receipt_id = ?5
+              WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            params![
+                out.account.0,
+                mailbox,
+                uid,
+                crate::mdn::Answer::Sent.code(),
+                out.ready.message_id
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(id))
     }
 
     /// The outbox, oldest first: one account's, or every account's.
@@ -5448,26 +5437,6 @@ impl Store {
         never: bool,
     ) -> Result<()> {
         self.keep_receipt_answer(account, mailbox, uid, answer, None, never)
-    }
-
-    /// The read receipt for a kept message was put in the outbox as
-    /// `message_id`: answered as sent, and taken back out with the message
-    /// should the person delete it there.
-    pub fn receipt_queued(
-        &self,
-        account: AccountId,
-        mailbox: &str,
-        uid: u32,
-        message_id: &str,
-    ) -> Result<()> {
-        self.keep_receipt_answer(
-            account,
-            mailbox,
-            uid,
-            crate::mdn::Answer::Sent,
-            Some(message_id),
-            false,
-        )
     }
 
     fn keep_receipt_answer(
@@ -8067,6 +8036,63 @@ impl Store {
         )?;
         Ok(())
     }
+}
+
+/// Writes a message into the outbox, within the caller's transaction.
+fn insert_outgoing(tx: &rusqlite::Transaction, out: &Outgoing, queued_at: i64) -> Result<i64> {
+    let json = |v: &Vec<String>| serde_json::to_string(v).unwrap_or_default();
+    let d = &out.draft;
+    tx.execute(
+        "INSERT INTO outbox (account, from_name, from_email, to_list, cc_list, bcc_list,
+             subject, body, in_reply_to, refs, signature, message_id, mail_from,
+             recipients, raw, saved_mailbox, saved_uid, queued_at, send_at, marks, undo,
+             plain_text, read_receipt, high_priority, redirect)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+             ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+        params![
+            out.account.0,
+            d.from_name,
+            d.from_email,
+            json(&d.to),
+            json(&d.cc),
+            json(&d.bcc),
+            d.subject,
+            d.body,
+            d.in_reply_to,
+            json(&d.references),
+            d.signature.as_ref().map(|s| s.id),
+            out.ready.message_id,
+            out.ready.from,
+            json(&out.ready.recipients),
+            out.ready.raw,
+            out.saved.as_ref().map(|s| s.0.as_str()),
+            out.saved.as_ref().map(|s| s.1),
+            queued_at,
+            out.send_at,
+            crate::rich::encode(&d.marks).unwrap_or_default(),
+            out.undo,
+            d.plain_text,
+            d.read_receipt,
+            d.high_priority,
+            out.redirect,
+        ],
+    )?;
+    let id = tx.last_insert_rowid();
+    for (i, f) in d.files.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO outbox_file (outbox, position, name, mime, data)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, i as i64, f.name, f.mime, f.data],
+        )?;
+    }
+    for (i, image) in d.images.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO outbox_image (outbox, position, cid, name, mime, data)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, i as i64, image.cid, image.name, image.mime, image.data],
+        )?;
+    }
+    Ok(id)
 }
 
 #[cfg(test)]
@@ -11000,6 +11026,27 @@ From: <help@bank.example>\r\n\r\nHi";
         store.queue_outgoing(&out, 100).unwrap()
     }
 
+    fn queued_receipt(store: &Store, account: AccountId, uid: u32) -> Option<i64> {
+        use crate::outbox::Outgoing;
+        use crate::smtp::{ready, Draft};
+        let draft = Draft {
+            from_email: "me@example.org".into(),
+            to: vec!["julia@example.org".into()],
+            subject: "Read: Plans".into(),
+            ..Draft::default()
+        };
+        let out = Outgoing {
+            account,
+            ready: ready(&draft).unwrap(),
+            draft,
+            saved: None,
+            send_at: None,
+            undo: false,
+            redirect: false,
+        };
+        store.queue_receipt(&out, 100, "INBOX", uid).unwrap()
+    }
+
     #[test]
     fn only_one_sender_claims_a_message() {
         let dir = std::env::temp_dir().join(format!(
@@ -13691,20 +13738,13 @@ From: <help@bank.example>\r\n\r\nHi";
                 )
                 .unwrap();
         }
-        let id = |store: &Store| -> (i64, String) {
-            let w = &store.outbox(Some(a)).unwrap()[0];
-            (
-                w.id,
-                store.outgoing(w.id).unwrap().unwrap().ready.message_id,
-            )
-        };
-
         // Put in the outbox, its first try failed: answered, so the band
         // doesn't ask again (a second receipt would go too).
-        queued(&store, a, None);
-        let (first, message_id) = id(&store);
-        store.receipt_queued(a, "INBOX", 1, &message_id).unwrap();
+        let first = queued_receipt(&store, a, 1).unwrap();
         assert_eq!(store.receipt_offered(a, "INBOX", 1).unwrap(), None);
+        // A second answer (another tap, another window) queues nothing.
+        assert_eq!(queued_receipt(&store, a, 1), None);
+        assert_eq!(store.outbox(Some(a)).unwrap().len(), 1);
         // "Don't send" now takes it back out of the outbox.
         store
             .answer_receipt(a, "INBOX", 1, crate::mdn::Answer::Declined, false)
@@ -13716,9 +13756,7 @@ From: <help@bank.example>\r\n\r\nHi";
         );
 
         // Deleted from the Outbox: declined, and not offered again.
-        queued(&store, a, None);
-        let (second, message_id) = id(&store);
-        store.receipt_queued(a, "INBOX", 2, &message_id).unwrap();
+        let second = queued_receipt(&store, a, 2).unwrap();
         assert!(store.take_outgoing(second).unwrap().is_some());
         assert_eq!(
             store.message_asks(a, "INBOX", 2).unwrap().1,
@@ -13727,9 +13765,12 @@ From: <help@bank.example>\r\n\r\nHi";
         assert_eq!(store.receipt_offered(a, "INBOX", 2).unwrap(), None);
 
         // One being sent right now can't be taken back.
-        queued(&store, a, None);
-        let (third, message_id) = id(&store);
-        store.receipt_queued(a, "INBOX", 2, &message_id).unwrap();
+        // (Answered as declined above: put back unanswered to try.)
+        store
+            .conn
+            .execute("UPDATE message_asks SET receipt = 0 WHERE uid = 2", [])
+            .unwrap();
+        let third = queued_receipt(&store, a, 2).unwrap();
         assert!(store.claim_outgoing(third, "me", 200).unwrap());
         store
             .answer_receipt(a, "INBOX", 2, crate::mdn::Answer::Declined, false)

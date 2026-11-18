@@ -9,7 +9,6 @@ use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
 use super::engine::{engine, now_secs, reader, send_outbox_at, store, EngineError, ErrorKind};
-use crate::credentials;
 
 /// One person on a line of a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,7 +133,7 @@ async fn raw_message(id: AccountId, mailbox: String, uid: u32) -> Result<Vec<u8>
     let account = store()?
         .account(id)?
         .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
-    let password = credentials::load(id)?;
+    let password = crate::login::load(id)?;
     let shared = engine.store.clone();
     engine
         .runtime

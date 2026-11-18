@@ -2802,7 +2802,7 @@ class _Toolbar extends StatelessWidget {
           if (onReplyAll != null && forward) ...[
             const SizedBox(width: 8),
             _KeyButton(
-              icon: PiumaIcon.reply,
+              icon: PiumaIcon.replyAll,
               label: l.actionReplyAll,
               keyLabel: keys ? 'A' : null,
               onTap: onReplyAll!,
@@ -3283,7 +3283,7 @@ class _PhoneBar extends StatelessWidget {
               if (onReply != null)
                 item(PiumaIcon.reply, l.actionReply, onReply),
               if (onReplyAll != null)
-                item(PiumaIcon.reply, l.actionReplyAll, onReplyAll),
+                item(PiumaIcon.replyAll, l.actionReplyAll, onReplyAll),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
               for (final x in early) item(x.icon, x.label, x.onTap),
@@ -3519,7 +3519,7 @@ class _TabletBar extends StatelessWidget {
               if (onWriteAgain != null && onReply != null)
                 item(PiumaIcon.reply, l.actionReply, onReply),
               if (onReplyAll != null)
-                item(PiumaIcon.reply, l.actionReplyAll, onReplyAll),
+                item(PiumaIcon.replyAll, l.actionReplyAll, onReplyAll),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
               for (final x in early) item(x.icon, x.label, x.onTap),

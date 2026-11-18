@@ -5236,6 +5236,12 @@ abstract class AppLocalizations {
   /// **'The server refused the password. Did it change?'**
   String get accountPasswordRefused;
 
+  /// No description provided for @accountCertificateRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The server’s certificate was refused. Sign in again to look at it.'**
+  String get accountCertificateRefused;
+
   /// No description provided for @accountEditServers.
   ///
   /// In en, this message translates to:
@@ -9148,6 +9154,192 @@ abstract class AppLocalizations {
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
 
+  /// No description provided for @errorNoKeyring.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma keeps passwords in the system keyring, and none is running. Install and start one, such as GNOME Keyring or KWallet, then try again. Passwords are never saved in a plain file.'**
+  String get errorNoKeyring;
+
+  /// No description provided for @errorCertificate.
+  ///
+  /// In en, this message translates to:
+  /// **'The server’s certificate can’t be trusted.'**
+  String get errorCertificate;
+
+  /// No description provided for @errorSignInUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This copy of Piuma Mail can’t sign in to this provider. Enter your own client ID under Advanced, or use an app password where the provider allows one.'**
+  String get errorSignInUnavailable;
+
+  /// No description provided for @errorSignInCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'The sign-in page was closed before it finished. Try again.'**
+  String get errorSignInCancelled;
+
+  /// No description provided for @errorSignInDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.'**
+  String get errorSignInDenied;
+
+  /// No description provided for @errorOAuthServers.
+  ///
+  /// In en, this message translates to:
+  /// **'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.'**
+  String get errorOAuthServers;
+
+  /// No description provided for @errorPort.
+  ///
+  /// In en, this message translates to:
+  /// **'A port is a number from 1 to 65535.'**
+  String get errorPort;
+
+  /// No description provided for @certUntrusted.
+  ///
+  /// In en, this message translates to:
+  /// **'No authority your system trusts vouches for this certificate. Servers that make their own certificate look like this.'**
+  String get certUntrusted;
+
+  /// No description provided for @certExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate is expired, or not valid yet.'**
+  String get certExpired;
+
+  /// No description provided for @certNameMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate was made for another server name.'**
+  String get certNameMismatch;
+
+  /// No description provided for @certChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'This isn’t the certificate you trusted for this server before. It may have been renewed, or someone may be listening in between. Trust it only if you know why it changed.'**
+  String get certChanged;
+
+  /// No description provided for @certInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.'**
+  String get certInvalid;
+
+  /// No description provided for @certProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.'**
+  String get certProvider;
+
+  /// No description provided for @certIssuedTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Issued to'**
+  String get certIssuedTo;
+
+  /// No description provided for @certIssuedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Issued by'**
+  String get certIssuedBy;
+
+  /// No description provided for @certValidUntil.
+  ///
+  /// In en, this message translates to:
+  /// **'Valid until'**
+  String get certValidUntil;
+
+  /// No description provided for @certFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'SHA-256 fingerprint'**
+  String get certFingerprint;
+
+  /// No description provided for @certTrust.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust this certificate'**
+  String get certTrust;
+
+  /// No description provided for @certTrustNew.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust the new certificate'**
+  String get certTrustNew;
+
+  /// No description provided for @certCopyFingerprint.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy fingerprint'**
+  String get certCopyFingerprint;
+
+  /// No description provided for @certTrustHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Only for this account and this exact certificate. Compare the fingerprint with the one your mail provider or administrator gives you first.'**
+  String get certTrustHint;
+
+  /// No description provided for @oauthSignInWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with {provider}'**
+  String oauthSignInWith(String provider);
+
+  /// No description provided for @oauthLead.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma Mail opens {provider}’s page in your browser. Sign in there, then come back here: your password stays with {provider}.'**
+  String oauthLead(String provider);
+
+  /// No description provided for @oauthWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the browser…'**
+  String get oauthWaiting;
+
+  /// No description provided for @oauthMicrosoftNoClient.
+  ///
+  /// In en, this message translates to:
+  /// **'Microsoft no longer lets mail apps sign in with a password, and this copy of Piuma Mail has no Microsoft sign-in set up. Use an official build, or enter your own app’s client ID under Advanced.'**
+  String get oauthMicrosoftNoClient;
+
+  /// No description provided for @oauthUseAppPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Use an app password instead'**
+  String get oauthUseAppPassword;
+
+  /// No description provided for @oauthAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced: your own client ID'**
+  String get oauthAdvanced;
+
+  /// No description provided for @oauthAdvancedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For your own app registration with {provider}. Leave it empty to use this build’s.'**
+  String oauthAdvancedHint(String provider);
+
+  /// No description provided for @oauthClientId.
+  ///
+  /// In en, this message translates to:
+  /// **'Client ID'**
+  String get oauthClientId;
+
+  /// No description provided for @oauthTenant.
+  ///
+  /// In en, this message translates to:
+  /// **'Tenant (optional)'**
+  String get oauthTenant;
+
+  /// No description provided for @oauthClientSecret.
+  ///
+  /// In en, this message translates to:
+  /// **'Client secret (Google desktop apps only)'**
+  String get oauthClientSecret;
+
   /// No description provided for @listFailed.
   ///
   /// In en, this message translates to:
@@ -9435,6 +9627,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The receipt is waiting in the Outbox and goes as soon as it can.'**
   String get readReceiptQueued;
+
+  /// No description provided for @oauthOwnClientNotHere.
+  ///
+  /// In en, this message translates to:
+  /// **'On Android this app can only sign in to {provider} with the client it was built with. Use an app password, or a build made with your client.'**
+  String oauthOwnClientNotHere(String provider);
 
   /// No description provided for @actionReplyAll.
   ///

@@ -7,4 +7,5 @@ pub mod background;
 mod clipboard;
 mod credentials;
 mod frb_generated;
+mod login;
 pub mod watch;

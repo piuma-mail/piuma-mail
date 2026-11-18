@@ -686,7 +686,7 @@ class DemoMailSource extends MailSource {
   final _receiptsWaiting = <Object, int>{};
 
   @override
-  Future<bool> answerReadReceipt(
+  Future<bool?> answerReadReceipt(
     MailRow row, {
     required bool send,
     bool never = false,
@@ -706,6 +706,12 @@ class DemoMailSource extends MailSource {
         _changes.add(null);
       }
       return false;
+    }
+    if (goneNextReceipt) {
+      // Deleted from the Outbox before its first try: not sent.
+      goneNextReceipt = false;
+      receiptAnswers.last = (row, false, never);
+      return null;
     }
     final refused = refuseNextReceipt;
     refuseNextReceipt = null;
@@ -739,6 +745,9 @@ class DemoMailSource extends MailSource {
 
   /// The next read receipt fails before it reaches the outbox.
   Object? failNextReceipt;
+
+  /// The next read receipt is deleted from the Outbox before it goes.
+  bool goneNextReceipt = false;
 
   /// The server refuses the next read receipt with this reason: it stays
   /// in the outbox.
@@ -857,7 +866,11 @@ class DemoMailSource extends MailSource {
   }
 
   @override
-  Future<void> setAccountServers(int accountId, AccountServers servers) async {
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (servers.imap.host.trim().isEmpty || servers.smtp.host.trim().isEmpty) {
       throw const AddAccountException(AddAccountError.unreachable, 'demo');
     }
@@ -889,7 +902,11 @@ class DemoMailSource extends MailSource {
     failedSince: status.value.failed.contains(accountId)
         ? DateTime(now.year, now.month, now.day, 9, 12)
         : null,
+    certificate: certificateFailed.contains(accountId),
   );
+
+  /// Accounts whose failure tests say was the server's certificate.
+  final certificateFailed = <int>{};
 
   final _changes = StreamController<void>.broadcast();
 
@@ -1741,7 +1758,11 @@ class DemoMailSource extends MailSource {
 
   /// The demo's one good password, for trying "Sign in again".
   @override
-  Future<void> signInAgain(int accountId, String password) async {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     if (password != 'carta-120-opaca') {
       throw const AddAccountException(AddAccountError.wrongPassword, 'demo');
     }
@@ -4315,6 +4336,7 @@ class DemoMailSource extends MailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.other, 'demo');
 
   @override
@@ -4326,6 +4348,7 @@ class DemoMailSource extends MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async => throw const AddAccountException(AddAccountError.other, 'demo');
 
   /// Finds settings for the mockup's studio.it, and JMAP for

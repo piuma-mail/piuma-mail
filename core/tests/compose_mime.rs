@@ -72,7 +72,7 @@ fn config(port: u16) -> SmtpConfig {
         port,
         security: Security::None,
         username: "me".into(),
-        password: "test".into(),
+        login: "test".into(),
     }
 }
 

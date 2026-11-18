@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
@@ -967,13 +969,21 @@ class AccountServers {
 
 /// How an account's connection is going, as its details show it.
 class AccountHealth {
-  const AccountHealth({this.checkedAt, this.failedSince});
+  const AccountHealth({
+    this.checkedAt,
+    this.failedSince,
+    this.certificate = false,
+  });
 
   /// When the server last answered.
   final DateTime? checkedAt;
 
   /// Since when the server refuses the password; null while it works.
   final DateTime? failedSince;
+
+  /// With [failedSince]: it was the server's certificate that was
+  /// refused, not the password.
+  final bool certificate;
 }
 
 /// An account's away message (`RemindAwayPrintToApprove`, section 2): an
@@ -1047,6 +1057,7 @@ class FoundSettings {
     required this.username,
     required this.source,
     this.jmapUrl,
+    this.oauth,
   });
   final MailServer imap;
   final MailServer smtp;
@@ -1057,20 +1068,175 @@ class FoundSettings {
   /// it in place of IMAP and SMTP.
   final String? jmapUrl;
 
+  /// The provider (`microsoft`, `google`) whose own sign-in page these
+  /// servers want, in place of a password.
+  final String? oauth;
+
   /// The host shown for a JMAP account.
   String? get jmapHost => jmapUrl == null ? null : Uri.tryParse(jmapUrl!)?.host;
 }
 
-/// Why adding an account failed.
-enum AddAccountError { wrongPassword, unreachable, insecure, keychain, other }
+/// Why adding an account, or signing in to one, failed.
+enum AddAccountError {
+  wrongPassword,
+  unreachable,
+  insecure,
+  keychain,
+
+  /// Linux with no keyring running (no Secret Service).
+  noKeyring,
+
+  /// The server's certificate was refused: see
+  /// [AddAccountException.certificate].
+  certificate,
+
+  /// This build has no sign-in for the provider, and no client ID was
+  /// given.
+  signInUnavailable,
+
+  /// The provider's page was closed or the wait ran out.
+  signInCancelled,
+
+  /// The provider refused the sign-in.
+  signInDenied,
+
+  /// New servers for an account that signs in with a provider's page:
+  /// its sign-in only goes to that provider's servers, over TLS.
+  oauthServers,
+  other,
+}
 
 class AddAccountException implements Exception {
-  const AddAccountException(this.error, [this.detail = '']);
+  const AddAccountException(this.error, [this.detail = '', this.certificate]);
   final AddAccountError error;
   final String detail;
 
+  /// With [AddAccountError.certificate]: what the certificate says.
+  final CertificateProblem? certificate;
+
   @override
   String toString() => 'AddAccountException($error, $detail)';
+}
+
+/// Why a server's certificate was refused.
+enum CertificateIssue {
+  /// Nobody the system trusts signed it, as with one the server made.
+  untrusted,
+  expired,
+
+  /// Made for another server name.
+  nameMismatch,
+
+  /// Not the one trusted for this account before.
+  changed,
+
+  /// Revoked or broken: trusting it can't help. Also one trusted before
+  /// and revoked since.
+  invalid,
+
+  /// A big provider's server (Microsoft, Google…), whose certificates an
+  /// authority always vouches for: refused, someone may be in the way.
+  /// Never trusted by hand.
+  provider,
+}
+
+/// A refused certificate, for the person to look at and maybe trust.
+class CertificateProblem {
+  const CertificateProblem({
+    required this.host,
+    required this.issue,
+    required this.fingerprint,
+    this.subject = '',
+    this.issuer = '',
+    this.notAfter = '',
+  });
+
+  /// From the engine's JSON (`Refused::json`); null when it isn't one.
+  static CertificateProblem? fromJson(String text) {
+    try {
+      final j = jsonDecode(text) as Map<String, dynamic>;
+      return CertificateProblem(
+        host: j['host'] as String,
+        issue: CertificateIssue.values.firstWhere(
+          (i) => i.name == j['problem'],
+          orElse: () => CertificateIssue.invalid,
+        ),
+        fingerprint: j['fingerprint'] as String,
+        subject: j['subject'] as String? ?? '',
+        issuer: j['issuer'] as String? ?? '',
+        notAfter: j['notAfter'] as String? ?? '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final String host;
+  final CertificateIssue issue;
+
+  /// SHA-256, `AB:CD:…`.
+  final String fingerprint;
+  final String subject;
+  final String issuer;
+
+  /// The last day it is valid, `2027-01-31`.
+  final String notAfter;
+
+  bool get canTrust =>
+      issue != CertificateIssue.invalid && issue != CertificateIssue.provider;
+
+  TrustedCertificate get trusted =>
+      TrustedCertificate(host: host, fingerprint: fingerprint);
+}
+
+/// A certificate the person chose to trust for one server of an account.
+class TrustedCertificate {
+  const TrustedCertificate({required this.host, required this.fingerprint});
+  final String host;
+  final String fingerprint;
+}
+
+/// A provider that signs in with its own page (OAuth).
+class OAuthProviderInfo {
+  const OAuthProviderInfo({
+    required this.id,
+    required this.name,
+    required this.builtIn,
+    required this.appPasswords,
+    required this.hasTenant,
+    this.ownClient = true,
+  });
+
+  /// `microsoft`, `google`.
+  final String id;
+
+  /// "Microsoft", "Google".
+  final String name;
+
+  /// This build can sign in with it out of the box.
+  final bool builtIn;
+
+  /// The provider still takes app passwords, the way in without a client.
+  final bool appPasswords;
+
+  /// A client of the person's own may name a tenant (Microsoft).
+  final bool hasTenant;
+
+  /// A client of the person's own works on this device: not Google's on
+  /// Android, whose redirect the app can't answer for another client.
+  final bool ownClient;
+}
+
+/// The person's own app registration with a provider, from Advanced.
+class OAuthClientConfig {
+  const OAuthClientConfig({
+    required this.clientId,
+    this.clientSecret,
+    this.tenant,
+  });
+  final String clientId;
+  final String? clientSecret;
+  final String? tenant;
 }
 
 /// A message being written.
@@ -2688,8 +2854,16 @@ abstract class MailSource with ComposeExtras {
   Future<MailAccount> updateAccount(MailAccount account);
 
   /// Checks new servers with the account's password and keeps them.
-  /// Throws [AddAccountException].
-  Future<void> setAccountServers(int accountId, AccountServers servers);
+  /// [trusted] are certificates the person chose to trust for them after
+  /// a [AddAccountError.certificate]: kept only once the check went
+  /// through. An account that signs in with a provider's page keeps that
+  /// provider's servers ([AddAccountError.oauthServers]). Throws
+  /// [AddAccountException].
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  });
 
   /// Removes an account and its mail from this device; the mail stays on
   /// the server.
@@ -2719,11 +2893,48 @@ abstract class MailSource with ComposeExtras {
   AccountHealth accountHealth(int accountId);
 
   /// Checks a new password for an account in [SyncStatus.failed], keeps it
-  /// and follows the account again. Throws [AddAccountException].
-  Future<void> signInAgain(int accountId, String password);
+  /// and follows the account again. [trusted] are certificates the person
+  /// chose to trust after a [AddAccountError.certificate]: kept only once
+  /// the sign-in went through, and only for the account's own servers.
+  /// Throws [AddAccountException].
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  });
+
+  /// The providers that sign in with their own page.
+  List<OAuthProviderInfo> get oauthProviders => const [];
+
+  /// The provider an account signs in with, if it signs in with OAuth.
+  String? accountOAuth(int accountId) => null;
+
+  /// Opens [provider]'s sign-in page in the browser and, once the person
+  /// signed in there, adds the account with the provider's servers.
+  /// Throws [AddAccountException].
+  Future<MailAccount> addOAuthAccount({
+    required String provider,
+    required String name,
+    required String email,
+    String senderName = '',
+    required Color color,
+    OAuthClientConfig? client,
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
+
+  /// As [addOAuthAccount], for an account whose sign-in stopped working.
+  Future<void> signInAgainOAuth(
+    int accountId, {
+    OAuthClientConfig? client,
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
+
+  /// Stops waiting for the provider's page.
+  void cancelOAuth() {}
 
   /// Checks the login, then adds the account. Without [smtp] the engine
-  /// guesses `smtp.<domain>` on port 465.
+  /// guesses `smtp.<domain>` on port 465. [trusted] are certificates the
+  /// person chose to trust after a [AddAccountError.certificate].
   Future<MailAccount> addImapAccount({
     required String name,
     required String email,
@@ -2735,6 +2946,7 @@ abstract class MailSource with ComposeExtras {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   });
 
   /// Checks the login against a JMAP server, then adds the account. With
@@ -2747,6 +2959,7 @@ abstract class MailSource with ComposeExtras {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   });
 
   /// Hides a message from the lists while its action can be undone, or

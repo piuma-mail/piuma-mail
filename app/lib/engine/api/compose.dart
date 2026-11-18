@@ -8,7 +8,7 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `lettre_mailbox`, `prepare_error`
+// These functions are ignored because they are not marked as `pub`: `lettre_mailbox`, `prepare_error`, `receipt_waits`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// Makes a picture ready to go inside a message: turned the right way,
@@ -58,9 +58,12 @@ MessageAsks messageAsks({
 /// The person's answer to a read receipt asked for: [send] it now, or
 /// not; with [never], the account never offers one to that sender
 /// again. Only an offered receipt is sent, never one on its own. It goes
-/// through the outbox like any message, so offline it waits there and
-/// goes once the server can be reached: returns true while it waits.
-Future<bool> answerReadReceipt({
+/// through the outbox like any message: returns true while it waits
+/// there, offline or after a failed try (the Outbox shows why, and
+/// deleting it there takes the answer back), false once sent, and null
+/// when it was deleted from the Outbox before it went. Not sending takes
+/// back one still waiting there.
+Future<bool?> answerReadReceipt({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,

@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+use crate::auth::Login;
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
 use crate::model::{Account, AccountId, AccountKind};
@@ -27,6 +28,15 @@ impl RemoteError {
         matches!(
             self,
             RemoteError::Imap(ImapError::Auth) | RemoteError::Jmap(JmapError::Auth)
+        )
+    }
+
+    /// The server's certificate was refused: the person has to look at it.
+    pub fn is_certificate(&self) -> bool {
+        matches!(
+            self,
+            RemoteError::Imap(ImapError::Certificate(_))
+                | RemoteError::Jmap(JmapError::Certificate(_))
         )
     }
 
@@ -101,14 +111,14 @@ pub enum Remote {
 }
 
 impl Remote {
-    pub async fn open(account: &Account, password: &str) -> Result<Self> {
+    pub async fn open(account: &Account, login: &Login) -> Result<Self> {
         Ok(match &account.kind {
             AccountKind::Imap { .. } => {
-                let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+                let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
                 Remote::Imap(imap::Connection::open(&cfg).await?)
             }
             AccountKind::Jmap { .. } => {
-                let cfg = JmapConfig::for_account(account, password).expect("JMAP account");
+                let cfg = JmapConfig::for_account(account, login).expect("JMAP account");
                 Remote::Jmap(jmap::Client::open(&cfg).await?)
             }
         })
@@ -522,16 +532,16 @@ impl Remote {
 }
 
 /// Checks that an account's settings work.
-pub async fn check_login(account: &Account, password: &str) -> Result<()> {
-    Remote::open(account, password).await?.close().await;
+pub async fn check_login(account: &Account, login: &Login) -> Result<()> {
+    Remote::open(account, login).await?.close().await;
     Ok(())
 }
 
 /// Sends a draft and files a copy in Sent, straight away, without the
 /// outbox: for checks and tests. The app sends through [crate::outbox].
-pub async fn send(account: &Account, password: &str, draft: &Draft) -> smtp::Result<SendReport> {
+pub async fn send(account: &Account, login: &Login, draft: &Draft) -> smtp::Result<SendReport> {
     let ready = smtp::ready(draft)?;
-    let mut courier = AccountCourier::new(account, password);
+    let mut courier = AccountCourier::new(account, login);
     courier.send(&ready).await?;
     Ok(SendReport {
         message_id: ready.message_id.clone(),
@@ -543,16 +553,16 @@ pub async fn send(account: &Account, password: &str, draft: &Draft) -> smtp::Res
 /// filed in Sent over IMAP, or through the JMAP server, which files it.
 pub struct AccountCourier<'a> {
     account: &'a Account,
-    password: &'a str,
+    login: &'a Login,
 }
 
 impl<'a> AccountCourier<'a> {
-    pub fn new(account: &'a Account, password: &'a str) -> Self {
-        AccountCourier { account, password }
+    pub fn new(account: &'a Account, login: &'a Login) -> Self {
+        AccountCourier { account, login }
     }
 
     fn jmap(&self) -> Option<JmapConfig> {
-        JmapConfig::for_account(self.account, self.password)
+        JmapConfig::for_account(self.account, self.login)
     }
 }
 
@@ -560,6 +570,7 @@ impl<'a> AccountCourier<'a> {
 fn jmap_send_error(e: JmapError) -> SendError {
     match e {
         JmapError::Auth => SendError::Auth,
+        JmapError::Certificate(r) => SendError::Certificate(r),
         JmapError::Uncertain(detail) => SendError::Uncertain(detail),
         // The server would take the password only unencrypted: as a
         // certificate error, shown, never waited on.
@@ -603,7 +614,7 @@ impl Courier for AccountCourier<'_> {
                 .map_err(jmap_send_error)?;
             return Ok(());
         }
-        let smtp = SmtpConfig::for_account(self.account, self.password).expect("IMAP account");
+        let smtp = SmtpConfig::for_account(self.account, self.login).expect("IMAP account");
         smtp::send(&smtp, ready).await
     }
 
@@ -611,8 +622,8 @@ impl Courier for AccountCourier<'_> {
         if self.jmap().is_some() {
             return smtp::Filing::Server;
         }
-        let smtp = SmtpConfig::for_account(self.account, self.password).expect("IMAP account");
-        let imap = ImapConfig::for_account(self.account, self.password).expect("IMAP account");
+        let smtp = SmtpConfig::for_account(self.account, self.login).expect("IMAP account");
+        let imap = ImapConfig::for_account(self.account, self.login).expect("IMAP account");
         smtp::file_sent(&smtp, &imap, ready, retry).await
     }
 
@@ -626,7 +637,7 @@ impl Courier for AccountCourier<'_> {
         }
         // In Sent, it went. Missing proves nothing on servers that don't
         // file sent mail themselves, nor on one that is slow to.
-        let imap = ImapConfig::for_account(self.account, self.password)?;
+        let imap = ImapConfig::for_account(self.account, self.login)?;
         let mut conn = imap::Connection::open(&imap).await.ok()?;
         let found = conn.sent_has(&ready.message_id).await.ok()?;
         conn.logout().await.ok();
@@ -638,13 +649,13 @@ impl Courier for AccountCourier<'_> {
 /// `jmap::watch`). Wrong credentials end it.
 pub async fn watch(
     account: &Account,
-    password: &str,
+    login: &Login,
     store: Arc<Mutex<Store>>,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    if let Some(cfg) = JmapConfig::for_account(account, password) {
+    if let Some(cfg) = JmapConfig::for_account(account, login) {
         return Ok(jmap::watch(cfg, store, account.id, events).await?);
     }
-    let cfg = ImapConfig::for_account(account, password).expect("IMAP account");
+    let cfg = ImapConfig::for_account(account, login).expect("IMAP account");
     Ok(imap::watch(cfg, store, account.id, "INBOX".to_owned(), events).await?)
 }
