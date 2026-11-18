@@ -225,12 +225,12 @@ class _SpansState extends State<_Spans> {
       if (s.link case final link?) {
         // A tap opens it; a long press, on a phone, shows where it goes.
         tap = LinkPressRecognizer()
-          ..onTapLink = () => openBodyLink(context, link, s)
-          ..onLongPress = () => showLinkTarget(
+          ..onTapLink = (() => openBodyLink(context, link, s))
+          ..onLongPress = (() => showLinkTarget(
             context,
             link,
             onOpen: () => openBodyLink(context, link, s),
-          );
+          ));
         _taps.add(tap);
       }
       final style = TextStyle(
