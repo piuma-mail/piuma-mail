@@ -1,7 +1,6 @@
 # Privacy notice: in-app reports
 
-> **Draft for the maintainer to check.** The names, places and periods below are the project's
-> defaults; a build made by someone else (a fork) can name its own, and the app shows the ones it
+> The names, places and periods below are the project's defaults; a build made by someone else (a fork) can name its own, and the app shows the ones it
 > was built with under Settings › Help & feedback › Reports and privacy.
 
 Piuma Mail reads and sends your mail directly between your device and your mail servers: no server
