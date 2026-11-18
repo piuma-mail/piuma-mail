@@ -23,4 +23,12 @@ void main() {
     expect(paperHeight('0,600', 360), isNull);
     expect(paperHeight('1200', 360), isNull);
   });
+
+  test('the channel takes two numbers and nothing else', () {
+    expect(paperHeight('1200,600;alert(1)', 360), isNull);
+    expect(paperHeight('https://x.example,600', 360), isNull);
+    expect(paperHeight('1e9,600', 360), isNull);
+    expect(paperHeight(' 1200,600', 360), isNull);
+    expect(paperHeight('1200.5,600', 600), 1200.5);
+  });
 }

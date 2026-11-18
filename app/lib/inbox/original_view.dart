@@ -8,14 +8,48 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../mail/mail_source.dart';
+import '../widgets/link_target.dart';
+import '../widgets/links.dart';
 import 'original_linux.dart';
 import 'original_windows.dart';
 
-/// Draws an original's safe HTML and hands every link tap to [onLink].
+/// Draws an original's safe HTML and hands every navigation it would make
+/// to [onLink]. [OriginalView] opens one only right after the person
+/// pressed on the paper ([ClickGate]); a web view that tells clicks apart
+/// itself reports them with [OriginalView.clicked] instead. The height,
+/// the link under the pointer and a web view that can't start go up with
+/// [OriginalView.setHeight], [OriginalView.hover] and
+/// [OriginalView.unavailable].
 typedef OriginalPaper = Widget Function(
   String html,
   ValueChanged<String> onLink,
 );
+
+/// Set once a web view failed to start in this run: emails open in the
+/// clean view from then on.
+bool originalPaperFailed = false;
+
+/// Whether a navigation follows a real press of the person's on the
+/// paper: a link they clicked, not one the page started by itself (a
+/// refresh, a form, a script that got past the policy).
+class ClickGate {
+  ClickGate({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
+
+  final DateTime Function() _clock;
+  DateTime? _at;
+
+  /// How long after a press its navigation may come.
+  static const window = Duration(milliseconds: 1500);
+
+  void pressed() => _at = _clock();
+
+  /// Whether a press came just before; it lets one navigation through.
+  bool take() {
+    final at = _at;
+    _at = null;
+    return at != null && _clock().difference(at) <= window;
+  }
+}
 
 /// How the original is drawn: the system's web view (Android, iPhone,
 /// iPad, macOS, WebView2 on Windows and WebKitGTK on Linux), nothing on
@@ -42,9 +76,13 @@ class OriginalView extends StatefulWidget {
     required this.original,
     required this.onLink,
     this.phone = false,
+    this.onUnavailable,
   });
 
   final Future<OriginalDoc> original;
+
+  /// The web view couldn't start: the reader shows the clean view.
+  final VoidCallback? onUnavailable;
 
   /// A link was tapped: the address, and the text it shows when the
   /// engine found it suspicious.
@@ -64,12 +102,73 @@ class OriginalView extends StatefulWidget {
     );
   }
 
+  static _OriginalPaperScope? _scope(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_OriginalPaperScope>();
+
+  /// A link the web view itself knows the person clicked (WebKitGTK's
+  /// "link clicked"): it opens without [ClickGate].
+  static void clicked(BuildContext context, String url) =>
+      _scope(context)?.onClicked(url);
+
+  /// The link under the pointer, or null when it left one.
+  static void hover(BuildContext context, String? url) {
+    final uri = url == null ? null : Uri.tryParse(url);
+    LinkTarget.show(
+      context,
+      uri != null && isMailLinkAllowed(uri) ? url : null,
+    );
+  }
+
+  /// The web view couldn't start (no WebView2, say): the clean view.
+  static void unavailable(BuildContext context) =>
+      _scope(context)?.onUnavailable();
+
+  /// The person activated a link from the keyboard (Enter or Space, as
+  /// the web view saw it, not as a page script made it up): the next
+  /// navigation counts as theirs, as after a press ([ClickGate]).
+  static void keyPressed(BuildContext context) => _scope(context)?.onKey();
+
+  /// A long press (or a right click) on a link: where it really goes,
+  /// to open or copy ([showLinkTarget]), as hovering shows on a desktop.
+  static void pressed(BuildContext context, String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !isMailLinkAllowed(uri)) return;
+    _scope(context)?.onPress(url);
+  }
+
   @override
   State<OriginalView> createState() => _OriginalViewState();
 }
 
 class _OriginalViewState extends State<OriginalView> {
   double? _height;
+  final _gate = ClickGate();
+  OriginalDoc? _doc;
+
+  void _open(String link, {required bool clicked}) {
+    final doc = _doc;
+    if (doc == null || !mounted) return;
+    if (!clicked && !_gate.take()) return;
+    widget.onLink(link, _suspicious(doc, link));
+  }
+
+  /// The text a suspicious link shows, by its address as the engine read
+  /// it from the `href`; the web view hands back the browser's form of it
+  /// (`a.href`: a trailing slash, another case, percent-encoding), so both
+  /// are compared normalized.
+  String? _suspicious(OriginalDoc doc, String link) {
+    if (doc.suspicious[link] case final shown?) return shown;
+    final wanted = normalizeLink(link);
+    for (final e in doc.suspicious.entries) {
+      if (normalizeLink(e.key) == wanted) return e.value;
+    }
+    return null;
+  }
+
+  void _unavailable() {
+    originalPaperFailed = true;
+    widget.onUnavailable?.call();
+  }
 
   @override
   void didUpdateWidget(OriginalView old) {
@@ -96,6 +195,14 @@ class _OriginalViewState extends State<OriginalView> {
       color: PiumaColors.light.page,
       child: _OriginalPaperScope(
         onHeight: _setHeight,
+        onClicked: (link) => _open(link, clicked: true),
+        onUnavailable: _unavailable,
+        onKey: _gate.pressed,
+        onPress: (link) => showLinkTarget(
+          context,
+          link,
+          onOpen: () => _open(link, clicked: true),
+        ),
         child: FutureBuilder<OriginalDoc>(
           future: widget.original,
           builder: (context, snap) {
@@ -103,9 +210,16 @@ class _OriginalViewState extends State<OriginalView> {
             if (doc == null || paper == null) {
               return const SizedBox.expand();
             }
-            return paper(
-              doc.html,
-              (link) => widget.onLink(link, doc.suspicious[link]),
+            _doc = doc;
+            // Every press on the paper, seen before the web view gets it.
+            return MouseRegion(
+              onExit: (_) => LinkTarget.show(context, null),
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) => _gate.pressed(),
+                onPointerUp: (_) => _gate.pressed(),
+                child: paper(doc.html, (link) => _open(link, clicked: false)),
+              ),
             );
           },
         ),
@@ -186,9 +300,20 @@ class _EdgeToEdgeState extends State<_EdgeToEdge> {
 }
 
 class _OriginalPaperScope extends InheritedWidget {
-  const _OriginalPaperScope({required this.onHeight, required super.child});
+  const _OriginalPaperScope({
+    required this.onHeight,
+    required this.onClicked,
+    required this.onUnavailable,
+    required this.onKey,
+    required this.onPress,
+    required super.child,
+  });
 
   final ValueChanged<double> onHeight;
+  final ValueChanged<String> onClicked;
+  final VoidCallback onUnavailable;
+  final VoidCallback onKey;
+  final ValueChanged<String> onPress;
 
   @override
   bool updateShouldNotify(_OriginalPaperScope old) => old.onHeight != onHeight;
@@ -198,6 +323,10 @@ class _OriginalPaperScope extends InheritedWidget {
 /// by the page's Content-Security-Policy (`default-src 'none'`), while
 /// the host watches the document's height so the reader scrolls as one
 /// page, and every navigation is stopped and handed to the app.
+///
+/// JavaScript stays on only because the height can't be measured without
+/// it: the email's own scripts can't run under the policy, and the
+/// channel back to the app takes nothing but two numbers.
 class _WebPaper extends StatefulWidget {
   const _WebPaper({required this.html, required this.onLink});
 
@@ -230,6 +359,31 @@ const _watchHeight = '''
   }
   window.addEventListener('load', report);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(report);
+  if (window.PiumaHover) {
+    document.addEventListener('mouseover', function (e) {
+      var a = e.target.closest && e.target.closest('a[href]');
+      PiumaHover.postMessage(a ? a.href : '');
+    }, true);
+  }
+  // A long press on a link (a right click with a mouse): the app shows
+  // where it goes, in place of the web view's own menu.
+  if (window.PiumaPress) {
+    document.addEventListener('contextmenu', function (e) {
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (!a || !e.isTrusted) return;
+      e.preventDefault();
+      PiumaPress.postMessage(a.href);
+    }, true);
+  }
+  // Enter or Space on a link, pressed by the person (a script's made-up
+  // event isn't trusted): its navigation may open, as after a click.
+  if (window.PiumaKey) {
+    document.addEventListener('keydown', function (e) {
+      if (!e.isTrusted || (e.key !== 'Enter' && e.key !== ' ')) return;
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (a) PiumaKey.postMessage('1');
+    }, true);
+  }
 })();
 ''';
 
@@ -239,6 +393,10 @@ const _watchHeight = '''
 /// scaled down to fit and its CSS pixels are not the app's points.
 @visibleForTesting
 double? paperHeight(String report, double width) {
+  // Two numbers and nothing else.
+  if (!RegExp(r'^\d{1,7}(\.\d{1,4})?,\d{1,6}(\.\d{1,4})?$').hasMatch(report)) {
+    return null;
+  }
   final parts = report.split(',');
   if (parts.length != 2) return null;
   final height = double.tryParse(parts[0]);
@@ -263,6 +421,22 @@ class _WebPaperState extends State<_WebPaper> {
   late final WebViewController _controller = _wide(WebViewController())
     ..setJavaScriptMode(JavaScriptMode.unrestricted)
     ..addJavaScriptChannel('PiumaPaper', onMessageReceived: _onReport)
+    ..addJavaScriptChannel('PiumaHover', onMessageReceived: _onHover)
+    ..addJavaScriptChannel(
+      'PiumaPress',
+      onMessageReceived: (m) {
+        final url = m.message;
+        if (mounted && url.isNotEmpty && url.length <= 2048) {
+          OriginalView.pressed(context, url);
+        }
+      },
+    )
+    ..addJavaScriptChannel(
+      'PiumaKey',
+      onMessageReceived: (_) {
+        if (mounted) OriginalView.keyPressed(context);
+      },
+    )
     ..setNavigationDelegate(
       NavigationDelegate(
         onPageFinished: (_) => _watch(),
@@ -272,8 +446,14 @@ class _WebPaperState extends State<_WebPaper> {
           if (url == 'about:blank' || url.startsWith('data:')) {
             return NavigationDecision.navigate;
           }
-          widget.onLink(url);
+          // A frame inside the email navigating is never the person's.
+          if (request.isMainFrame) widget.onLink(url);
           return NavigationDecision.prevent;
+        },
+        onWebResourceError: (error) {
+          if (error.isForMainFrame ?? false) {
+            if (mounted) OriginalView.unavailable(context);
+          }
         },
       ),
     )
@@ -305,6 +485,13 @@ class _WebPaperState extends State<_WebPaper> {
     if (!mounted) return;
     final h = paperHeight(message.message, _width);
     if (h != null) OriginalView.setHeight(context, h);
+  }
+
+  /// Only shown, never opened: at most an address of a link.
+  void _onHover(JavaScriptMessage message) {
+    if (!mounted) return;
+    final url = message.message;
+    OriginalView.hover(context, url.isEmpty || url.length > 2048 ? null : url);
   }
 
   @override

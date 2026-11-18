@@ -35,6 +35,8 @@ const MAIL: &str = "urn:ietf:params:jmap:mail";
 const CORE: &str = "urn:ietf:params:jmap:core";
 /// The away message (RFC 8621 section 8).
 pub const VACATION: &str = "urn:ietf:params:jmap:vacationresponse";
+/// Quotas (RFC 9425).
+const QUOTA: &str = "urn:ietf:params:jmap:quota";
 
 /// Messages asked for per round trip, unless the server allows fewer.
 const BATCH: usize = 250;
@@ -46,10 +48,13 @@ const QUERY_PAGES_MAX: usize = 1000;
 /// The most JSON a server response may hold: beyond this the response
 /// is a protocol failure, not something to keep buffering.
 const RESPONSE_MAX: usize = 32 * 1024 * 1024;
+
+/// The longest event-stream line kept while waiting for its end.
+const EVENT_LINE_MAX: usize = 64 * 1024;
 /// How long to wait for a push before looking anyway.
 pub const POLL_EVERY: Duration = Duration::from_secs(5 * 60);
 
-const SUMMARY_PROPERTIES: [&str; 18] = [
+const SUMMARY_PROPERTIES: [&str; 19] = [
     "id",
     "blobId",
     "keywords",
@@ -68,6 +73,7 @@ const SUMMARY_PROPERTIES: [&str; 18] = [
     "header:List-Unsubscribe-Post",
     "header:List-Post",
     "header:Precedence",
+    crate::envelope::FOLLOWUP_TO,
 ];
 /// What tells a newsletter, for mail cached before it was asked for.
 const LIST_PROPERTIES: [&str; 10] = [
@@ -94,6 +100,8 @@ pub struct JmapConfig {
     /// Login name. Empty means `password` is an API token (Bearer).
     pub username: String,
     pub password: String,
+    /// Certificates the person trusted for the account's servers.
+    pub pins: Vec<crate::tls::Pin>,
 }
 
 impl fmt::Debug for JmapConfig {
@@ -107,7 +115,9 @@ impl fmt::Debug for JmapConfig {
 
 impl JmapConfig {
     /// The JMAP settings of an account, or None for other accounts.
-    pub fn for_account(account: &Account, password: &str) -> Option<Self> {
+    /// JMAP accounts sign in with a password or an API token; an OAuth
+    /// sign-in gives none here.
+    pub fn for_account(account: &Account, login: &crate::auth::Login) -> Option<Self> {
         match &account.kind {
             AccountKind::Jmap {
                 session_url,
@@ -115,7 +125,8 @@ impl JmapConfig {
             } => Some(JmapConfig {
                 session_url: session_url.clone(),
                 username: username.clone(),
-                password: password.to_owned(),
+                password: login.password_text().unwrap_or_default().to_owned(),
+                pins: login.pins.clone(),
             }),
             AccountKind::Imap { .. } => None,
         }
@@ -151,10 +162,15 @@ pub async fn discover(email: &str) -> Option<String> {
 pub async fn discover_at(url: &str) -> Option<String> {
     let http = crate::tls::http_client()
         .timeout(Duration::from_secs(8))
+        .redirect(redirect_policy())
         .build()
         .ok()?;
     let response = http.get(url).send().await.ok()?;
     let found = response.url().to_string();
+    // What is found becomes where the password goes.
+    if !credentials_may_go_to(&found) {
+        return None;
+    }
     match response.status() {
         reqwest::StatusCode::UNAUTHORIZED => {
             let challenge = response
@@ -167,7 +183,7 @@ pub async fn discover_at(url: &str) -> Option<String> {
             challenge.contains("basic").then_some(found)
         }
         s if s.is_success() => {
-            let bytes = response.bytes().await.ok()?;
+            let bytes = read_capped(response, RESPONSE_MAX).await.ok()?;
             let session: Value = serde_json::from_slice(&bytes).ok()?;
             session.get("apiUrl").is_some().then_some(found)
         }
@@ -175,10 +191,23 @@ pub async fn discover_at(url: &str) -> Option<String> {
     }
 }
 
+/// Where a message being sent stands on a JMAP server ([Client::sent_state]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentState {
+    /// A copy with its Message-ID was submitted for sending: it went.
+    pub submitted: bool,
+    /// Its copy in Drafts, left by an earlier try, to submit rather than
+    /// import again.
+    pub draft: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum JmapError {
     #[error("could not reach {url}: {source}")]
     Connect { url: String, source: reqwest::Error },
+    /// The server's certificate was refused; the person may trust it.
+    #[error("{0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server rejected the user name or password")]
     Auth,
     #[error("this account does not offer mail over JMAP")]
@@ -189,8 +218,17 @@ pub enum JmapError {
     NoFolder,
     #[error("JMAP: {0}")]
     Protocol(String),
+    /// A send was asked for and no answer came: it may have gone.
+    #[error("the server may have taken the message: {0}")]
+    Uncertain(String),
+    #[error("the server asked to send the password without encryption")]
+    Insecure,
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A folder that holds the inbox or a folder with a job is not
+    /// deleted.
+    #[error("the folder holds the inbox or a folder with a job")]
+    Protected,
 }
 
 impl JmapError {
@@ -232,6 +270,9 @@ pub struct Mailbox {
     pub total_emails: u32,
     #[serde(default)]
     pub sort_order: u32,
+    /// Shown in folder lists; None when the server doesn't say.
+    #[serde(default)]
+    pub is_subscribed: Option<bool>,
 }
 
 impl Mailbox {
@@ -271,13 +312,20 @@ pub struct Client {
     mailboxes: Vec<Mailbox>,
     /// What the session says the server can do.
     capabilities: HashSet<String>,
+    /// Jobs the person gave folders of their choice, by local name.
+    roles: Vec<(FolderRole, String)>,
 }
 
 impl Client {
     /// Reads the session object, which is also the login check.
     pub async fn open(cfg: &JmapConfig) -> Result<Self> {
-        let http = crate::tls::http_client()
+        if !credentials_may_go_to(&cfg.session_url) {
+            return Err(JmapError::Insecure);
+        }
+        let (http, refused) = crate::tls::http_client_pinned(&cfg.pins);
+        let http = http
             .timeout(Duration::from_secs(60))
+            .redirect(redirect_policy())
             .build()
             .map_err(|e| JmapError::Protocol(e.to_string()))?;
         let authorization = cfg.authorization();
@@ -286,9 +334,12 @@ impl Client {
             .header(reqwest::header::AUTHORIZATION, &authorization)
             .send()
             .await
-            .map_err(|source| JmapError::Connect {
-                url: cfg.session_url.clone(),
-                source,
+            .map_err(|source| match refused.take() {
+                Some(r) => JmapError::Certificate(Box::new(r)),
+                None => JmapError::Connect {
+                    url: cfg.session_url.clone(),
+                    source,
+                },
             })?;
         let session: Session = read_json(response).await?;
         let account_id = session
@@ -311,18 +362,31 @@ impl Client {
         };
         // A template's braces must survive joining.
         let template = |u: String| absolute(u).replace("%7B", "{").replace("%7D", "}");
+        let api_url = absolute(session.api_url);
+        let download_url = template(session.download_url);
+        let upload_url = template(session.upload_url);
+        let event_source_url = session.event_source_url.map(template);
+        // The session names where the password goes next: never plain http.
+        let insecure = [&api_url, &download_url, &upload_url]
+            .into_iter()
+            .chain(event_source_url.as_ref())
+            .any(|u| !credentials_may_go_to(u));
+        if insecure {
+            return Err(JmapError::Insecure);
+        }
         let mut client = Client {
             http,
             config: cfg.clone(),
             authorization,
-            api_url: absolute(session.api_url),
-            download_url: template(session.download_url),
-            upload_url: template(session.upload_url),
-            event_source_url: session.event_source_url.map(template),
+            api_url,
+            download_url,
+            upload_url,
+            event_source_url,
             account_id,
             max_get,
             mailboxes: Vec::new(),
             capabilities,
+            roles: Vec::new(),
         };
         client.refresh_mailboxes().await?;
         Ok(client)
@@ -394,7 +458,7 @@ impl Client {
             .call([(
                 "Mailbox/get",
                 json!({ "accountId": self.account_id, "ids": null,
-                        "properties": ["id", "name", "role", "parentId", "unreadEmails", "totalEmails", "sortOrder"] }),
+                        "properties": ["id", "name", "role", "parentId", "unreadEmails", "totalEmails", "sortOrder", "isSubscribed"] }),
             )])
             .await?;
         self.mailboxes = serde_json::from_value(got["list"].clone())
@@ -402,9 +466,22 @@ impl Client {
         Ok(())
     }
 
-    /// The folder with a job, when the account has one.
+    /// The folder with a job, when the account has one: the person's
+    /// choice when it is still there, else the one the server gave it.
     pub fn find_folder(&self, role: FolderRole) -> Option<&Mailbox> {
+        let chosen = self.roles.iter().find(|(r, _)| *r == role);
+        if let Some((_, local)) = chosen {
+            if let Some(m) = self.mailboxes.iter().find(|m| m.local() == *local) {
+                return Some(m);
+            }
+        }
         find_role(&self.mailboxes, role)
+    }
+
+    /// Reads which folders the person gave a job to.
+    pub fn learn_roles(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        self.roles = lock(store).role_choices(account)?;
+        Ok(())
     }
 
     /// The folder for a role, made if the account has none. Returns its
@@ -460,7 +537,7 @@ impl Client {
             name: name.trim().to_owned(),
             ..Mailbox::default()
         });
-        lock(store).set_account_folders(account, &own_folders(&self.mailboxes))?;
+        lock(store).set_account_folders(account, &own_folders(&self.mailboxes, &self.roles))?;
         Ok(id)
     }
 
@@ -674,6 +751,7 @@ impl Client {
     /// Finds Sent, Archive and Drafts, remembers them, and brings them up
     /// to date.
     pub async fn sync_folders(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        self.learn_roles(store, account)?;
         self.refresh_mailboxes().await?;
         for (role, folder) in [
             (FolderRole::Sent, Folder::Sent),
@@ -688,9 +766,23 @@ impl Client {
             self.sync_mailbox(store, account, &name, |_, _| {}).await?;
         }
         // Report spam moves mail to the junk role; offered only when found.
+        // Delete there, and in Trash, deletes for good.
         let junk = self.find_folder(FolderRole::Junk).map(Mailbox::local);
-        lock(store).set_junk_mailbox(account, junk.as_deref())?;
-        lock(store).set_account_folders(account, &own_folders(&self.mailboxes))?;
+        let trash = self.find_folder(FolderRole::Trash).map(Mailbox::local);
+        let store = lock(store);
+        store.set_junk_mailbox(account, junk.as_deref())?;
+        store.set_trash_mailbox(account, trash.as_deref())?;
+        // By path ("Clients/Acme"), which also says what is inside what.
+        store.set_server_folders(
+            account,
+            &self
+                .mailboxes
+                .iter()
+                .filter(|m| !is_space(m))
+                .map(|m| (m.local(), path_of(&self.mailboxes, m)))
+                .collect::<Vec<_>>(),
+        )?;
+        store.set_account_folders(account, &own_folders(&self.mailboxes, &self.roles))?;
         Ok(())
     }
 
@@ -800,9 +892,284 @@ impl Client {
         uids: &[u32],
         role: FolderRole,
     ) -> Result<String> {
+        self.learn_roles(store, account)?;
         let target = self.folder(role).await?;
+        // Already there: nothing to do. Deleting for good is only ever
+        // asked for by name (`erase`).
+        if target == mailbox {
+            return Ok(target);
+        }
         self.move_to(store, account, mailbox, uids, &target).await?;
         Ok(target)
+    }
+
+    /// Stars messages of one folder (`$flagged`), or takes the star off.
+    pub async fn set_flagged(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        flagged: bool,
+    ) -> Result<()> {
+        let patch = json!({ "keywords/$flagged": if flagged { json!(true) } else { Value::Null } });
+        self.update(store, account, mailbox, uids, patch).await
+    }
+
+    /// Puts messages of one folder in `target` too: JMAP keeps one email
+    /// in several folders, so the copy is the same email.
+    pub async fn copy_to(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+        target: &str,
+    ) -> Result<()> {
+        if uids.is_empty() || target == mailbox {
+            return Ok(());
+        }
+        let to = self.remote(target)?;
+        let patch = json!({ format!("mailboxIds/{to}"): true });
+        self.update(store, account, mailbox, uids, patch).await
+    }
+
+    /// Deletes the emails of `mailbox` for good (Empty Trash, Empty spam)
+    /// and forgets them here: only those of `only` (the ids the person
+    /// was told the count with, or those here when the server couldn't be
+    /// counted), so mail that came after stays; none with
+    /// a change still waiting. An email that is in another folder too
+    /// only leaves this one. Returns how many went.
+    pub async fn empty(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        only: &HashSet<String>,
+    ) -> Result<usize> {
+        let remote = self.remote(mailbox)?;
+        let waiting: HashSet<String> = {
+            let store = lock(store);
+            let mut ids = HashSet::new();
+            for uid in store.pending_uids(account, mailbox)? {
+                ids.extend(store.jmap_id(account, mailbox, uid)?);
+            }
+            ids
+        };
+        let ids: Vec<String> = self
+            .query_ids(&remote)
+            .await?
+            .into_iter()
+            .filter(|id| only.contains(id) && !waiting.contains(id))
+            .collect();
+        for chunk in ids.chunks(self.max_get) {
+            self.leave_or_destroy(&remote, chunk).await?;
+        }
+        let gone: HashSet<&String> = ids.iter().collect();
+        let uids: Vec<u32> = lock(store)
+            .jmap_ids(account, mailbox)?
+            .into_iter()
+            .filter(|(id, _)| gone.contains(id))
+            .map(|(_, uid)| uid)
+            .collect();
+        lock(store).remove_messages(account, mailbox, &uids)?;
+        Ok(ids.len())
+    }
+
+    /// Emails of folder `remote` deleted for good, except those also in
+    /// another folder: they only leave this one.
+    async fn leave_or_destroy(&mut self, remote: &str, ids: &[String]) -> Result<()> {
+        let (elsewhere, only_here) = self.split_elsewhere(ids).await?;
+        if !only_here.is_empty() {
+            self.destroy(&only_here).await?;
+        }
+        self.leave(remote, &elsewhere, None).await
+    }
+
+    /// `ids` split into those in more folders than one and the rest.
+    async fn split_elsewhere(&mut self, ids: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+        let mut elsewhere = Vec::new();
+        let mut only_here = Vec::new();
+        for chunk in ids.chunks(self.max_get) {
+            for e in self.get_emails(chunk, &["id", "mailboxIds"]).await? {
+                let Some(id) = email_id(&e) else { continue };
+                if e["mailboxIds"].as_object().is_some_and(|m| m.len() > 1) {
+                    elsewhere.push(id);
+                } else {
+                    only_here.push(id);
+                }
+            }
+        }
+        Ok((elsewhere, only_here))
+    }
+
+    /// Takes emails out of folder `remote`, and with `to` puts them there.
+    async fn leave(&mut self, remote: &str, ids: &[String], to: Option<&str>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let patch = match to {
+            Some(to) => {
+                json!({ format!("mailboxIds/{remote}"): null, format!("mailboxIds/{to}"): true })
+            }
+            None => json!({ format!("mailboxIds/{remote}"): null }),
+        };
+        let update: serde_json::Map<String, Value> =
+            ids.iter().map(|id| (id.clone(), patch.clone())).collect();
+        let [done] = self
+            .call([(
+                "Email/set",
+                json!({ "accountId": self.account_id, "update": update }),
+            )])
+            .await?;
+        if done["notUpdated"]
+            .as_object()
+            .is_some_and(|f| !f.is_empty())
+        {
+            return Err(not_done(&done, "notUpdated"));
+        }
+        Ok(())
+    }
+
+    /// How many emails `mailbox` holds on the server, and their ids: what
+    /// [`Self::empty`] keeps to.
+    pub async fn count(&mut self, mailbox: &str) -> Result<(u32, Vec<String>)> {
+        self.refresh_mailboxes().await?;
+        let remote = self.remote(mailbox)?;
+        let ids = self.query_ids(&remote).await?;
+        Ok((ids.len() as u32, ids))
+    }
+
+    /// How full the account is, in bytes used and allowed, when the server
+    /// keeps quotas (RFC 9425).
+    pub async fn quota(&mut self) -> Result<Option<(u64, u64)>> {
+        if !self.capabilities.contains(QUOTA) {
+            return Ok(None);
+        }
+        let [got] = self
+            .call_using(
+                &[CORE, QUOTA],
+                [(
+                    "Quota/get",
+                    json!({ "accountId": self.account_id, "ids": null }),
+                )],
+            )
+            .await?;
+        Ok(got["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|q| q["resourceType"].as_str() == Some("octets"))
+            .filter_map(|q| {
+                let used = q["used"].as_u64()?;
+                let limit = q["hardLimit"].as_u64().filter(|l| *l > 0)?;
+                Some((q["scope"].as_str() == Some("account"), used, limit))
+            })
+            // The account's own quota first, then any other.
+            .max_by_key(|(account, _, _)| *account)
+            .map(|(_, used, limit)| (used, limit)))
+    }
+
+    /// Renames, deletes, subscribes to or unsubscribes from one of the
+    /// account's own folders. Deleting first moves its emails, and its
+    /// subfolders', to Trash.
+    pub async fn change_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        change: &crate::pending::FolderChange,
+    ) -> Result<()> {
+        use crate::pending::FolderChange;
+        self.refresh_mailboxes().await?;
+        let Ok(id) = self.remote(mailbox) else {
+            // Already gone.
+            return Ok(());
+        };
+        let account_id = self.account_id.clone();
+        let set =
+            |patch: Value| json!({ "accountId": account_id, "update": { id.clone(): patch } });
+        let args = match change {
+            FolderChange::Rename(name) => set(json!({ "name": name })),
+            FolderChange::Subscribe(on) => set(json!({ "isSubscribed": on })),
+            FolderChange::Delete => return self.delete_folder(store, account, &id).await,
+        };
+        let [done] = self.call([("Mailbox/set", args)]).await?;
+        if done["updated"].get(&id).is_none() {
+            return Err(not_done(&done, "notUpdated"));
+        }
+        Ok(())
+    }
+
+    /// Moves the emails of a folder and its subfolders to Trash, then
+    /// deletes them, deepest first.
+    async fn delete_folder(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        id: &str,
+    ) -> Result<()> {
+        self.learn_roles(store, account)?;
+        let trash = self.folder(FolderRole::Trash).await?;
+        let trash_id = self.remote(&trash)?;
+        // The folder, then each level under it.
+        let mut gone = vec![id.to_owned()];
+        let mut i = 0;
+        while i < gone.len() && gone.len() < 1000 {
+            let parent = gone[i].clone();
+            gone.extend(
+                self.mailboxes
+                    .iter()
+                    .filter(|m| m.parent_id.as_deref() == Some(parent.as_str()))
+                    .filter(|m| !gone.contains(&m.id))
+                    .map(|m| m.id.clone())
+                    .collect::<Vec<_>>(),
+            );
+            i += 1;
+        }
+        // Never the inbox or a folder with a job (the server's or the
+        // person's), nor one holding them: refused for good, rather than
+        // tried again for a day.
+        let chosen: Vec<String> = self
+            .roles
+            .iter()
+            .filter_map(|(_, local)| self.remote(local).ok())
+            .collect();
+        if gone.iter().any(|g| {
+            chosen.contains(g)
+                || self
+                    .mailboxes
+                    .iter()
+                    .any(|m| m.id == *g && m.role.is_some())
+        }) {
+            return Err(JmapError::Protected);
+        }
+        for folder in gone.iter().rev() {
+            let ids = self.query_ids(folder).await?;
+            // An email that is in another folder too only leaves this one;
+            // the rest go to Trash.
+            let (elsewhere, only_here) = self.split_elsewhere(&ids).await?;
+            self.leave(folder, &elsewhere, None).await?;
+            for chunk in only_here.chunks(self.max_get) {
+                self.leave(folder, chunk, Some(&trash_id)).await?;
+            }
+            let [done] = self
+                .call([(
+                    "Mailbox/set",
+                    json!({ "accountId": self.account_id, "destroy": [folder],
+                            "onDestroyRemoveEmails": false }),
+                )])
+                .await?;
+            if !done["destroyed"]
+                .as_array()
+                .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(folder.as_str())))
+            {
+                return Err(not_done(&done, "notDestroyed"));
+            }
+            lock(store).clear_mailbox(account, folder)?;
+        }
+        self.refresh_mailboxes().await?;
+        Ok(())
     }
 
     /// Puts messages away in Snoozed. When they come back is kept on this
@@ -876,6 +1243,15 @@ impl Client {
             return Ok(());
         }
         let ids = self.emails(store, account, mailbox, uids)?;
+        let remote = self.remote(mailbox)?;
+        // An email that is in another folder too only leaves this one.
+        self.leave_or_destroy(&remote, &ids).await?;
+        lock(store).remove_messages(account, mailbox, uids)?;
+        Ok(())
+    }
+
+    /// Deletes emails for good; ones already gone count as deleted.
+    async fn destroy(&mut self, ids: &[String]) -> Result<()> {
         let [done] = self
             .call([(
                 "Email/set",
@@ -888,7 +1264,6 @@ impl Client {
         {
             return Err(JmapError::Protocol(format!("not deleted: {failed:?}")));
         }
-        lock(store).remove_messages(account, mailbox, uids)?;
         Ok(())
     }
 
@@ -989,15 +1364,47 @@ impl Client {
         Ok(folder)
     }
 
+    /// Puts a whole message in one of the account's folders, as read: an
+    /// email file imported by the person.
+    pub async fn append_to(&mut self, folder: &str, raw: &[u8]) -> Result<()> {
+        if self.mailboxes.is_empty() {
+            self.refresh_mailboxes().await?;
+        }
+        self.import(raw, folder, &["$seen"]).await?;
+        Ok(())
+    }
+
     /// Sends a message from `from` to `recipients` and files it in Sent.
     /// Returns the Sent folder.
-    pub async fn send(&mut self, raw: &[u8], from: &str, recipients: &[String]) -> Result<String> {
+    ///
+    /// Safe to call again for the same message (`message_id`): one already
+    /// submitted is not sent twice, and the copy an earlier try left in
+    /// Drafts is used rather than a new one. A connection lost while
+    /// submitting is [JmapError::Uncertain]; [Client::sent_state] settles it.
+    pub async fn send(
+        &mut self,
+        raw: &[u8],
+        from: &str,
+        recipients: &[String],
+        message_id: &str,
+    ) -> Result<String> {
         let sent = self.folder(FolderRole::Sent).await?;
         let drafts = self.folder(FolderRole::Drafts).await?;
-        let identity = self.identity(from).await?;
-        // The message waits in Drafts and moves to Sent once it is out, so
-        // a failed send leaves it where the person can find it.
-        let email = self.import(raw, &drafts, &["$draft", "$seen"]).await?;
+        let email = match self.sent_state(message_id).await? {
+            Some(SentState {
+                submitted: true, ..
+            }) => return Ok(sent),
+            Some(SentState {
+                draft: Some(email), ..
+            }) => email,
+            // The message waits in Drafts and moves to Sent once it is
+            // out, so a failed send leaves it where the person can find it.
+            _ => self.import(raw, &drafts, &["$draft", "$seen"]).await?,
+        };
+        // The envelope goes from the identity's own address: one the
+        // server lets this account send as, which an alias without an
+        // identity of its own is not.
+        let (identity, mail_from) = self.identity(from).await?;
         let rcpt: Vec<Value> = recipients.iter().map(|r| json!({ "email": r })).collect();
         let (drafts_id, sent_id) = (self.remote(&drafts)?, self.remote(&sent)?);
         let [submitted] = self
@@ -1007,7 +1414,7 @@ impl Client {
                     "accountId": self.account_id,
                     "create": { "send": {
                         "identityId": identity, "emailId": email,
-                        "envelope": { "mailFrom": { "email": from }, "rcptTo": rcpt },
+                        "envelope": { "mailFrom": { "email": mail_from }, "rcptTo": rcpt },
                     } },
                     "onSuccessUpdateEmail": { "#send": {
                         format!("mailboxIds/{drafts_id}"): null,
@@ -1016,11 +1423,108 @@ impl Client {
                     } },
                 }),
             )])
-            .await?;
+            .await
+            .map_err(|e| match e {
+                JmapError::Auth => JmapError::Auth,
+                // The server answered and refused it.
+                JmapError::Protocol(p) if p.starts_with("EmailSubmission/set:") => {
+                    JmapError::Protocol(p)
+                }
+                // Asked, but no answer came: it may have gone.
+                e => JmapError::Uncertain(e.to_string()),
+            })?;
         if submitted["created"]["send"].is_null() {
             return Err(not_done(&submitted, "notCreated"));
         }
         Ok(sent)
+    }
+
+    /// Where the message with this Message-ID stands on the server: in
+    /// Drafts (a copy an earlier try left there) or Sent (where a
+    /// submission moves it), matched on the whole Message-ID, never on a
+    /// part of another's; and whether one of those copies was submitted.
+    /// None when neither folder has it.
+    pub async fn sent_state(&mut self, message_id: &str) -> Result<Option<SentState>> {
+        let id = message_id
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .trim();
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let drafts = self.folder(FolderRole::Drafts).await?;
+        let sent = self.folder(FolderRole::Sent).await?;
+        let (drafts, sent) = (self.remote(&drafts)?, self.remote(&sent)?);
+        // The header filter matches a part of the value, ignoring case
+        // (RFC 8621 4.4.1): it only narrows the search; each candidate's
+        // own Message-ID decides.
+        let [found] = self
+            .call([(
+                "Email/query",
+                json!({
+                    "accountId": self.account_id,
+                    "filter": { "operator": "AND", "conditions": [
+                        { "header": ["Message-ID", id] },
+                        { "operator": "OR", "conditions": [
+                            { "inMailbox": drafts },
+                            { "inMailbox": sent },
+                        ] },
+                    ] },
+                    "limit": 50,
+                }),
+            )])
+            .await?;
+        let ids: Vec<String> = found["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+        if ids.is_empty() {
+            return Ok(None);
+        }
+        let [got] = self
+            .call([(
+                "Email/get",
+                json!({
+                    "accountId": self.account_id,
+                    "ids": ids,
+                    "properties": ["id", "messageId", "mailboxIds"],
+                }),
+            )])
+            .await?;
+        let mine: Vec<(String, bool)> = got["list"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| {
+                e["messageId"]
+                    .as_array()
+                    .is_some_and(|m| m.len() == 1 && m[0].as_str() == Some(id))
+            })
+            .filter_map(|e| {
+                let in_drafts = e["mailboxIds"][&drafts].as_bool() == Some(true);
+                e["id"].as_str().map(|i| (i.to_owned(), in_drafts))
+            })
+            .collect();
+        if mine.is_empty() {
+            return Ok(None);
+        }
+        let exact: Vec<&String> = mine.iter().map(|(i, _)| i).collect();
+        let [submissions] = self
+            .call([(
+                "EmailSubmission/query",
+                json!({ "accountId": self.account_id, "filter": { "emailIds": exact } }),
+            )])
+            .await?;
+        Ok(Some(SentState {
+            submitted: submissions["ids"].as_array().is_some_and(|a| !a.is_empty()),
+            draft: mine
+                .iter()
+                .find(|(_, in_drafts)| *in_drafts)
+                .map(|(i, _)| i.clone()),
+        }))
     }
 
     /// Waits until the server reports a change or `timeout` passes, over
@@ -1055,13 +1559,8 @@ impl Client {
                 .await
                 .map_err(|e| JmapError::Protocol(e.to_string()))?
             {
-                seen.push_str(&String::from_utf8_lossy(&chunk));
-                if seen.lines().any(|l| l.trim() == "event: state") {
+                if state_event(&mut seen, &chunk) {
                     return Ok(true);
-                }
-                // Keep only the line being written.
-                if let Some(i) = seen.rfind('\n') {
-                    seen.drain(..=i);
                 }
             }
             Ok(false)
@@ -1122,8 +1621,13 @@ impl Client {
             .ok_or_else(|| not_done(&imported, "notCreated"))
     }
 
-    /// The identity that sends as `from`, else the first one.
-    async fn identity(&mut self, from: &str) -> Result<String> {
+    /// The identity that sends as `from` (its own, or a wildcard
+    /// `*@domain` one for its domain), else the login's, else the first
+    /// one; and the address the envelope goes from with it: `from` when
+    /// the identity covers it, the identity's own address otherwise, which
+    /// the server lets the account send as (an alias without an identity
+    /// of its own would be `forbiddenMailFrom`).
+    async fn identity(&mut self, from: &str) -> Result<(String, String)> {
         let [got] = self
             .call([(
                 "Identity/get",
@@ -1131,16 +1635,42 @@ impl Client {
             )])
             .await?;
         let list = got["list"].as_array().cloned().unwrap_or_default();
-        list.iter()
-            .find(|i| {
-                i["email"]
-                    .as_str()
-                    .is_some_and(|e| e.eq_ignore_ascii_case(from))
-            })
+        let email = |i: &Value| i["email"].as_str().unwrap_or_default().to_owned();
+        let covers = |identity: &Value, address: &str| {
+            let e = email(identity);
+            e.eq_ignore_ascii_case(address)
+                || e.strip_prefix("*@").is_some_and(|domain| {
+                    address
+                        .rsplit_once('@')
+                        .is_some_and(|(_, d)| d.eq_ignore_ascii_case(domain))
+                })
+        };
+        let login = self.config.username.clone();
+        let (identity, mail_from) = if let Some(i) = list.iter().find(|i| covers(i, from)) {
+            (i, from.to_owned())
+        } else if let Some(i) = list
+            .iter()
+            .find(|i| !login.is_empty() && covers(i, &login))
             .or(list.first())
-            .and_then(|i| i["id"].as_str())
+        {
+            let e = email(i);
+            let mail_from = if e.starts_with("*@") && covers(i, &login) {
+                // A wildcard has no one address of its own: the login's.
+                login.clone()
+            } else if e.is_empty() || e.starts_with("*@") {
+                from.to_owned()
+            } else {
+                e
+            };
+            (i, mail_from)
+        } else {
+            return Err(JmapError::Protocol("no identity to send as".into()));
+        };
+        let id = identity["id"]
+            .as_str()
             .map(str::to_owned)
-            .ok_or_else(|| JmapError::Protocol("no identity to send as".into()))
+            .ok_or_else(|| JmapError::Protocol("no identity to send as".into()))?;
+        Ok((id, mail_from))
     }
 
     /// Every message id in one folder, newest first; past the page cap
@@ -1310,11 +1840,7 @@ impl Client {
             return Err(JmapError::Gone);
         }
         check_status(&response)?;
-        Ok(response
-            .bytes()
-            .await
-            .map_err(|e| JmapError::Protocol(e.to_string()))?
-            .to_vec())
+        read_capped(response, crate::guard::MESSAGE_MAX).await
     }
 
     async fn upload(&self, raw: &[u8]) -> Result<String> {
@@ -1366,32 +1892,43 @@ impl Client {
                 source,
             })?;
         let answer: Value = read_json(response).await?;
-        let mut out: [Value; N] = std::array::from_fn(|_| Value::Null);
-        for r in answer["methodResponses"].as_array().into_iter().flatten() {
-            let (Some(name), Some(i)) = (
-                r[0].as_str(),
-                r[2].as_str().and_then(|i| i.parse::<usize>().ok()),
-            ) else {
-                continue;
-            };
-            if name == "error" {
-                let kind = r[1]["type"].as_str().unwrap_or("unknown");
-                return Err(JmapError::Protocol(format!("{}: {kind}", calls[i].0)));
-            }
-            if i < N && out[i].is_null() {
-                out[i] = r[1].clone();
-            }
-        }
-        if out.iter().any(Value::is_null) {
-            return Err(JmapError::Protocol("missing method response".into()));
-        }
-        Ok(out)
+        method_responses(&answer, calls.map(|(name, _)| name))
     }
 
     /// The settings it was opened with.
     pub fn config(&self) -> &JmapConfig {
         &self.config
     }
+}
+
+/// The answer to each call, in order, from a JMAP response. The ids
+/// that tie answers to calls come from the server and are checked.
+pub(crate) fn method_responses<const N: usize>(
+    answer: &Value,
+    names: [&str; N],
+) -> Result<[Value; N]> {
+    let mut out: [Value; N] = std::array::from_fn(|_| Value::Null);
+    for r in answer["methodResponses"].as_array().into_iter().flatten() {
+        let (Some(name), Some(i)) = (
+            r[0].as_str(),
+            r[2].as_str().and_then(|i| i.parse::<usize>().ok()),
+        ) else {
+            continue;
+        };
+        if name == "error" {
+            let kind = r[1]["type"].as_str().unwrap_or("unknown");
+            // The call id is the server's word: a made-up one names no call.
+            let call = names.get(i).copied().unwrap_or("unknown call");
+            return Err(JmapError::Protocol(format!("{call}: {kind}")));
+        }
+        if i < N && out[i].is_null() {
+            out[i] = r[1].clone();
+        }
+    }
+    if out.iter().any(Value::is_null) {
+        return Err(JmapError::Protocol("missing method response".into()));
+    }
+    Ok(out)
 }
 
 /// Checks that the settings work.
@@ -1408,14 +1945,35 @@ pub async fn watch(
     account: AccountId,
     events: impl Fn(WatchEvent),
 ) -> Result<()> {
-    let mut pause = Duration::from_secs(2);
+    watch_timed(cfg, store, account, events, crate::backoff::FIRST).await
+}
+
+/// [`watch`] with another first wait after a failure, for tests.
+#[doc(hidden)]
+pub async fn watch_timed(
+    cfg: JmapConfig,
+    store: Arc<Mutex<Store>>,
+    account: AccountId,
+    events: impl Fn(WatchEvent),
+    retry_first: Duration,
+) -> Result<()> {
+    // The same waits as IMAP's (see crate::backoff): they start over only
+    // after a whole round.
+    let mut backoff = crate::backoff::Backoff::new(retry_first);
+    let mut answered;
     loop {
+        answered = false;
         let result: Result<()> = async {
             let mut client = Client::open(&cfg).await?;
-            pause = Duration::from_secs(2);
+            answered = true;
             let mut folders_synced: Option<std::time::Instant> = None;
+            let dropped = |changes: usize| {
+                if changes > 0 {
+                    events(WatchEvent::Dropped { account, changes });
+                }
+            };
             loop {
-                crate::pending::send(&mut client, &store, account).await?;
+                dropped(crate::pending::send(&mut client, &store, account).await?);
                 if folders_synced.is_none_or(|t| t.elapsed() >= crate::imap::FOLDERS_EVERY) {
                     client.sync_folders(&store, account).await?;
                     folders_synced = Some(std::time::Instant::now());
@@ -1430,11 +1988,12 @@ pub async fn watch(
                     })
                     .await?;
                 if crate::rules::after_sync(&store, account, &mut report)? {
-                    crate::pending::send(&mut client, &store, account).await?;
+                    dropped(crate::pending::send(&mut client, &store, account).await?);
                 }
                 events(WatchEvent::Synced { account, report });
-                // Snoozed mail comes back, and mail sent later goes, on
-                // time.
+                backoff.reset();
+                // Snoozed mail comes back, mail sent later goes, and a
+                // refused change is tried again, on time.
                 let due = lock(&store)
                     .next_due(account, crate::pending::now())?
                     .map(|at| Duration::from_secs((at - crate::pending::now()).max(1) as u64));
@@ -1444,31 +2003,49 @@ pub async fn watch(
             }
         }
         .await;
-        match result {
+        let most = match &result {
             Err(JmapError::Auth) => return Err(JmapError::Auth),
-            Err(e) => events(WatchEvent::Offline {
+            // A certificate other than the one trusted: the person decides.
+            Err(JmapError::Certificate(r)) => return Err(JmapError::Certificate(r.clone())),
+            Err(e) if answered && !e.is_offline() => crate::backoff::ANSWERED_MOST,
+            _ => crate::backoff::OFFLINE_MOST,
+        };
+        if let Err(e) = result {
+            events(WatchEvent::Offline {
                 account,
                 reason: e.to_string(),
-            }),
-            Ok(()) => {}
+            });
         }
-        tokio::time::sleep(pause).await;
-        pause = (pause * 2).min(Duration::from_secs(60));
+        tokio::time::sleep(backoff.fail(most)).await;
     }
 }
 
 /// The account's own folders in tree order: those with no role, under
 /// their parents, by the server's sort order then name.
-fn own_folders(mailboxes: &[Mailbox]) -> Vec<crate::AccountFolder> {
-    fn add(
-        mailboxes: &[Mailbox],
+pub(crate) fn own_folders(
+    mailboxes: &[Mailbox],
+    chosen: &[(FolderRole, String)],
+) -> Vec<crate::AccountFolder> {
+    // A server where nothing is subscribed shows everything.
+    let any_subscribed = mailboxes.iter().any(|m| m.is_subscribed == Some(true));
+    #[allow(clippy::too_many_arguments)]
+    fn add<'a>(
+        mailboxes: &'a [Mailbox],
+        chosen: &[(FolderRole, String)],
+        any_subscribed: bool,
         parent: Option<&str>,
         depth: u32,
+        seen: &mut HashSet<&'a str>,
         out: &mut Vec<crate::AccountFolder>,
     ) {
+        // Each id once: a server that repeats ids would otherwise make the
+        // tree grow without end. A folder the person gave a job to is no
+        // longer one of their own.
         let mut children: Vec<&Mailbox> = mailboxes
             .iter()
             .filter(|m| m.parent_id.as_deref() == parent && m.role.is_none() && !is_space(m))
+            .filter(|m| !chosen.iter().any(|(_, c)| *c == m.local()))
+            .filter(|m| seen.insert(m.id.as_str()))
             .collect();
         children.sort_by(|a, b| {
             (a.sort_order, a.name.to_lowercase()).cmp(&(b.sort_order, b.name.to_lowercase()))
@@ -1481,15 +2058,50 @@ fn own_folders(mailboxes: &[Mailbox]) -> Vec<crate::AccountFolder> {
                 selectable: true,
                 unread: m.unread_emails,
                 total: m.total_emails,
+                subscribed: !any_subscribed || m.is_subscribed != Some(false),
+                delimiter: String::new(),
             });
             if depth < 16 {
-                add(mailboxes, Some(&m.id), depth + 1, out);
+                add(
+                    mailboxes,
+                    chosen,
+                    any_subscribed,
+                    Some(&m.id),
+                    depth + 1,
+                    seen,
+                    out,
+                );
             }
         }
     }
     let mut out = Vec::new();
-    add(mailboxes, None, 0, &mut out);
+    add(
+        mailboxes,
+        chosen,
+        any_subscribed,
+        None,
+        0,
+        &mut HashSet::new(),
+        &mut out,
+    );
     out
+}
+
+/// A folder's path from the top, its parents' names first ("Clients/Acme").
+fn path_of(mailboxes: &[Mailbox], m: &Mailbox) -> String {
+    let mut parts = vec![m.name.clone()];
+    let mut parent = m.parent_id.clone();
+    // A server that loops its parents still ends.
+    for _ in 0..16 {
+        let Some(id) = parent else { break };
+        let Some(p) = mailboxes.iter().find(|x| x.id == id) else {
+            break;
+        };
+        parts.push(p.name.clone());
+        parent = p.parent_id.clone();
+    }
+    parts.reverse();
+    parts.join("/")
 }
 
 /// The sync space's folder, which stays hidden.
@@ -1566,7 +2178,7 @@ fn ids(list: &Value) -> Vec<String> {
         .collect()
 }
 
-fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
+pub(crate) fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSummary {
     let (from_name, from_email) = first_address(&e["from"]);
     let to = e["to"]
         .as_array()
@@ -1611,6 +2223,7 @@ fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSum
                 reply_to
             },
             recipients: groups::recipients_json(e),
+            envelope: Some(crate::envelope::Envelope::from_jmap(e)),
         },
         from_email,
     }
@@ -1618,7 +2231,7 @@ fn summary(e: &Value, account: AccountId, mailbox: &str, uid: u32) -> MessageSum
 
 /// The files in an Email's `attachments`, as the Attachments board lists
 /// them before the body is here. Each keeps its blob, to be fetched alone.
-fn listed_files(parts: &Value) -> Vec<Attachment> {
+pub(crate) fn listed_files(parts: &Value) -> Vec<Attachment> {
     let mut files = Vec::new();
     for p in parts.as_array().into_iter().flatten() {
         let mime = p["type"].as_str().unwrap_or_default().to_ascii_lowercase();
@@ -1641,7 +2254,7 @@ fn listed_files(parts: &Value) -> Vec<Attachment> {
         files.push(Attachment {
             part: files.len() as u32,
             name: match name {
-                Some(n) => n.to_owned(),
+                Some(n) => crate::imap::file_name(n),
                 None if mime == "message/rfc822" => "message.eml".into(),
                 None => "attachment".into(),
             },
@@ -1716,12 +2329,10 @@ fn check_status(response: &reqwest::Response) -> Result<()> {
 }
 
 /// A response body above the cap is refused before it is parsed.
-fn check_size(bytes: &[u8]) -> Result<()> {
-    if bytes.len() > RESPONSE_MAX {
+fn check_size(len: usize, max: usize) -> Result<()> {
+    if len > max {
         Err(JmapError::Protocol(format!(
-            "body of {} bytes exceeds the {}-byte limit",
-            bytes.len(),
-            RESPONSE_MAX
+            "body of {len} bytes exceeds the {max}-byte limit"
         )))
     } else {
         Ok(())
@@ -1730,12 +2341,107 @@ fn check_size(bytes: &[u8]) -> Result<()> {
 
 async fn read_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
     check_status(&response)?;
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| JmapError::Protocol(e.to_string()))?;
-    check_size(&bytes)?;
+    let bytes = read_capped(response, RESPONSE_MAX).await?;
     serde_json::from_slice(&bytes).map_err(|e| JmapError::Protocol(e.to_string()))
+}
+
+/// A response body read a piece at a time, refused as soon as it passes
+/// `max` bytes: never held whole before it is measured.
+async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if let Some(n) = response.content_length() {
+        check_size(usize::try_from(n).unwrap_or(usize::MAX), max)?;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| JmapError::Protocol(e.to_string()))?
+    {
+        check_size(bytes.len() + chunk.len(), max)?;
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// Adds a piece of the event stream to `seen` and says whether a state
+/// change arrived. Keeps only the line still being written, and drops it
+/// once it passes [`EVENT_LINE_MAX`]: a line that never ends must not
+/// fill the memory.
+fn state_event(seen: &mut String, chunk: &[u8]) -> bool {
+    seen.push_str(&String::from_utf8_lossy(chunk));
+    if seen.lines().any(|l| l.trim() == "event: state") {
+        return true;
+    }
+    if let Some(i) = seen.rfind('\n') {
+        seen.drain(..=i);
+    }
+    if seen.len() > EVENT_LINE_MAX {
+        seen.clear();
+    }
+    false
+}
+
+/// Whether an address may carry the account's credentials: https only.
+/// Plain http is allowed on this computer's own address, and only in a
+/// build for tests, when a test asked for it
+/// (`allow_loopback_http_for_tests`).
+fn credentials_may_go_to(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else {
+        return false;
+    };
+    match u.scheme() {
+        "https" => true,
+        "http" => loopback_http_allowed() && is_loopback(&u),
+        _ => false,
+    }
+}
+
+fn is_loopback(u: &url::Url) -> bool {
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
+/// Whether a test turned plain http on this computer on. Never in the
+/// app: the switch is only built for tests (the `test-support` feature,
+/// which only the integration tests turn on).
+fn loopback_http_allowed() -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        LOOPBACK_HTTP.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(any(test, feature = "test-support")))]
+    {
+        false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static LOOPBACK_HTTP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lets the engine talk plain http to a JMAP server on 127.0.0.1, as the
+/// tests' local server does. Built only for tests.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn allow_loopback_http_for_tests() {
+    LOOPBACK_HTTP.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Follows redirects only to addresses that may carry credentials, at
+/// most ten: an https server can't send the password on to plain http.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if !credentials_may_go_to(attempt.url().as_str()) {
+            attempt.error("redirect to an insecure address")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// Percent-encodes a value for a URL template.
@@ -1752,6 +2458,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_event_line_that_never_ends_is_dropped() {
+        let mut seen = String::new();
+        let piece = vec![b'x'; 16 * 1024];
+        for _ in 0..64 {
+            assert!(!state_event(&mut seen, &piece));
+            assert!(seen.len() <= EVENT_LINE_MAX, "{}", seen.len());
+        }
+        // The stream still works after a dropped line.
+        assert!(!state_event(&mut seen, b"\nevent: pi"));
+        assert_eq!(seen, "event: pi");
+        assert!(state_event(&mut seen, b"ng\nevent: state\ndata: {}\n"));
+        // A short unfinished line is kept for the next piece.
+        let mut seen = String::new();
+        assert!(!state_event(&mut seen, b"data: 1\nevent: sta"));
+        assert_eq!(seen, "event: sta");
+        assert!(state_event(&mut seen, b"te\n"));
+    }
+
+    #[test]
+    fn repeated_mailbox_ids_make_a_finite_tree() {
+        let mut mailboxes = Vec::new();
+        for i in 0..40 {
+            mailboxes.push(Mailbox {
+                id: "a".into(),
+                name: format!("n{i}"),
+                parent_id: (i % 2 == 1).then(|| "a".into()),
+                ..Default::default()
+            });
+        }
+        let folders = own_folders(&mailboxes, &[]);
+        assert_eq!(folders.len(), 1);
+    }
+
+    #[test]
+    fn an_error_for_a_call_that_was_never_made_is_an_error() {
+        let answer = json!({ "methodResponses": [["error", { "type": "serverFail" }, "7"]] });
+        let got = method_responses(&answer, ["Email/get"]);
+        assert!(matches!(got, Err(JmapError::Protocol(m)) if m == "unknown call: serverFail"));
+        let answer = json!({ "methodResponses": [["error", { "type": "serverFail" }, "0"]] });
+        let got = method_responses(&answer, ["Email/get"]);
+        assert!(matches!(got, Err(JmapError::Protocol(m)) if m == "Email/get: serverFail"));
+        let answer = json!({ "methodResponses": [["Email/get", { "list": [] }, "0"], 5, "x"] });
+        assert!(method_responses(&answer, ["Email/get"]).is_ok());
+    }
+
+    #[test]
+    fn credentials_go_only_over_https() {
+        assert!(credentials_may_go_to("https://jmap.example.com/session"));
+        assert!(!credentials_may_go_to("http://jmap.example.com/session"));
+        assert!(!credentials_may_go_to("ftp://jmap.example.com/"));
+        assert!(!credentials_may_go_to("not a url"));
+        // The tests' own switch is never turned on in these unit tests.
+        assert!(!credentials_may_go_to("http://127.0.0.1:8080/jmap"));
+    }
+
+    #[test]
     fn finds_the_well_known_session() {
         assert_eq!(
             well_known("matteo@fastmail.com").as_deref(),
@@ -1766,6 +2528,7 @@ mod tests {
             session_url: String::new(),
             username: "a@b.c".into(),
             password: "pw".into(),
+            pins: Vec::new(),
         };
         assert_eq!(cfg.authorization(), "Basic YUBiLmM6cHc=");
         cfg.username.clear();
@@ -1814,7 +2577,7 @@ mod tests {
         let junk = find_role(&mailboxes, FolderRole::Junk).map(Mailbox::local);
         assert_eq!(junk.as_deref(), Some("m3"));
         // Spam stays out of the account's own folders.
-        assert_eq!(own_folders(&mailboxes).len(), 1);
+        assert_eq!(own_folders(&mailboxes, &[]).len(), 1);
         mailboxes.pop();
         assert!(find_role(&mailboxes, FolderRole::Junk).is_none());
     }
@@ -1852,12 +2615,11 @@ mod tests {
     #[test]
     fn refuses_a_body_over_the_limit() {
         // At the limit the body still passes, and so does a small one.
-        assert!(check_size(b"{}").is_ok());
-        assert!(check_size(&vec![0u8; RESPONSE_MAX]).is_ok());
+        assert!(check_size(2, RESPONSE_MAX).is_ok());
+        assert!(check_size(RESPONSE_MAX, RESPONSE_MAX).is_ok());
 
         // One byte over is a protocol failure, naming the limit.
-        let over = vec![0u8; RESPONSE_MAX + 1];
-        let err = check_size(&over).unwrap_err();
+        let err = check_size(RESPONSE_MAX + 1, RESPONSE_MAX).unwrap_err();
         assert!(matches!(
             err,
             JmapError::Protocol(msg)

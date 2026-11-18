@@ -1,13 +1,17 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/widgets.dart' show StringCharacters;
 
 import 'calendars.dart';
+import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
 
 export 'calendars.dart';
+export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
 
@@ -57,6 +61,9 @@ enum MailFolder {
 
   /// Every email with one label, wherever it is (`LabelsToApprove`).
   label,
+
+  /// Every starred email, wherever it is but Trash, spam and Drafts.
+  starred,
 }
 
 /// A colored word on emails, shared across accounts (`LabelsToApprove`).
@@ -185,6 +192,7 @@ class PecMessage {
     this.reason = '',
     this.failedTo = '',
     this.proofs = const [],
+    this.verified = false,
   });
 
   /// The receipt a tap opens: the failure, else the newest one.
@@ -207,6 +215,11 @@ class PecMessage {
 
   /// The receipts worth keeping as proof, by uid in [row]'s folder.
   final List<int> proofs;
+
+  /// The receipts [stage] rests on carry their provider's checked
+  /// signature. Otherwise the stage is only what their headers claim and
+  /// the Vault shows it as unverified, never as proof.
+  final bool verified;
 }
 
 /// A card in the Vault, read on the device from the email it opens. Only
@@ -387,7 +400,12 @@ enum UnsubscribeKind {
 }
 
 class UnsubscribeInfo {
-  const UnsubscribeInfo(this.kind, [this.address = '']);
+  const UnsubscribeInfo(
+    this.kind, [
+    this.address = '',
+    this.subject = '',
+    this.body = '',
+  ]);
 
   static const none = UnsubscribeInfo(UnsubscribeKind.none);
 
@@ -395,6 +413,12 @@ class UnsubscribeInfo {
 
   /// The page, or the address the message goes to.
   final String address;
+
+  /// For [UnsubscribeKind.mail]: the subject and text the list's header
+  /// asks for. They come from the sender, so the person sees them before
+  /// they go out from their account.
+  final String subject;
+  final String body;
 }
 
 /// One of an account's own folders, as its server keeps them.
@@ -406,6 +430,7 @@ class AccountFolder {
     this.selectable = true,
     this.unread = 0,
     this.total = 0,
+    this.subscribed = true,
   });
 
   /// What the server calls it, e.g. "Clients/Acme": what opens it.
@@ -423,6 +448,9 @@ class AccountFolder {
 
   /// How many emails it holds on the server.
   final int total;
+
+  /// Subscribed: shown in the lists. The others show on demand.
+  final bool subscribed;
 }
 
 /// The folders of [list] that share [folder]'s parent, [folder] among them,
@@ -489,6 +517,81 @@ List<AccountFolder> withFolderOrder(
     end++;
   }
   return (start, end);
+}
+
+/// A job a folder does for an account.
+enum SpecialRole { sent, drafts, trash, junk, archive }
+
+/// The folder doing one job for an account.
+class SpecialFolder {
+  const SpecialFolder(this.role, this.mailbox, {this.chosen = false});
+
+  final SpecialRole role;
+
+  /// Its server name; null while no folder does that job.
+  final String? mailbox;
+
+  /// The person chose it, rather than the server's marks or its name.
+  final bool chosen;
+}
+
+/// How a list is sorted.
+enum ListOrder { newest, oldest, sender }
+
+/// What a swipe on a row does.
+enum SwipeChoice { archive, snooze, delete, read, star, move, nothing }
+
+/// How the lists look (Settings › Appearance): newest first, in
+/// conversations, Archive to the right and Snooze to the left until
+/// changed.
+class ListPrefs {
+  const ListPrefs({
+    this.order = ListOrder.newest,
+    this.threads = true,
+    this.swipeRight = SwipeChoice.archive,
+    this.swipeLeft = SwipeChoice.snooze,
+  });
+
+  final ListOrder order;
+  final bool threads;
+  final SwipeChoice swipeRight;
+  final SwipeChoice swipeLeft;
+
+  ListPrefs copyWith({
+    ListOrder? order,
+    bool? threads,
+    SwipeChoice? swipeRight,
+    SwipeChoice? swipeLeft,
+  }) => ListPrefs(
+    order: order ?? this.order,
+    threads: threads ?? this.threads,
+    swipeRight: swipeRight ?? this.swipeRight,
+    swipeLeft: swipeLeft ?? this.swipeLeft,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListPrefs &&
+      other.order == order &&
+      other.threads == threads &&
+      other.swipeRight == swipeRight &&
+      other.swipeLeft == swipeLeft;
+
+  @override
+  int get hashCode => Object.hash(order, threads, swipeRight, swipeLeft);
+}
+
+/// How full a mailbox is, in bytes.
+class MailQuota {
+  const MailQuota(this.used, this.limit);
+  final int used;
+  final int limit;
+
+  /// From 0 to 1.
+  double get share => limit <= 0 ? 0 : (used / limit).clamp(0, 1);
+
+  /// Nearly full: a gentle word in the account's settings.
+  bool get nearlyFull => share >= 0.9;
 }
 
 /// What a rule looks at. The body is its first words as it arrives, all
@@ -674,6 +777,7 @@ class MailRow {
     this.waitingFor = const [],
     this.labels = const [],
     this.remindAt,
+    this.starred = false,
   });
 
   /// Empty for a single-account row; otherwise every server copy.
@@ -740,6 +844,9 @@ class MailRow {
   /// if nobody has replied by then. Null without a reminder.
   final DateTime? remindAt;
 
+  /// Starred (IMAP `\Flagged`, JMAP `$flagged`).
+  final bool starred;
+
   bool get isConversation => messages > 1 && thread.isNotEmpty;
 
   MailRow withSeen(bool seen) => copyWith(seen: seen);
@@ -753,6 +860,7 @@ class MailRow {
     List<String>? waitingFor,
     List<String>? labels,
     Object? remindAt = _unchanged,
+    bool? starred,
   }) => MailRow(
     copies: copies,
     accountId: accountId,
@@ -781,6 +889,7 @@ class MailRow {
     remindAt: identical(remindAt, _unchanged)
         ? this.remindAt
         : remindAt as DateTime?,
+    starred: starred ?? this.starred,
   );
 
   /// Name if the sender has one, otherwise the address.
@@ -858,13 +967,21 @@ class AccountServers {
 
 /// How an account's connection is going, as its details show it.
 class AccountHealth {
-  const AccountHealth({this.checkedAt, this.failedSince});
+  const AccountHealth({
+    this.checkedAt,
+    this.failedSince,
+    this.certificate = false,
+  });
 
   /// When the server last answered.
   final DateTime? checkedAt;
 
   /// Since when the server refuses the password; null while it works.
   final DateTime? failedSince;
+
+  /// With [failedSince]: it was the server's certificate that was
+  /// refused, not the password.
+  final bool certificate;
 }
 
 /// An account's away message (`RemindAwayPrintToApprove`, section 2): an
@@ -938,6 +1055,7 @@ class FoundSettings {
     required this.username,
     required this.source,
     this.jmapUrl,
+    this.oauth,
   });
   final MailServer imap;
   final MailServer smtp;
@@ -948,20 +1066,175 @@ class FoundSettings {
   /// it in place of IMAP and SMTP.
   final String? jmapUrl;
 
+  /// The provider (`microsoft`, `google`) whose own sign-in page these
+  /// servers want, in place of a password.
+  final String? oauth;
+
   /// The host shown for a JMAP account.
   String? get jmapHost => jmapUrl == null ? null : Uri.tryParse(jmapUrl!)?.host;
 }
 
-/// Why adding an account failed.
-enum AddAccountError { wrongPassword, unreachable, insecure, keychain, other }
+/// Why adding an account, or signing in to one, failed.
+enum AddAccountError {
+  wrongPassword,
+  unreachable,
+  insecure,
+  keychain,
+
+  /// Linux with no keyring running (no Secret Service).
+  noKeyring,
+
+  /// The server's certificate was refused: see
+  /// [AddAccountException.certificate].
+  certificate,
+
+  /// This build has no sign-in for the provider, and no client ID was
+  /// given.
+  signInUnavailable,
+
+  /// The provider's page was closed or the wait ran out.
+  signInCancelled,
+
+  /// The provider refused the sign-in.
+  signInDenied,
+
+  /// New servers for an account that signs in with a provider's page:
+  /// its sign-in only goes to that provider's servers, over TLS.
+  oauthServers,
+  other,
+}
 
 class AddAccountException implements Exception {
-  const AddAccountException(this.error, [this.detail = '']);
+  const AddAccountException(this.error, [this.detail = '', this.certificate]);
   final AddAccountError error;
   final String detail;
 
+  /// With [AddAccountError.certificate]: what the certificate says.
+  final CertificateProblem? certificate;
+
   @override
   String toString() => 'AddAccountException($error, $detail)';
+}
+
+/// Why a server's certificate was refused.
+enum CertificateIssue {
+  /// Nobody the system trusts signed it, as with one the server made.
+  untrusted,
+  expired,
+
+  /// Made for another server name.
+  nameMismatch,
+
+  /// Not the one trusted for this account before.
+  changed,
+
+  /// Revoked or broken: trusting it can't help. Also one trusted before
+  /// and revoked since.
+  invalid,
+
+  /// A big provider's server (Microsoft, Google…), whose certificates an
+  /// authority always vouches for: refused, someone may be in the way.
+  /// Never trusted by hand.
+  provider,
+}
+
+/// A refused certificate, for the person to look at and maybe trust.
+class CertificateProblem {
+  const CertificateProblem({
+    required this.host,
+    required this.issue,
+    required this.fingerprint,
+    this.subject = '',
+    this.issuer = '',
+    this.notAfter = '',
+  });
+
+  /// From the engine's JSON (`Refused::json`); null when it isn't one.
+  static CertificateProblem? fromJson(String text) {
+    try {
+      final j = jsonDecode(text) as Map<String, dynamic>;
+      return CertificateProblem(
+        host: j['host'] as String,
+        issue: CertificateIssue.values.firstWhere(
+          (i) => i.name == j['problem'],
+          orElse: () => CertificateIssue.invalid,
+        ),
+        fingerprint: j['fingerprint'] as String,
+        subject: j['subject'] as String? ?? '',
+        issuer: j['issuer'] as String? ?? '',
+        notAfter: j['notAfter'] as String? ?? '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final String host;
+  final CertificateIssue issue;
+
+  /// SHA-256, `AB:CD:…`.
+  final String fingerprint;
+  final String subject;
+  final String issuer;
+
+  /// The last day it is valid, `2027-01-31`.
+  final String notAfter;
+
+  bool get canTrust =>
+      issue != CertificateIssue.invalid && issue != CertificateIssue.provider;
+
+  TrustedCertificate get trusted =>
+      TrustedCertificate(host: host, fingerprint: fingerprint);
+}
+
+/// A certificate the person chose to trust for one server of an account.
+class TrustedCertificate {
+  const TrustedCertificate({required this.host, required this.fingerprint});
+  final String host;
+  final String fingerprint;
+}
+
+/// A provider that signs in with its own page (OAuth).
+class OAuthProviderInfo {
+  const OAuthProviderInfo({
+    required this.id,
+    required this.name,
+    required this.builtIn,
+    required this.appPasswords,
+    required this.hasTenant,
+    this.ownClient = true,
+  });
+
+  /// `microsoft`, `google`.
+  final String id;
+
+  /// "Microsoft", "Google".
+  final String name;
+
+  /// This build can sign in with it out of the box.
+  final bool builtIn;
+
+  /// The provider still takes app passwords, the way in without a client.
+  final bool appPasswords;
+
+  /// A client of the person's own may name a tenant (Microsoft).
+  final bool hasTenant;
+
+  /// A client of the person's own works on this device: not Google's on
+  /// Android, whose redirect the app can't answer for another client.
+  final bool ownClient;
+}
+
+/// The person's own app registration with a provider, from Advanced.
+class OAuthClientConfig {
+  const OAuthClientConfig({
+    required this.clientId,
+    this.clientSecret,
+    this.tenant,
+  });
+  final String clientId;
+  final String? clientSecret;
+  final String? tenant;
 }
 
 /// A message being written.
@@ -975,6 +1248,56 @@ enum BackgroundDelivery {
   periodic,
 }
 
+/// Where a message of the outbox stands.
+enum OutboxState {
+  /// It waits for its time or for the server.
+  waiting,
+
+  /// It is on its way now.
+  sending,
+
+  /// The server refused it; [OutboxItem.error] says why.
+  refused,
+
+  /// The connection broke as it went: the server may have it. The person
+  /// checks Sent before sending it again; it never goes again by itself.
+  maybeSent,
+}
+
+/// What became of a message handed to the server ([MailSource.deliver]).
+enum SendOutcome {
+  /// The server took it.
+  sent,
+
+  /// It waits in the outbox until the server can be reached.
+  waiting,
+
+  /// It waits in the outbox: the server refused the password.
+  wrongPassword,
+
+  /// The server refused it.
+  refused,
+
+  /// No secure connection could be made (a certificate that doesn't
+  /// check out).
+  insecure,
+
+  /// The server may have taken it; it stays in the outbox, marked so.
+  maybeSent,
+
+  /// It was taken back (Undo) or deleted meanwhile.
+  gone,
+}
+
+/// A message of the outbox, handed to the server.
+class Delivery {
+  const Delivery(this.outcome, [this.detail = '']);
+  final SendOutcome outcome;
+
+  /// The server's words, when it said something.
+  final String detail;
+}
+
 /// A message waiting in the outbox (`Outbox`).
 class OutboxItem {
   const OutboxItem({
@@ -986,10 +1309,25 @@ class OutboxItem {
     required this.queuedAt,
     this.error,
     this.sendAt,
+    this.state = OutboxState.waiting,
+    this.undo = false,
+    this.redirect = false,
   });
 
   final int id;
   final int accountId;
+
+  /// A Redirect: the email as it came, with nothing of its own to edit.
+  /// It never opens in compose; it is cancelled or tried again
+  /// ([MailSource.cancelOutgoing], [MailSource.retryOutgoing]).
+  final bool redirect;
+
+  /// Where it stands: waiting, on its way, refused, or maybe sent.
+  final OutboxState state;
+
+  /// Sent with Undo: [sendAt] ends the Undo window rather than being a
+  /// time the person picked, and the row says Sending.
+  final bool undo;
 
   /// When it goes, for mail sent later; null to go as soon as it can.
   final DateTime? sendAt;
@@ -1000,8 +1338,29 @@ class OutboxItem {
   final String body;
   final DateTime queuedAt;
 
-  /// Why the server refused it; null while it only waits.
+  /// Why the server refused it, or why it may have gone; null while it
+  /// only waits.
   final String? error;
+
+  /// The same message in another state.
+  OutboxItem copyWith({
+    OutboxState? state,
+    String? error,
+    bool clearSendAt = false,
+    bool? undo,
+  }) => OutboxItem(
+    id: id,
+    accountId: accountId,
+    to: to,
+    subject: subject,
+    body: body,
+    queuedAt: queuedAt,
+    error: error ?? this.error,
+    sendAt: clearSendAt ? null : sendAt,
+    state: state ?? this.state,
+    undo: undo ?? this.undo,
+    redirect: redirect,
+  );
 
   /// Who it goes to, by name where there is one.
   String get recipients => to
@@ -1434,6 +1793,68 @@ enum LogoError { notAnImage, tooBig }
 class LogoException implements Exception {
   const LogoException(this.error);
   final LogoError error;
+}
+
+/// An email file opened from outside the app, read for the reader.
+class EmlMessage {
+  const EmlMessage({
+    required this.path,
+    required this.readable,
+    this.fromName = '',
+    this.fromEmail = '',
+    this.to = const [],
+    this.cc = const [],
+    this.subject = '',
+    this.date,
+  });
+
+  /// Where the file is: the engine reads it again to save or import.
+  final String path;
+  final String fromName;
+  final String fromEmail;
+
+  /// `Name <a@b.c>` or `a@b.c`.
+  final List<String> to;
+  final List<String> cc;
+  final String subject;
+  final DateTime? date;
+  final Readable readable;
+}
+
+enum EmlProblem { notMail, tooLarge }
+
+class EmlException implements Exception {
+  const EmlException(this.problem);
+  final EmlProblem problem;
+
+  @override
+  String toString() => 'EmlException($problem)';
+}
+
+/// How the desktop app behaves when its window is closed, and at sign-in.
+class DesktopSettings {
+  const DesktopSettings({this.keepRunning = true, this.startAtLogin = false});
+
+  /// Closing the window leaves Piuma in the tray, still notifying.
+  final bool keepRunning;
+
+  /// Piuma starts at sign-in, without its window.
+  final bool startAtLogin;
+
+  DesktopSettings copyWith({bool? keepRunning, bool? startAtLogin}) =>
+      DesktopSettings(
+        keepRunning: keepRunning ?? this.keepRunning,
+        startAtLogin: startAtLogin ?? this.startAtLogin,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is DesktopSettings &&
+      other.keepRunning == keepRunning &&
+      other.startAtLogin == startAtLogin;
+
+  @override
+  int get hashCode => Object.hash(keepRunning, startAtLogin);
 }
 
 /// A file attached to a draft.
@@ -2022,6 +2443,12 @@ abstract class MailSource {
   /// New mail worth a notification, as it arrives.
   Stream<List<MailNotice>> get notices;
 
+  /// Changes made on this device (a move, read or unread, a label) that
+  /// the server kept refusing for a day, or refused for good, and were
+  /// given up, by how many. Their messages are back as the server has
+  /// them.
+  Stream<int> get changesDropped => const Stream.empty();
+
   Future<NotifySettings> notifySettings();
 
   Future<void> setNotifySettings(NotifySettings settings);
@@ -2176,6 +2603,24 @@ abstract class MailSource {
   /// The message made safe to read, with what was stopped.
   Future<Readable> readable(MailRow row);
 
+  /// Reads an email file (`.eml`) opened from outside the app, made safe
+  /// exactly like a synced message; nothing is stored or fetched. Throws
+  /// an [EmlException] when it isn't one, or is too large.
+  Future<EmlMessage> openEml(String path) async =>
+      throw const EmlException(EmlProblem.notMail);
+
+  /// Saves one of an email file's attachments in Downloads; returns where.
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) =>
+      throw UnimplementedError();
+
+  /// Puts an email file in one of an account's folders on its server.
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) =>
+      throw UnimplementedError();
+
+  /// Keeping running with the window closed, and starting at sign-in.
+  DesktopSettings get desktopSettings => const DesktopSettings();
+  set desktopSettings(DesktopSettings settings) {}
+
   /// The message's original layout, made safe; with [loadImages] its
   /// remote images come in too.
   Future<OriginalDoc> original(MailRow row, {required bool loadImages});
@@ -2258,6 +2703,36 @@ abstract class MailSource {
   /// Mute a sender's notifications, or let them come again.
   Future<void> setMuted(String email, bool muted);
 
+  /// Who [row] went to, and who Reply, Reply all and Reply to list write
+  /// to. Null when it can't be known (mail kept before its headers were
+  /// read, with the server out of reach): Reply then goes to the sender.
+  Future<MailEnvelope?> envelope(MailRow row) async => null;
+
+  /// [row] as it came from the server, byte for byte: View source, Save
+  /// as .eml, Forward as attachment and Redirect start from it.
+  Future<Uint8List> rawMessage(MailRow row) =>
+      Future.error(UnsupportedError('no raw message'));
+
+  /// The headers of a raw message, in order, encoded words decoded.
+  List<MailHeader> headersOf(Uint8List raw) => const [];
+
+  /// Redirect: [row] unchanged, with Resent-* headers on top, to [to],
+  /// from the account (or the alias it was written to). It goes through
+  /// the outbox like any message, after [window] (Undo takes it back with
+  /// [cancelOutgoing]); returns its id there, for [deliver]. Throws
+  /// [SendException] for an address that isn't one.
+  Future<int> redirect(MailRow row, List<String> to, Duration window) =>
+      Future.error(UnsupportedError('no redirect'));
+
+  /// Mutes [row]'s conversation, or unmutes it: new mail in it arrives
+  /// read and makes no notice. It stays in the inbox.
+  Future<void> setThreadMuted(MailRow row, bool muted) async {}
+
+  /// Saves [data] in Downloads as [name], or a name like it no other file
+  /// there has, as [saveText] does; returns the saved file's path.
+  Future<String> saveFile(String name, Uint8List data) =>
+      Future.error(UnsupportedError('no files'));
+
   /// Whether a sender's new mail goes straight to Trash.
   Future<bool> isBlocked(String email);
 
@@ -2330,10 +2805,18 @@ abstract class MailSource {
   Future<void> setPrivacySettings(PrivacySettings settings);
 
   /// A company sender's picture as a PNG (`PicturesToApprove`), or null.
-  Future<Uint8List?> senderPicture(String email) async => null;
+  /// A brand logo comes only for a message [row] whose own sender check
+  /// passed, and is looked up only when it is [opened].
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async => null;
 
   /// The pictures already asked for, shared by every list and reader.
-  late final SenderPictures pictures = SenderPictures(senderPicture);
+  late final SenderPictures pictures = SenderPictures(
+    (email, row, opened) => senderPicture(email, row: row, opened: opened),
+  );
 
   /// Read newsletters more than a week old archive themselves (on unless
   /// turned off in Settings › Rules & folders).
@@ -2371,8 +2854,16 @@ abstract class MailSource {
   Future<MailAccount> updateAccount(MailAccount account);
 
   /// Checks new servers with the account's password and keeps them.
-  /// Throws [AddAccountException].
-  Future<void> setAccountServers(int accountId, AccountServers servers);
+  /// [trusted] are certificates the person chose to trust for them after
+  /// a [AddAccountError.certificate]: kept only once the check went
+  /// through. An account that signs in with a provider's page keeps that
+  /// provider's servers ([AddAccountError.oauthServers]). Throws
+  /// [AddAccountException].
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  });
 
   /// Removes an account and its mail from this device; the mail stays on
   /// the server.
@@ -2402,11 +2893,48 @@ abstract class MailSource {
   AccountHealth accountHealth(int accountId);
 
   /// Checks a new password for an account in [SyncStatus.failed], keeps it
-  /// and follows the account again. Throws [AddAccountException].
-  Future<void> signInAgain(int accountId, String password);
+  /// and follows the account again. [trusted] are certificates the person
+  /// chose to trust after a [AddAccountError.certificate]: kept only once
+  /// the sign-in went through, and only for the account's own servers.
+  /// Throws [AddAccountException].
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  });
+
+  /// The providers that sign in with their own page.
+  List<OAuthProviderInfo> get oauthProviders => const [];
+
+  /// The provider an account signs in with, if it signs in with OAuth.
+  String? accountOAuth(int accountId) => null;
+
+  /// Opens [provider]'s sign-in page in the browser and, once the person
+  /// signed in there, adds the account with the provider's servers.
+  /// Throws [AddAccountException].
+  Future<MailAccount> addOAuthAccount({
+    required String provider,
+    required String name,
+    required String email,
+    String senderName = '',
+    required Color color,
+    OAuthClientConfig? client,
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
+
+  /// As [addOAuthAccount], for an account whose sign-in stopped working.
+  Future<void> signInAgainOAuth(
+    int accountId, {
+    OAuthClientConfig? client,
+  }) async =>
+      throw const AddAccountException(AddAccountError.signInUnavailable);
+
+  /// Stops waiting for the provider's page.
+  void cancelOAuth() {}
 
   /// Checks the login, then adds the account. Without [smtp] the engine
-  /// guesses `smtp.<domain>` on port 465.
+  /// guesses `smtp.<domain>` on port 465. [trusted] are certificates the
+  /// person chose to trust after a [AddAccountError.certificate].
   Future<MailAccount> addImapAccount({
     required String name,
     required String email,
@@ -2418,6 +2946,7 @@ abstract class MailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   });
 
   /// Checks the login against a JMAP server, then adds the account. With
@@ -2430,6 +2959,7 @@ abstract class MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   });
 
   /// Hides a message from the lists while its action can be undone, or
@@ -2443,6 +2973,98 @@ abstract class MailSource {
   /// The account's spam folder, by its server name, once a sync found
   /// one; null when it has none, and Report spam isn't offered.
   String? junkMailbox(int accountId) => null;
+
+  /// The account's Trash, by its server name, once a sync found it.
+  String? trashMailbox(int accountId) => null;
+
+  /// Whether Delete in [mailbox] deletes for good, with no Undo: in Trash
+  /// and in spam, where moving to Trash would only put it back.
+  bool deletesForGood(int accountId, String mailbox) =>
+      mailbox == trashMailbox(accountId) || mailbox == junkMailbox(accountId);
+
+  /// Deletes emails for good: they leave the lists at once and their
+  /// servers delete them (at the next sync when offline). No Undo: the
+  /// app asks first.
+  Future<void> deleteForever(List<MailRow> rows) async {}
+
+  /// Stars emails, or takes their stars off: at once here, then on their
+  /// servers.
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {}
+
+  /// Copies emails to one of their account's folders; they stay where
+  /// they are.
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {}
+
+  /// How many emails a folder holds: what its server says, or what is
+  /// here when it can't be reached.
+  Future<int> folderTotal(int accountId, String mailbox) async => 0;
+
+  /// Empty Trash, Empty spam: every email of the folder goes for good.
+  /// Returns how many.
+  Future<int> emptyFolder(int accountId, String mailbox) async => 0;
+
+  /// Renames one of the account's own folders.
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {}
+
+  /// What deleting a folder takes with it: its emails and its
+  /// subfolders' (they go to Trash), and how many subfolders. [protected]
+  /// names the inbox or a folder with a job inside it: then it isn't
+  /// deleted.
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) => (emails: 0, subfolders: 0, protected: null);
+
+  /// Deletes one of the account's own folders with its subfolders; their
+  /// emails go to Trash first.
+  Future<void> deleteFolder(int accountId, String mailbox) async {}
+
+  /// Shows one of the account's own folders in the lists, or hides it.
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {}
+
+  /// Which folder does each job for an account.
+  List<SpecialFolder> specialFolders(int accountId) => const [];
+
+  /// Every folder of the account's server, to give one a job: its server
+  /// name and its whole path as people read it.
+  List<({String mailbox, String name})> serverFolders(int accountId) =>
+      const [];
+
+  /// The folders that may do [role]'s job: never the inbox, nor one doing
+  /// another job when either job is Trash or spam.
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in serverFolders(accountId))
+      if (f.mailbox.toUpperCase() != 'INBOX') f,
+  ];
+
+  /// Gives a job to a folder of the person's choice; null goes back to
+  /// the one the server marks or names.
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {}
+
+  /// How the lists look: their order, conversations or single emails,
+  /// and what each swipe does.
+  ValueListenable<ListPrefs> get listPrefs => _defaultListPrefs;
+  static final _defaultListPrefs = ValueNotifier(const ListPrefs());
+
+  Future<void> setListPrefs(ListPrefs prefs) async {}
+
+  /// How full the account's mailbox was when its server last said; null
+  /// when it never said.
+  MailQuota? quota(int accountId) => null;
+
+  /// Asks the server how full the mailbox is.
+  Future<MailQuota?> refreshQuota(int accountId) async => quota(accountId);
 
   /// Snoozes messages until [until]: they leave the lists at once, wait
   /// in their account's Snoozed folder and come back to the inbox, unread.
@@ -2651,11 +3273,23 @@ abstract class MailSource {
   /// [LogoException].
   Future<Uint8List> shrinkLogo(Uint8List data);
 
-  /// Sends a draft and files a copy in Sent; its saved copy goes. When
-  /// the server can't be reached it waits in the outbox, goes once the
-  /// connection is back, and this returns its id there. Throws
-  /// [SendException].
+  /// Sends a draft and files a copy in Sent; its saved copy goes. It is
+  /// kept in the outbox first, so nothing is lost: when the server can't
+  /// be reached it waits there, goes once the connection is back, and
+  /// this returns its id there. Throws [SendException].
   Future<int?> send(Draft draft);
+
+  /// Send with Undo: keeps [draft] in the outbox, on disk, to go once
+  /// [window] has passed, and returns its id there. Undo takes it back
+  /// with [reopenOutgoing]. Closing the app in the window doesn't lose it:
+  /// it goes at the next start. Throws [SendException] for a draft that
+  /// can't be sent (a wrong address).
+  Future<int> sendWithUndo(Draft draft, Duration window);
+
+  /// Waits until the message [id] of the outbox has gone (its Undo window
+  /// first) and says what became of it. Safe to call while anything else
+  /// sends the outbox: a message never goes twice.
+  Future<Delivery> deliver(int id);
 
   /// Keeps [draft] to send at [at] from this device: it waits in the
   /// Outbox until then. Returns its id there, to take it back.
@@ -2678,8 +3312,21 @@ abstract class MailSource {
   /// Mail waiting to go, oldest first: one account's, or every account's.
   Future<List<OutboxItem>> outbox(int? accountId);
 
-  /// Takes a message back out of the outbox, to edit it.
+  /// Takes a message back out of the outbox, to edit it. Never a
+  /// Redirect ([OutboxItem.redirect]), which has nothing to edit: that
+  /// throws and the Redirect stays.
   Future<Draft> reopenOutgoing(int id);
+
+  /// Deletes a message from the outbox without sending it: Undo of a
+  /// Redirect, or Cancel in the Outbox. Throws when it is on its way.
+  Future<void> cancelOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
+
+  /// Sends a message of the outbox again now (waiting, refused, or maybe
+  /// sent, when the person says so); [deliver] then says what became of
+  /// it. Throws when it is on its way or gone.
+  Future<void> retryOutgoing(int id) =>
+      Future.error(UnsupportedError('no outbox'));
 
   /// How many drafts every account keeps.
   Future<int> draftCount();

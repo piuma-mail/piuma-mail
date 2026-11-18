@@ -43,6 +43,7 @@ class MailService : Service() {
                 val json = MailNative.next(Background.minute(), 60_000)
                 if (running) Background.show(applicationContext, json)
                 if (running) Background.showSignIn(applicationContext)
+                if (running) Background.keepSecrets(applicationContext)
                 // The Vault's notices: a parcel's day, a bill due soon.
                 val now = System.currentTimeMillis()
                 if (running && now - looked > 10 * 60_000) {

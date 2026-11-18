@@ -262,7 +262,13 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pump();
-    expect(find.text('Sending…'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(SnackBar),
+        matching: find.text('Sending…'),
+      ),
+      findsOneWidget,
+    );
     await tester.pump(const Duration(seconds: 11));
     await _settle(tester);
     final sent = source.sent.single;

@@ -328,6 +328,8 @@ struct Rules {
     smtp_error: Regex,
     smtp_answer: Regex,
     url: Regex,
+    app_url: Regex,
+    oauth: Regex,
     path: Regex,
     message_id: Regex,
     email: Regex,
@@ -373,6 +375,13 @@ fn rules() -> &'static Rules {
             // An SMTP reply with its enhanced status code.
             smtp_answer: re(r"\b([245]\d\d)[ -]([245]\.\d{1,3}\.\d{1,3})\s+[^\n]+"),
             url: re(r#"(?i)\b(?:https?|wss?|imaps?|smtps?)://[^\s"'<>]+"#),
+            // An app's own scheme, a reverse domain name, as sign-in pages
+            // come back to: `com.googleusercontent.apps.…:/oauth2redirect?code=…`.
+            app_url: re(r#"(?i)\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+:/{1,2}[^\s"'<>]*"#),
+            // What OAuth answers carry, wherever they show up.
+            oauth: re(
+                r#"(?i)\b(code|state|code_verifier|refresh_token|access_token|id_token|client_secret)=[^&\s"'<>]+"#,
+            ),
             // Absolute paths: they carry the person's user name and the
             // names of their files.
             path: re(
@@ -441,6 +450,8 @@ pub fn clean(text: &str) -> String {
     }
     s = r.login.replace_all(&s, "$1 <hidden>").into_owned();
     s = r.url.replace_all(&s, "<url>").into_owned();
+    s = r.app_url.replace_all(&s, "<url>").into_owned();
+    s = r.oauth.replace_all(&s, "$1=<secret>").into_owned();
     s = r.path.replace_all(&s, "<path>").into_owned();
     s = r.bearer.replace_all(&s, "$1 <token>").into_owned();
     s = r.secret.replace_all(&s, "$1$2<secret>").into_owned();
@@ -1799,6 +1810,25 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("piuma-feedback-{name}-{}", random_hex(4)));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn cleaning_hides_sign_in_answers() {
+        for (raw, gone) in [
+            (
+                "redirect com.googleusercontent.apps.1234-abcd:/oauth2redirect?code=4/0AdQt8qh&state=Xy9",
+                "4/0AdQt8qh",
+            ),
+            ("back to mail.piuma.app://oauth?code=M.C5_BAY.2.U&state=abc", "M.C5_BAY"),
+            ("GET /?code=0.AXkA-secret&state=s1 HTTP/1.1", "0.AXkA-secret"),
+            ("token request code=splx0bQ&code_verifier=dBjftJ", "splx0bQ"),
+        ] {
+            let cleaned = clean(raw);
+            assert!(!cleaned.contains(gone), "{raw} -> {cleaned}");
+            assert!(!cleaned.contains("googleusercontent"), "{cleaned}");
+        }
+        // Error codes stay: they say what failed.
+        assert!(clean("SMTP error code: 535").contains("535"));
     }
 
     #[test]

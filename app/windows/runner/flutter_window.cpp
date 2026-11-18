@@ -5,8 +5,9 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool start_hidden)
+    : project_(project), start_hidden_(start_hidden) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -26,6 +27,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  shell_ = std::make_unique<Shell>(flutter_controller_->engine()->messenger(),
+                                   GetHandle());
+  unread_badge_ = std::make_unique<UnreadBadge>(
+      flutter_controller_->engine()->messenger(), GetHandle());
   // A message opened in a window of its own gets the plugins too.
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* view_controller =
@@ -35,7 +40,9 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    if (!start_hidden_) {
+      this->Show();
+    }
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -47,6 +54,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  shell_ = nullptr;
+  unread_badge_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -68,10 +77,33 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     }
   }
 
+  if (shell_) {
+    if (auto handled = shell_->HandleMessage(hwnd, message, wparam, lparam)) {
+      return *handled;
+    }
+  }
+
   switch (message) {
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_COPYDATA: {
+      // A later launch handed over its command line (see main.cpp): a
+      // mailto: link, an .eml file, files to send. Untrusted: Dart
+      // checks every word (lib/outside/arrivals.dart).
+      const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(lparam);
+      if (data != nullptr && data->dwData == kForwardedCommandLine &&
+          data->lpData != nullptr && data->cbData >= sizeof(wchar_t) &&
+          data->cbData % sizeof(wchar_t) == 0) {
+        const auto* text = static_cast<const wchar_t*>(data->lpData);
+        std::wstring line(text, data->cbData / sizeof(wchar_t));
+        // Up to the first NUL, whatever the sender said its size was.
+        line.resize(wcsnlen(line.c_str(), line.size()));
+        if (shell_) shell_->Forward(line);
+        return TRUE;
+      }
+      break;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

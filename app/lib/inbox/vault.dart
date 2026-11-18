@@ -259,7 +259,9 @@ String vaultCategoryLine(
       return v.notDelivered > 0
           ? l.pecNotDelivered(v.notDelivered)
           : l.vaultCertDelivered(
-              v.certified.where((m) => m.stage == PecStage.delivered).length,
+              v.certified
+                  .where((m) => m.stage == PecStage.delivered && m.verified)
+                  .length,
             );
   }
 }
@@ -3235,7 +3237,7 @@ class _TrackButton extends StatelessWidget {
           ),
         );
     }
-    await openExternalLink(uri);
+    await openMailLink(uri);
   }
 
   @override
@@ -3344,16 +3346,26 @@ class _PecCard extends StatelessWidget {
     final tints = dark ? PiumaTints.dark : PiumaTints.light;
     final m = message;
     final failed = m.stage == PecStage.failed;
-    final (status, statusColor) = switch (m.stage) {
-      PecStage.failed => (l.pecFailed, c.danger),
-      PecStage.delivered => (l.pecDelivered, c.ok),
-      PecStage.accepted => (l.pecAccepted, c.accentText),
+    final claimed = switch (m.stage) {
+      PecStage.failed => l.pecFailed,
+      PecStage.delivered => l.pecDelivered,
+      PecStage.accepted => l.pecAccepted,
     };
+    // Without the provider's signature the stage is only what headers
+    // claim: it says so, and offers no receipt to keep as proof.
+    final (status, statusColor) = !m.verified
+        ? (l.pecUnverified, c.warn)
+        : switch (m.stage) {
+            PecStage.failed => (l.pecFailed, c.danger),
+            PecStage.delivered => (l.pecDelivered, c.ok),
+            PecStage.accepted => (l.pecAccepted, c.accentText),
+          };
     final to = m.recipients.length > 1
         ? l.pecToMany(m.recipients.length, m.delivered)
         : l.pecTo(m.recipients.firstOrNull ?? m.failedTo);
     final when = _pecWhen(l, m.stageAt, now, locale);
     final foot = switch (m.stage) {
+      _ when !m.verified => l.pecUnverifiedNote(claimed),
       PecStage.failed when m.reason.isNotEmpty => l.pecReasonAt(m.reason, when),
       PecStage.failed => l.pecFailedAt(when),
       PecStage.delivered => l.pecDeliveredAt(when),
@@ -3362,11 +3374,14 @@ class _PecCard extends StatelessWidget {
     final stages = [l.pecSent, l.pecAccepted, l.pecDelivered];
     final at = m.stage == PecStage.accepted ? 1 : 2;
     Color bar(int i) => switch (i) {
+      // Unverified: only "Sent" is known for sure.
+      _ when !m.verified => i == 0 ? c.accent : c.line,
       2 when failed => c.danger,
       _ when i <= at => c.accent,
       _ => c.line,
     };
     Color? strong(int i) => switch (m.stage) {
+      _ when !m.verified => null,
       PecStage.accepted when i == 1 => c.accentText,
       PecStage.delivered when i == 2 => c.ok,
       _ => null,
@@ -3442,7 +3457,7 @@ class _PecCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   foot,
-                  maxLines: 2,
+                  maxLines: m.verified ? 2 : 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: PiumaFonts.sans,
@@ -3452,7 +3467,7 @@ class _PecCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              failed
+              failed || !m.verified
                   ? _SmallButton(label: l.pecOpen, onTap: onTap)
                   : _SmallButton(
                       label: l.pecReceipt(m.proofs.length),
