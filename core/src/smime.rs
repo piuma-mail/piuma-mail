@@ -328,7 +328,9 @@ fn may_issue(c: &Cert<'_>) -> bool {
 /// signatures, and its extended usages, if it lists them, e-mail.
 fn may_sign(c: &Cert<'_>) -> bool {
     c.usage.is_some_and(|u| u & DIGITAL_SIGNATURE != 0)
-        && c.extended.as_ref().is_none_or(|e| e.contains(&EMAIL_PROTECTION))
+        && c.extended
+            .as_ref()
+            .is_none_or(|e| e.contains(&EMAIL_PROTECTION))
 }
 
 /// Who signed: the signer's certificate names.
