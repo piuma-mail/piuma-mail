@@ -382,7 +382,8 @@ async fn mail_sent_later_waits_for_its_time_and_is_dated_then() {
 const ORIGINAL: &str = "Delivered-To: me@example.org\r\nReturn-Path: <anna@x.it>\r\n\
 From: Anna <anna@x.it>\r\nTo: me@example.org\r\nCc: Bo <bo@x.it>\r\n\
 Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
-Content-Type: text/plain; charset=utf-8\r\n\r\nSee you at 20:30, caffè after.\r\n";
+Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n\
+See you at 20:30, caff=C3=A8 after.\r\n";
 
 #[tokio::test]
 async fn redirect_resends_the_message_unchanged_with_resent_headers() {
@@ -410,7 +411,7 @@ async fn redirect_resends_the_message_unchanged_with_resent_headers() {
     // The message itself is as it came, From and Message-ID included.
     assert!(data.contains("From: Anna <anna@x.it>\nTo: me@example.org\n"), "{data}");
     assert!(data.contains("Message-ID: <plan@x.it>\n"), "{data}");
-    assert!(data.contains("\n\nSee you at 20:30, caffè after.\n"), "{data}");
+    assert!(data.contains("\n\nSee you at 20:30, caff=C3=A8 after.\n"), "{data}");
     // Not the person's own delivery headers, which would look like a loop.
     assert!(!data.contains("Delivered-To"), "{data}");
     assert!(!data.contains("Return-Path"), "{data}");
@@ -433,7 +434,7 @@ async fn forward_as_attachment_sends_the_original_as_message_rfc822() {
     let got = inbox.lock().unwrap();
     let data = &got[0].data;
     assert!(data.contains("Content-Type: message/rfc822"), "{data}");
-    assert!(data.contains("Content-Transfer-Encoding: 8bit"), "{data}");
+    assert!(data.contains("Content-Transfer-Encoding: 7bit"), "{data}");
     let raw = data.replace('\n', "\r\n");
     let m = mail_parser::MessageParser::default()
         .parse(raw.as_bytes())

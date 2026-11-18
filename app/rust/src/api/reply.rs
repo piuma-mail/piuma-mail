@@ -17,12 +17,15 @@ pub struct MailAddress {
     /// May be empty.
     pub name: String,
     pub email: String,
+    /// One of the person's own addresses (the account's, or an alias).
+    pub you: bool,
 }
 
-fn mail_address(a: &Address) -> MailAddress {
+fn mail_address(a: &Address, own: &[String]) -> MailAddress {
     MailAddress {
         name: a.name.clone(),
         email: a.email.clone(),
+        you: own.iter().any(|o| o.eq_ignore_ascii_case(a.email.trim())),
     }
 }
 
@@ -62,8 +65,8 @@ pub(crate) fn describe(
     let reply = envelope::reply_recipients(envelope, &from, &own, ReplyMode::Sender);
     let all = envelope::reply_recipients(envelope, &from, &own, ReplyMode::All);
     Ok(MessageEnvelope {
-        to: envelope.to.iter().map(mail_address).collect(),
-        cc: envelope.cc.iter().map(mail_address).collect(),
+        to: envelope.to.iter().map(|a| mail_address(a, &own)).collect(),
+        cc: envelope.cc.iter().map(|a| mail_address(a, &own)).collect(),
         bcc_you: envelope::bcc_you(envelope, &row.from_email, &own),
         reply_to: shown(&reply.to),
         reply_all_to: shown(&all.to),
@@ -292,6 +295,8 @@ mod tests {
         assert_eq!(e.reply_all_cc, ["dan@x.it"]);
         assert!(!e.bcc_you);
         assert_eq!(e.to.len(), 2);
+        assert!(e.to[0].you && !e.to[1].you);
+        assert!(e.cc[0].you, "aliases are the person too");
         assert_eq!(e.list_post, None);
         assert!(!e.muted);
         store.set_thread_muted(a, "INBOX", 1, true).unwrap();

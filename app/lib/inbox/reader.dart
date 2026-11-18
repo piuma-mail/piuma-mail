@@ -30,6 +30,7 @@ import 'message_body.dart';
 import 'images_bar.dart';
 import 'original_view.dart';
 import 'print.dart';
+import 'recipients_line.dart';
 import 'translate_parts.dart';
 import 'message_list.dart' show initials;
 import 'risky_file.dart';
@@ -47,7 +48,16 @@ class Reader extends StatefulWidget {
     this.onArchive,
     this.onDelete,
     this.onReply,
+    this.onReplyAll,
+    this.onReplyList,
     this.onForward,
+    this.onForwardAttachment,
+    this.onEditAsNew,
+    this.onRedirect,
+    this.onViewSource,
+    this.onSaveEml,
+    this.onMute,
+    this.zoom = 1,
     this.onMove,
     this.onLabel,
     this.onSnooze,
@@ -141,6 +151,29 @@ class Reader extends StatefulWidget {
   /// More on the phone.
   final ValueChanged<MailRow>? onForward;
 
+  /// Reply all, as [onReply]: next to Reply on the desktop (key A), after
+  /// Reply in the phone's and tablet's More. Shown only when it writes to
+  /// more people than Reply. Reply stays the default.
+  final void Function(MailRow row, String body, [String text])? onReplyAll;
+
+  /// Reply to list, in More, for mail from a list that takes posts.
+  final void Function(MailRow row, String body, [String text])? onReplyList;
+
+  /// More's Forward as attachment, Edit as new, Redirect, View source and
+  /// Save as .eml.
+  final ValueChanged<MailRow>? onForwardAttachment;
+  final ValueChanged<MailRow>? onEditAsNew;
+  final ValueChanged<MailRow>? onRedirect;
+  final ValueChanged<MailRow>? onViewSource;
+  final ValueChanged<MailRow>? onSaveEml;
+
+  /// More's Mute conversation, or Unmute once muted; [onMute] gets what it
+  /// should become and calls back once done, so More says the other.
+  final void Function(MailRow row, bool muted, VoidCallback done)? onMute;
+
+  /// The message's text size, from Ctrl/⌘ + and −: 1 as the app sets it.
+  final double zoom;
+
   /// The `PhoneRead` layout: "‹ Inbox" with Archive and More on top, and
   /// the quick reply bar at the foot.
   final bool phone;
@@ -150,8 +183,10 @@ class Reader extends StatefulWidget {
   final bool tablet;
   final VoidCallback? onBack;
 
-  /// Sends [text] as a reply to the message, whose text is [body].
-  final void Function(MailRow row, String body, String text)? onQuickReply;
+  /// Sends [text] as a reply to the message, whose text is [body]; to
+  /// everyone it went to with [all] (the box's Reply all, off by default).
+  final void Function(MailRow row, String body, String text, bool all)?
+  onQuickReply;
 
   /// Where a reply to the message goes from, when that is one of the
   /// account's other addresses, and the signature it takes: the line
@@ -197,6 +232,29 @@ class _ReaderState extends State<Reader> {
   /// Whether the open email's list can be left, once known: More's
   /// Unsubscribe shows only then.
   bool _leavable = false;
+
+  /// Who each message went to and who answers go to, by key, once the
+  /// engine says (null: it can't say). Asked once per message.
+  final _envelopes = <Object, MailEnvelope?>{};
+
+  /// The quick reply box goes to everyone: its Reply all, off for each
+  /// email opened.
+  bool _replyAll = false;
+
+  /// [row]'s envelope when known; the first call asks for it.
+  MailEnvelope? _envelope(MailRow row) {
+    final key = row.key;
+    if (_envelopes.containsKey(key)) return _envelopes[key];
+    _envelopes[key] = null;
+    widget.source
+        .envelope(row)
+        .catchError((Object _) => null)
+        .then((e) {
+          if (!mounted || e == null) return;
+          setState(() => _envelopes[key] = e);
+        });
+    return null;
+  }
 
   @override
   void initState() {
@@ -399,6 +457,8 @@ class _ReaderState extends State<Reader> {
     _seenNow = null;
     _layouts.clear();
     _leavable = false;
+    _replyAll = false;
+    _envelopes.clear();
     if (row != null && widget.onUnsubscribe != null) {
       widget.source
           .unsubscribeInfo(row)
@@ -472,6 +532,56 @@ class _ReaderState extends State<Reader> {
     final onForward = widget.onForward == null
         ? null
         : () => widget.onForward!(row);
+    final envelope = _envelope(row);
+    // Answers that take the text already typed in the reply box.
+    VoidCallback? answer(
+      void Function(MailRow row, String body, [String text])? to,
+    ) => to == null
+        ? null
+        : () async {
+            final text = _replyText.text.trim();
+            _replyText.clear();
+            FocusManager.instance.primaryFocus?.unfocus();
+            final body = await widget.source.body(row).catchError((_) => '');
+            to(row, body, text);
+          };
+    final onReplyAll = (envelope?.others ?? 0) > 0
+        ? answer(widget.onReplyAll)
+        : null;
+    final muted = envelope?.muted ?? false;
+    VoidCallback? one(ValueChanged<MailRow>? f) =>
+        f == null ? null : () => f(row);
+    final early = <_Extra>[
+      if (envelope?.listPost != null)
+        if (answer(widget.onReplyList) case final f?)
+          _Extra(l.actionReplyList, PiumaIcon.reply, f),
+      if (one(widget.onForwardAttachment) case final f?)
+        _Extra(l.actionForwardAttachment, PiumaIcon.paperclip, f),
+      if (one(widget.onRedirect) case final f?)
+        _Extra(l.actionRedirect, PiumaIcon.arrowRight, f),
+      if (one(widget.onEditAsNew) case final f?)
+        _Extra(l.actionEditAsNew, PiumaIcon.pen, f),
+    ];
+    final late = <_Extra>[
+      if (widget.onMute case final mute? when row.folder != MailFolder.drafts)
+        _Extra(
+          muted ? l.unmuteConversation : l.muteConversation,
+          PiumaIcon.bell,
+          () => mute(row, !muted, () {
+            if (!mounted) return;
+            final key = row.key;
+            setState(() {
+              if (_envelopes[key] case final e?) {
+                _envelopes[key] = e.withMuted(!muted);
+              }
+            });
+          }),
+        ),
+      if (one(widget.onViewSource) case final f?)
+        _Extra(l.actionViewSource, PiumaIcon.document, f),
+      if (one(widget.onSaveEml) case final f?)
+        _Extra(l.actionSaveEml, PiumaIcon.download, f),
+    ];
     final onWriteAgain = widget.onWriteAgain == null
         ? null
         : () async {
@@ -516,7 +626,10 @@ class _ReaderState extends State<Reader> {
             onArchive: onArchive,
             onDelete: onDelete,
             onReply: onReply,
+            onReplyAll: onReplyAll,
             onForward: onForward,
+            early: early,
+            late: late,
             onMove: onMove == null ? null : () => onMove(null),
             onLabel: widget.onLabel == null || row.folder == MailFolder.drafts
                 ? null
@@ -544,7 +657,10 @@ class _ReaderState extends State<Reader> {
             onArchive: onArchive,
             onDelete: onDelete,
             onReply: onReply,
+            onReplyAll: onReplyAll,
             onForward: onForward,
+            early: early,
+            late: late,
             onMove: onMove,
             onSnooze: onSnooze,
             onWake: onWake,
@@ -572,7 +688,9 @@ class _ReaderState extends State<Reader> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final wide = !phone && !tablet && constraints.maxWidth >= 1300;
-              return SingleChildScrollView(
+              return _zoomed(
+                context,
+                SingleChildScrollView(
                 key: ValueKey(row.key),
                 child: Align(
                   alignment: wide ? Alignment.topCenter : Alignment.topLeft,
@@ -658,7 +776,15 @@ class _ReaderState extends State<Reader> {
                                   from: widget.replyFrom?.call(row),
                                   machine: widget.source.noReplySender(row),
                                   onSend: (text) => _quickReply(row, text),
-                                  onExpand: onReply,
+                                  onExpand: _replyAll && onReplyAll != null
+                                      ? onReplyAll
+                                      : onReply,
+                                  others: onReplyAll == null
+                                      ? 0
+                                      : envelope?.others ?? 0,
+                                  all: _replyAll,
+                                  onAll: () =>
+                                      setState(() => _replyAll = !_replyAll),
                                 ),
                               ),
                           ],
@@ -666,6 +792,7 @@ class _ReaderState extends State<Reader> {
                       ),
                     ),
                   ),
+                ),
                 ),
               );
             },
@@ -680,7 +807,10 @@ class _ReaderState extends State<Reader> {
             from: widget.replyFrom?.call(row),
             machine: widget.source.noReplySender(row),
             onSend: (text) => _quickReply(row, text),
-            onExpand: onReply,
+            onExpand: _replyAll && onReplyAll != null ? onReplyAll : onReply,
+            others: onReplyAll == null ? 0 : envelope?.others ?? 0,
+            all: _replyAll,
+            onAll: () => setState(() => _replyAll = !_replyAll),
           ),
       ],
     );
@@ -695,6 +825,9 @@ class _ReaderState extends State<Reader> {
           child: Center(
             child: _TabletBar(
               onReply: onReply,
+              onReplyAll: onReplyAll,
+              early: early,
+              late: late,
               onArchive: onArchive,
               onSnooze: onSnooze == null ? null : () => onSnooze(null),
               onWake: onWake,
@@ -729,8 +862,22 @@ class _ReaderState extends State<Reader> {
       row.fromName.isNotEmpty ? row.fromName.split(' ').first : row.fromEmail;
 
   Future<void> _quickReply(MailRow row, String text) async {
+    final all = _replyAll && (_envelopes[row.key]?.others ?? 0) > 0;
     final body = await widget.source.body(row).catchError((_) => '');
-    widget.onQuickReply!(row, body, text);
+    widget.onQuickReply!(row, body, text, all);
+  }
+
+  /// The message at the text size Ctrl/⌘ + and − set, on top of the
+  /// system's.
+  Widget _zoomed(BuildContext context, Widget child) {
+    if (widget.zoom == 1) return child;
+    final system = MediaQuery.textScalerOf(context).scale(100) / 100;
+    return MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(system * widget.zoom)),
+      child: child,
+    );
   }
 
   void _translated(MailRow row, Readable? t) {
@@ -774,6 +921,8 @@ class _ReaderState extends State<Reader> {
           row: row,
           account: account,
           when: _when(l, row, widget.now(), locale),
+          envelope: _envelope(row),
+          line: (who) => _when(l, row, widget.now(), locale, who: who),
           avatar: widget.phone ? 40 : 42,
           email: !widget.phone,
           // A sender who isn't who they say shows the address on the
@@ -854,6 +1003,9 @@ class _ReaderState extends State<Reader> {
                       avatar: widget.phone ? 40 : 42,
                       name: _name(row, l),
                       when: _when(l, row, widget.now(), locale),
+                      envelope: _envelope(row),
+                      line: (who) =>
+                          _when(l, row, widget.now(), locale, who: who),
                       onSender: _onSender(row),
                       warned: _warned.contains(row.key),
                       onToggle: row == messages.last
@@ -1032,22 +1184,28 @@ class _ReaderState extends State<Reader> {
     return out;
   }
 
-  /// "to you · today at 09:42" and friends; sent mail names who it went to.
+  /// "to you · today at 09:42" and friends; sent mail names who it went
+  /// to, and so does [who] once the recipients are known ("you, Carla and
+  /// 2 others").
   static String _when(
     AppLocalizations l,
     MailRow row,
     DateTime now,
-    String locale,
-  ) {
+    String locale, {
+    String? who,
+  }) {
     final t = row.receivedAt;
     final time = DateFormat.Hm(locale).format(t);
     final date = DateFormat.yMMMEd(locale).format(t);
     final today = DateTime(now.year, now.month, now.day);
     final days = today.difference(DateTime(t.year, t.month, t.day)).inDays;
-    if (row.folder == MailFolder.sent && row.to.isNotEmpty) {
-      if (days == 0) return l.toPeopleToday(row.to, time);
-      if (days == 1) return l.toPeopleYesterday(row.to, time);
-      return l.toPeopleOn(row.to, date, time);
+    final people =
+        who ??
+        (row.folder == MailFolder.sent && row.to.isNotEmpty ? row.to : null);
+    if (people != null) {
+      if (days == 0) return l.toPeopleToday(people, time);
+      if (days == 1) return l.toPeopleYesterday(people, time);
+      return l.toPeopleOn(people, date, time);
     }
     if (days == 0) return l.toYouToday(time);
     if (days == 1) return l.toYouYesterday(time);
@@ -1704,11 +1862,17 @@ class _OpenMessage extends StatelessWidget {
     this.avatar = 42,
     this.onSender,
     this.warned = false,
+    this.envelope,
+    this.line,
   });
 
   final MailRow row;
   final String name;
   final String when;
+
+  /// Who it went to, once known, and the line saying so.
+  final MailEnvelope? envelope;
+  final String Function(String who)? line;
 
   /// The sender isn't who they say: the address shows on the phone too.
   final bool warned;
@@ -1734,6 +1898,8 @@ class _OpenMessage extends StatelessWidget {
               row: row,
               account: null,
               when: when,
+              envelope: envelope,
+              line: line,
               name: name,
               avatar: avatar,
               email: avatar > 40,
@@ -2071,6 +2237,8 @@ class _SenderLine extends StatelessWidget {
     required this.row,
     required this.account,
     required this.when,
+    this.envelope,
+    this.line,
     this.name,
     this.avatar = 42,
     this.email = true,
@@ -2086,6 +2254,11 @@ class _SenderLine extends StatelessWidget {
   final bool address;
   final String when;
   final double avatar;
+
+  /// Who it went to, once known: the line under the name names them and
+  /// opens into To and Cc ([line] words it).
+  final MailEnvelope? envelope;
+  final String Function(String who)? line;
 
   /// Opens the sender's card under the name, given where the name is.
   final ValueChanged<Rect>? onSender;
@@ -2125,12 +2298,15 @@ class _SenderLine extends StatelessWidget {
                     ),
                 ],
               ),
-              Text(
-                address ? row.fromEmail : when,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13, height: 1.35, color: c.muted),
-              ),
+              if (envelope case final e? when !address && line != null)
+                RecipientsLine(envelope: e, line: line!)
+              else
+                Text(
+                  address ? row.fromEmail : when,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, height: 1.35, color: c.muted),
+                ),
             ],
           ),
         ),
@@ -2238,7 +2414,10 @@ class _Toolbar extends StatelessWidget {
     this.onArchive,
     this.onDelete,
     this.onReply,
+    this.onReplyAll,
     this.onForward,
+    this.early = const [],
+    this.late = const [],
     this.onMove,
     this.onSnooze,
     this.onWake,
@@ -2313,6 +2492,15 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback? onReply;
   final VoidCallback? onForward;
 
+  /// Reply all: a button after Reply when there is room, else in More.
+  final VoidCallback? onReplyAll;
+
+  /// More's other ways to send the message on ([early]: Reply to list,
+  /// Forward as attachment, Redirect, Edit as new) and the rest ([late]:
+  /// Mute, View source, Save as .eml).
+  final List<_Extra> early;
+  final List<_Extra> late;
+
   /// Opens "Move to…" under its button.
   final ValueChanged<Rect>? onMove;
 
@@ -2360,11 +2548,14 @@ class _Toolbar extends StatelessWidget {
         (onForward != null
             ? 62 + text(l.actionForward, 15, FontWeight.w500)
             : 0) +
+        (onReplyAll != null
+            ? 62 + text(l.actionReplyAll, 15, FontWeight.w500)
+            : 0) +
         (onStopWaiting != null
             ? 28 + text(l.stopWaiting, 15, FontWeight.w500)
             : 0);
     const printRoom = 44.0;
-    const keysRoom = 32.0;
+    final keysRoom = onReplyAll != null ? 48.0 : 32.0;
     return LayoutBuilder(
       builder: (context, box) {
         final room = box.maxWidth;
@@ -2529,6 +2720,15 @@ class _Toolbar extends StatelessWidget {
               keyLabel: keys ? 'R' : null,
               onTap: onReply!,
             ),
+          if (onReplyAll != null && forward) ...[
+            const SizedBox(width: 8),
+            _KeyButton(
+              icon: PiumaIcon.reply,
+              label: l.actionReplyAll,
+              keyLabel: keys ? 'A' : null,
+              onTap: onReplyAll!,
+            ),
+          ],
           if (onForward != null && forward) ...[
             const SizedBox(width: 8),
             _KeyButton(
@@ -2575,8 +2775,11 @@ class _Toolbar extends StatelessWidget {
       _MoreItem(l.writeAgain, null, w),
     if (onRemind case final r? when !remind)
       _MoreItem(remindLabel, null, null, onAt: r),
+    if (onReplyAll case final a? when !forward)
+      _MoreItem(l.actionReplyAll, 'A', a),
     if (onForward case final f? when !forward)
       _MoreItem(l.actionForward, 'F', f),
+    for (final x in early) _MoreItem(x.label, null, x.onTap),
     if (onStopWaiting case final stop? when !forward)
       _MoreItem(l.stopWaiting, null, stop),
     if (onSeen case final seen?)
@@ -2587,6 +2790,7 @@ class _Toolbar extends StatelessWidget {
     if (onUnsubscribe case final leave?) _MoreItem(l.unsubscribe, null, leave),
     if (onOriginal case final original?)
       _MoreItem(l.originalLayout, null, original),
+    for (final x in late) _MoreItem(x.label, null, x.onTap),
     if (onPrint case final p? when !print)
       _MoreItem(l.printEmail, printKeys.replaceAll('+', ' '), p),
     if (onReportSpam case final spam?) _MoreItem(l.reportSpam, null, spam),
@@ -2618,6 +2822,16 @@ class _Toolbar extends StatelessWidget {
       picked.onTap?.call();
     }
   }
+}
+
+/// An action of More beyond those each bar knows: its words, its icon in
+/// the phone's and tablet's menus, and what it does.
+class _Extra {
+  const _Extra(this.label, this.icon, this.onTap);
+
+  final String label;
+  final PiumaIcon icon;
+  final VoidCallback onTap;
 }
 
 /// One line of the desktop's More: its words, its key in mono when it has
@@ -2835,7 +3049,10 @@ class _PhoneBar extends StatelessWidget {
     this.onArchive,
     this.onDelete,
     this.onReply,
+    this.onReplyAll,
     this.onForward,
+    this.early = const [],
+    this.late = const [],
     this.onMove,
     this.onLabel,
     this.onSnooze,
@@ -2875,7 +3092,10 @@ class _PhoneBar extends StatelessWidget {
   final VoidCallback? onArchive;
   final VoidCallback? onDelete;
   final VoidCallback? onReply;
+  final VoidCallback? onReplyAll;
   final VoidCallback? onForward;
+  final List<_Extra> early;
+  final List<_Extra> late;
   final VoidCallback? onMove;
   final VoidCallback? onLabel;
 
@@ -2970,8 +3190,11 @@ class _PhoneBar extends StatelessWidget {
                 item(PiumaIcon.hourglass, l.stopWaiting, onStopWaiting),
               if (onReply != null)
                 item(PiumaIcon.reply, l.actionReply, onReply),
+              if (onReplyAll != null)
+                item(PiumaIcon.reply, l.actionReplyAll, onReplyAll),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
+              for (final x in early) item(x.icon, x.label, x.onTap),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
@@ -2984,6 +3207,7 @@ class _PhoneBar extends StatelessWidget {
                 ),
               if (onUnsubscribe != null)
                 item(PiumaIcon.blocked, l.unsubscribe, onUnsubscribe),
+              for (final x in late) item(x.icon, x.label, x.onTap),
               if (onPrint != null)
                 item(PiumaIcon.printer, l.printOrSavePdf, onPrint),
               if (onReportSpam != null)
@@ -3051,6 +3275,9 @@ class _PanelTop extends StatelessWidget {
 class _TabletBar extends StatelessWidget {
   const _TabletBar({
     this.onReply,
+    this.onReplyAll,
+    this.early = const [],
+    this.late = const [],
     this.onArchive,
     this.onSnooze,
     this.onWake,
@@ -3081,6 +3308,9 @@ class _TabletBar extends StatelessWidget {
   final VoidCallback? onReportSpam;
   final VoidCallback? onNotSpam;
   final VoidCallback? onReply;
+  final VoidCallback? onReplyAll;
+  final List<_Extra> early;
+  final List<_Extra> late;
   final VoidCallback? onArchive;
   final VoidCallback? onSnooze;
   final VoidCallback? onWake;
@@ -3183,8 +3413,11 @@ class _TabletBar extends StatelessWidget {
                 item(PiumaIcon.hourglass, l.stopWaiting, onStopWaiting),
               if (onWriteAgain != null && onReply != null)
                 item(PiumaIcon.reply, l.actionReply, onReply),
+              if (onReplyAll != null)
+                item(PiumaIcon.reply, l.actionReplyAll, onReplyAll),
               if (onForward != null)
                 item(PiumaIcon.forward, l.actionForward, onForward),
+              for (final x in early) item(x.icon, x.label, x.onTap),
               if (onMove != null) item(PiumaIcon.folder, l.moveTo, onMove),
               if (onLabel != null) item(PiumaIcon.tag, l.labelMenu, onLabel),
               if (onSide != null)
@@ -3197,6 +3430,7 @@ class _TabletBar extends StatelessWidget {
                 ),
               if (onUnsubscribe != null)
                 item(PiumaIcon.blocked, l.unsubscribe, onUnsubscribe),
+              for (final x in late) item(x.icon, x.label, x.onTap),
               if (onPrint != null)
                 item(PiumaIcon.printer, l.printOrSavePdf, onPrint),
               if (onReportSpam != null)
@@ -3308,9 +3542,18 @@ class _QuickReply extends StatefulWidget {
     this.from,
     this.machine = false,
     this.phone = false,
+    this.others = 0,
+    this.all = false,
+    this.onAll,
   });
 
   final String to;
+
+  /// How many more people Reply all reaches: with some, a Reply all
+  /// switch sits by the box, off at first; [all] once it is on.
+  final int others;
+  final bool all;
+  final VoidCallback? onAll;
   final ValueChanged<String> onSend;
   final TextEditingController? controller;
   final VoidCallback? onExpand;
@@ -3374,9 +3617,31 @@ class _QuickReplyState extends State<_QuickReply> {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    final hint = l.quickReplyHint(widget.to);
+    final everyone = widget.all && widget.others > 0;
+    final hint = l.quickReplyHint(
+      everyone ? l.replyAllNames(widget.to, widget.others) : widget.to,
+    );
     final from = widget.from;
-    final note = from == null ? null : _ReplyFromLine(from: from);
+    final fromLine = from == null ? null : _ReplyFromLine(from: from);
+    // Reply all, one tap away and never the default (`ReplyMode.sender`).
+    final allSwitch = widget.others > 0 && widget.onAll != null
+        ? _Pill(
+            label: l.actionReplyAll,
+            on: widget.all,
+            onTap: widget.onAll!,
+          )
+        : null;
+    final note = allSwitch == null
+        ? fromLine
+        : Row(
+            children: [
+              allSwitch,
+              if (fromLine != null) ...[
+                const SizedBox(width: PiumaSpace.s12),
+                Expanded(child: fromLine),
+              ],
+            ],
+          );
     final machine = widget.machine
         ? Text(
             l.senderReadsNoReplies,

@@ -4,23 +4,41 @@ import 'package:flutter/foundation.dart';
 /// address.
 @immutable
 class MailPerson {
-  const MailPerson(this.name, this.email);
+  const MailPerson(this.name, this.email, {this.you = false});
 
   final String name;
   final String email;
+
+  /// One of the person's own addresses (the account's, or an alias).
+  final bool you;
 
   /// The name, or the address when there is none.
   String get shown => name.trim().isEmpty ? email : name.trim();
 
   @override
   bool operator ==(Object other) =>
-      other is MailPerson && other.name == name && other.email == email;
+      other is MailPerson &&
+      other.name == name &&
+      other.email == email &&
+      other.you == you;
 
   @override
-  int get hashCode => Object.hash(name, email);
+  int get hashCode => Object.hash(name, email, you);
+
+  /// As compose writes it: `a@b.c`, or `Name <a@b.c>` with the name
+  /// quoted when it holds a character that would end it.
+  String get address {
+    final n = name.trim();
+    if (n.isEmpty || n.toLowerCase() == email.toLowerCase()) return email;
+    if (RegExp(r'[()<>\[\]:;@\\,."]').hasMatch(n)) {
+      final quoted = n.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+      return '"$quoted" <$email>';
+    }
+    return '$n <$email>';
+  }
 
   @override
-  String toString() => name.isEmpty ? email : '$name <$email>';
+  String toString() => address;
 }
 
 /// Who a message went to, as the reader shows it, and who each answer goes

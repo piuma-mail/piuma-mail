@@ -1759,8 +1759,8 @@ class EngineMailSource extends MailSource {
         uid: row.uid,
       );
       return MailEnvelope(
-        to: [for (final a in e.to) MailPerson(a.name, a.email)],
-        cc: [for (final a in e.cc) MailPerson(a.name, a.email)],
+        to: [for (final a in e.to) MailPerson(a.name, a.email, you: a.you)],
+        cc: [for (final a in e.cc) MailPerson(a.name, a.email, you: a.you)],
         bccYou: e.bccYou,
         replyTo: e.replyTo,
         replyAllTo: e.replyAllTo,

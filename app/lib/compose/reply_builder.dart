@@ -138,7 +138,7 @@ class ReplyBuilder {
       final e? when e.to.isNotEmpty || e.cc.isNotEmpty => [
         ...e.to,
         ...e.cc,
-      ].map((p) => p.toString()).join(', '),
+      ].map((p) => p.address).join(', '),
       _ => toLine,
     };
     final head = '\n\n${l.forwardBlock(from, date, to, row.subject)}\n\n';
@@ -192,12 +192,12 @@ class ReplyBuilder {
             if (row.waitingFor.isEmpty && row.to.contains('@'))
               ...row.to.split(',').map((a) => a.trim()),
           ]
-        : [for (final p in envelope.to) p.toString()];
+        : [for (final p in envelope.to) p.address];
     return Draft(
       accountId: row.accountId,
       fromEmail: fromEmail,
       to: to,
-      cc: [for (final p in envelope?.cc ?? const <MailPerson>[]) p.toString()],
+      cc: [for (final p in envelope?.cc ?? const <MailPerson>[]) p.address],
       subject: row.subject,
       body: content.text,
       marks: content.marks,

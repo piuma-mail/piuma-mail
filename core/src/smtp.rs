@@ -318,20 +318,19 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
     built.map_err(|e| SendError::Build(e.to_string()))
 }
 
-/// A message attached whole (Forward as attachment): RFC 2046 wants it in
-/// 7bit or 8bit, never base64, so mail apps open it as an email. Base64
-/// stays only for a message with NUL bytes or lines too long for either.
+/// A message attached whole (Forward as attachment). RFC 2046 wants it
+/// in 7bit or 8bit so mail apps open it as an email: 7bit when it is plain
+/// ASCII, as most mail is once encoded. One with 8-bit text goes as
+/// base64, which every server takes (8bit needs the server's 8BITMIME,
+/// and lettre refuses it without) and mail apps still open.
 fn message_body(data: &[u8]) -> Body {
-    let fits = !data.contains(&0) && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
-    if !fits {
-        return Body::new(data.to_vec());
-    }
-    let encoding = if data.is_ascii() {
-        ContentTransferEncoding::SevenBit
+    let seven_bit =
+        data.is_ascii() && !data.contains(&0) && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
+    if seven_bit {
+        Body::dangerous_pre_encoded(crate::envelope::to_crlf(data), ContentTransferEncoding::SevenBit)
     } else {
-        ContentTransferEncoding::EightBit
-    };
-    Body::dangerous_pre_encoded(crate::envelope::to_crlf(data), encoding)
+        Body::new(data.to_vec())
+    }
 }
 
 enum Content {
@@ -592,19 +591,30 @@ mod tests {
     }
 
     #[test]
-    fn a_message_attached_whole_is_not_base64() {
-        let original = "From: Anna <anna@x.it>\r\nTo: me@x.it\r\nSubject: Caffè\r\n\r\nCiao, è tutto pronto.\r\n";
+    fn a_message_attached_whole_goes_as_7bit_when_it_can() {
+        let original = "From: Anna <anna@x.it>\r\nTo: me@x.it\r\nSubject: Plan\r\n\
+                        Content-Type: text/plain; charset=utf-8\r\n\
+                        Content-Transfer-Encoding: quoted-printable\r\n\r\nCaff=C3=A8 after.\r\n";
         let mut d = draft();
         d.files = vec![OutgoingFile {
-            name: "Caffè.eml".into(),
+            name: "Plan.eml".into(),
             mime: "message/rfc822".into(),
             data: original.as_bytes().to_vec(),
         }];
         let raw = build(&d).unwrap().formatted();
         let text = String::from_utf8_lossy(&raw);
         assert!(text.contains("Content-Type: message/rfc822"), "{text}");
-        assert!(text.contains("Content-Transfer-Encoding: 8bit"), "{text}");
-        assert!(text.contains("Ciao, è tutto pronto."), "{text}");
+        assert!(text.contains("Content-Transfer-Encoding: 7bit"), "{text}");
+        assert!(text.contains("Caff=C3=A8 after."), "{text}");
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Plan"));
+        assert_eq!(inner.body_text(0).unwrap().trim_end(), "Caffè after.");
+
+        // 8-bit text inside: base64, which needs nothing of the server.
+        d.files[0].data = "Subject: Caffè\r\n\r\nè pronto\r\n".as_bytes().to_vec();
+        let raw = build(&d).unwrap().formatted();
+        assert!(raw.is_ascii());
         let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
         let inner = m.attachments().next().unwrap().nested().unwrap();
         assert_eq!(inner.subject(), Some("Caffè"));
