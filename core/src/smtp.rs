@@ -134,7 +134,8 @@ pub enum SendError {
     #[error("the server rejected the user name or password")]
     Auth,
     /// The server's certificate was refused; the person may trust it.
-    #[error("{0}")]
+    /// Kept in the outbox as an insecure connection ([insecure_reason]).
+    #[error("could not make a secure connection: {0}")]
     Certificate(Box<crate::tls::Refused>),
     #[error("the server refused the message: {0}")]
     Rejected(String),
@@ -143,12 +144,28 @@ pub enum SendError {
     /// tries again in a later batch.
     #[error("the server deferred the message: {0}")]
     Deferred(String),
-    /// The server's reply broke the SMTP exchange: a reply out of turn,
-    /// data where the TLS handshake should start, a line without end. The
-    /// message may or may not have been taken, so it is not sent again on
-    /// its own: the person sees why and decides.
+    /// The connection broke after the message was handed over and before
+    /// the server said whether it took it: it may have gone. Never sent
+    /// again without asking.
+    #[error("the server may have taken the message: {0}")]
+    Uncertain(String),
+    /// The connection could not be made secure: a certificate that
+    /// doesn't check out, or a server without encryption. Waiting won't
+    /// fix it, so it shows rather than waits.
+    #[error("could not make a secure connection to {host}: {detail}")]
+    Tls { host: String, detail: String },
+    /// The server's reply broke the SMTP exchange before the message text
+    /// was sent (a reply out of turn, a line without end): nothing was
+    /// handed over, so the outbox shows why and waits for the person.
+    /// The same after the message text is [SendError::Uncertain].
     #[error("the server's reply was not valid SMTP: {0}")]
     Protocol(String),
+}
+
+/// Whether a refusal kept in the outbox is [SendError::Tls]'s: the
+/// connection could not be made secure.
+pub fn insecure_reason(reason: &str) -> bool {
+    reason.starts_with("could not make a secure connection")
 }
 
 impl SendError {
@@ -207,12 +224,56 @@ pub fn ready(draft: &Draft) -> Result<Ready> {
     })
 }
 
+/// The message with its Date header set to `at` (Unix seconds): mail
+/// sent later is dated when it actually goes. The rest stays byte for
+/// byte, Message-ID included.
+pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
+    let mut headers = lettre::message::header::Headers::new();
+    headers.set(lettre::message::header::Date::new(
+        std::time::UNIX_EPOCH + Duration::from_secs(at.max(0) as u64),
+    ));
+    let Some(date) = headers.get_raw("Date") else {
+        return raw.to_vec();
+    };
+    let end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map_or(raw.len(), |i| i + 2);
+    let mut start = 0;
+    while start < end {
+        let line_end = raw[start..end]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map_or(end, |i| start + i + 2);
+        if raw[start..line_end]
+            .get(..5)
+            .is_some_and(|h| h.eq_ignore_ascii_case(b"date:"))
+        {
+            // Folded lines belong to the header.
+            let mut stop = line_end;
+            while stop < end && matches!(raw[stop], b' ' | b'\t') {
+                stop = raw[stop..end]
+                    .windows(2)
+                    .position(|w| w == b"\r\n")
+                    .map_or(end, |i| stop + i + 2);
+            }
+            let mut out = Vec::with_capacity(raw.len() + 8);
+            out.extend_from_slice(&raw[..start]);
+            out.extend_from_slice(format!("Date: {date}\r\n").as_bytes());
+            out.extend_from_slice(&raw[stop..]);
+            return out;
+        }
+        start = line_end;
+    }
+    raw.to_vec()
+}
+
 /// What happened after a successful send.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendReport {
     pub message_id: String,
-    /// Folder the copy went into, or None when no copy was filed.
-    pub filed_in: Option<String>,
+    /// Whether the copy is in Sent.
+    pub filed: Filing,
 }
 
 /// Builds the RFC 5322 message for a draft.
@@ -522,7 +583,51 @@ fn crlf_line_endings(raw: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 }
 
 /// Hands a message to the SMTP server.
+///
+/// The steps are taken one by one, so a failure says how far the message
+/// got: anything before the message text is sent is safe to try again,
+/// while a connection lost after it, before the server's answer, leaves
+/// the server holding it or not ([SendError::Uncertain]).
 pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
+    send_within(cfg, ready, Limits::default()).await
+}
+
+/// How long a send may wait on the server.
+#[derive(Debug, Clone, Copy)]
+#[doc(hidden)]
+pub struct Limits {
+    /// One step: connecting and securing the connection, EHLO, AUTH,
+    /// MAIL, each RCPT, DATA, and the server's answer to the message.
+    pub step: Duration,
+    /// The slowest upload still taken for moving: the message transfer
+    /// may take `step` plus its size at this rate, so a large message on
+    /// a slow uplink is not cut.
+    pub bytes_per_second: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            step: SMTP_TIMEOUT,
+            // About 128 kbit/s: a poor mobile uplink.
+            bytes_per_second: 16 * 1024,
+        }
+    }
+}
+
+impl Limits {
+    /// How long the message transfer and the server's answer may take.
+    pub fn transfer(&self, bytes: usize) -> Duration {
+        self.step + Duration::from_secs(bytes as u64 / self.bytes_per_second.max(1))
+    }
+}
+
+/// [send], with its own limits (tests use short ones).
+#[doc(hidden)]
+pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Result<()> {
+    use lettre::transport::smtp::commands::{Data, Ehlo, Mail, Rcpt};
+    use lettre::transport::smtp::extension::{Extension, MailBodyParameter, MailParameter};
+
     let address = |a: &str| {
         a.parse::<lettre::Address>()
             .map_err(|_| SendError::Address(a.to_owned()))
@@ -532,44 +637,113 @@ pub async fn send(cfg: &SmtpConfig, ready: &Ready) -> Result<()> {
         .iter()
         .map(|r| address(r))
         .collect::<Result<Vec<_>>>()?;
-    let envelope = lettre::address::Envelope::new(Some(address(&ready.from)?), recipients)
-        .map_err(|e| SendError::Build(e.to_string()))?;
-    let mut conn = within(TIMEOUT, &cfg.host, connect(cfg)).await?;
-    let sent = async {
-        within(TIMEOUT, &cfg.host, sign_in(&mut conn, cfg)).await?;
-        within(SEND_TIMEOUT, &cfg.host, async {
-            conn.send(&envelope, &crlf_line_endings(&ready.raw))
-                .await
-                .map(|_| ())
-                .map_err(|e| classify(&cfg.host, e))
-        })
+    let from = address(&ready.from)?;
+    let body = crlf_line_endings(&ready.raw);
+    crate::tls::use_one_crypto_provider();
+    let host = cfg.host.as_str();
+    // A step the server never answers fails like a dropped connection:
+    // before the message text it is safe to try again later; once the
+    // text is on its way, the server may have the message.
+    let stalled = |step: Step| {
+        let detail = format!("no answer within {} s", limits.step.as_secs());
+        if step == Step::Message {
+            SendError::Uncertain(detail)
+        } else {
+            SendError::Connect {
+                host: host.to_owned(),
+                detail,
+            }
+        }
+    };
+    // Our own TLS, as for IMAP: certificates the person trusted for this
+    // server count, a refused one says why, and STARTTLS is required.
+    let mut conn = tokio::time::timeout(limits.step, connect(cfg))
         .await
+        .map_err(|_| stalled(Step::Connect))??;
+    let hello = ClientId::default();
+    // What the server takes at most (RFC 1870), from its EHLO: lettre
+    // keeps the extensions it uses, not this one.
+    let ehlo = tokio::time::timeout(limits.step, conn.command(Ehlo::new(hello.clone())))
+        .await
+        .map_err(|_| stalled(Step::Connect))?
+        .map_err(|e| classify(host, Step::Connect, e))?;
+    let size = advertised_size(ehlo.message());
+    if let Some(Some(most)) = size {
+        if body.len() > most {
+            abort(&mut conn, limits.step).await;
+            return Err(SendError::Rejected(format!(
+                "the message is {} and the server takes at most {}",
+                megabytes(body.len()),
+                megabytes(most)
+            )));
+        }
+    }
+    // The password, or an OAuth token renewed once if refused.
+    let signed = tokio::time::timeout(limits.step, sign_in(&mut conn, cfg))
+        .await
+        .map_err(|_| stalled(Step::Auth))
+        .and_then(|r| r);
+    if let Err(e) = signed {
+        abort(&mut conn, limits.step).await;
+        return Err(e);
+    }
+    let mut options = Vec::new();
+    let wide = !ready.from.is_ascii() || ready.recipients.iter().any(|r| !r.is_ascii());
+    if wide && conn.server_info().supports_feature(Extension::SmtpUtfEight) {
+        options.push(MailParameter::SmtpUtfEight);
+    }
+    if !body.is_ascii() && conn.server_info().supports_feature(Extension::EightBitMime) {
+        options.push(MailParameter::Body(MailBodyParameter::EightBitMime));
+    }
+    if size.is_some() {
+        options.push(MailParameter::Size(body.len()));
+    }
+    let before = async {
+        tokio::time::timeout(limits.step, conn.command(Mail::new(Some(from), options)))
+            .await
+            .map_err(|_| stalled(Step::Envelope))?
+            .map_err(|e| classify(host, Step::Envelope, e))?;
+        for to in recipients {
+            tokio::time::timeout(limits.step, conn.command(Rcpt::new(to, Vec::new())))
+                .await
+                .map_err(|_| stalled(Step::Envelope))?
+                .map_err(|e| classify(host, Step::Envelope, e))?;
+        }
+        tokio::time::timeout(limits.step, conn.command(Data))
+            .await
+            .map_err(|_| stalled(Step::Envelope))?
+            .map_err(|e| classify(host, Step::Envelope, e))
     }
     .await;
-    if sent.is_ok() {
-        let _ = conn.quit().await;
-    } else {
-        conn.abort().await;
+    match before {
+        Err(e) => {
+            abort(&mut conn, limits.step).await;
+            return Err(e);
+        }
+        // Anything but "go on" (354) to DATA breaks the exchange: the text
+        // would be read as commands. Nothing was handed over yet.
+        Ok(answer) if !answer.has_code(354) => {
+            abort(&mut conn, limits.step).await;
+            return Err(SendError::Protocol(format!(
+                "DATA answered with {} instead of 354",
+                answer.code()
+            )));
+        }
+        Ok(_) => {}
     }
-    sent
-}
-
-/// The longest wait for the server to connect, greet and sign in.
-const TIMEOUT: Duration = Duration::from_secs(60);
-/// The longest a message may take to go, attachments and all.
-const SEND_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-
-async fn within<T>(
-    limit: Duration,
-    host: &str,
-    work: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    tokio::time::timeout(limit, work).await.unwrap_or_else(|_| {
-        Err(SendError::Connect {
-            host: host.to_owned(),
-            detail: "the server took too long to answer".into(),
-        })
-    })
+    // From here on the server may have the message.
+    let answer = tokio::time::timeout(limits.transfer(body.len()), conn.message(&body)).await;
+    match answer {
+        Ok(Ok(_)) => {
+            tokio::time::timeout(limits.step, conn.quit()).await.ok();
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            abort(&mut conn, limits.step).await;
+            Err(classify(host, Step::Message, e))
+        }
+        Err(_) => Err(stalled(Step::Message)),
+    }
 }
 
 /// A secure stream lettre can drive. The TLS is ours, as for IMAP, so a
@@ -650,7 +824,11 @@ async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
     let wrap = |e: crate::tls::Failure| match e {
         crate::tls::Failure::Certificate(r) => SendError::Certificate(r),
         crate::tls::Failure::Stalled => unreachable(&cfg.host, crate::tls::Failure::Stalled),
-        crate::tls::Failure::Other(e) => unreachable(&cfg.host, e),
+        // Waiting won't make the connection secure: shown, as lettre's were.
+        crate::tls::Failure::Other(detail) => SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        },
     };
     let stream: Box<dyn AsyncTokioStream> = match cfg.security {
         Security::None => Box::new(Stream {
@@ -672,7 +850,10 @@ async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
                     .is_some_and(|w| w.trim().eq_ignore_ascii_case("STARTTLS"))
             }) {
                 // Never a password in the clear.
-                return Err(unreachable(&cfg.host, "the server does not offer STARTTLS"));
+                return Err(SendError::Tls {
+                    host: cfg.host.clone(),
+                    detail: "the server does not offer STARTTLS".into(),
+                });
             }
             expect(&mut tcp, &cfg.host, Some("STARTTLS"), "220").await?;
             Box::new(Stream {
@@ -685,7 +866,7 @@ async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
     };
     AsyncSmtpConnection::connect_with_transport(stream, &hello)
         .await
-        .map_err(|e| classify(&cfg.host, e))
+        .map_err(|e| classify(&cfg.host, Step::Connect, e))
 }
 
 /// Sends `command` (if any) and reads the whole reply, which must start
@@ -755,7 +936,7 @@ async fn sign_in(conn: &mut AsyncSmtpConnection, cfg: &SmtpConfig) -> Result<()>
             )
             .await
             .map(|_| ())
-            .map_err(|e| classify(&cfg.host, e)),
+            .map_err(|e| classify(&cfg.host, Step::Auth, e)),
         Credential::Token { mechanism, token } => {
             match authenticate(conn, cfg, mechanism, &token).await {
                 Err(SendError::Auth) => {}
@@ -800,34 +981,113 @@ async fn authenticate(
     let reply = conn
         .command(Line(&command))
         .await
-        .map_err(|e| classify(&cfg.host, e))?;
+        .map_err(|e| classify(&cfg.host, Step::Auth, e))?;
     if reply.has_code(235) {
         return Ok(());
     }
     if reply.has_code(334) {
         let abort = base64::engine::general_purpose::STANDARD.encode(sasl_abort(mechanism));
         return match conn.command(Line(&abort)).await {
-            Err(e) => Err(classify(&cfg.host, e)),
+            Err(e) => Err(classify(&cfg.host, Step::Auth, e)),
             Ok(_) => Err(SendError::Auth),
         };
     }
     Err(SendError::Auth)
 }
 
-fn classify(host: &str, e: lettre::transport::smtp::Error) -> SendError {
+/// Ends a connection that went wrong, without waiting on a server that
+/// may not answer any more.
+async fn abort(conn: &mut lettre::transport::smtp::client::AsyncSmtpConnection, step: Duration) {
+    tokio::time::timeout(step, conn.abort()).await.ok();
+}
+
+/// The SIZE an EHLO answer advertises: None when it doesn't, Some(None)
+/// when it gives no limit (or 0, "no fixed limit"), Some(Some(bytes)).
+fn advertised_size<'a>(lines: impl Iterator<Item = &'a str>) -> Option<Option<usize>> {
+    lines
+        .filter_map(|l| {
+            let mut words = l.split_whitespace();
+            words
+                .next()
+                .filter(|w| w.eq_ignore_ascii_case("SIZE"))
+                .map(|_| words.next().and_then(|n| n.parse().ok()).filter(|&n| n > 0))
+        })
+        .next()
+}
+
+fn megabytes(bytes: usize) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+}
+
+/// How long one step of a conversation with the SMTP server may take.
+const SMTP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How far a send got when it failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Reaching the server and securing the connection.
+    Connect,
+    Auth,
+    /// MAIL, RCPT and DATA: the server has nothing to deliver yet.
+    Envelope,
+    /// The message itself and the server's answer to it.
+    Message,
+}
+
+fn classify(host: &str, step: Step, e: lettre::transport::smtp::Error) -> SendError {
+    let detail = e.to_string();
     match e.status().map(|c| c.to_string()) {
         Some(code) if code == "535" || code == "534" || code == "530" => SendError::Auth,
         // A 4xx refusal is temporary, from greylisting to a busy server.
-        Some(code) if code.starts_with('4') => SendError::Deferred(e.to_string()),
-        Some(_) => SendError::Rejected(e.to_string()),
-        // A reply that breaks the exchange, not a network failure: sending
-        // it again by itself could deliver it twice.
-        None if e.is_response() => SendError::Protocol(e.to_string()),
+        Some(code) if code.starts_with('4') => SendError::Deferred(detail),
+        Some(_) => SendError::Rejected(detail),
+        // No answer to the message, or one that breaks the exchange: the
+        // server may have taken it.
+        None if step == Step::Message && e.is_response() => {
+            SendError::Uncertain(format!("the server's reply was not valid SMTP: {detail}"))
+        }
+        None if step == Step::Message => SendError::Uncertain(detail),
+        None if step == Step::Connect && (e.is_tls() || tls_failure(&e) || e.is_client()) => {
+            SendError::Tls {
+                host: host.to_owned(),
+                detail,
+            }
+        }
+        // A reply that breaks the exchange before the message went: not a
+        // network failure to wait out, and nothing was handed over.
+        None if e.is_response() => SendError::Protocol(detail),
+        // The server answered, but nothing it offers fits: no way to
+        // sign in that waiting would fix.
+        None if step == Step::Auth && e.is_client() => SendError::Rejected(detail),
         None => SendError::Connect {
             host: host.to_owned(),
-            detail: e.to_string(),
+            detail,
         },
     }
+}
+
+/// Whether an error comes from TLS itself (a certificate that doesn't
+/// check out, a handshake that fails) rather than from the network.
+pub(crate) fn tls_failure(e: &(dyn std::error::Error + 'static)) -> bool {
+    let mut next = Some(e);
+    while let Some(e) = next {
+        if e.downcast_ref::<tokio_rustls::rustls::Error>().is_some() {
+            return true;
+        }
+        if let Some(io) = e.downcast_ref::<std::io::Error>() {
+            if let Some(inner) = io.get_ref() {
+                if tls_failure(inner) {
+                    return true;
+                }
+            }
+            // rustls reports a broken handshake as invalid data.
+            if io.kind() == std::io::ErrorKind::InvalidData {
+                return true;
+            }
+        }
+        next = e.source();
+    }
+    false
 }
 
 /// Sends a message and files a copy in Sent.
@@ -837,22 +1097,62 @@ pub async fn send_and_file(
     ready: &Ready,
 ) -> Result<SendReport> {
     send(smtp, ready).await?;
-    let filed_in = if smtp.files_sent_itself() {
-        None
-    } else {
-        file_copy(imap, &ready.raw).await
-    };
     Ok(SendReport {
         message_id: ready.message_id.clone(),
-        filed_in,
+        filed: file_sent(smtp, imap, ready, false).await,
     })
 }
 
-async fn file_copy(imap: &ImapConfig, raw: &[u8]) -> Option<String> {
-    let mut conn = Connection::open(imap).await.ok()?;
-    let folder = conn.append_sent(raw).await.ok();
-    conn.logout().await.ok();
-    folder
+/// Files the copy of a message the server took in Sent, unless the server
+/// does it itself. A [retry] looks first, so a copy that went in before a
+/// lost answer is not filed twice.
+pub async fn file_sent(smtp: &SmtpConfig, imap: &ImapConfig, ready: &Ready, retry: bool) -> Filing {
+    if smtp.files_sent_itself() {
+        return Filing::Server;
+    }
+    let filed = async {
+        let mut conn = Connection::open(imap).await?;
+        let there = if retry {
+            conn.sent_has(&ready.message_id).await?
+        } else {
+            None
+        };
+        let folder = match there {
+            Some(folder) => folder,
+            None => conn.append_sent(&ready.raw).await?,
+        };
+        conn.logout().await.ok();
+        Ok::<_, crate::imap::ImapError>(folder)
+    }
+    .await;
+    match filed {
+        Ok(folder) => Filing::Ours(folder),
+        Err(e) => Filing::Missing(e.to_string()),
+    }
+}
+
+/// Whether the copy of a sent message is in Sent (see [file_sent]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Filing {
+    /// Filed here, in this folder.
+    Ours(String),
+    /// The server files sent mail itself (Gmail, JMAP).
+    Server,
+    /// Not filed yet; why. The outbox keeps the message and tries again.
+    Missing(String),
+}
+
+impl Filing {
+    /// Whether nothing is left to do for the Sent copy.
+    pub fn done(&self) -> bool {
+        !matches!(self, Filing::Missing(_))
+    }
+}
+
+/// Whether the server files sent mail itself, so a message it took is in
+/// Sent: its Message-ID there settles a send whose answer was lost.
+pub fn files_sent_itself(smtp: &SmtpConfig) -> bool {
+    smtp.files_sent_itself()
 }
 
 #[cfg(test)]
@@ -1056,6 +1356,51 @@ mod tests {
         let body = crate::imap::parse_body(&raw);
         assert_eq!(body.attachments.len(), 1, "{:?}", body.attachments);
         assert_eq!(body.attachments[0].name, "notes.txt");
+    }
+
+    #[test]
+    fn a_late_message_is_dated_when_it_goes() {
+        let mut d = draft();
+        d.date = Some(1_700_000_000);
+        let built = ready(&d).unwrap();
+        let later = redate(&built.raw, 1_800_000_000);
+        let parsed = mail_parser::MessageParser::default().parse(&later).unwrap();
+        assert_eq!(parsed.date().unwrap().to_timestamp(), 1_800_000_000);
+        let text = String::from_utf8(later.clone()).unwrap();
+        assert_eq!(text.matches("Date:").count(), 1, "{text}");
+        assert!(text.contains(&built.message_id));
+    }
+
+    #[test]
+    fn the_advertised_size_is_read_from_ehlo() {
+        let read = |lines: &[&str]| advertised_size(lines.iter().copied());
+        assert_eq!(
+            read(&["8BITMIME", "SIZE 35882577", "AUTH PLAIN"]),
+            Some(Some(35_882_577))
+        );
+        assert_eq!(read(&["size 0"]), Some(None));
+        assert_eq!(read(&["SIZE"]), Some(None));
+        assert_eq!(read(&["8BITMIME", "AUTH PLAIN"]), None);
+    }
+
+    #[test]
+    fn a_large_message_gets_time_to_upload() {
+        let limits = Limits::default();
+        assert_eq!(limits.transfer(0), Duration::from_secs(60));
+        // 25 MB at the slowest rate still taken for moving.
+        assert!(limits.transfer(25_000_000) > Duration::from_secs(25 * 60));
+    }
+
+    #[test]
+    fn a_kept_tls_refusal_is_told_apart() {
+        let tls = SendError::Tls {
+            host: "smtp.example.org".into(),
+            detail: "invalid peer certificate".into(),
+        };
+        assert!(insecure_reason(&tls.to_string()));
+        assert!(!insecure_reason(
+            &SendError::Rejected("550 no".into()).to_string()
+        ));
     }
 
     #[test]

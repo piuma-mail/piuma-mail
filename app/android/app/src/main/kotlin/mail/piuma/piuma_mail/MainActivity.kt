@@ -99,6 +99,18 @@ class MainActivity : FlutterActivity() {
                         Background.apply(context)
                         result.success(null)
                     }
+                    "outboxAt" -> {
+                        Background.outboxAt(
+                            context,
+                            call.argument<Number>("id")!!.toLong(),
+                            call.argument<Number>("at")!!.toLong(),
+                        )
+                        result.success(null)
+                    }
+                    "cancelOutbox" -> {
+                        Background.cancelOutbox(context, call.argument<Number>("id")!!.toLong())
+                        result.success(null)
+                    }
                     "refreshSignInNotices" -> {
                         Background.showSignIn(context)
                         result.success(null)

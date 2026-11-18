@@ -1316,6 +1316,28 @@ impl Connection {
             .await?;
         Ok(folder)
     }
+
+    /// The Sent folder when it holds a message with this Message-ID
+    /// (angle brackets or not), else None.
+    pub async fn sent_has(&mut self, message_id: &str) -> Result<Option<String>> {
+        let id: String = message_id
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .chars()
+            .filter(|c| !matches!(c, '"' | '\\' | '\r' | '\n'))
+            .collect();
+        if id.is_empty() {
+            return Ok(None);
+        }
+        let folder = self.folder(FolderRole::Sent).await?;
+        let session = self.session()?;
+        session.examine(&folder).await?;
+        let found = session
+            .uid_search(format!("HEADER Message-ID \"{id}\""))
+            .await?;
+        Ok((!found.is_empty()).then_some(folder))
+    }
 }
 
 /// Folders with a job, found by their RFC 6154 marker or a usual name.

@@ -73,6 +73,10 @@
             android:name=".CheckJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE"/>
+        <service
+            android:name=".OutboxJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"/>
         <receiver
             android:name=".BootReceiver"
             android:exported="false">

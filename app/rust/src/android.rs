@@ -125,6 +125,17 @@ pub fn check_once<'caller>(
         .resolve::<ThrowRuntimeExAndDefault>()
 }
 
+/// Sends what waits in the outbox, once (`OutboxJob.kt`).
+#[jni_mangle("mail.piuma.piuma_mail.MailNative")]
+pub fn send_outbox<'caller>(mut unowned_env: EnvUnowned<'caller>, _class: JClass<'caller>) {
+    unowned_env
+        .with_env(|_env| -> Result<(), Error> {
+            crate::background::send_outbox_once().ok();
+            Ok(())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
 /// The device moved to another network: the watchers start over on it.
 #[jni_mangle("mail.piuma.piuma_mail.MailNative")]
 pub fn network_changed<'caller>(_unowned_env: EnvUnowned<'caller>, _class: JClass<'caller>) {

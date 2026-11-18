@@ -4134,11 +4134,100 @@ class DemoMailSource extends MailSource {
     return null;
   }
 
+  /// Undo windows of messages sent with Undo, by outbox id.
+  final _undoWindows = <int, Duration>{};
+
+  /// When set, the next message handed to the server may have gone: the
+  /// connection breaks before the server answers.
+  bool loseNextAnswer = false;
+
+  @override
+  Future<int> sendWithUndo(Draft draft, Duration window) async {
+    final failure = failNextSend;
+    if (failure != null &&
+        (failure.error == SendError.badAddress ||
+            failure.error == SendError.noRecipients)) {
+      failNextSend = null;
+      throw failure;
+    }
+    final id = _outboxId++;
+    _outbox.add(
+      OutboxItem(
+        id: id,
+        accountId: draft.accountId,
+        to: draft.recipients,
+        subject: draft.subject,
+        body: draft.body,
+        queuedAt: now,
+        sendAt: now.add(window),
+        undo: true,
+      ),
+    );
+    _outboxDrafts[id] = draft;
+    _undoWindows[id] = window;
+    _changes.add(null);
+    return id;
+  }
+
+  @override
+  Future<Delivery> deliver(int id) async {
+    final window = _undoWindows.remove(id);
+    if (window != null) await Future<void>.delayed(window);
+    final i = _outbox.indexWhere((o) => o.id == id);
+    if (i < 0) return const Delivery(SendOutcome.gone);
+    final failure = failNextSend;
+    failNextSend = null;
+    final o = _outbox[i];
+    Delivery waits(OutboxState state, SendOutcome outcome, [String? error]) {
+      _outbox[i] = o.copyWith(
+        state: state,
+        error: error,
+        clearSendAt: true,
+        undo: false,
+      );
+      _changes.add(null);
+      return Delivery(outcome, error ?? '');
+    }
+
+    if (failure != null) {
+      return switch (failure.error) {
+        SendError.unreachable => waits(
+          OutboxState.waiting,
+          SendOutcome.waiting,
+        ),
+        SendError.wrongPassword => waits(
+          OutboxState.waiting,
+          SendOutcome.wrongPassword,
+        ),
+        _ => waits(
+          OutboxState.refused,
+          SendOutcome.refused,
+          failure.detail.isEmpty ? 'refused' : failure.detail,
+        ),
+      };
+    }
+    if (loseNextAnswer) {
+      loseNextAnswer = false;
+      sent.add(_outboxDrafts[id]!);
+      return waits(
+        OutboxState.maybeSent,
+        SendOutcome.maybeSent,
+        'connection lost',
+      );
+    }
+    if (offline) return waits(OutboxState.waiting, SendOutcome.waiting);
+    _outbox.removeAt(i);
+    _deliver(_outboxDrafts.remove(id)!);
+    _changes.add(null);
+    return const Delivery(SendOutcome.sent);
+  }
+
   /// The connection is back: what waits goes, except what was refused.
   void goOnline() {
     offline = false;
     for (final o in [..._outbox]) {
-      if (o.error != null || o.sendAt != null) continue;
+      if (o.state != OutboxState.waiting || o.error != null) continue;
+      if (o.sendAt != null) continue;
       _outbox.remove(o);
       _deliver(_outboxDrafts.remove(o.id)!);
     }
@@ -4149,16 +4238,7 @@ class DemoMailSource extends MailSource {
   void refuse(int id, String reason) {
     final i = _outbox.indexWhere((o) => o.id == id);
     final o = _outbox[i];
-    _outbox[i] = OutboxItem(
-      id: o.id,
-      accountId: o.accountId,
-      to: o.to,
-      subject: o.subject,
-      body: o.body,
-      queuedAt: o.queuedAt,
-      sendAt: o.sendAt,
-      error: reason,
-    );
+    _outbox[i] = o.copyWith(state: OutboxState.refused, error: reason);
     _changes.add(null);
   }
 
@@ -4193,7 +4273,13 @@ class DemoMailSource extends MailSource {
 
   @override
   Future<Draft> reopenOutgoing(int id) async {
-    _outbox.removeWhere((o) => o.id == id);
+    final i = _outbox.indexWhere((o) => o.id == id);
+    // Gone (sent), or on its way: it can't be taken back.
+    if (i < 0 || _outbox[i].state == OutboxState.sending) {
+      throw StateError('not in the outbox');
+    }
+    _outbox.removeAt(i);
+    _undoWindows.remove(id);
     final draft = _outboxDrafts.remove(id)!;
     _changes.add(null);
     return draft;

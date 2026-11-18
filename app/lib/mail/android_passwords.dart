@@ -25,25 +25,31 @@ class AndroidPasswords {
   static Future<void> load() async {
     if (!_on) return;
     for (final a in engine.accounts()) {
-      final password = await _channel.invokeMethod<String>('read', {
-        'key': _key(a.id),
-      });
+      final password = await _read(_key(a.id));
       if (password != null) {
         engine.rememberPassword(accountId: a.id, password: password);
       }
     }
-    final secret = await _channel.invokeMethod<String>('read', {
-      'key': spaceKey,
-    });
+    final secret = await _read(spaceKey);
     if (secret != null) sync.rememberSyncSecret(secret: secret);
     // Calendars of their own: those of an email account use its password.
     for (final s in cal.calendarSources().where((s) => s.accountId == null)) {
-      final password = await _channel.invokeMethod<String>('read', {
-        'key': 'calendar-${s.id}',
-      });
+      final password = await _read('calendar-${s.id}');
       if (password != null) {
         cal.rememberCalendarPassword(sourceId: s.id, password: password);
       }
+    }
+  }
+
+  /// One kept secret, or null when there is none or the system can't
+  /// read it any more (a Keystore key invalidated, e.g. by a new screen
+  /// lock): that account then asks for its password again, and the app
+  /// still starts.
+  static Future<String?> _read(String key) async {
+    try {
+      return await _channel.invokeMethod<String>('read', {'key': key});
+    } on PlatformException {
+      return null;
     }
   }
 
