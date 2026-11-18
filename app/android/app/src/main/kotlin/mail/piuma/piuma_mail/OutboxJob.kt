@@ -15,6 +15,8 @@ class OutboxJob : JobService() {
             try {
                 Background.openEngine(applicationContext)
                 MailNative.sendOutbox()
+                // A sign-in renewed while sending: into the Keystore before the process goes.
+                Background.keepSecrets(applicationContext)
             } catch (e: Throwable) {
                 // The app sends it at its next start.
             }

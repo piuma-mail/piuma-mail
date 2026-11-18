@@ -780,7 +780,12 @@ async fn a_certificate_error_shows_and_does_not_wait_as_offline() {
     let err = send(&smtp(port, Security::Tls), &ready(&draft("Plans")).unwrap())
         .await
         .unwrap_err();
-    assert!(matches!(err, SendError::Tls { .. }), "{err:?}");
+    // Our own TLS says which certificate it refused (the person may trust
+    // it); either way it shows rather than waits.
+    assert!(
+        matches!(err, SendError::Tls { .. } | SendError::Certificate(_)),
+        "{err:?}"
+    );
     assert!(!err.is_offline());
 
     let store = Store::open_in_memory().unwrap();
