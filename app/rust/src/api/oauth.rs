@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use flutter_rust_bridge::frb;
 use piuma_core::oauth::{self, Client, FlowError, Loopback, Request, Stored, TokenError};
 use piuma_core::{remote, Account, AccountId, AccountKind, Login};
-use tokio::sync::{oneshot, Notify};
+use tokio::sync::{mpsc, Notify};
 
 use super::engine::{
     engine, reader, stop_watching, store, watch_account, AccountInfo, EngineError, ErrorKind,
@@ -38,6 +38,10 @@ pub struct OAuthProvider {
     /// The provider has tenants (Microsoft): a client of the person's own
     /// may name one.
     pub has_tenant: bool,
+    /// A client of the person's own works on this device. Not Google's on
+    /// Android: its redirect scheme comes from the client ID, and the app
+    /// only answers the one it was built with.
+    pub own_client: bool,
     /// Its servers, for the summary.
     pub imap_host: String,
     pub smtp_host: String,
@@ -64,6 +68,7 @@ pub fn oauth_providers() -> Vec<OAuthProvider> {
             built_in: oauth::built_in_client(&p.id).is_some(),
             app_passwords: p.app_passwords,
             has_tenant: p.tenant.is_some(),
+            own_client: p.takes_own_client(),
             imap_host: p.imap().host,
             smtp_host: p.smtp().host,
         })
@@ -88,7 +93,7 @@ pub fn account_oauth(account_id: i64) -> Result<Option<String>, EngineError> {
 /// How the browser comes back.
 enum WayBack {
     Loopback(Loopback),
-    App(oneshot::Receiver<String>),
+    App(mpsc::UnboundedReceiver<String>),
 }
 
 struct Pending {
@@ -100,7 +105,7 @@ struct Pending {
 
 static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 /// Android: where [`deliver_oauth_redirect`] sends the address.
-static REDIRECT: Mutex<Option<oneshot::Sender<String>>> = Mutex::new(None);
+static REDIRECT: Mutex<Option<mpsc::UnboundedSender<String>>> = Mutex::new(None);
 /// Ends the sign-in being waited for.
 static CANCEL: Mutex<Option<Arc<Notify>>> = Mutex::new(None);
 
@@ -126,6 +131,13 @@ fn token_error(e: TokenError) -> EngineError {
 
 fn client_of(provider: &oauth::Provider, own: Option<OAuthClient>) -> Result<Client, EngineError> {
     match own.filter(|c| !c.client_id.trim().is_empty()) {
+        Some(_) if !provider.takes_own_client() => Err(EngineError::new(
+            ErrorKind::SignInUnavailable,
+            format!(
+                "a {} client of your own can't sign in on this device",
+                provider.name
+            ),
+        )),
         Some(c) => Ok(Client {
             client_id: c.client_id.trim().to_owned(),
             client_secret: c
@@ -158,7 +170,7 @@ pub async fn begin_oauth(
     let client = client_of(provider, client)?;
     cancel_oauth();
     let way_back = if cfg!(target_os = "android") {
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::unbounded_channel();
         *lock(&REDIRECT) = Some(tx);
         (provider.android_redirect(&client), WayBack::App(rx))
     } else {
@@ -187,7 +199,7 @@ pub async fn begin_oauth(
 /// anything else is read from it.
 #[frb(sync)]
 pub fn deliver_oauth_redirect(url: String) -> bool {
-    match lock(&REDIRECT).take() {
+    match lock(&REDIRECT).as_ref() {
         Some(tx) => tx.send(url).is_ok(),
         None => false,
     }
@@ -201,6 +213,22 @@ pub fn cancel_oauth() {
     if let Some(cancel) = lock(&CANCEL).take() {
         cancel.notify_one();
     }
+}
+
+/// The first address handed over with this sign-in's `state`. Others (an
+/// old sign-in's, or one any app opened) are dropped and the wait goes on,
+/// as on the desktop's loopback.
+async fn app_redirect(
+    request: &Request,
+    mut rx: mpsc::UnboundedReceiver<String>,
+) -> Result<String, FlowError> {
+    while let Some(url) = rx.recv().await {
+        match request.code_from_redirect(&url) {
+            Err(FlowError::StateMismatch) => continue,
+            done => return done,
+        }
+    }
+    Err(FlowError::Cancelled)
 }
 
 /// What a finished sign-in gave: the account's login and what the
@@ -234,11 +262,9 @@ async fn finish(account: Account, email: &str) -> Result<SignedIn, EngineError> 
                     match way_back {
                         WayBack::Loopback(l) => l.wait(&request, oauth::SIGN_IN_TIME).await,
                         WayBack::App(rx) => {
-                            match tokio::time::timeout(oauth::SIGN_IN_TIME, rx).await {
-                                Ok(Ok(url)) => request.code_from_redirect(&url),
-                                Ok(Err(_)) => Err(FlowError::Cancelled),
-                                Err(_) => Err(FlowError::Timeout),
-                            }
+                            tokio::time::timeout(oauth::SIGN_IN_TIME, app_redirect(&request, rx))
+                                .await
+                                .unwrap_or(Err(FlowError::Timeout))
                         }
                     }
                 } => code,
@@ -345,4 +371,44 @@ pub fn take_new_secrets() -> Vec<KeptSecret> {
         .into_iter()
         .map(|(key, value)| KeptSecret { key, value })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_app_redirect_with_another_state_is_dropped_and_the_wait_goes_on() {
+        let p = oauth::provider("microsoft").unwrap();
+        let client = Client {
+            client_id: "test".into(),
+            client_secret: None,
+            tenant: None,
+        };
+        let request = Request::new(p, &client, "", "mail.piuma.app://oauth");
+        // URL-safe base64: as written in the address.
+        let state = request.url.split("state=").nth(1).unwrap();
+        let state = state.split('&').next().unwrap().to_owned();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send("mail.piuma.app://oauth?code=forged&state=nope".into())
+            .unwrap();
+        tx.send("mail.piuma.app://oauth?code=forged".into())
+            .unwrap();
+        tx.send(format!("mail.piuma.app://oauth?code=real&state={state}"))
+            .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        assert_eq!(
+            runtime.block_on(app_redirect(&request, rx)),
+            Ok("real".into())
+        );
+        // Nothing more will come: cancelled, not hung.
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        drop(tx);
+        assert_eq!(
+            runtime.block_on(app_redirect(&request, rx)),
+            Err(FlowError::Cancelled)
+        );
+    }
 }

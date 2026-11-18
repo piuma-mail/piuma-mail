@@ -47,7 +47,8 @@ fn session(
     let kept: Arc<Mutex<Vec<String>>> = Arc::default();
     let keep = kept.clone();
     let s = Session::with_provider(provider(base, mechanism), stored(refresh), move |s| {
-        keep.lock().unwrap().push(s.refresh_token.clone())
+        keep.lock().unwrap().push(s.refresh_token.clone());
+        Ok(())
     });
     (Arc::new(s), kept)
 }
@@ -129,16 +130,42 @@ async fn the_browser_comes_back_with_a_code_for_tokens() {
 }
 
 #[tokio::test]
-async fn an_answer_with_another_state_is_refused() {
+async fn an_answer_with_another_state_is_refused_and_the_wait_goes_on() {
+    let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
+    let loopback = Loopback::bind().await.unwrap();
+    let redirect = loopback.redirect_uri();
+    let request = Request::new(&p, &client(), "", &redirect);
+    let state = query(&request.url)["state"].clone();
+    let waiting =
+        tokio::spawn(async move { loopback.wait(&request, Duration::from_secs(10)).await });
+    // Stray or hostile local requests, with a wrong state or none, don't
+    // end the sign-in.
+    for target in [
+        "/?code=forged&state=not-this-one",
+        "/?code=forged",
+        "/?error=access_denied&state=nope",
+        "/",
+    ] {
+        let status = browser(&redirect, target).await;
+        assert!(status.contains("400"), "{target}: {status}");
+    }
+    assert!(!waiting.is_finished());
+    // The browser's real answer still gets through.
+    let status = browser(&redirect, &format!("/?code=the-code&state={state}")).await;
+    assert!(status.contains("200"), "{status}");
+    assert_eq!(waiting.await.unwrap(), Ok("the-code".into()));
+}
+
+#[tokio::test]
+async fn only_wrong_answers_until_the_time_runs_out() {
     let p = provider("http://127.0.0.1:9", Mechanism::Xoauth2);
     let loopback = Loopback::bind().await.unwrap();
     let redirect = loopback.redirect_uri();
     let request = Request::new(&p, &client(), "", &redirect);
     let waiting =
-        tokio::spawn(async move { loopback.wait(&request, Duration::from_secs(10)).await });
-    let status = browser(&redirect, "/?code=forged&state=not-this-one").await;
-    assert!(status.contains("400"), "{status}");
-    assert_eq!(waiting.await.unwrap(), Err(FlowError::StateMismatch));
+        tokio::spawn(async move { loopback.wait(&request, Duration::from_millis(800)).await });
+    browser(&redirect, "/?code=forged&state=not-this-one").await;
+    assert_eq!(waiting.await.unwrap(), Err(FlowError::Timeout));
 }
 
 #[tokio::test]
@@ -192,6 +219,51 @@ async fn tokens_are_renewed_before_they_run_out() {
     // And the new one is used next.
     s.renew().await.unwrap();
     assert_eq!(forms.lock().unwrap()[1]["refresh_token"], "refresh-1");
+}
+
+#[tokio::test]
+async fn an_endless_token_lifetime_is_capped_not_a_crash() {
+    let (base, forms) = token_server(false).await;
+    let (s, _) = session(&base, Mechanism::Xoauth2, "huge");
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    // Good for a while (capped at 30 days): no second trip.
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    assert_eq!(forms.lock().unwrap().len(), 1);
+    s.seed("x".to_owned().into(), u64::MAX).await;
+}
+
+#[tokio::test]
+async fn a_new_refresh_token_not_kept_is_kept_again_at_each_use() {
+    let (base, _) = token_server(true).await;
+    let tries = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = tries.clone();
+    // The keychain refuses twice, then takes it.
+    let s = Session::with_provider(
+        provider(&base, Mechanism::Xoauth2),
+        stored("refresh-0"),
+        move |s| {
+            let mut t = seen.lock().unwrap();
+            t.push(s.refresh_token.clone());
+            if t.len() < 3 {
+                Err("keychain locked".into())
+            } else {
+                Ok(())
+            }
+        },
+    );
+    // The new token works for this run all the same.
+    assert_eq!(s.access_token().await.unwrap().as_str(), "access-1");
+    assert!(s.unsaved().await);
+    s.access_token().await.unwrap();
+    assert!(s.unsaved().await);
+    s.access_token().await.unwrap();
+    assert!(!s.unsaved().await);
+    assert_eq!(
+        *tries.lock().unwrap(),
+        ["refresh-1", "refresh-1", "refresh-1"]
+    );
+    s.access_token().await.unwrap();
+    assert_eq!(tries.lock().unwrap().len(), 3);
 }
 
 #[tokio::test]

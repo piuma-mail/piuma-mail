@@ -97,6 +97,8 @@ pub struct JmapConfig {
     /// Login name. Empty means `password` is an API token (Bearer).
     pub username: String,
     pub password: String,
+    /// Certificates the person trusted for the account's servers.
+    pub pins: Vec<crate::tls::Pin>,
 }
 
 impl fmt::Debug for JmapConfig {
@@ -121,6 +123,7 @@ impl JmapConfig {
                 session_url: session_url.clone(),
                 username: username.clone(),
                 password: login.password_text().unwrap_or_default().to_owned(),
+                pins: login.pins.clone(),
             }),
             AccountKind::Imap { .. } => None,
         }
@@ -189,6 +192,9 @@ pub async fn discover_at(url: &str) -> Option<String> {
 pub enum JmapError {
     #[error("could not reach {url}: {source}")]
     Connect { url: String, source: reqwest::Error },
+    /// The server's certificate was refused; the person may trust it.
+    #[error("{0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server rejected the user name or password")]
     Auth,
     #[error("this account does not offer mail over JMAP")]
@@ -291,7 +297,8 @@ impl Client {
         if !credentials_may_go_to(&cfg.session_url) {
             return Err(JmapError::Insecure);
         }
-        let http = crate::tls::http_client()
+        let (http, refused) = crate::tls::http_client_pinned(&cfg.pins);
+        let http = http
             .timeout(Duration::from_secs(60))
             .redirect(redirect_policy())
             .build()
@@ -302,9 +309,12 @@ impl Client {
             .header(reqwest::header::AUTHORIZATION, &authorization)
             .send()
             .await
-            .map_err(|source| JmapError::Connect {
-                url: cfg.session_url.clone(),
-                source,
+            .map_err(|source| match refused.take() {
+                Some(r) => JmapError::Certificate(Box::new(r)),
+                None => JmapError::Connect {
+                    url: cfg.session_url.clone(),
+                    source,
+                },
             })?;
         let session: Session = read_json(response).await?;
         let account_id = session
@@ -1498,6 +1508,8 @@ pub async fn watch_timed(
         .await;
         let most = match &result {
             Err(JmapError::Auth) => return Err(JmapError::Auth),
+            // A certificate other than the one trusted: the person decides.
+            Err(JmapError::Certificate(r)) => return Err(JmapError::Certificate(r.clone())),
             Err(e) if answered && !e.is_offline() => crate::backoff::ANSWERED_MOST,
             _ => crate::backoff::OFFLINE_MOST,
         };
@@ -1973,6 +1985,7 @@ mod tests {
             session_url: String::new(),
             username: "a@b.c".into(),
             password: "pw".into(),
+            pins: Vec::new(),
         };
         assert_eq!(cfg.authorization(), "Basic YUBiLmM6cHc=");
         cfg.username.clear();

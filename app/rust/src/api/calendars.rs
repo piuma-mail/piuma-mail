@@ -107,6 +107,7 @@ impl From<CalendarError> for EngineError {
     fn from(e: CalendarError) -> Self {
         let kind = match &e {
             CalendarError::WrongPassword => ErrorKind::WrongPassword,
+            CalendarError::Certificate(r) => return super::engine::certificate_error(r),
             CalendarError::NotFound(_) | CalendarError::Connect { .. } => ErrorKind::Unreachable,
             _ => ErrorKind::Other,
         };
@@ -223,7 +224,7 @@ pub async fn connect_account_calendar(account_id: i64) -> Result<CalendarSourceI
     let password = login
         .password_text()
         .ok_or_else(|| EngineError::new(ErrorKind::WrongPassword, "signed in with OAuth"))?;
-    let found = CalDav::new(&account.email, password)?
+    let found = CalDav::with_pins(&account.email, password, &login.pins)?
         .discover(&account.email)
         .await?;
     let name = server_name(&found.home, &account.email);
@@ -354,6 +355,18 @@ pub fn remember_calendar_password(source_id: i64, password: String) {
     let _ = (source_id, password);
 }
 
+/// A CalDAV client for a source: a mail account's calendar trusts the
+/// certificates trusted for the account; a calendar of its own, only what
+/// the system trusts.
+fn dav(source: &CalendarSource) -> Result<CalDav, EngineError> {
+    let pins = source.account.map(crate::login::pins).unwrap_or_default();
+    Ok(CalDav::with_pins(
+        &source.username,
+        &password(source)?,
+        &pins,
+    )?)
+}
+
 fn password(source: &CalendarSource) -> Result<String, EngineError> {
     match source.account {
         // An account signed in with OAuth has no password for CalDAV.
@@ -383,7 +396,7 @@ async fn refresh_source(id: i64) -> Result<(), EngineError> {
         store.set_calendar_refresh(id, feed.refresh)?;
         return Ok(());
     }
-    let dav = CalDav::new(&source.username, &password(&source)?)?;
+    let dav = dav(&source)?;
     if let Ok(calendars) = dav.calendars(&source.url).await {
         store()?.set_calendars(id, &calendars)?;
     }
@@ -539,7 +552,7 @@ pub async fn add_found_date(
         (source, calendar)
     };
     let ics = dates::event(&uid, &summary, start, start + FOUND_LENGTH, now_secs());
-    let dav = CalDav::new(&source.username, &password(&source)?)?;
+    let dav = dav(&source)?;
     dav.add(&calendar.url, &uid, &ics).await?;
     store()?.set_found_date(&uid, &calendar.name, now_secs())?;
     let _ = refresh_source(source.id).await;
@@ -564,7 +577,7 @@ pub(crate) async fn add_invite(
     };
     let event = invite::parse(ics)?;
     let kept = invite::for_calendar(ics, me_email, answer)?;
-    let dav = CalDav::new(&source.username, &password(&source).ok()?).ok()?;
+    let dav = dav(&source).ok()?;
     dav.add(&calendar.url, &event.uid, &kept).await.ok()?;
     let _ = refresh_source(source.id).await;
     Some(calendar.name)

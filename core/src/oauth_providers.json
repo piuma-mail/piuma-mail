@@ -5,6 +5,7 @@
     "authorize_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
     "token_url": "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
     "revoke_url": null,
+    "issuer": null,
     "tenant": "common",
     "scopes": [
       "https://outlook.office.com/IMAP.AccessAsUser.All",
@@ -31,6 +32,7 @@
     "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
     "token_url": "https://oauth2.googleapis.com/token",
     "revoke_url": "https://oauth2.googleapis.com/revoke",
+    "issuer": "https://accounts.google.com",
     "tenant": null,
     "scopes": ["https://mail.google.com/"],
     "params": { "access_type": "offline", "prompt": "consent" },

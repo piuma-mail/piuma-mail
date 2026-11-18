@@ -87,6 +87,11 @@ pub async fn token_server(rotate: bool) -> (String, Forms) {
                     "400 Bad Request",
                     "{\"error\":\"invalid_grant\",\"error_description\":\"AADSTS70000: revoked\\r\\nTrace ID: 1\"}".to_owned(),
                 ),
+                // A broken or hostile endpoint: a lifetime no clock holds.
+                Some("refresh_token") if form.get("refresh_token").map(String::as_str) == Some("huge") => (
+                    "200 OK",
+                    format!(r#"{{"access_token":"access-{n}","expires_in":18446744073709551615}}"#),
+                ),
                 Some("refresh_token") if rotate => (
                     "200 OK",
                     format!(r#"{{"access_token":"access-{n}","refresh_token":"refresh-{n}","expires_in":"3600"}}"#),
@@ -336,4 +341,28 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
             return;
         }
     }
+}
+
+/// An HTTPS server that answers every request 401 (a login refused): it
+/// shows the TLS got through. The certificate is the one in `shown`.
+pub async fn https_401(shown: Shown) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((tcp, _)) = listener.accept().await {
+            let cert = *shown.lock().unwrap();
+            tokio::spawn(async move {
+                let Ok(mut tls) = acceptor(cert).accept(tcp).await else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = tls.read(&mut buf).await;
+                let _ = tls
+                    .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    port
 }

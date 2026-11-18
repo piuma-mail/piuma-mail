@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex};
 use piuma_core::auth::Login;
 use piuma_core::cert::{self, CertInfo};
 use piuma_core::imap::{check_login, ImapConfig, ImapError};
+use piuma_core::jmap::{Client, JmapConfig, JmapError};
 use piuma_core::smtp::{ready, send, Draft, SendError, SmtpConfig};
 use piuma_core::tls::{Pin, Problem};
 use piuma_core::Security;
-use support::{imap_server, smtp_server, Shown, FIRST_CERT, SECOND_CERT};
+use support::{https_401, imap_server, smtp_server, Shown, FIRST_CERT, SECOND_CERT};
 
 fn imap(port: u16, pins: Vec<Pin>) -> ImapConfig {
     ImapConfig {
@@ -127,4 +128,36 @@ async fn smtp_follows_the_same_trust() {
     );
     assert!(err.needs_person() && !err.is_offline());
     assert_eq!(delivered.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn jmap_follows_the_same_trust() {
+    let showing = shown(FIRST_CERT);
+    let port = https_401(showing.clone()).await;
+    let cfg = |pins| JmapConfig {
+        session_url: format!("https://localhost:{port}/jmap/session"),
+        username: "me".into(),
+        password: "test".into(),
+        pins,
+    };
+    let err = Client::open(&cfg(vec![])).await.err().unwrap();
+    assert!(
+        matches!(&err, JmapError::Certificate(r) if r.problem == Problem::Untrusted),
+        "{err:?}"
+    );
+    // Trusted: the TLS goes through, and the server's own answer comes.
+    let err = Client::open(&cfg(vec![pin(FIRST_CERT)]))
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, JmapError::Auth), "{err:?}");
+    *showing.lock().unwrap() = SECOND_CERT;
+    let err = Client::open(&cfg(vec![pin(FIRST_CERT)]))
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        matches!(&err, JmapError::Certificate(r) if r.problem == Problem::Changed),
+        "{err:?}"
+    );
 }

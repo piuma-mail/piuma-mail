@@ -172,6 +172,7 @@ impl From<JmapError> for EngineError {
     fn from(e: JmapError) -> Self {
         let kind = match &e {
             JmapError::Auth => ErrorKind::WrongPassword,
+            JmapError::Certificate(r) => return certificate_error(r),
             JmapError::Connect { .. } => ErrorKind::Unreachable,
             JmapError::Insecure => ErrorKind::InsecureConnection,
             _ => ErrorKind::Other,
@@ -368,6 +369,9 @@ pub enum SyncEventKind {
     /// kept refusing were given up; `removed` says how many. Their
     /// messages are back as the server has them.
     ChangesDropped,
+    /// Android: the engine got a secret for the Keystore (a renewed
+    /// sign-in): `take_new_secrets` has it, to keep at once.
+    SecretsChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -810,6 +814,7 @@ pub async fn add_imap_account(
 
 /// Checks the login against a JMAP server, saves the password in the
 /// system keychain and adds the account.
+#[allow(clippy::too_many_arguments)]
 pub async fn add_jmap_account(
     name: String,
     email: String,
@@ -818,6 +823,7 @@ pub async fn add_jmap_account(
     session_url: String,
     password: String,
     api_token: bool,
+    trusted: Vec<TrustedCertificate>,
 ) -> Result<AccountInfo, EngineError> {
     // An API token signs in on its own, without the address.
     let username = if api_token {
@@ -836,7 +842,7 @@ pub async fn add_jmap_account(
             username,
         },
     };
-    add_checked_account(account, password, Vec::new()).await
+    add_checked_account(account, password, trusted).await
 }
 
 /// Checks that an account signs in, then keeps it and its password.
@@ -1342,6 +1348,12 @@ fn set_waiting(id: i64, kind: Option<SyncEventKind>) {
     }
 }
 
+/// Android: tells the app at once that a secret waits for the Keystore.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn secrets_changed(id: AccountId) {
+    emit(SyncEvent::new(SyncEventKind::SecretsChanged, id.0));
+}
+
 fn emit(event: SyncEvent) {
     let sink = SYNC_SINK.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if let Some(sink) = sink {
@@ -1534,7 +1546,14 @@ async fn follow(
     match result {
         // A refused password, or a certificate other than the one
         // trusted: the person has to act, through the same notice.
-        Err(e) if e.is_auth() || matches!(e, RemoteError::Imap(ImapError::Certificate(_))) => {
+        Err(e)
+            if e.is_auth()
+                || matches!(
+                    e,
+                    RemoteError::Imap(ImapError::Certificate(_))
+                        | RemoteError::Jmap(JmapError::Certificate(_))
+                ) =>
+        {
             Followed::SignInFailed
         }
         Err(e) => Followed::Ended(e.to_string()),

@@ -536,6 +536,7 @@ async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
         session_url: format!("http://127.0.0.1:{port}/jmap/session"),
         username: USER.into(),
         password: PASSWORD.into(),
+        pins: Vec::new(),
     };
     (state, cfg)
 }

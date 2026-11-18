@@ -649,6 +649,7 @@ async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
     let hello = ClientId::default();
     let wrap = |e: crate::tls::Failure| match e {
         crate::tls::Failure::Certificate(r) => SendError::Certificate(r),
+        crate::tls::Failure::Stalled => unreachable(&cfg.host, crate::tls::Failure::Stalled),
         crate::tls::Failure::Other(e) => unreachable(&cfg.host, e),
     };
     let stream: Box<dyn AsyncTokioStream> = match cfg.security {

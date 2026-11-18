@@ -240,10 +240,35 @@ pub fn problem_of(e: &CertificateError) -> Problem {
 #[derive(Debug)]
 struct Pinned {
     system: Arc<dyn ServerCertVerifier>,
-    host: String,
-    pin: Option<[u8; 32]>,
-    /// The refused certificate, for [`connect`] to explain.
-    refused: Mutex<Option<Refused>>,
+    /// Trusted certificates, by the server name they were trusted for.
+    pins: Vec<Pin>,
+    /// The last certificate refused, for the caller to explain.
+    refused: Refusals,
+}
+
+/// Where a pinned verifier leaves the certificate it refused, for the
+/// connection's error to show: shared with the web clients it serves.
+#[derive(Debug, Clone, Default)]
+pub struct Refusals(Arc<Mutex<Option<Refused>>>);
+
+impl Refusals {
+    /// The last certificate refused, taken.
+    pub fn take(&self) -> Option<Refused> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    fn put(&self, refused: Refused) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(refused);
+    }
+}
+
+/// The name a connection asked for, as pins are kept.
+fn name_of(server_name: &ServerName<'_>) -> String {
+    match server_name {
+        ServerName::DnsName(d) => d.as_ref().to_owned(),
+        ServerName::IpAddress(ip) => std::net::IpAddr::from(*ip).to_string(),
+        _ => String::new(),
+    }
 }
 
 impl ServerCertVerifier for Pinned {
@@ -266,11 +291,13 @@ impl ServerCertVerifier for Pinned {
             Ok(ok) => return Ok(ok),
             Err(e) => e,
         };
+        let host = name_of(server_name);
+        let pin = Pin::for_host(&self.pins, &host).map(|p| p.sha256);
         let seen = cert::sha256(end_entity.as_ref());
-        let problem = match (&error, self.pin) {
+        let problem = match (&error, pin) {
             // The exact certificate the person trusted.
             (TlsError::InvalidCertificate(c), Some(pin))
-                if pin == seen && problem_of(c).can_trust() =>
+                if crate::oauth::same(&pin, &seen) && problem_of(c).can_trust() =>
             {
                 return Ok(ServerCertVerified::assertion());
             }
@@ -278,8 +305,8 @@ impl ServerCertVerifier for Pinned {
             (TlsError::InvalidCertificate(c), None) => problem_of(c),
             _ => return Err(error),
         };
-        *self.refused.lock().unwrap_or_else(|e| e.into_inner()) = Some(Refused {
-            host: self.host.clone(),
+        self.refused.put(Refused {
+            host,
             problem,
             cert: CertInfo::read(end_entity.as_ref()),
         });
@@ -309,6 +336,33 @@ impl ServerCertVerifier for Pinned {
     }
 }
 
+/// A client configuration that trusts what the system trusts, and the
+/// certificates in `pins` for their servers, leaving refusals in `refused`.
+fn pinned_config(pins: &[Pin], refused: &Refusals) -> Result<ClientConfig, String> {
+    let verifier = Arc::new(Pinned {
+        system: system_verifier()?,
+        pins: pins.to_vec(),
+        refused: refused.clone(),
+    });
+    Ok(ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth())
+}
+
+/// A web client for an account's own servers (JMAP, CalDAV): the system's
+/// check and the certificates the person trusted for them. A certificate
+/// it refuses is left in the [`Refusals`], for the error to show.
+pub fn http_client_pinned(pins: &[Pin]) -> (reqwest::ClientBuilder, Refusals) {
+    let refused = Refusals::default();
+    let builder = reqwest::Client::builder();
+    let builder = match pinned_config(pins, &refused) {
+        Ok(config) => builder.tls_backend_preconfigured(config),
+        Err(_) => builder,
+    };
+    (builder, refused)
+}
+
 /// Opens TLS over `stream` to `host`, trusting the certificate in `pins`
 /// for it, if any, besides the system's own check.
 pub async fn connect<T>(
@@ -319,27 +373,14 @@ pub async fn connect<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let verifier = Arc::new(Pinned {
-        system: system_verifier().map_err(Failure::Other)?,
-        host: host.to_owned(),
-        pin: Pin::for_host(pins, host).map(|p| p.sha256),
-        refused: Mutex::new(None),
-    });
-    let config = ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(verifier.clone())
-        .with_no_client_auth();
+    let refused = Refusals::default();
+    let config = pinned_config(pins, &refused).map_err(Failure::Other)?;
     let name = ServerName::try_from(host.to_owned()).map_err(|e| Failure::Other(e.to_string()))?;
     TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
         .map_err(|e| {
-            match verifier
-                .refused
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take()
-            {
+            match refused.take() {
                 Some(refused) => Failure::Certificate(Box::new(refused)),
                 // A handshake the server never finished is no certificate
                 // problem.

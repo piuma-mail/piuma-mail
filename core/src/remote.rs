@@ -425,6 +425,7 @@ pub async fn send_ready(
         .await
         .map_err(|e| match e {
             JmapError::Auth => SendError::Auth,
+            JmapError::Certificate(r) => SendError::Certificate(r),
             JmapError::Connect { url, source } => SendError::Connect {
                 host: url,
                 detail: source.to_string(),

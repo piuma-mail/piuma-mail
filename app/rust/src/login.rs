@@ -43,13 +43,21 @@ pub(crate) fn cert_key(account: i64, host: &str) -> String {
 pub(crate) fn session(id: Arc<AtomicI64>, stored: Stored) -> Option<Arc<Session>> {
     let session = Session::new(stored, move |changed| {
         let id = id.load(Ordering::Relaxed);
+        // A new account without its id yet keeps it once it has one.
         if id == 0 {
-            return;
+            return Err("no account yet".into());
         }
-        // The keychain can't be reached now: the old refresh token still
-        // works until the provider retires it, and the next change tries
-        // again.
-        let _ = credentials::keep(AccountId(id), &changed.to_secret());
+        // Not kept: the session keeps the new token for this run and tries
+        // again at each use. The old one stays where it was: Microsoft's
+        // stay valid until they run out, Google's don't change.
+        credentials::keep(AccountId(id), &changed.to_secret()).map_err(|e| {
+            piuma_core::feedback::log(
+                piuma_core::feedback::Level::Warn,
+                "oauth",
+                &format!("a renewed sign-in could not be kept yet: {:?}", e.kind),
+            );
+            e.detail
+        })
     })?;
     Some(Arc::new(session))
 }
@@ -94,7 +102,14 @@ pub(crate) fn pins(id: AccountId) -> Vec<Pin> {
     };
     let hosts = match &account.kind {
         AccountKind::Imap { imap, smtp, .. } => vec![imap.host.clone(), smtp.host.clone()],
-        AccountKind::Jmap { .. } => Vec::new(),
+        // The session's host. An API on another host with a certificate
+        // nobody vouches for is refused (the session's settings name one).
+        AccountKind::Jmap { session_url, .. } => session_url
+            .split("://")
+            .nth(1)
+            .and_then(|r| r.split(['/', ':']).next())
+            .map(|h| vec![h.to_owned()])
+            .unwrap_or_default(),
     };
     hosts
         .into_iter()

@@ -95,6 +95,11 @@ pub struct Provider {
     /// this build has no client for it.
     #[serde(default)]
     pub app_passwords: bool,
+    /// The authorization server's identifier. When the answer carries an
+    /// `iss` (RFC 9207), it must be this one; none for providers whose
+    /// issuer depends on the tenant.
+    #[serde(default)]
+    pub issuer: Option<String>,
     /// Whether a refresh asks for the scopes again (Microsoft wants them).
     #[serde(default)]
     pub refresh_scopes: bool,
@@ -130,6 +135,13 @@ impl Provider {
 
     pub fn token_url(&self, client: &Client) -> String {
         self.with_tenant(&self.token_url, client)
+    }
+
+    /// Whether a client of the person's own can sign in on this device.
+    /// Not on Android when the redirect is built from the client ID
+    /// (Google): the app can only open the scheme it was built with.
+    pub fn takes_own_client(&self) -> bool {
+        !(cfg!(target_os = "android") && self.android_redirect.contains("{reversed_client_id}"))
     }
 
     /// Where the browser comes back to on Android.
@@ -253,6 +265,8 @@ pub enum FlowError {
     Denied(String),
     #[error("the answer carried no code")]
     NoCode,
+    #[error("the answer came from another authorization server (iss)")]
+    IssuerMismatch,
     #[error("nobody signed in in time")]
     Timeout,
     #[error("the sign-in was cancelled")]
@@ -278,6 +292,13 @@ fn random(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("system randomness");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf)
+}
+
+/// Whether two secrets are equal, in time that doesn't say where they
+/// differ.
+pub(crate) fn same(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    a.len() == b.len() && bool::from(a.ct_eq(b))
 }
 
 /// RFC 7636: the S256 challenge of a verifier.
@@ -348,18 +369,25 @@ impl Request {
         let mut code = None;
         let mut error = None;
         let mut description = None;
+        let mut issuer = None;
         for (k, v) in url.query_pairs() {
             match k.as_ref() {
                 "state" => state = Some(v.into_owned()),
                 "code" => code = Some(v.into_owned()),
                 "error" => error = Some(v.into_owned()),
                 "error_description" => description = Some(v.into_owned()),
+                "iss" => issuer = Some(v.into_owned()),
                 _ => {}
             }
         }
-        // Constant time is not needed: the state is single use and random.
-        if state.as_deref() != Some(self.state.as_str()) {
+        if !state.is_some_and(|s| same(s.as_bytes(), self.state.as_bytes())) {
             return Err(FlowError::StateMismatch);
+        }
+        // RFC 9207: an answer naming another server is a mix-up attack.
+        if let (Some(got), Some(expected)) = (&issuer, &self.provider.issuer) {
+            if got != expected {
+                return Err(FlowError::IssuerMismatch);
+            }
         }
         if let Some(error) = error {
             return Err(FlowError::Denied(match description {
@@ -414,7 +442,8 @@ impl Loopback {
     }
 
     /// Waits for the browser, and answers it with a page saying to go back
-    /// to the app.
+    /// to the app. Requests without this sign-in's `state` get a 400 and
+    /// the wait goes on, up to `timeout`.
     pub async fn wait(self, request: &Request, timeout: Duration) -> Result<String, FlowError> {
         tokio::time::timeout(timeout, self.serve(request))
             .await
@@ -445,6 +474,15 @@ impl Loopback {
                         continue;
                     }
                     let result = request.code_from_redirect(&format!("{}{target}", self.redirect_uri()));
+                    // An answer to another sign-in, or a stray or hostile
+                    // local request, ends nothing: only this request's
+                    // `state` does, or the time running out.
+                    if result == Err(FlowError::StateMismatch) {
+                        let _ = tcp
+                            .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .await;
+                        continue;
+                    }
                     let (status, text) = match &result {
                         Ok(_) => ("200 OK", "Signed in. You can close this page and go back to Piuma Mail."),
                         Err(_) => (
@@ -568,7 +606,8 @@ async fn token_request(
                 Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(3600),
                 Some(serde_json::Value::String(s)) => s.parse().unwrap_or(3600),
                 _ => 3600,
-            },
+            }
+            .min(LONGEST_TOKEN.as_secs()),
         }),
         // A server error is not a refusal.
         _ if status.is_server_error() || status.as_u16() == 429 => {
@@ -665,13 +704,32 @@ impl Stored {
     }
 }
 
+/// The longest an access token is believed to last, whatever the
+/// provider says: a broken or hostile endpoint can't push the renewal
+/// out of reach (or overflow the clock).
+pub const LONGEST_TOKEN: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// When a token given now for `expires_in` seconds runs out. A time the
+/// clock can't hold counts as already gone: the next use renews it.
+fn valid_until(expires_in: u64) -> Instant {
+    let now = Instant::now();
+    now.checked_add(Duration::from_secs(expires_in).min(LONGEST_TOKEN))
+        .unwrap_or(now)
+}
+
 /// Access tokens are renewed when they have less than this left, so a
 /// connection never starts with one about to run out.
 pub const RENEW_BEFORE: Duration = Duration::from_secs(5 * 60);
 
+/// Keeps a [`Stored`] the provider changed; an error means it isn't kept.
+type KeepStored = dyn Fn(&Stored) -> Result<(), String> + Send + Sync;
+
 struct State {
     stored: Stored,
     access: Option<(Zeroizing<String>, Instant)>,
+    /// A refresh token the provider replaced, not kept yet: kept again at
+    /// each use until it is.
+    unsaved: bool,
 }
 
 /// An account's sign-in with a provider, for as long as the app runs:
@@ -680,8 +738,9 @@ struct State {
 pub struct Session {
     provider: Provider,
     state: tokio::sync::Mutex<State>,
-    /// Told when the provider sends a new refresh token, to keep it.
-    on_change: Box<dyn Fn(&Stored) + Send + Sync>,
+    /// Told when the provider sends a new refresh token, to keep it; an
+    /// error means it isn't kept yet.
+    on_change: Box<KeepStored>,
 }
 
 impl fmt::Debug for Session {
@@ -696,7 +755,7 @@ impl Session {
     /// None for a provider this build doesn't know.
     pub fn new(
         stored: Stored,
-        on_change: impl Fn(&Stored) + Send + Sync + 'static,
+        on_change: impl Fn(&Stored) -> Result<(), String> + Send + Sync + 'static,
     ) -> Option<Self> {
         let provider = provider(&stored.provider)?.clone();
         Some(Self::with_provider(provider, stored, on_change))
@@ -706,13 +765,14 @@ impl Session {
     pub fn with_provider(
         provider: Provider,
         stored: Stored,
-        on_change: impl Fn(&Stored) + Send + Sync + 'static,
+        on_change: impl Fn(&Stored) -> Result<(), String> + Send + Sync + 'static,
     ) -> Self {
         Session {
             provider,
             state: tokio::sync::Mutex::new(State {
                 stored,
                 access: None,
+                unsaved: false,
             }),
             on_change: Box::new(on_change),
         }
@@ -729,13 +789,13 @@ impl Session {
     /// Starts with the access token sign-in just gave, good for
     /// `expires_in` seconds.
     pub async fn seed(&self, access: Zeroizing<String>, expires_in: u64) {
-        self.state.lock().await.access =
-            Some((access, Instant::now() + Duration::from_secs(expires_in)));
+        self.state.lock().await.access = Some((access, valid_until(expires_in)));
     }
 
     /// A token good for a while yet: the one in hand, or a new one.
     pub async fn access_token(&self) -> Result<Zeroizing<String>, TokenError> {
         let mut state = self.state.lock().await;
+        self.keep_unsaved(&mut state);
         if let Some((token, until)) = &state.access {
             if until.saturating_duration_since(Instant::now()) > RENEW_BEFORE {
                 return Ok(token.clone());
@@ -761,12 +821,26 @@ impl Session {
         if let Some(new) = grant.refresh_token {
             if *new != state.stored.refresh_token {
                 state.stored.refresh_token = new.to_string();
-                (self.on_change)(&state.stored);
+                state.unsaved = true;
+                self.keep_unsaved(state);
             }
         }
-        let until = Instant::now() + Duration::from_secs(grant.expires_in);
+        let until = valid_until(grant.expires_in);
         state.access = Some((grant.access_token.clone(), until));
         Ok(grant.access_token)
+    }
+
+    /// Keeps a replaced refresh token not kept yet. Until it is, the new
+    /// one works for this run; the old one stays where it was kept.
+    fn keep_unsaved(&self, state: &mut State) {
+        if state.unsaved && (self.on_change)(&state.stored).is_ok() {
+            state.unsaved = false;
+        }
+    }
+
+    /// Whether a refresh token the provider replaced isn't kept yet.
+    pub async fn unsaved(&self) -> bool {
+        self.state.lock().await.unsaved
     }
 
     /// What the keychain keeps now.
@@ -850,6 +924,15 @@ mod tests {
     }
 
     #[test]
+    fn token_lifetimes_are_capped() {
+        let now = Instant::now();
+        let far = valid_until(u64::MAX);
+        assert!(far <= now + LONGEST_TOKEN + Duration::from_secs(5));
+        assert!(far > now);
+        assert!(valid_until(60) <= Instant::now() + Duration::from_secs(60));
+    }
+
+    #[test]
     fn pkce_challenge_matches_rfc_7636() {
         // RFC 7636, appendix B.
         assert_eq!(
@@ -916,6 +999,20 @@ mod tests {
             r.code_from_redirect(&format!("mail.piuma.app://oauth?state={state}")),
             Err(FlowError::NoCode)
         );
+        // RFC 9207: Google names itself; another issuer is refused.
+        assert_eq!(
+            r.code_from_redirect(&format!(
+                "mail.piuma.app://oauth?code=abc&state={state}&iss=https%3A%2F%2Faccounts.google.com"
+            )),
+            Ok("abc".into())
+        );
+        assert_eq!(
+            r.code_from_redirect(&format!(
+                "mail.piuma.app://oauth?code=abc&state={state}&iss=https%3A%2F%2Fevil.example"
+            )),
+            Err(FlowError::IssuerMismatch)
+        );
+        assert!(same(b"abc", b"abc") && !same(b"abc", b"abd") && !same(b"abc", b"ab"));
     }
 
     #[test]

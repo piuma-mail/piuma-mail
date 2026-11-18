@@ -109,11 +109,27 @@ pub fn keep(id: AccountId, secret: &str) -> Result<(), EngineError> {
         .unwrap_or_else(|e| e.into_inner())
         .retain(|(k, _)| *k != account_key(id));
     #[cfg(target_os = "android")]
-    kept()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push((account_key(id), secret.to_owned()));
+    {
+        kept()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((account_key(id), secret.to_owned()));
+        // Into the Keystore now, not at the next sync: the app is told at
+        // once, and the background service wakes up for it.
+        crate::api::engine::secrets_changed(id);
+        crate::background::wake();
+    }
     Ok(())
+}
+
+/// Android: whether [`keep`] got secrets the Keystore doesn't have yet.
+pub fn has_kept() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        !kept().lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+    }
+    #[cfg(not(target_os = "android"))]
+    false
 }
 
 #[cfg(target_os = "android")]

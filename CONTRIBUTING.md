@@ -104,6 +104,10 @@ In the [Google Cloud console](https://console.cloud.google.com), in a project of
 
 A fork, or a person whose organization requires its own app registration, follows the same steps, then either builds with `PIUMA_OAUTH_CLIENTS` or enters the client ID (and, for Microsoft, the tenant; for a Google desktop client, the secret) under "Advanced: your own client ID" in the add-account flow. The client is kept with the account in the keychain and used for every renewal.
 
+One exception: **Google on Android** takes only the client the build was made with. Google sends Android sign-ins back to a scheme made from the client ID (`com.googleusercontent.apps.<id>`), and the app can only answer the scheme registered in its manifest at build time, so the option is hidden there and the engine refuses another Google client on Android. A Microsoft client of one's own works on Android too: its redirect, `mail.piuma.app://oauth`, is the same for every client (add it to your registration).
+
+The sign-in answer is accepted only with this sign-in's `state` (compared in constant time); answers with another `state` are ignored and the app keeps waiting until the five minutes run out. When the provider names itself in the answer (`iss`, RFC 9207; Google does), it must be the `issuer` in `oauth_providers.json`.
+
 ## License and DCO sign-off
 
 - Every contribution is released under GPL-3.0-or-later plus the additional app store permission described in [`LICENSE-APPSTORE.md`](LICENSE-APPSTORE.md).

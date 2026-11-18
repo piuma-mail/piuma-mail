@@ -51,13 +51,24 @@ pub(crate) fn push(notices: &[MailNotice]) {
     ARRIVED.notify_all();
 }
 
+/// Wakes [`wait`] up: the engine got a secret for the Keystore.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn wake() {
+    // Taken while wait() looks, so the wake-up isn't lost.
+    drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+    ARRIVED.notify_all();
+}
+
 /// The notices that came since the last call, waiting at most `timeout`
-/// for one; empty when none came.
+/// for one; empty when none came. Also returns early when the engine got
+/// a secret for the Keystore (`MailService.kt` keeps it right after).
 pub fn wait(timeout: Duration) -> Vec<MailNotice> {
     let queue = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
     let (mut queue, _) = ARRIVED
         .wait_timeout_while(queue, timeout, |q| {
-            q.is_empty() && FAILED.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+            q.is_empty()
+                && FAILED.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+                && !crate::credentials::has_kept()
         })
         .unwrap_or_else(|e| e.into_inner());
     std::mem::take(&mut *queue)
