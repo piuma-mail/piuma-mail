@@ -526,7 +526,13 @@ async fn a_folder_answer_without_uidvalidity_touches_and_drops_nothing() {
         .unwrap_err();
     assert!(matches!(e, ImapError::NoUidValidity), "{e}");
 
-    for verb in ["UID MOVE", "UID COPY", "UID STORE", "UID EXPUNGE", "EXPUNGE"] {
+    for verb in [
+        "UID MOVE",
+        "UID COPY",
+        "UID STORE",
+        "UID EXPUNGE",
+        "EXPUNGE",
+    ] {
         assert!(!seen.any(verb), "{verb} sent: {:?}", seen.commands());
     }
     let s = store.lock().unwrap();

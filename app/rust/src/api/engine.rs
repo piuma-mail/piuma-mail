@@ -1674,9 +1674,7 @@ mod watcher_supervision_tests {
         let starts = starts.lock().unwrap();
         assert_eq!(starts.len(), 4);
         // The wait between a run's end and the next start.
-        let wait = |i: usize, ran: u64| {
-            (starts[i + 1] - starts[i]).as_secs_f64() - ran as f64
-        };
+        let wait = |i: usize, ran: u64| (starts[i + 1] - starts[i]).as_secs_f64() - ran as f64;
         // 5 s, then 10 s even after an hour's run, then 5 s after a round;
         // each ±20 %.
         assert!((4.0..=6.0).contains(&wait(0, 0)), "{starts:?}");
