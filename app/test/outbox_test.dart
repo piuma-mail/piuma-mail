@@ -153,6 +153,62 @@ void main() {
     expect(find.byType(OutboxTile), findsNothing);
   });
 
+  /// On the phone: writes from the Compose button and taps Send.
+  Future<void> sendOnPhone(WidgetTester tester, String subject) async {
+    await tester.tap(find.bySemanticsLabel('Compose a message'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field(0), 'Luca Bianchi <luca@studio.it>,');
+    await tester.enterText(_field(1), subject);
+    await tester.enterText(_field(2), 'Fine on the comments.');
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Send'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+  }
+
+  testWidgets('on the phone, two sends in the Undo window both wait, '
+      'each with its own Undo', (tester) async {
+    final source = await _pump(tester, size: const Size(390, 844));
+    source.offline = false;
+    await sendOnPhone(tester, 'First');
+    await sendOnPhone(tester, 'Second');
+    // Both in the Outbox, on their way.
+    expect(find.byType(OutboxTile), findsNWidgets(2));
+    expect(
+      find.descendant(
+        of: find.byType(OutboxTile),
+        matching: find.text('Sending…'),
+      ),
+      findsNWidgets(2),
+    );
+    // The first, whose toast is gone, is taken back from its row.
+    await tester.tap(find.widgetWithText(OutboxTile, 'First'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    expect(find.byType(ComposePane), findsOneWidget);
+    await tester.pump(const Duration(seconds: 15));
+    await tester.pumpAndSettle();
+    expect(source.sent.map((d) => d.subject), ['Second']);
+  });
+
+  testWidgets('on the phone, a message that may have gone says so', (
+    tester,
+  ) async {
+    final source = await _pump(tester, size: const Size(390, 844));
+    source
+      ..offline = false
+      ..loseNextAnswer = true;
+    await sendOnPhone(tester, 'Re: Mockup v3');
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pumpAndSettle();
+    expect(find.text('May have been sent'), findsOneWidget);
+    expect((await source.outbox(null)).single.state, OutboxState.maybeSent);
+    source.goOnline();
+    await tester.pumpAndSettle();
+    expect(source.sent, hasLength(1), reason: 'never sent again by itself');
+    await tester.tap(find.byType(OutboxTile));
+    await tester.pumpAndSettle();
+    expect(find.byType(ComposePane), findsOneWidget);
+  });
+
   testWidgets('the Outbox follows the account picked', (tester) async {
     await _pump(tester);
     await _send(tester);

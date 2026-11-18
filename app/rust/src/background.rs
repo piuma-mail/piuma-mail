@@ -278,6 +278,28 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
     Ok(notices)
 }
 
+/// Sends what waits in every account's outbox, once, the way the app
+/// does: for the job Android runs when a message's time comes (the end of
+/// its Undo window, a Send later time) and the app may have been swiped
+/// away. Claims in the database keep it from going twice beside the app.
+pub fn send_outbox_once() -> Result<(), engine::EngineError> {
+    let engine = engine::engine()?;
+    let accounts = engine
+        .store
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .accounts()?;
+    for account in accounts {
+        let Ok(password) = credentials::load(account.id) else {
+            continue;
+        };
+        engine
+            .runtime
+            .block_on(engine::deliver_outbox(&account, &password));
+    }
+    Ok(())
+}
+
 /// What a button on a notice asks for (`Notifications`): the message is
 /// the notice's payload, "account\nmailbox\nuid".
 #[derive(Debug, Clone, PartialEq, Eq)]
