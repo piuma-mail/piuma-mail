@@ -6544,6 +6544,18 @@ abstract class AppLocalizations {
   /// **'These words don\'t open your space. Check them and try again.'**
   String get pairPhraseWrong;
 
+  /// No description provided for @pairPhraseOld.
+  ///
+  /// In en, this message translates to:
+  /// **'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.'**
+  String get pairPhraseOld;
+
+  /// No description provided for @pairConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Two of your devices removed each other, so this space can\'t be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.'**
+  String get pairConflict;
+
   /// No description provided for @pairContinue.
   ///
   /// In en, this message translates to:
@@ -9381,6 +9393,246 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers'**
   String get bundledReleaseNotes;
+
+  /// No description provided for @syncHeldTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{email} was removed on another device'**
+  String syncHeldTitle(String email);
+
+  /// No description provided for @syncHeldWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Here it still has {what}. Remove it from this device too, or keep it on all your devices?'**
+  String syncHeldWaiting(String what);
+
+  /// No description provided for @syncHeldOutbox.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 email waiting to be sent} other{{count} emails waiting to be sent}}'**
+  String syncHeldOutbox(int count);
+
+  /// No description provided for @syncHeldDrafts.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 draft not saved to the server yet} other{{count} drafts not saved to the server yet}}'**
+  String syncHeldDrafts(int count);
+
+  /// No description provided for @syncHeldPending.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 change not on the server yet} other{{count} changes not on the server yet}}'**
+  String syncHeldPending(int count);
+
+  /// No description provided for @syncHeldHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Its mailbox holds your sync space, so it stays here. Keep it, or move the space to another mailbox first.'**
+  String get syncHeldHome;
+
+  /// No description provided for @syncHeldRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove here'**
+  String get syncHeldRemove;
+
+  /// No description provided for @syncHeldKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep it'**
+  String get syncHeldKeep;
+
+  /// No description provided for @syncRollbackTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'An older copy of your space was left out'**
+  String get syncRollbackTitle;
+
+  /// No description provided for @syncRollbackBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone with access to {email}, or a device you unlinked, may have put it back. Nothing was taken from it. If this happens again, change that mailbox’s password.'**
+  String syncRollbackBody(String email);
+
+  /// No description provided for @syncOutdatedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Piuma to sync this device’s changes'**
+  String get syncOutdatedTitle;
+
+  /// No description provided for @syncOutdatedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device saved your space with a newer version. This one still receives changes, and keeps its own until it is updated.'**
+  String get syncOutdatedBody;
+
+  /// No description provided for @syncExposedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change these passwords'**
+  String get syncExposedTitle;
+
+  /// No description provided for @syncExposedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} can’t read your space any more, but it still knows the passwords of these mailboxes. Change them with your provider to keep it out of your mail too.'**
+  String syncExposedBody(String name);
+
+  /// No description provided for @syncExposedDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Got it'**
+  String get syncExposedDone;
+
+  /// No description provided for @syncPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused on this device'**
+  String get syncPaused;
+
+  /// No description provided for @syncConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm this device'**
+  String get syncConfirmTitle;
+
+  /// No description provided for @syncConfirmBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.'**
+  String get syncConfirmBody;
+
+  /// No description provided for @syncConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get syncConfirm;
+
+  /// No description provided for @syncConflictTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Two devices removed each other'**
+  String get syncConflictTitle;
+
+  /// No description provided for @syncConflictBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{names} each removed the other from your space, and one of them may not be yours any more. Sync stopped on this device: link it again from a device you still have.'**
+  String syncConflictBody(String names);
+
+  /// No description provided for @syncLinkAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Link again'**
+  String get syncLinkAgain;
+
+  /// No description provided for @syncUnlinkedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} removed this device'**
+  String syncUnlinkedTitle(String name);
+
+  /// No description provided for @syncUnlinkedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync stopped on this device; its accounts and mail stay here. If that wasn’t you, link it again from a device you still have. Otherwise, turn sync off here.'**
+  String get syncUnlinkedBody;
+
+  /// No description provided for @syncExposedNowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Change these passwords now'**
+  String get syncExposedNowTitle;
+
+  /// No description provided for @syncExposedNowBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} still knows these passwords. Start with {email}: until its password changes, {name} can still reach the folder that holds your space.'**
+  String syncExposedNowBody(String name, String email);
+
+  /// No description provided for @syncExposedChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'I changed them'**
+  String get syncExposedChanged;
+
+  /// No description provided for @syncExposedFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'First: it holds your space'**
+  String get syncExposedFirst;
+
+  /// No description provided for @syncFailRollback.
+  ///
+  /// In en, this message translates to:
+  /// **'Only an older copy of your space is in this mailbox. Nothing was changed.'**
+  String get syncFailRollback;
+
+  /// No description provided for @syncFailOutdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Your space was saved by a newer version of Piuma. Update Piuma on this device.'**
+  String get syncFailOutdated;
+
+  /// No description provided for @pairServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Signs in at {host}'**
+  String pairServer(String host);
+
+  /// No description provided for @pairServerFromCode.
+  ///
+  /// In en, this message translates to:
+  /// **'This server comes from the code, not from your provider’s settings. Make sure it is your provider’s before you type the password.'**
+  String get pairServerFromCode;
+
+  /// No description provided for @pairServerChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the server…'**
+  String get pairServerChecking;
+
+  /// No description provided for @pairRefusedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, phone{Your phone said this wasn\'t you.} tablet{Your tablet said this wasn\'t you.} other{Your computer said this wasn\'t you.}}'**
+  String pairRefusedDevice(String kind);
+
+  /// No description provided for @pairCodeBodyDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, phone{Open Piuma on your phone and enter the code.} tablet{Open Piuma on your tablet and enter the code.} other{Open Piuma on your computer and enter the code.}}'**
+  String pairCodeBodyDevice(String kind);
+
+  /// No description provided for @pairWaitingDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, phone{Waiting for your phone to confirm…} tablet{Waiting for your tablet to confirm…} other{Waiting for your computer to confirm…}}'**
+  String pairWaitingDevice(String kind);
+
+  /// No description provided for @pairStep1Device.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, phone{Your phone will show “{title}”} tablet{Your tablet will show “{title}”} other{Your computer will show “{title}”}}'**
+  String pairStep1Device(String kind, String title);
+
+  /// No description provided for @pairConfirmFromDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind, select, phone{For security, confirm from a device that\'s already paired: your phone, active {ago}.} tablet{For security, confirm from a device that\'s already paired: your tablet, active {ago}.} other{For security, confirm from a device that\'s already paired: your computer, active {ago}.}}'**
+  String pairConfirmFromDevice(String kind, String ago);
+
+  /// No description provided for @syncRecoveryChangedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Write down your new recovery phrase'**
+  String get syncRecoveryChangedTitle;
+
+  /// No description provided for @syncRecoveryChangedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.'**
+  String get syncRecoveryChangedBody;
 
   /// No description provided for @saveSearch.
   ///

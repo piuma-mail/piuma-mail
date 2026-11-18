@@ -131,6 +131,9 @@ pub enum ErrorKind {
     TooBig,
     /// Sync: the recovery phrase doesn't open the space.
     WrongPhrase,
+    /// Sync: the recovery phrase was the space's, and was replaced since:
+    /// only the newest one opens it.
+    OldPhrase,
     /// Sync: the code typed on the other device wasn't the one shown.
     WrongCode,
     /// Sync: this device isn't linked, or sync is off.
@@ -143,6 +146,14 @@ pub enum ErrorKind {
     Refused,
     /// Sync: the mailbox to move the space to holds another one.
     Taken,
+    /// Sync: only an older copy of the space was found, and left out.
+    Rollback,
+    /// Sync: the space was written by a newer version of Piuma.
+    Outdated,
+    /// Sync: two devices removed each other and nothing tells which came
+    /// first: the space can't be joined until the mailbox holds only one
+    /// side.
+    Conflict,
     /// An account still has mail written in it that hasn't gone (see
     /// `account_unsent`): it isn't removed until that is sent or deleted.
     Unsent,

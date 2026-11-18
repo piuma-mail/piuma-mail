@@ -230,7 +230,8 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
         disconnect_calendar(source)?;
     }
     let store = store()?;
-    // An account added later may get the same id.
+    // At once, though the account's row goes only with the last step of
+    // the removal (which removes every setting that names it).
     store.set_setting(&alert_key(account_id), "")?;
     store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
     store.set_setting(&crate::login::oauth_key(account_id), "")?;

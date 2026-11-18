@@ -10,7 +10,7 @@ use piuma_core::jmap::{discover_at, Client, JmapConfig, JmapError};
 use piuma_core::model::{Account, AccountId, AccountKind};
 use piuma_core::remote::{Remote, Snapshot};
 use piuma_core::space::{self, Device, Key};
-use piuma_core::space_sync::{self, Me, Round};
+use piuma_core::space_sync::{self, Folder as SpaceFolder, Me, Round};
 use piuma_core::{Folder, Store};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1469,6 +1469,7 @@ fn me(name: &str, kind: &str) -> Me {
             kind: kind.into(),
             last_seen: 0,
             public: space::public_key(&secret),
+            sign: space::sign_public(&secret),
         },
         secret,
     }
@@ -1486,9 +1487,14 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let mac = me("Matteo's MacBook", "laptop");
     let mut mac_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    let recovery = space_sync::create(&mut mac_jmap, USER, &mac_store, pw(), &mac)
-        .await
-        .unwrap();
+    let recovery = space_sync::create(
+        &mut SpaceFolder::new(&mut mac_jmap, USER),
+        &mac_store,
+        pw(),
+        &mac,
+    )
+    .await
+    .unwrap();
     assert_eq!(recovery.phrase().split(' ').count(), 24);
 
     // The folder is made once, and stays out of the account's folders.
@@ -1514,27 +1520,30 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
     // A phone pairs with a code.
     let phone = me("Pixel 8", "phone");
     let mut phone_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    assert!(space_sync::found(&mut phone_jmap).await.unwrap());
+    let mut phone_f = SpaceFolder::new(&mut phone_jmap, USER);
+    let mut mac_f = SpaceFolder::new(&mut mac_jmap, USER);
+    assert!(space_sync::found(&mut phone_f).await.unwrap());
     let code = space::pair_code();
-    let pairing = space_sync::request(&mut phone_jmap, USER, &code, &phone)
+    let pairing = space_sync::request(&mut phone_f, &code, &phone)
         .await
         .unwrap();
-    let waiting = space_sync::requests(&mut mac_jmap).await.unwrap();
+    let waiting = space_sync::requests(&mut mac_f).await.unwrap();
     assert_eq!(waiting.len(), 1);
-    space_sync::approve_waiting(&mut mac_jmap, USER, &waiting[0].id, &code, &mac)
+    space_sync::approve_waiting(&mut mac_f, &mac_store, &waiting[0].id, &code, &mac)
         .await
         .unwrap();
-    let (space, _) = space_sync::join(
-        &mut phone_jmap,
-        USER,
+    let joined = space_sync::join(
+        &mut phone_f,
         pairing,
         &phone_store,
+        pw(),
         &phone,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await
     .unwrap();
-    assert_eq!(space.content.devices.len(), 2);
+    assert_eq!(joined.space.content.devices.len(), 2);
     assert_eq!(
         phone_store
             .lock()
@@ -1544,40 +1553,29 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
             .as_deref(),
         Some("all")
     );
-    assert!(space_sync::requests(&mut mac_jmap)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(space_sync::requests(&mut mac_f).await.unwrap().is_empty());
 
     // A change on the Mac reaches the phone, and only one copy of the
     // space stays behind.
-    let mac_space = space_sync::open(&mut mac_jmap, &mac).await.unwrap();
-    let mac_seen = space_sync::seen(&mac_store, pw(), &mac, &mac_space).unwrap();
-    let phone_seen = space_sync::seen(&phone_store, pw(), &phone, &space).unwrap();
     mac_store
         .lock()
         .unwrap()
         .set_setting("notify.mode", "people")
         .unwrap();
-    let Round::Pushed(..) =
-        space_sync::round(&mut mac_jmap, USER, &mac_store, pw(), &mac, &mac_seen)
-            .await
-            .unwrap()
+    let Round::Done(r) = space_sync::round(&mut mac_f, &mac_store, pw(), &mac, Some(USER))
+        .await
+        .unwrap()
     else {
-        panic!("the Mac should push");
+        panic!("the Mac should round");
     };
-    let Round::Took(..) = space_sync::round(
-        &mut phone_jmap,
-        USER,
-        &phone_store,
-        pw(),
-        &phone,
-        &phone_seen,
-    )
-    .await
-    .unwrap() else {
-        panic!("the phone should take");
+    assert!(r.pushed);
+    let Round::Done(r) = space_sync::round(&mut phone_f, &phone_store, pw(), &phone, Some(USER))
+        .await
+        .unwrap()
+    else {
+        panic!("the phone should round");
     };
+    assert!(r.applied.took);
     assert_eq!(
         phone_store
             .lock()
@@ -1737,38 +1735,56 @@ async fn the_sync_space_moves_to_another_mailbox() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let (mac, phone) = (me("Matteo's MacBook", "laptop"), me("Pixel 8", "phone"));
     let mut mac_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
-    let recovery = space_sync::create(&mut mac_old, USER, &mac_store, pw(), &mac)
-        .await
-        .unwrap();
-    let mut phone_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
-    let (space, _) = space_sync::recover(
-        &mut phone_old,
-        USER,
-        &recovery.phrase(),
-        &phone_store,
-        &phone,
+    let recovery = space_sync::create(
+        &mut SpaceFolder::new(&mut mac_old, USER),
+        &mac_store,
+        pw(),
+        &mac,
     )
     .await
     .unwrap();
-    let phone_seen = space_sync::seen(&phone_store, pw(), &phone, &space).unwrap();
-
-    // The Mac moves it: same devices, no pairing again.
-    let mut mac_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
-    let moved = space_sync::relocate(&mut mac_old, USER, &mut mac_new, OTHER, &mac)
-        .await
-        .unwrap();
-    assert_eq!(moved.content.devices.len(), 2);
-    assert!(space_sync::found(&mut mac_new).await.unwrap());
-    assert!(!space_sync::found(&mut mac_old).await.unwrap());
-
-    // The phone finds the note and follows; there it opens the space.
-    let Round::Moved(to) = space_sync::round(
-        &mut phone_old,
-        USER,
+    let mut phone_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
+    space_sync::recover(
+        &mut SpaceFolder::new(&mut phone_old, USER),
+        &recovery.phrase(),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(USER),
+    )
+    .await
+    .unwrap();
+
+    // The Mac moves it: same devices, no pairing again.
+    let mut mac_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
+    let moved = space_sync::relocate(
+        &mut SpaceFolder::new(&mut mac_old, USER),
+        &mut SpaceFolder::new(&mut mac_new, OTHER),
+        OTHER,
+        &mac_store,
+        &mac,
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved.content.devices.len(), 2);
+    assert!(
+        space_sync::found(&mut SpaceFolder::new(&mut mac_new, OTHER))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !space_sync::found(&mut SpaceFolder::new(&mut mac_old, USER))
+            .await
+            .unwrap()
+    );
+
+    // The phone finds the note and follows; there it opens the space.
+    let Round::Moved(to) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_old, USER),
+        &phone_store,
+        pw(),
+        &phone,
+        Some(USER),
     )
     .await
     .unwrap() else {
@@ -1776,18 +1792,18 @@ async fn the_sync_space_moves_to_another_mailbox() {
     };
     assert_eq!(to, OTHER);
     let mut phone_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
-    let Round::Same(..) = space_sync::round(
-        &mut phone_new,
-        OTHER,
+    let Round::Done(r) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_new, OTHER),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(OTHER),
     )
     .await
     .unwrap() else {
-        panic!("nothing changed, so nothing to do");
+        panic!("the phone should open it there");
     };
+    assert!(!r.applied.took);
 
     // The old folder keeps only the note; the new one the space.
     for (state, left) in [(old_state, 1), (new_state, 1)] {
@@ -1803,17 +1819,24 @@ async fn the_sync_space_moves_to_another_mailbox() {
     }
 
     // Moving back clears that note.
-    space_sync::relocate(&mut mac_new, OTHER, &mut mac_old, USER, &mac)
-        .await
-        .unwrap();
-    assert!(space_sync::found(&mut mac_old).await.unwrap());
-    let Round::Same(..) = space_sync::round(
-        &mut phone_old,
+    space_sync::relocate(
+        &mut SpaceFolder::new(&mut mac_new, OTHER),
+        &mut SpaceFolder::new(&mut mac_old, USER),
         USER,
+        &mac_store,
+        &mac,
+    )
+    .await
+    .unwrap();
+    assert!(space_sync::found(&mut SpaceFolder::new(&mut mac_old, USER))
+        .await
+        .unwrap());
+    let Round::Done(_) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_old, USER),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(USER),
     )
     .await
     .unwrap() else {
@@ -1829,7 +1852,8 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let mac = me("Matteo's MacBook", "laptop");
     let mut mac_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    space_sync::create(&mut mac_jmap, USER, &mac_store, pw(), &mac)
+    let mut mac_f = SpaceFolder::new(&mut mac_jmap, USER);
+    space_sync::create(&mut mac_f, &mac_store, pw(), &mac)
         .await
         .unwrap();
 
@@ -1840,29 +1864,28 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     let codes = [code.clone(), newer];
     let phone = me("Pixel 8", "phone");
     let mut phone_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    let pairing = space_sync::request_qr(&mut phone_jmap, USER, &code, &phone)
+    let mut phone_f = SpaceFolder::new(&mut phone_jmap, USER);
+    let pairing = space_sync::request_qr(&mut phone_f, &code, &phone)
         .await
         .unwrap();
     // Nobody is asked for digits.
-    assert!(space_sync::requests(&mut mac_jmap)
-        .await
-        .unwrap()
-        .is_empty());
-    let answered = space_sync::answer_invite(&mut mac_jmap, USER, &codes, &mac)
+    assert!(space_sync::requests(&mut mac_f).await.unwrap().is_empty());
+    let answered = space_sync::answer_invite(&mut mac_f, &mac_store, &codes, &mac)
         .await
         .unwrap();
     assert_eq!(answered, ["Pixel 8"]);
-    let (space, _) = space_sync::join(
-        &mut phone_jmap,
-        USER,
+    let joined = space_sync::join(
+        &mut phone_f,
         pairing,
         &phone_store,
+        pw(),
         &phone,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await
     .unwrap();
-    assert_eq!(space.content.devices.len(), 2);
+    assert_eq!(joined.space.content.devices.len(), 2);
 
     // Someone who copies the invite's tag but has not the code gets an
     // answer they can't open.
@@ -1874,16 +1897,17 @@ async fn a_phone_pairs_by_scanning_the_invite() {
         .space_put(&space::Note::Request(guess.request.clone()).to_message(USER, space::now()))
         .await
         .unwrap();
-    space_sync::answer_invite(&mut mac_jmap, USER, &codes, &mac)
+    space_sync::answer_invite(&mut mac_f, &mac_store, &codes, &mac)
         .await
         .unwrap();
     let (s_store, _) = store_with_account(&cfg);
     assert!(space_sync::join(
-        &mut s_jmap,
-        USER,
+        &mut SpaceFolder::new(&mut s_jmap, USER),
         guess,
         &s_store,
+        pw(),
         &stranger,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await

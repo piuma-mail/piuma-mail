@@ -2244,7 +2244,20 @@ class NotifySettings {
 /// Devices & sync, as on `SyncToApprove` and `Groups`: where the encrypted
 /// space lives, and the devices that read it.
 class SyncState {
-  const SyncState({this.home, this.syncedAt, this.devices = const []});
+  const SyncState({
+    this.home,
+    this.syncedAt,
+    this.devices = const [],
+    this.rollback = false,
+    this.outdated = false,
+    this.held = const [],
+    this.recoveryChanged = false,
+    this.unverified = false,
+    this.conflict = const [],
+    this.unlinked,
+    this.exposed = const [],
+    this.exposedDevice = '',
+  });
 
   /// The address whose mailbox holds the space; null while sync is off.
   final String? home;
@@ -2253,7 +2266,95 @@ class SyncState {
   final DateTime? syncedAt;
   final List<SyncDevice> devices;
 
+  /// The last round found an older copy of the space in the mailbox and
+  /// left it out.
+  final bool rollback;
+
+  /// A newer version of Piuma wrote the space: this device takes changes
+  /// in but sends none until it is updated.
+  final bool outdated;
+
+  /// Accounts removed on another device that wait for the person here,
+  /// because something still has to leave with them.
+  final List<HeldRemoval> held;
+
+  /// The recovery phrase changed in a merge (a device left, or two were
+  /// unlinked at once) and the person hasn't seen the new one.
+  final bool recoveryChanged;
+
+  /// This device synced with an older version of Piuma: nothing syncs
+  /// until the person confirms it with the recovery phrase or a code.
+  final bool unverified;
+
+  /// Two devices (by name) removed each other: sync stopped here until
+  /// this device is linked again.
+  final List<String> conflict;
+
+  /// The device (by name) that removed this one: sync stopped here, and
+  /// nothing was forgotten, until the person links it again or turns
+  /// sync off here.
+  final String? unlinked;
+
+  /// After unlinking a device: the mailboxes whose passwords it still
+  /// knows, until the person says they changed them.
+  final List<String> exposed;
+
+  /// The unlinked device, for the same notice.
+  final String exposedDevice;
+
   bool get on => home != null;
+}
+
+/// An account another device removed, kept on this one until the person
+/// says, with what would go with it.
+class HeldRemoval {
+  const HeldRemoval({
+    required this.accountId,
+    required this.email,
+    this.outbox = 0,
+    this.drafts = 0,
+    this.pending = 0,
+    this.home = false,
+  });
+
+  final int accountId;
+  final String email;
+
+  /// Emails waiting to be sent.
+  final int outbox;
+
+  /// Drafts waiting to be uploaded.
+  final int drafts;
+
+  /// Changes waiting for the server.
+  final int pending;
+
+  /// Its mailbox holds the space.
+  final bool home;
+}
+
+/// After unlinking a device: the new recovery phrase, and the mailboxes
+/// whose passwords that device still knows.
+class Unlinked {
+  const Unlinked({required this.phrase, this.exposed = const []});
+
+  final String phrase;
+
+  /// Addresses whose password to change, to lock the device out of the
+  /// mailboxes too.
+  final List<String> exposed;
+}
+
+/// Where a scanned code signs in, shown before the password is typed.
+class InviteServer {
+  const InviteServer({required this.host, required this.fromCode});
+
+  /// The server the password goes to.
+  final String host;
+
+  /// It comes from the code, not from the address's known or published
+  /// settings: the person checks it.
+  final bool fromCode;
 }
 
 enum SyncDeviceKind { laptop, phone, tablet }
@@ -2300,6 +2401,9 @@ enum SyncProblem {
   /// The recovery phrase doesn't open the space.
   wrongPhrase,
 
+  /// The recovery phrase was the space's once, and was replaced since.
+  oldPhrase,
+
   /// The code typed on the other device wasn't the one shown.
   wrongCode,
 
@@ -2315,6 +2419,15 @@ enum SyncProblem {
 
   /// The mailbox to move the space to holds another one.
   taken,
+
+  /// Only an older copy of the space is in the mailbox.
+  rollback,
+
+  /// A newer version of Piuma wrote the space.
+  outdated,
+
+  /// Two devices removed each other, and nothing tells which is right.
+  conflict,
   other,
 }
 
@@ -3490,8 +3603,20 @@ abstract class MailSource with ComposeExtras {
   /// The recovery phrase, to show it again.
   Future<String> recoveryPhrase();
 
-  /// Unlinks a device and returns the new recovery phrase.
-  Future<String> unlinkDevice(String id);
+  /// Unlinks a device: the new recovery phrase, and the mailboxes whose
+  /// passwords it still knows.
+  Future<Unlinked> unlinkDevice(String id);
+
+  /// "I changed them": the passwords an unlinked device knew were changed.
+  Future<void> exposedChanged() async {}
+
+  /// "Remove it here too": an account another device removed, held here
+  /// because something still had to leave with it, goes now.
+  Future<void> confirmRemoval(int accountId) async {}
+
+  /// "Keep it": an account another device removed stays, and comes back on
+  /// the other devices.
+  Future<void> keepAccount(int accountId) async {}
 
   /// "Turn off sync on this device": this device leaves the space; its
   /// accounts and mail stay. The last device deletes the space.
@@ -3545,7 +3670,11 @@ abstract class MailSource with ComposeExtras {
     int stride,
   ) => null;
 
-  /// Signs in to the mailbox a scanned code names, with its settings.
+  /// Where a scanned code would sign in: the address's own known or
+  /// published servers, or the code's. Null when it can't be told.
+  Future<InviteServer?> inviteServer(ScannedPair code) async => null;
+
+  /// Signs in to the mailbox a scanned code names, at [inviteServer].
   Future<MailAccount> addInviteAccount(ScannedPair code, String password) =>
       throw UnimplementedError();
 

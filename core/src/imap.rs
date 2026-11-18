@@ -1719,18 +1719,20 @@ impl Connection {
         if mailbox.exists == 0 {
             return Ok(Vec::new());
         }
-        // Notes are small: one that says it is big is not ours, and all
-        // of them together have a budget whatever their sizes claim.
+        // Notes are small: one that says it is big is not ours, and all of
+        // them together have a budget whatever their sizes claim (the
+        // newest first, as the space is the newest note).
         let sizes: Vec<Fetch> = session
             .fetch("1:*", "(UID RFC822.SIZE)")
             .await?
             .try_collect()
             .await?;
-        let wanted: Vec<u32> = sizes
-            .iter()
-            .filter(|f| f.size.is_some_and(|n| n <= SPACE_NOTE_MAX))
-            .filter_map(|f| f.uid)
-            .collect();
+        let wanted = space_notes_within(
+            sizes
+                .iter()
+                .filter_map(|f| Some((f.uid?, f.size?)))
+                .collect(),
+        );
         if wanted.is_empty() {
             return Ok(Vec::new());
         }
@@ -2694,6 +2696,24 @@ async fn store_checked(session: &mut Session, set: &str, op: &str) -> Result<()>
 }
 
 /// "1:3,7,9:10" for [1, 2, 3, 7, 9, 10].
+/// The notes of the sync space to read, by uid, from (uid, size): none
+/// over [SPACE_NOTE_MAX], the newest first while they fit
+/// [SPACE_NOTES_BUDGET].
+fn space_notes_within(mut sizes: Vec<(u32, u32)>) -> Vec<u32> {
+    sizes.sort_by_key(|(uid, _)| std::cmp::Reverse(*uid));
+    let mut total: u64 = 0;
+    let mut wanted = Vec::new();
+    for (uid, size) in sizes {
+        if size > SPACE_NOTE_MAX || total + u64::from(size) > SPACE_NOTES_BUDGET {
+            continue;
+        }
+        total += u64::from(size);
+        wanted.push(uid);
+    }
+    wanted.sort_unstable();
+    wanted
+}
+
 fn uid_set(uids: &[u32]) -> String {
     let mut sorted = uids.to_vec();
     sorted.sort_unstable();
@@ -4412,6 +4432,23 @@ mod tests {
         assert_eq!(file_name("..."), "attachment");
         assert_eq!(file_name(".hidden"), "hidden");
         assert_eq!(file_name("a\u{0}b?.txt"), "a_b_.txt");
+    }
+
+    #[test]
+    fn space_notes_have_a_size_cap_and_a_budget() {
+        let mb = 1024 * 1024;
+        // None over 16 MiB, then the newest that fit 64 MiB together.
+        let wanted = space_notes_within(vec![
+            (1, 10 * mb),
+            (2, 14 * mb),
+            (3, 17 * mb),
+            (4, 15 * mb),
+            (5, 15 * mb),
+            (6, 15 * mb),
+            (7, 12 * mb),
+        ]);
+        assert_eq!(wanted, [4, 5, 6, 7]);
+        assert!(space_notes_within(vec![(9, 16 * mb + 1)]).is_empty());
     }
 
     #[test]

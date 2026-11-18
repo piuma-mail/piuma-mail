@@ -7,11 +7,14 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
+use piuma_core::oauth::Stored;
 use piuma_core::pair_qr::{self, Invite, INVITE_TTL};
 use piuma_core::remote::Remote;
 use piuma_core::space::{self, Device, Key, Pairing, SpaceError};
-use piuma_core::space_sync::{self, Me, Round, Seen, SyncError};
-use piuma_core::{Account, AccountId};
+use piuma_core::space_sync::{self, Folder, Me, Round, SyncError};
+use piuma_core::store::{Held, SecretIn};
+use piuma_core::StoreError;
+use piuma_core::{Account, AccountId, AccountKind};
 
 use super::accounts::remove_account;
 use super::engine::{
@@ -25,6 +28,7 @@ const SECRET: &str = "space-device";
 // This device's own settings; `space.` ones never travel in the space.
 const DEVICE: &str = "space.device";
 const HOME: &str = "space.home";
+/// What the old format kept of the last round; gone with it.
 const SEEN: &str = "space.seen";
 const DEVICES: &str = "space.devices";
 const SYNCED_AT: &str = "space.synced_at";
@@ -49,6 +53,73 @@ pub struct SyncInfo {
     /// The last round that reached the space, in Unix seconds.
     pub synced_at: Option<i64>,
     pub devices: Vec<SyncDevice>,
+    /// The last round found an older copy of the space and left it out.
+    pub rollback: bool,
+    /// The space was written by a newer version of Piuma: this device
+    /// takes changes in but sends none until it is updated.
+    pub outdated: bool,
+    /// Accounts removed on another device that wait for the person here.
+    pub held: Vec<HeldAccount>,
+    /// The recovery phrase changed in a merge (two devices unlinked at
+    /// once, or a device turned sync off), and the person hasn't seen the
+    /// new one yet.
+    pub recovery_changed: bool,
+    /// This device was syncing with an older version of Piuma: it takes
+    /// and sends nothing until the person confirms it with the recovery
+    /// phrase or a code from a linked device.
+    pub unverified: bool,
+    /// Two devices removed each other (their names): sync stopped here
+    /// until this device is linked again.
+    pub conflict: Vec<String>,
+    /// Another device removed this one (its name): sync stopped here, and
+    /// what this device trusts stays until the person links it again or
+    /// turns sync off here.
+    pub unlinked: Option<String>,
+    /// After unlinking a device: the mailboxes whose passwords it still
+    /// knows, until the person says they changed them. Urgent: until the
+    /// space's own mailbox password changes, it can still write there.
+    pub exposed: Vec<String>,
+    /// The unlinked device's name, for the same notice.
+    pub exposed_device: String,
+}
+
+/// An account another device removed, kept here until the person says:
+/// what would go with it.
+#[derive(Debug, Clone)]
+pub struct HeldAccount {
+    pub account_id: i64,
+    pub email: String,
+    /// Emails waiting to be sent.
+    pub outbox: u32,
+    /// Drafts waiting to be uploaded.
+    pub drafts: u32,
+    /// Changes waiting for the server.
+    pub pending: u32,
+    /// Its mailbox holds the space.
+    pub home: bool,
+}
+
+impl From<Held> for HeldAccount {
+    fn from(h: Held) -> Self {
+        HeldAccount {
+            account_id: h.account.0,
+            email: h.email,
+            outbox: h.outbox,
+            drafts: h.drafts,
+            pending: h.pending,
+            home: h.home,
+        }
+    }
+}
+
+/// After unlinking a device: the new recovery phrase, and the mailboxes
+/// whose passwords that device still knows.
+#[derive(Debug, Clone)]
+pub struct UnlinkResult {
+    pub phrase: String,
+    /// Addresses whose password to change, so the device is locked out of
+    /// the mailboxes too.
+    pub exposed: Vec<String>,
 }
 
 /// A new device asking to be linked.
@@ -74,13 +145,24 @@ pub struct KeptSecret {
 pub struct SyncRound {
     /// Another device's changes came in.
     pub took: bool,
-    /// Another device unlinked this one; sync is off here now.
+    /// Another device unlinked this one: sync stopped here, and Devices &
+    /// sync says who did it ([SyncInfo::unlinked]).
     pub unlinked: bool,
     pub requests: Vec<PairAsk>,
     /// Android only: passwords that came in, for the app to keep.
     pub keep: Vec<KeptSecret>,
     /// Accounts removed on another device, so removed here too.
     pub removed: Vec<i64>,
+    /// Accounts removed on another device that wait for the person here.
+    pub held: Vec<HeldAccount>,
+    /// An older copy of the space was found and left out.
+    pub rollback: bool,
+    /// The space was written by a newer version of Piuma.
+    pub outdated: bool,
+    /// This device must be confirmed first (see [SyncInfo::unverified]).
+    pub unverified: bool,
+    /// Two devices removed each other (see [SyncInfo::conflict]).
+    pub conflict: bool,
 }
 
 /// What "We found your space" shows before the space is open.
@@ -110,12 +192,17 @@ impl From<SyncError> for EngineError {
                 return e.into();
             }
             SyncError::Space(SpaceError::Phrase | SpaceError::Sealed) => ErrorKind::WrongPhrase,
+            SyncError::PhraseReplaced => ErrorKind::OldPhrase,
+            SyncError::Unlinked(_) => ErrorKind::NotLinked,
             SyncError::Space(SpaceError::Code) => ErrorKind::WrongCode,
             SyncError::Space(SpaceError::NotLinked) => ErrorKind::NotLinked,
             SyncError::NoSpace => ErrorKind::NoSpace,
             SyncError::Expired => ErrorKind::Expired,
             SyncError::Refused => ErrorKind::Refused,
             SyncError::Taken => ErrorKind::Taken,
+            SyncError::Rollback => ErrorKind::Rollback,
+            SyncError::Space(SpaceError::Newer) => ErrorKind::Outdated,
+            SyncError::Conflict(_) => ErrorKind::Conflict,
             _ => ErrorKind::Other,
         };
         EngineError::new(kind, e.to_string())
@@ -154,6 +241,7 @@ fn me() -> Result<Me, EngineError> {
             kind: kind.to_owned(),
             last_seen: 0,
             public: space::public_key(&secret),
+            sign: space::sign_public(&secret),
         },
         secret,
     })
@@ -215,11 +303,86 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
                 .collect()
         })
         .unwrap_or_default();
-    Ok(SyncInfo {
-        home: setting(HOME)?,
+    let home = setting(HOME)?;
+    let mut info = SyncInfo {
+        home: home.clone(),
         synced_at: setting(SYNCED_AT)?.and_then(|s| s.parse().ok()),
         devices,
-    })
+        rollback: false,
+        outdated: false,
+        held: Vec::new(),
+        recovery_changed: false,
+        unverified: false,
+        conflict: Vec::new(),
+        unlinked: None,
+        exposed: Vec::new(),
+        exposed_device: String::new(),
+    };
+    if home.is_none() {
+        return Ok(info);
+    }
+    let local = match space_sync::state(&engine()?.store) {
+        Ok(l) => l,
+        // What this device kept of the space doesn't read: it trusts
+        // nothing, and is confirmed again like an older version's.
+        Err(SyncError::Store(StoreError::SpaceState(_))) => {
+            info.unverified = true;
+            return Ok(info);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    info.held = held_here(&local)?;
+    info.rollback = local.refused > 0;
+    info.outdated = local.outdated;
+    info.recovery_changed = local.recovery_changed;
+    info.unverified = !local.trust.verified();
+    info.conflict = local
+        .conflict
+        .iter()
+        .map(|id| {
+            info.devices
+                .iter()
+                .find(|d| &d.id == id)
+                .map_or_else(|| id.clone(), |d| d.name.clone())
+        })
+        .collect();
+    if !local.unlinked.is_empty() {
+        info.unlinked = Some(
+            info.devices
+                .iter()
+                .find(|d| d.id == local.unlinked)
+                .map_or_else(|| local.unlinked.clone(), |d| d.name.clone()),
+        );
+    }
+    info.exposed = local.exposed;
+    info.exposed_device = local.exposed_device;
+    Ok(info)
+}
+
+/// The accounts whose removal waits for the person.
+fn held_here(local: &piuma_core::space_merge::Local) -> Result<Vec<HeldAccount>, EngineError> {
+    let store = store()?;
+    let home = setting(HOME)?;
+    let mut out = Vec::new();
+    for a in store.accounts()? {
+        if store
+            .account_gid(a.id)?
+            .is_some_and(|g| local.held.contains_key(&g))
+        {
+            let (outbox, drafts, pending) = store.account_waiting(a.id)?;
+            out.push(HeldAccount {
+                account_id: a.id.0,
+                home: home
+                    .as_deref()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(&a.email)),
+                email: a.email,
+                outbox,
+                drafts,
+                pending,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The accounts whose mailbox can hold the space: all of them, IMAP and
@@ -236,8 +399,7 @@ pub fn sync_dirty() -> Result<bool, EngineError> {
     if setting(HOME)?.is_none() {
         return Ok(false);
     }
-    let local = space_sync::content(&engine()?.store, passwords()?, &me()?)?;
-    Ok(space_sync::fingerprint(&local) != last_seen()?.local)
+    Ok(space_sync::dirty(&engine()?.store, &passwords()?, &me()?)?)
 }
 
 /// Runs `f` on the engine's runtime, one sync step at a time.
@@ -287,7 +449,7 @@ fn passwords() -> Result<Vec<(String, String)>, EngineError> {
         .filter_map(|a| Some((a.email.clone(), credentials::load(a.id).ok()?)))
         // An OAuth sign-in stays on this device: its refresh token never
         // travels, and the other device signs in on its own.
-        .filter(|(_, secret)| !piuma_core::oauth::Stored::is_stored(secret))
+        .filter(|(_, secret)| !Stored::is_stored(secret))
         .collect();
     // Connected calendars with a password of their own.
     for source in store.calendar_sources()? {
@@ -303,8 +465,9 @@ fn passwords() -> Result<Vec<(String, String)>, EngineError> {
 /// the keychain, e.g. "secret:calendar-3".
 const KEPT_KEY: &str = "secret:";
 
-/// Keeps what this device now knows of the space.
-fn remember(space: &space::Space, seen: &Seen) -> Result<(), EngineError> {
+/// Keeps what this device now knows of the space: its devices, for
+/// Devices & sync.
+fn remember(space: &space::Space) -> Result<(), EngineError> {
     let devices: Vec<String> = space
         .content
         .devices
@@ -320,47 +483,37 @@ fn remember(space: &space::Space, seen: &Seen) -> Result<(), EngineError> {
         })
         .collect();
     set(DEVICES, &devices.join("\n"))?;
-    set(
-        SEEN,
-        &format!("{}\t{}\t{}", seen.remote, seen.local, seen.touched),
-    )?;
     set(SYNCED_AT, &space::now().to_string())
-}
-
-fn last_seen() -> Result<Seen, EngineError> {
-    let saved = setting(SEEN)?.unwrap_or_default();
-    let mut p = saved.split('\t');
-    Ok(Seen {
-        remote: p.next().unwrap_or_default().to_owned(),
-        local: p.next().unwrap_or_default().to_owned(),
-        touched: p.next().and_then(|t| t.parse().ok()).unwrap_or_default(),
-    })
 }
 
 /// Keeps passwords that came in from the space and follows their
 /// accounts. Returns them for the app to keep on Android.
-fn took(
-    passwords: Vec<(AccountId, String)>,
-    space: &space::Space,
-) -> Result<Vec<KeptSecret>, EngineError> {
+fn took(secrets: Vec<SecretIn>) -> Result<Vec<KeptSecret>, EngineError> {
     let mut keep = Vec::new();
-    for (name, password) in &space.content.passwords {
-        let Some(key) = name.strip_prefix(KEPT_KEY) else {
-            continue;
+    for secret in secrets {
+        let (key, password) = match secret {
+            // Never a sign-in token from the space (no device sends one),
+            // and never a password over an account that signs in with a
+            // provider's page here: that sign-in stays.
+            SecretIn::Account(_, password) if Stored::is_stored(&password) => continue,
+            SecretIn::Account(id, _)
+                if credentials::read(id).is_ok_and(|s| Stored::is_stored(&s)) =>
+            {
+                continue
+            }
+            SecretIn::Account(id, password) => {
+                credentials::save(id, &password)?;
+                (format!("account-{}", id.0), password)
+            }
+            SecretIn::Calendar(id, password) => {
+                let key = credentials::calendar_key(id);
+                credentials::save_key(&key, &password)?;
+                (key, password)
+            }
         };
-        credentials::save_key(key, password)?;
         if cfg!(target_os = "android") {
             keep.push(KeptSecret {
-                key: key.to_owned(),
-                value: password.clone(),
-            });
-        }
-    }
-    for (id, password) in passwords {
-        credentials::save(id, &password)?;
-        if cfg!(target_os = "android") {
-            keep.push(KeptSecret {
-                key: format!("account-{}", id.0),
+                key,
                 value: password,
             });
         }
@@ -378,13 +531,13 @@ pub async fn sync_turn_on(account_id: i64) -> Result<String, EngineError> {
     run(async move {
         let me = me()?;
         let mut imap = connect(&account).await?;
+        let mut folder = Folder::new(&mut imap, &account.email);
         let store = &engine()?.store;
-        let recovery =
-            space_sync::create(&mut imap, &account.email, store, passwords()?, &me).await?;
-        let space = space_sync::open(&mut imap, &me).await?;
-        let seen = space_sync::seen(store, passwords()?, &me, &space)?;
+        let recovery = space_sync::create(&mut folder, store, passwords()?, &me).await?;
+        let space = space_sync::open(&mut folder, store, &me).await?;
         set(HOME, &account.email)?;
-        remember(&space, &seen)?;
+        super::engine::store()?.remove_setting(SEEN)?;
+        remember(&space)?;
         Ok(recovery.phrase())
     })
     .await
@@ -401,10 +554,16 @@ pub async fn sync_move(account_id: i64) -> Result<(), EngineError> {
             return Ok(());
         }
         let mut to = connect(&account).await?;
-        let space = space_sync::relocate(&mut from, &mailbox, &mut to, &account.email, &me).await?;
+        let space = space_sync::relocate(
+            &mut Folder::new(&mut from, &mailbox),
+            &mut Folder::new(&mut to, &account.email),
+            &account.email,
+            &engine()?.store,
+            &me,
+        )
+        .await?;
         set(HOME, &account.email)?;
-        // The content didn't change: what this device last saw still holds.
-        remember(&space, &last_seen()?)
+        remember(&space)
     })
     .await
 }
@@ -421,16 +580,17 @@ fn asks(requests: Vec<space::PairRequest>) -> Vec<PairAsk> {
         .collect()
 }
 
-/// Turns sync off here, when another device unlinked this one.
+/// Turns sync off here.
 fn off() -> Result<(), EngineError> {
     let s = store()?;
     for key in [HOME, SEEN, DEVICES, SYNCED_AT] {
         s.remove_setting(key)?;
     }
+    s.space_forget()?;
     Ok(())
 }
 
-/// One round: takes in other devices' changes or writes this one's, and
+/// One round: merges this device's changes with the other devices', and
 /// says who is asking to be linked. Does nothing while sync is off.
 pub async fn sync_now() -> Result<SyncRound, EngineError> {
     let mut round = SyncRound {
@@ -439,6 +599,11 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
         requests: Vec::new(),
         keep: Vec::new(),
         removed: Vec::new(),
+        held: Vec::new(),
+        rollback: false,
+        outdated: false,
+        unverified: false,
+        conflict: false,
     };
     if setting(HOME)?.is_none() {
         return Ok(round);
@@ -447,45 +612,95 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
         let me = me()?;
         let (mut imap, mut mailbox) = home().await?;
         let store = &engine()?.store;
-        let last = last_seen()?;
-        let mut done =
-            space_sync::round(&mut imap, &mailbox, store, passwords()?, &me, &last).await?;
-        if let Round::Moved(to) = done {
+        let mut done = space_sync::round(
+            &mut Folder::new(&mut imap, &mailbox),
+            store,
+            passwords()?,
+            &me,
+            Some(&mailbox),
+        )
+        .await;
+        if let Ok(Round::Moved(to)) = done {
             // Another device moved the space: follow it there.
             set(HOME, &to)?;
             (imap, mailbox) = home().await?;
-            done = space_sync::round(&mut imap, &mailbox, store, passwords()?, &me, &last).await?;
+            done = space_sync::round(
+                &mut Folder::new(&mut imap, &mailbox),
+                store,
+                passwords()?,
+                &me,
+                Some(&mailbox),
+            )
+            .await;
         }
         match done {
-            Round::Unlinked => {
-                off()?;
+            Err(SyncError::Rollback) => {
+                // Only an older copy is there: nothing taken in or written.
+                round.rollback = true;
+            }
+            // Nothing taken or sent: Devices & sync asks the person.
+            Ok(Round::Unverified) | Err(SyncError::Store(StoreError::SpaceState(_))) => {
+                round.unverified = true;
+                return Ok(round);
+            }
+            Err(e) => return Err(e.into()),
+            // Nothing taken or sent, and nothing forgotten: Devices & sync
+            // says who did it, and the person links this device again or
+            // turns sync off here.
+            Ok(Round::Unlinked(_)) => {
                 round.unlinked = true;
                 return Ok(round);
             }
-            Round::Moved(_) => {
+            Ok(Round::Moved(_)) => {
                 return Err(EngineError::new(
                     ErrorKind::NoSpace,
                     "the space moved twice",
                 ))
             }
-            Round::Same(space, seen) | Round::Pushed(space, seen) => remember(&space, &seen)?,
-            Round::Took(space, passwords, gone) => {
-                for id in gone {
-                    // The space's own mailbox stays while sync is on.
-                    if account(id)?.email.eq_ignore_ascii_case(&mailbox) {
-                        continue;
-                    }
+            Ok(Round::Newer) => round.outdated = true,
+            Ok(Round::Conflict(_)) => {
+                round.conflict = true;
+                return Ok(round);
+            }
+            Ok(Round::Done(report)) => {
+                // Removed on another device and confirmed by the merged
+                // state, with nothing waiting to leave with it here.
+                for id in &report.applied.remove {
                     remove_account(id.0)?;
                     round.removed.push(id.0);
                 }
-                round.keep = took(passwords, &space)?;
-                round.took = true;
-                let seen = space_sync::seen(store, self::passwords()?, &me, &space)?;
-                remember(&space, &seen)?;
+                round.took = report.applied.took || !round.removed.is_empty();
+                round.keep = took(report.applied.secrets)?;
+                round.held = report.applied.held.into_iter().map(Into::into).collect();
+                round.rollback = report.refused > 0;
+                round.outdated = report.outdated;
+                remember(&report.space)?;
             }
         }
-        round.requests = asks(space_sync::requests(&mut imap).await?);
+        round.requests = asks(space_sync::requests(&mut Folder::new(&mut imap, &mailbox)).await?);
         Ok(round)
+    })
+    .await
+}
+
+/// "Remove it here too": an account another device removed, which waited
+/// here for mail, drafts or changes still to go, is removed now.
+pub async fn sync_confirm_removal(account_id: i64) -> Result<(), EngineError> {
+    run(async move {
+        space_sync::confirm_removal(&engine()?.store, AccountId(account_id))?;
+        remove_account(account_id)
+    })
+    .await
+}
+
+/// "Keep it": an account another device removed stays, and comes back on
+/// the other devices with the next round.
+pub async fn sync_keep_account(account_id: i64) -> Result<(), EngineError> {
+    run(async move {
+        Ok(space_sync::keep_account(
+            &engine()?.store,
+            AccountId(account_id),
+        )?)
     })
     .await
 }
@@ -493,8 +708,10 @@ pub async fn sync_now() -> Result<SyncRound, EngineError> {
 /// Who is asking to be linked, newest first.
 pub async fn sync_requests() -> Result<Vec<PairAsk>, EngineError> {
     run(async move {
-        let (mut imap, _) = home().await?;
-        Ok(asks(space_sync::requests(&mut imap).await?))
+        let (mut imap, mailbox) = home().await?;
+        Ok(asks(
+            space_sync::requests(&mut Folder::new(&mut imap, &mailbox)).await?,
+        ))
     })
     .await
 }
@@ -505,7 +722,14 @@ pub async fn sync_approve(request_id: String, code: String) -> Result<(), Engine
         let me = me()?;
         let (mut imap, mailbox) = home().await?;
         let code: String = code.chars().filter(char::is_ascii_digit).collect();
-        space_sync::approve_waiting(&mut imap, &mailbox, &request_id, &code, &me).await?;
+        space_sync::approve_waiting(
+            &mut Folder::new(&mut imap, &mailbox),
+            &engine()?.store,
+            &request_id,
+            &code,
+            &me,
+        )
+        .await?;
         Ok(())
     })
     .await
@@ -515,26 +739,39 @@ pub async fn sync_approve(request_id: String, code: String) -> Result<(), Engine
 pub async fn sync_refuse(request_id: String) -> Result<(), EngineError> {
     run(async move {
         let (mut imap, mailbox) = home().await?;
-        space_sync::refuse(&mut imap, &mailbox, &request_id).await?;
+        space_sync::refuse(&mut Folder::new(&mut imap, &mailbox), &request_id).await?;
         Ok(())
     })
     .await
 }
 
-/// Unlinks a device. Returns the new recovery phrase: the old one opens
-/// the space no more.
-pub async fn sync_unlink(device_id: String) -> Result<String, EngineError> {
+/// Unlinks a device. Returns the new recovery phrase (the old one opens
+/// the space no more) and the mailboxes whose passwords the device still
+/// knows: a new key keeps it out of the space, not out of the mailboxes.
+pub async fn sync_unlink(device_id: String) -> Result<UnlinkResult, EngineError> {
     run(async move {
         let me = me()?;
         let (mut imap, mailbox) = home().await?;
-        let recovery = space_sync::unlink(&mut imap, &mailbox, &device_id, &me).await?;
-        let store = &engine()?.store;
-        let space = space_sync::open(&mut imap, &me).await?;
-        let seen = space_sync::seen(store, passwords()?, &me, &space)?;
-        remember(&space, &seen)?;
-        Ok(recovery.phrase())
+        let done = space_sync::unlink(
+            &mut Folder::new(&mut imap, &mailbox),
+            &engine()?.store,
+            &device_id,
+            &me,
+        )
+        .await?;
+        remember(&done.space)?;
+        Ok(UnlinkResult {
+            phrase: done.recovery.phrase(),
+            exposed: done.exposed,
+        })
     })
     .await
+}
+
+/// "I changed them": the passwords an unlinked device knew were changed,
+/// and Devices & sync stops asking.
+pub async fn sync_exposed_done() -> Result<(), EngineError> {
+    run(async move { Ok(space_sync::exposed_done(&engine()?.store)?) }).await
 }
 
 /// "Turn off sync on this device": leaves the space and stops syncing
@@ -544,7 +781,7 @@ pub async fn sync_turn_off() -> Result<(), EngineError> {
     run(async move {
         let me = me()?;
         let (mut imap, mailbox) = home().await?;
-        space_sync::leave(&mut imap, &mailbox, &me).await?;
+        space_sync::leave(&mut Folder::new(&mut imap, &mailbox), &engine()?.store, &me).await?;
         off()
     })
     .await
@@ -554,8 +791,10 @@ pub async fn sync_turn_off() -> Result<(), EngineError> {
 pub async fn sync_phrase() -> Result<String, EngineError> {
     run(async move {
         let me = me()?;
-        let (mut imap, _) = home().await?;
-        let space = space_sync::open(&mut imap, &me).await?;
+        let (mut imap, mailbox) = home().await?;
+        let store = &engine()?.store;
+        let space = space_sync::open(&mut Folder::new(&mut imap, &mailbox), store, &me).await?;
+        space_sync::recovery_seen(store)?;
         space
             .recovery()
             .map(|k| k.phrase())
@@ -570,7 +809,8 @@ pub async fn sync_found(account_id: i64) -> Result<Option<SpaceFound>, EngineErr
     let account = account(AccountId(account_id))?;
     run(async move {
         let mut imap = connect(&account).await?;
-        Ok(space_sync::about(&mut imap).await?.map(|a| SpaceFound {
+        let mut folder = Folder::new(&mut imap, &account.email);
+        Ok(space_sync::about(&mut folder).await?.map(|a| SpaceFound {
             accounts: a.accounts as u32,
             groups: a.groups as u32,
             signatures: a.signatures as u32,
@@ -605,16 +845,11 @@ pub fn sync_phrase_valid(phrase: String) -> bool {
 }
 
 /// After a pairing or the recovery phrase: this device is in.
-fn joined(
-    mailbox: &str,
-    space: &space::Space,
-    passwords: Vec<(AccountId, String)>,
-    me: &Me,
-) -> Result<Joined, EngineError> {
-    let keep = took(passwords, space)?;
-    let seen = space_sync::seen(&engine()?.store, self::passwords()?, me, space)?;
+fn joined(mailbox: &str, report: space_sync::Report) -> Result<Joined, EngineError> {
+    let keep = took(report.applied.secrets)?;
     set(HOME, mailbox)?;
-    remember(space, &seen)?;
+    store()?.remove_setting(SEEN)?;
+    remember(&report.space)?;
     Ok(Joined { keep })
 }
 
@@ -639,22 +874,24 @@ async fn join(account_id: i64, code: String, qr: bool) -> Result<Joined, EngineE
     let task = engine()?.runtime.spawn(async move {
         let me = me()?;
         let mut imap = connect(&account).await?;
+        let mut folder = Folder::new(&mut imap, &account.email);
         let pairing: Pairing = if qr {
-            space_sync::request_qr(&mut imap, &account.email, &code, &me).await?
+            space_sync::request_qr(&mut folder, &code, &me).await?
         } else {
-            space_sync::request(&mut imap, &account.email, &code, &me).await?
+            space_sync::request(&mut folder, &code, &me).await?
         };
         let store = &engine()?.store;
-        let (space, passwords) = space_sync::join(
-            &mut imap,
-            &account.email,
+        let report = space_sync::join(
+            &mut folder,
             pairing,
             store,
+            passwords()?,
             &me,
+            Some(&account.email),
             Duration::from_secs(2),
         )
         .await?;
-        joined(&account.email, &space, passwords, &me)
+        joined(&account.email, report)
     });
     *JOINING.lock().unwrap_or_else(|e| e.into_inner()) = Some(task.abort_handle());
     let result = task.await;
@@ -682,9 +919,16 @@ pub async fn sync_recover(account_id: i64, phrase: String) -> Result<Joined, Eng
         let me = me()?;
         let mut imap = connect(&account).await?;
         let store = &engine()?.store;
-        let (space, passwords) =
-            space_sync::recover(&mut imap, &account.email, &phrase, store, &me).await?;
-        joined(&account.email, &space, passwords, &me)
+        let report = space_sync::recover(
+            &mut Folder::new(&mut imap, &account.email),
+            &phrase,
+            store,
+            passwords()?,
+            &me,
+            Some(&account.email),
+        )
+        .await?;
+        joined(&account.email, report)
     })
     .await
 }
@@ -764,7 +1008,13 @@ pub async fn sync_answer_invite() -> Result<Vec<String>, EngineError> {
     run(async move {
         let me = me()?;
         let (mut imap, mailbox) = home().await?;
-        Ok(space_sync::answer_invite(&mut imap, &mailbox, &codes, &me).await?)
+        Ok(space_sync::answer_invite(
+            &mut Folder::new(&mut imap, &mailbox),
+            &engine()?.store,
+            &codes,
+            &me,
+        )
+        .await?)
     })
     .await
 }
@@ -786,8 +1036,40 @@ pub fn sync_read_code(
     })
 }
 
+/// Where a scanned invite signs in, shown before the password is typed.
+#[derive(Debug, Clone)]
+pub struct InviteServer {
+    /// The host the password goes to.
+    pub host: String,
+    /// It comes from the code itself, not from the address's own known or
+    /// published settings: the person checks it.
+    pub from_invite: bool,
+}
+
+/// The servers resolved for the last invite looked at, by its link, so
+/// the sign-in uses what the person saw.
+static RESOLVED: Mutex<Option<(String, AccountKind)>> = Mutex::new(None);
+
+/// Where a scanned invite would sign in: the address's own settings when
+/// it has known or published ones, the code's otherwise.
+pub async fn sync_invite_server(link: String) -> Result<InviteServer, EngineError> {
+    let invite = Invite::from_link(&link)
+        .ok_or_else(|| EngineError::new(ErrorKind::WrongCode, "not an invite"))?;
+    let resolved = engine()?
+        .runtime
+        .spawn(async move { pair_qr::resolve(&invite).await })
+        .await
+        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
+    let server = InviteServer {
+        host: resolved.host(),
+        from_invite: resolved.from_invite,
+    };
+    *RESOLVED.lock().unwrap_or_else(|e| e.into_inner()) = Some((link, resolved.kind));
+    Ok(server)
+}
+
 /// On a new phone: signs in to the mailbox a scanned invite names, with
-/// the settings it carries, and adds the account.
+/// the servers [sync_invite_server] showed, and adds the account.
 pub async fn sync_add_invite_account(
     link: String,
     name: String,
@@ -796,13 +1078,31 @@ pub async fn sync_add_invite_account(
 ) -> Result<AccountInfo, EngineError> {
     let invite = Invite::from_link(&link)
         .ok_or_else(|| EngineError::new(ErrorKind::WrongCode, "not an invite"))?;
+    let shown = RESOLVED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .filter(|(l, _)| *l == link)
+        .map(|(_, kind)| kind);
+    let kind = match shown {
+        Some(kind) => kind,
+        None => {
+            let i = invite.clone();
+            engine()?
+                .runtime
+                .spawn(async move { pair_qr::resolve(&i).await })
+                .await
+                .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
+                .kind
+        }
+    };
     let account = Account {
         id: AccountId(0),
         name,
         email: invite.email,
         sender_name: String::new(),
         color,
-        kind: invite.kind,
+        kind,
     };
     add_checked_account(account, password, Vec::new()).await
 }

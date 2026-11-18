@@ -298,6 +298,11 @@ pub struct Vacation {
     pub text: String,
 }
 
+/// One note of the sync space; bigger ones are skipped.
+const SPACE_NOTE_MAX: u64 = 16 * 1024 * 1024;
+/// Every note of the sync space, read in one round.
+const SPACE_NOTES_BUDGET: u64 = 64 * 1024 * 1024;
+
 /// A logged-in JMAP account.
 pub struct Client {
     http: reqwest::Client,
@@ -1472,11 +1477,19 @@ impl Client {
         };
         let ids = self.query_ids(&folder).await?;
         let mut found: HashMap<String, crate::space::Note> = HashMap::new();
+        // As over IMAP: no note over 16 MiB, 64 MiB for all of them, the
+        // newest first (the server lists newest first).
+        let mut total: u64 = 0;
         for chunk in ids.chunks(self.max_get) {
-            for e in self.get_emails(chunk, &["id", "blobId"]).await? {
+            for e in self.get_emails(chunk, &["id", "blobId", "size"]).await? {
                 let (Some(id), Some(blob)) = (email_id(&e), e["blobId"].as_str()) else {
                     continue;
                 };
+                let size = e["size"].as_u64().unwrap_or(u64::MAX);
+                if size > SPACE_NOTE_MAX || total + size > SPACE_NOTES_BUDGET {
+                    continue;
+                }
+                total += size;
                 let raw = match self.download(blob).await {
                     Err(JmapError::Gone) => continue,
                     r => r?,
