@@ -31,6 +31,7 @@ pub mod pec;
 pub mod pending;
 pub mod pictures;
 pub mod preview;
+pub mod private_files;
 pub mod reading;
 pub mod remote;
 pub mod rich;

@@ -2101,6 +2101,11 @@ abstract class MailSource {
   /// Every email with a label, newest first, wherever it is.
   Future<List<MailRow>> labelled(String keyword);
 
+  /// How many emails [labelled] lists: the list asks for its rows a page
+  /// at a time, since a label the server keeps can hold tens of thousands.
+  Future<int> labelledCount(String keyword) async =>
+      (await labelled(keyword)).length;
+
   /// The account's server keeps no labels: they stay on this device.
   bool labelsLocal(int accountId) => false;
 
@@ -2350,6 +2355,21 @@ abstract class MailSource {
   /// Removes an account and its mail from this device; the mail stays on
   /// the server.
   Future<void> removeAccount(int accountId);
+
+  /// How many messages written in an account would be lost with it: in the
+  /// outbox, not sent yet, or drafts waiting on this device.
+  Future<int> unsentMail(int accountId) async => 0;
+
+  /// How much room the mail takes on this device (Settings › Storage).
+  Future<StorageUse> storage() async => const StorageUse();
+
+  /// Keeps whole messages for reading offline for [days] days; null keeps
+  /// them for good. Older ones are downloaded again when opened.
+  Future<void> setKeepDays(int? days) async {}
+
+  /// Removes the whole messages and pictures kept for reading offline of
+  /// an account from this device; the mail stays on the server.
+  Future<StorageUse> clearCachedMail(int accountId) => storage();
 
   /// "Tell me when it can't sign in", on unless turned off.
   Future<bool> signInAlert(int accountId);
@@ -2838,4 +2858,38 @@ class SenderWarning {
   /// For Details: whose signature passed, and the server that sent it.
   final String? signedBy;
   final String? sentBy;
+}
+
+/// How much room the mail takes on this device (Settings › Storage).
+@immutable
+class StorageUse {
+  const StorageUse({
+    this.totalBytes = 0,
+    this.accounts = const [],
+    this.keepDays = 90,
+  });
+
+  /// The whole database on disk.
+  final int totalBytes;
+  final List<AccountStorage> accounts;
+
+  /// Days whole messages are kept for reading offline; null: always.
+  final int? keepDays;
+}
+
+/// One account's part of [StorageUse].
+@immutable
+class AccountStorage {
+  const AccountStorage({
+    required this.accountId,
+    required this.messages,
+    required this.cachedBytes,
+  });
+
+  final int accountId;
+  final int messages;
+
+  /// Whole messages and pictures kept for reading offline: what clearing
+  /// the cache gives back.
+  final int cachedBytes;
 }

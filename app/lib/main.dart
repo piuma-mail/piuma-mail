@@ -24,6 +24,7 @@ import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
+import 'updating.dart';
 
 Future<void> main(List<String> args) async {
   // A message opened in a window of its own: [window id, its argument].
@@ -38,7 +39,12 @@ Future<void> main(List<String> args) async {
   // First: the installer's hooks end here, and a downloaded update
   // restarts into itself before the engine opens.
   Updates.start(dir.path);
-  engine.openEngine(dbPath: '${dir.path}/piuma.db');
+  // Off the thread that draws: after an update the database is brought
+  // up to date first, with "Updating your mail" on screen if it is slow.
+  await openEngineShowingUpdate(
+    '${dir.path}/piuma.db',
+    show: (screen) => runApp(PiumaApp(home: (_, _) => screen)),
+  );
   _keepCrashes();
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();

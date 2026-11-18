@@ -9,7 +9,7 @@ import 'engine.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `account`, `alert_key`, `server`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`
 
 AccountServers accountServers({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiAccountsAccountServers(accountId: accountId);
@@ -37,9 +37,16 @@ Future<void> setAccountServers({
   servers: servers,
 );
 
+/// [`UnsentMail`] of an account, asked before removing it.
+Future<UnsentMail> accountUnsent({required PlatformInt64 accountId}) =>
+    RustLib.instance.api.crateApiAccountsAccountUnsent(accountId: accountId);
+
 /// Removes an account from this device: its mail here, its password and
-/// the calendars that used it. Its mail stays on the server.
-void removeAccount({required PlatformInt64 accountId}) =>
+/// the calendars that used it. Its mail stays on the server. The account
+/// leaves every list at once; its messages are removed in the background,
+/// a few thousand at a time (and the removal goes on at the next start if
+/// the app stops first), so nothing waits on it.
+Future<void> removeAccount({required PlatformInt64 accountId}) =>
     RustLib.instance.api.crateApiAccountsRemoveAccount(accountId: accountId);
 
 /// "Tell me when it can't sign in": on unless turned off.
@@ -86,4 +93,24 @@ class AccountServers {
           smtp == other.smtp &&
           username == other.username &&
           jmapUrl == other.jmapUrl;
+}
+
+/// What removing an account would lose for good: messages written here
+/// that haven't gone yet, and drafts waiting on this device.
+class UnsentMail {
+  final int outbox;
+  final int drafts;
+
+  const UnsentMail({required this.outbox, required this.drafts});
+
+  @override
+  int get hashCode => outbox.hashCode ^ drafts.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is UnsentMail &&
+          runtimeType == other.runtimeType &&
+          outbox == other.outbox &&
+          drafts == other.drafts;
 }

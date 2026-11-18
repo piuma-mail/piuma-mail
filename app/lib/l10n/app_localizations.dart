@@ -5152,6 +5152,108 @@ abstract class AppLocalizations {
   /// **'Remove'**
   String get accountRemoveConfirm;
 
+  /// No description provided for @accountRemoveUnsent.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 message written here hasn\'t been sent yet and will be lost.} other{{count} messages written here haven\'t been sent yet and will be lost.}}'**
+  String accountRemoveUnsent(int count);
+
+  /// No description provided for @updatingMail.
+  ///
+  /// In en, this message translates to:
+  /// **'Updating your mail'**
+  String get updatingMail;
+
+  /// No description provided for @updatingMailNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma was updated and is getting your mail ready. It only happens once, and closing the app meanwhile loses nothing.'**
+  String get updatingMailNote;
+
+  /// No description provided for @storageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage'**
+  String get storageTitle;
+
+  /// No description provided for @storageSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The mail kept on this device. Everything stays on the server.'**
+  String get storageSubtitle;
+
+  /// No description provided for @storageTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} on this device'**
+  String storageTotal(String size);
+
+  /// No description provided for @storageAccountLine.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 email} other{{count} emails}} · {size} kept for reading offline'**
+  String storageAccountLine(int count, String size);
+
+  /// No description provided for @storageClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear cached mail'**
+  String get storageClear;
+
+  /// No description provided for @storageClearing.
+  ///
+  /// In en, this message translates to:
+  /// **'Clearing…'**
+  String get storageClearing;
+
+  /// No description provided for @storageClearTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the cached mail of {name}?'**
+  String storageClearTitle(String name);
+
+  /// No description provided for @storageClearNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, the mail stays on the server, and a message is downloaded again when you open it.'**
+  String get storageClearNote;
+
+  /// No description provided for @storageKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep whole messages for reading offline'**
+  String get storageKeep;
+
+  /// No description provided for @storageKeepHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Older ones are downloaded again when you open them.'**
+  String get storageKeepHint;
+
+  /// No description provided for @storageKeepMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'1 month'**
+  String get storageKeepMonth;
+
+  /// No description provided for @storageKeepMonths.
+  ///
+  /// In en, this message translates to:
+  /// **'3 months'**
+  String get storageKeepMonths;
+
+  /// No description provided for @storageKeepYear.
+  ///
+  /// In en, this message translates to:
+  /// **'1 year'**
+  String get storageKeepYear;
+
+  /// No description provided for @storageKeepAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always'**
+  String get storageKeepAlways;
+
   /// No description provided for @accountServersTitle.
   ///
   /// In en, this message translates to:

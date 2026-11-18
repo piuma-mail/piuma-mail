@@ -122,9 +122,25 @@ pub async fn set_account_servers(
     watch_account(a)
 }
 
+/// What removing an account would lose for good: messages written here
+/// that haven't gone yet, and drafts waiting on this device.
+#[derive(Debug, Clone, Copy)]
+pub struct UnsentMail {
+    pub outbox: u32,
+    pub drafts: u32,
+}
+
+/// [`UnsentMail`] of an account, asked before removing it.
+pub fn account_unsent(account_id: i64) -> Result<UnsentMail, EngineError> {
+    let (outbox, drafts) = reader()?.unsent(AccountId(account_id))?;
+    Ok(UnsentMail { outbox, drafts })
+}
+
 /// Removes an account from this device: its mail here, its password and
-/// the calendars that used it. Its mail stays on the server.
-#[frb(sync)]
+/// the calendars that used it. Its mail stays on the server. The account
+/// leaves every list at once; its messages are removed in the background,
+/// a few thousand at a time (and the removal goes on at the next start if
+/// the app stops first), so nothing waits on it.
 pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
     let id = AccountId(account_id);
     stop_watching(id);
@@ -139,12 +155,13 @@ pub fn remove_account(account_id: i64) -> Result<(), EngineError> {
         disconnect_calendar(source)?;
     }
     let store = store()?;
-    store.remove_account(id)?;
+    store.start_removing_account(id)?;
     // An account added later may get the same id.
     store.set_setting(&alert_key(account_id), "")?;
     store.set_setting(&format!("sign_in.told.{account_id}"), "")?;
     drop(store);
     credentials::forget(id);
+    super::engine::kick_maintenance();
     Ok(())
 }
 

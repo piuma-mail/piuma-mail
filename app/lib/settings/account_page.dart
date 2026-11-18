@@ -201,6 +201,9 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _remove() async {
+    // What would be lost with it: said before asking.
+    final unsent = await widget.source.unsentMail(_account.id);
+    if (!mounted) return;
     final l = AppLocalizations.of(context);
     final c = PiumaTheme.of(context);
     final title = l.accountRemoveTitle(_account.name);
@@ -226,6 +229,13 @@ class _AccountPageState extends State<AccountPage> {
                 l.accountRemoveNote,
                 style: PiumaType.body.copyWith(color: c.muted),
               ),
+              if (unsent > 0) ...[
+                const SizedBox(height: PiumaSpace.s8),
+                Text(
+                  l.accountRemoveUnsent(unsent),
+                  style: PiumaType.body.copyWith(color: c.danger),
+                ),
+              ],
               const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,

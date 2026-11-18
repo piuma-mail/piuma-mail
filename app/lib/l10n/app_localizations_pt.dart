@@ -3342,6 +3342,82 @@ class AppLocalizationsPt extends AppLocalizations {
   String get accountRemoveConfirm => 'Remover';
 
   @override
+  String accountRemoveUnsent(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count mensagens escritas aqui ainda não foram enviadas e serão perdidas.',
+      one: '1 mensagem escrita aqui ainda não foi enviada e será perdida.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get updatingMail => 'Atualizando seu e-mail';
+
+  @override
+  String get updatingMailNote =>
+      'O Piuma foi atualizado e está preparando seu e-mail. Só acontece uma vez, e fechar o app enquanto isso não faz perder nada.';
+
+  @override
+  String get storageTitle => 'Armazenamento';
+
+  @override
+  String get storageSubtitle =>
+      'O e-mail guardado neste dispositivo. No servidor fica tudo.';
+
+  @override
+  String storageTotal(String size) {
+    return '$size neste dispositivo';
+  }
+
+  @override
+  String storageAccountLine(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count e-mails',
+      one: '1 e-mail',
+    );
+    return '$_temp0 · $size guardados para ler offline';
+  }
+
+  @override
+  String get storageClear => 'Limpar o e-mail em cache';
+
+  @override
+  String get storageClearing => 'Limpando…';
+
+  @override
+  String storageClearTitle(String name) {
+    return 'Limpar o e-mail em cache de $name?';
+  }
+
+  @override
+  String get storageClearNote =>
+      'As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre.';
+
+  @override
+  String get storageKeep => 'Guardar as mensagens completas para ler offline';
+
+  @override
+  String get storageKeepHint =>
+      'As mais antigas são baixadas de novo quando você as abre.';
+
+  @override
+  String get storageKeepMonth => '1 mês';
+
+  @override
+  String get storageKeepMonths => '3 meses';
+
+  @override
+  String get storageKeepYear => '1 ano';
+
+  @override
+  String get storageKeepAlways => 'Sempre';
+
+  @override
   String get accountServersTitle => 'Servidores';
 
   @override

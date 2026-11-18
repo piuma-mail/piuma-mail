@@ -8,13 +8,18 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `kick_maintenance`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `person_info`, `put_away`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_draft`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `start_maintenance`, `stop_watching`, `store`, `switch`, `to_core`, `to_core`, `translator`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
-/// Opens (or creates) the local database. Call once at startup.
-void openEngine({required String dbPath}) =>
+/// Opens (or creates) the local database. Call once at startup, and wait
+/// for it: when the app was updated, the database is copied
+/// (`piuma.db.before-update`) and its schema brought up to date first,
+/// which on a big mailbox takes a while ("Updating your mail"). Work on
+/// many messages is then done in the background, a step at a time
+/// ([`Store::maintain`]).
+Future<void> openEngine({required String dbPath}) =>
     RustLib.instance.api.crateApiEngineOpenEngine(dbPath: dbPath);
 
 /// Whether `from`→`to` translates on this device with Firefox's models:
@@ -548,8 +553,9 @@ Future<OutgoingMessage> openDraft({required MessageRef draft}) =>
     RustLib.instance.api.crateApiEngineOpenDraft(draft: draft);
 
 /// Hides a message from the lists while its action can be undone, or
-/// shows it again after Undo.
-void setMessageHidden({
+/// shows it again after Undo. Not on the thread that draws: a sync writing
+/// a batch holds the database for a moment.
+Future<void> setMessageHidden({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,

@@ -14,6 +14,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../version.dart';
 import '../widgets/button.dart';
+import '../widgets/dialog.dart';
 import '../widgets/segments.dart';
 import '../widgets/switch.dart';
 import '../widgets/verified.dart';
@@ -52,6 +53,9 @@ enum SettingsSection {
   appearance,
   notifications,
   privacy,
+
+  /// Room the mail takes here, how long whole messages stay, clearing it.
+  storage,
   sync,
 
   /// Desktop only: phones have no keyboard to speak of.
@@ -319,6 +323,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   phone: true,
                 ),
                 SettingsSection.privacy => PrivacyPage(source: widget.source),
+                SettingsSection.storage => StoragePage(
+                  source: widget.source,
+                  phone: true,
+                ),
                 SettingsSection.help => HelpPage(
                   source: widget.source,
                   now: widget.now,
@@ -461,6 +469,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         PiumaIcon.shield,
                         l.privacyTitle,
                       ),
+                      (
+                        null,
+                        SettingsSection.storage,
+                        PiumaIcon.layers,
+                        l.storageTitle,
+                      ),
                       (null, SettingsSection.sync, PiumaIcon.sync, l.syncTitle),
                       (
                         null,
@@ -593,6 +607,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               zones: ZoneSwitches(source: widget.source),
                             ),
                             SettingsSection.privacy => PrivacyPage(
+                              source: widget.source,
+                            ),
+                            SettingsSection.storage => StoragePage(
                               source: widget.source,
                             ),
                             SettingsSection.shortcuts => const ShortcutsPage(),
@@ -921,6 +938,7 @@ class _PhoneList extends StatelessWidget {
             () => onOpen(SettingsSection.notifications),
           ),
           row(l.privacyTitle, null, () => onOpen(SettingsSection.privacy)),
+          row(l.storageTitle, null, () => onOpen(SettingsSection.storage)),
           row(l.syncTitle, sync, () => onOpen(SettingsSection.sync)),
         ]),
         heading(l.settingsAbout),
@@ -1339,6 +1357,224 @@ class _AccountRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Settings › Storage: how much room the mail takes on this device, per
+/// account with "Clear cached mail", and how long whole messages are kept
+/// for reading offline. Built from the Privacy page's parts until the
+/// canvas has a screen for it.
+class StoragePage extends StatefulWidget {
+  const StoragePage({super.key, required this.source, this.phone = false});
+  final MailSource source;
+  final bool phone;
+
+  @override
+  State<StoragePage> createState() => _StoragePageState();
+}
+
+class _StoragePageState extends State<StoragePage> {
+  StorageUse? _use;
+
+  /// The account whose cache is being cleared.
+  int? _clearing;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.source.storage().then((use) {
+      if (mounted) setState(() => _use = use);
+    });
+  }
+
+  Future<void> _keep(int? days) async {
+    final use = _use;
+    if (use == null) return;
+    setState(
+      () => _use = StorageUse(
+        totalBytes: use.totalBytes,
+        accounts: use.accounts,
+        keepDays: days,
+      ),
+    );
+    await widget.source.setKeepDays(days);
+  }
+
+  Future<void> _clear(MailAccount account) async {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final title = l.storageClearTitle(account.name);
+    Widget panel(BuildContext context) => Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.phone ? PiumaSpace.s20 : 0,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: PiumaType.body.copyWith(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: c.fg,
+            ),
+          ),
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            l.storageClearNote,
+            style: PiumaType.body.copyWith(color: c.muted),
+          ),
+          const SizedBox(height: PiumaSpace.s20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              PiumaButton(
+                label: l.cancel,
+                kind: PiumaButtonKind.tertiary,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: PiumaSpace.s8),
+              PiumaButton(
+                label: l.storageClear,
+                kind: PiumaButtonKind.danger,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final yes = widget.phone
+        ? await showPiumaSheet<bool>(context, label: title, builder: panel)
+        : await showPiumaDialog<bool>(context, label: title, builder: panel);
+    if (yes != true || !mounted) return;
+    setState(() => _clearing = account.id);
+    try {
+      final use = await widget.source.clearCachedMail(account.id);
+      if (mounted) setState(() => _use = use);
+    } finally {
+      if (mounted) setState(() => _clearing = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    final use = _use;
+    String size(int bytes) => fileSize(bytes, locale: locale);
+    final hint = PiumaType.small.copyWith(color: c.muted);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SettingsHeader(title: l.storageTitle, subtitle: l.storageSubtitle),
+        const SizedBox(height: 28),
+        if (use != null) ...[
+          Text(
+            l.storageTotal(size(use.totalBytes)),
+            style: PiumaType.body.copyWith(color: c.fg),
+          ),
+          const SizedBox(height: PiumaSpace.s12),
+          _Card(
+            children: [
+              for (final a in use.accounts)
+                if (widget.source.accounts
+                        .where((m) => m.id == a.accountId)
+                        .firstOrNull
+                    case final account?)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: account.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                account.name,
+                                style: PiumaType.body.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: c.fg,
+                                ),
+                              ),
+                              Text(
+                                l.storageAccountLine(
+                                  a.messages,
+                                  size(a.cachedBytes),
+                                ),
+                                style: hint,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: PiumaSpace.s12),
+                        PiumaButton(
+                          label: _clearing == a.accountId
+                              ? l.storageClearing
+                              : l.storageClear,
+                          kind: PiumaButtonKind.secondary,
+                          size: PiumaButtonSize.compact,
+                          onPressed: _clearing != null || a.cachedBytes == 0
+                              ? null
+                              : () => _clear(account),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+          const SizedBox(height: 28),
+          _Card(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l.storageKeep,
+                      style: PiumaType.body.copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: c.fg,
+                      ),
+                    ),
+                    Text(l.storageKeepHint, style: hint),
+                    const SizedBox(height: PiumaSpace.s12),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: PiumaSegments(
+                        label: l.storageKeep,
+                        items: [
+                          for (final (days, text) in [
+                            (30, l.storageKeepMonth),
+                            (90, l.storageKeepMonths),
+                            (365, l.storageKeepYear),
+                            (null, l.storageKeepAlways),
+                          ])
+                            (text, use.keepDays == days, () => _keep(days)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

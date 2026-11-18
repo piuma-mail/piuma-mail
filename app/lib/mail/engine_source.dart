@@ -21,6 +21,7 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/storage.dart' as store;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
@@ -739,7 +740,14 @@ class EngineMailSource extends MailSource {
     GroupScope? group,
   }) async {
     if (folder == MailFolder.label) {
-      return (await labelled(mailbox ?? '')).skip(offset).take(limit).toList();
+      return [
+        for (final r in await lbl.labelledPage(
+          keyword: mailbox ?? '',
+          offset: offset,
+          limit: limit,
+        ))
+          _row(r),
+      ];
     }
     if (account != null && mailbox != null) {
       final rows = await engine.mailboxPage(
@@ -999,6 +1007,39 @@ class EngineMailSource extends MailSource {
   Future<List<MailRow>> labelled(String keyword) async => [
     for (final r in await lbl.labelled(keyword: keyword)) _row(r),
   ];
+
+  @override
+  Future<int> labelledCount(String keyword) =>
+      lbl.labelledCount(keyword: keyword);
+
+  @override
+  Future<int> unsentMail(int accountId) async {
+    final u = await acc.accountUnsent(accountId: accountId);
+    return u.outbox + u.drafts;
+  }
+
+  @override
+  Future<StorageUse> storage() async => _storage(await store.storageInfo());
+
+  @override
+  Future<void> setKeepDays(int? days) => store.setKeepDays(days: days);
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async =>
+      _storage(await store.clearCachedMail(accountId: accountId));
+
+  static StorageUse _storage(store.StorageInfo s) => StorageUse(
+    totalBytes: s.totalBytes,
+    keepDays: s.keepDays,
+    accounts: [
+      for (final a in s.accounts)
+        AccountStorage(
+          accountId: a.accountId,
+          messages: a.messages,
+          cachedBytes: a.cachedBytes,
+        ),
+    ],
+  );
 
   @override
   bool labelsLocal(int accountId) => lbl.labelsLocal(accountId: accountId);
@@ -2155,7 +2196,8 @@ class EngineMailSource extends MailSource {
 
   @override
   Future<void> removeAccount(int accountId) async {
-    acc.removeAccount(accountId: accountId);
+    // Leaves the lists at once; its mail goes in the background.
+    await acc.removeAccount(accountId: accountId);
     await AndroidPasswords.forget(accountId);
     _forgetStatus(accountId);
     _reloadAccounts();
@@ -2297,15 +2339,17 @@ class EngineMailSource extends MailSource {
 
   @override
   void setHidden(MailRow row, bool hidden) {
-    for (final c in row.actionCopies) {
-      engine.setMessageHidden(
-        accountId: c.accountId,
-        mailbox: c.mailbox,
-        uid: c.uid,
-        hidden: hidden,
-      );
-    }
-    _changes.add(null);
+    // Off the thread that draws: a sync writing a batch holds the
+    // database for a moment. The lists read again once it is written.
+    Future.wait([
+      for (final c in row.actionCopies)
+        engine.setMessageHidden(
+          accountId: c.accountId,
+          mailbox: c.mailbox,
+          uid: c.uid,
+          hidden: hidden,
+        ),
+    ]).whenComplete(() => _changes.add(null)).ignore();
   }
 
   @override

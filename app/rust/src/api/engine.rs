@@ -462,14 +462,22 @@ pub fn init_app() {
     });
 }
 
-/// Opens (or creates) the local database. Call once at startup.
-#[frb(sync)]
+/// Opens (or creates) the local database. Call once at startup, and wait
+/// for it: when the app was updated, the database is copied
+/// (`piuma.db.before-update`) and its schema brought up to date first,
+/// which on a big mailbox takes a while ("Updating your mail"). Work on
+/// many messages is then done in the background, a step at a time
+/// ([`Store::maintain`]).
 pub fn open_engine(db_path: String) -> Result<(), EngineError> {
     if ENGINE.get().is_some() {
         return Ok(());
     }
     piuma_core::tls::use_one_crypto_provider();
-    let store = Store::open(&db_path)?;
+    let store = if db_path == ":memory:" {
+        Store::open(&db_path)?
+    } else {
+        Store::open_file(&db_path)?.0
+    };
     // Actions still inside their Undo window when the app quit never
     // happened: show those messages again.
     store.unhide_all()?;
@@ -494,7 +502,63 @@ pub fn open_engine(db_path: String) -> Result<(), EngineError> {
         .unwrap_or_else(|| "translation".into());
     let _ = TRANSLATOR.set(piuma_core::translate::Translator::new(models));
     super::feedback::opened(&db_path);
+    start_maintenance();
     Ok(())
+}
+
+/// The thread that does the database's background work: the rest of an
+/// account being removed, jobs left by an update, letting go of old
+/// whole messages once a day. One short write per step, so syncs and taps
+/// get the database in between.
+static MAINTENANCE: OnceLock<std::thread::Thread> = OnceLock::new();
+
+/// How long the background work rests between steps...
+const MAINTENANCE_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
+/// ...and how often it looks for old whole messages to let go of.
+const CLEAN_UP_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+fn start_maintenance() {
+    if MAINTENANCE.get().is_some() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("piuma-maintenance".into())
+        .spawn(|| {
+            // The first look a minute after starting, out of the way.
+            let mut clean_up_at = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                if std::time::Instant::now() >= clean_up_at {
+                    clean_up_at = std::time::Instant::now() + CLEAN_UP_EVERY;
+                    if let Ok(store) = store() {
+                        let _ = store.queue_body_clean_up(now_secs());
+                    }
+                }
+                let more = match store() {
+                    Ok(mut store) => store.maintain().unwrap_or(false),
+                    Err(_) => false,
+                };
+                if more {
+                    std::thread::sleep(MAINTENANCE_PAUSE);
+                } else {
+                    if let Ok(store) = store() {
+                        let _ = store.give_back_room(1024);
+                    }
+                    std::thread::park_timeout(
+                        clean_up_at.saturating_duration_since(std::time::Instant::now()),
+                    );
+                }
+            }
+        });
+    if let Ok(handle) = spawned {
+        let _ = MAINTENANCE.set(handle.thread().clone());
+    }
+}
+
+/// Wakes the background work: something was queued for it.
+pub(crate) fn kick_maintenance() {
+    if let Some(thread) = MAINTENANCE.get() {
+        thread.unpark();
+    }
 }
 
 /// Firefox's translation models, kept next to the database.
@@ -821,7 +885,7 @@ pub fn folder_count(
     tab: Option<InboxTab>,
     unread: bool,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.conversation_count(
+    Ok(reader()?.conversation_count(
         folder.into(),
         within(account, group, address),
         filter(tab, unread),
@@ -835,7 +899,7 @@ pub fn folder_unread(
     address: Option<String>,
     tab: Option<InboxTab>,
 ) -> Result<u32, EngineError> {
-    Ok(store()?.unread_count(
+    Ok(reader()?.unread_count(
         folder.into(),
         within(account, group, address),
         tab.map_or(Section::All, Section::from),
@@ -857,7 +921,8 @@ pub fn folder_page(
     offset: u32,
     limit: u32,
 ) -> Result<Vec<InboxRow>, EngineError> {
-    let store = store()?;
+    // The reader: paging never waits on a sync's write, nor holds it up.
+    let store = reader()?;
     let scope = within(account, group, address);
     store
         .conversations_page(
@@ -1214,7 +1279,7 @@ pub fn folder_counts_between(
     unread: bool,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = store()?;
+    let store = reader()?;
     let within = within(account, group, address);
     let section = filter(tab, unread);
     edges
@@ -3588,8 +3653,8 @@ fn lock_store(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
 }
 
 /// Hides a message from the lists while its action can be undone, or
-/// shows it again after Undo.
-#[frb(sync)]
+/// shows it again after Undo. Not on the thread that draws: a sync writing
+/// a batch holds the database for a moment.
 pub fn set_message_hidden(
     account_id: i64,
     mailbox: String,
@@ -3928,7 +3993,7 @@ pub fn mailbox_counts_between(
     mailbox: String,
     edges: Vec<i64>,
 ) -> Result<Vec<u32>, EngineError> {
-    let store = store()?;
+    let store = reader()?;
     let account = AccountId(account_id);
     edges
         .windows(2)
@@ -4337,7 +4402,7 @@ const SEARCH_FILES: u32 = 6;
 pub fn search(query: String, limit: u32) -> Result<SearchResult, EngineError> {
     let start = std::time::Instant::now();
     let query = Query::parse(&query);
-    let store = store()?;
+    let store = reader()?;
     let found = store.search(&query, limit)?;
     let people = store.search_people(&query, 3)?;
     let files = store.search_files(&query, SEARCH_FILES)?;

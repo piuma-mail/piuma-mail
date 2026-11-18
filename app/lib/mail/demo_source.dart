@@ -749,6 +749,39 @@ class DemoMailSource extends MailSource {
     _changes.add(null);
   }
 
+  /// Days whole messages are kept, as picked in Settings › Storage.
+  int? _keepDays = 90;
+
+  /// Accounts whose cached mail was cleared.
+  final _cleared = <int>{};
+
+  @override
+  Future<StorageUse> storage() async {
+    final list = [
+      for (final (i, a) in accounts.indexed)
+        AccountStorage(
+          accountId: a.id,
+          messages: 1840 + i * 2315,
+          cachedBytes: _cleared.contains(a.id) ? 0 : (38 + i * 21) << 20,
+        ),
+    ];
+    return StorageUse(
+      totalBytes:
+          (96 << 20) + list.fold<int>(0, (sum, a) => sum + a.cachedBytes),
+      accounts: list,
+      keepDays: _keepDays,
+    );
+  }
+
+  @override
+  Future<void> setKeepDays(int? days) async => _keepDays = days;
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async {
+    _cleared.add(accountId);
+    return storage();
+  }
+
   @override
   Future<bool> signInAlert(int accountId) async =>
       !_alertsOff.contains(accountId);

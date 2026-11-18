@@ -189,8 +189,8 @@ class MessageListState extends State<MessageList>
       _groupNotices &&
       a != null &&
       b != null &&
-      !widget.source.byPerson(a) &&
-      !widget.source.byPerson(b) &&
+      !_byPerson(a) &&
+      !_byPerson(b) &&
       !a.isConversation &&
       !b.isConversation &&
       sameNotice(a, b);
@@ -397,8 +397,38 @@ class MessageListState extends State<MessageList>
     final plan = SectionPlan(widget.now(), l, locale);
     final folder = widget.folder;
     final account = widget.account;
-    if (folder == MailFolder.waiting || folder == MailFolder.label) {
-      // Newest first, in one list with no headers.
+    if (folder == MailFolder.label) {
+      // Newest first, in one list with no headers; counted, then read a
+      // page at a time like the other lists: a label the server keeps can
+      // hold tens of thousands of emails.
+      final (count, first) = await (
+        widget.source.labelledCount(widget.mailbox ?? ''),
+        widget.source.page(
+          0,
+          _pageSize,
+          folder: folder,
+          account: account,
+          mailbox: widget.mailbox,
+        ),
+      ).wait;
+      if (!mounted || gen != _generation) return;
+      setState(() {
+        _loaded = true;
+        _outbox = const [];
+        _reminded = const [];
+        _sections = [if (count > 0) InboxSection('', count)];
+        _pages
+          ..clear()
+          ..[0] = first;
+        _loading.clear();
+        _folding = const {};
+      });
+      widget.onTotal?.call(total);
+      return;
+    }
+    if (folder == MailFolder.waiting) {
+      // Newest first, in one list with no headers: what was sent in the
+      // last 30 days, so never long.
       final all = await widget.source.page(
         0,
         1 << 30,
@@ -546,6 +576,7 @@ class MessageListState extends State<MessageList>
       _remindedHeader = l.sectionToday;
       _sections = plan.sections(counts);
       _aliases.clear();
+      _people.clear();
       _pages
         ..clear()
         ..[0] = first
@@ -573,6 +604,13 @@ class MessageListState extends State<MessageList>
 
   /// The aliases rows were written to, asked once per row.
   final _aliases = <Object, String?>{};
+
+  /// Whether a person wrote each row, asked once per row and load: the
+  /// notice runs are worked out at every frame of their fold.
+  final _people = <Object, bool>{};
+
+  bool _byPerson(MailRow row) =>
+      _people.putIfAbsent(row.key, () => widget.source.byPerson(row));
 
   /// In a group's inbox, the alias [row] was written to; on the phone,
   /// as on `GroupsPhone`, every row says it, the account's own address
