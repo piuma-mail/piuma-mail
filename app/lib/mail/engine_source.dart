@@ -1510,6 +1510,8 @@ class EngineMailSource extends MailSource {
       asked: r.asked,
       failed: r.failed,
       partial: r.partial,
+      partialAccounts: r.partialAccounts,
+      textRefused: r.textRefused,
     );
   }
 

@@ -12554,11 +12554,15 @@ impl SseDecode for crate::api::search::ServerSearchResult {
         let mut var_asked = <bool>::sse_decode(deserializer);
         let mut var_failed = <u32>::sse_decode(deserializer);
         let mut var_partial = <bool>::sse_decode(deserializer);
+        let mut var_partialAccounts = <Vec<String>>::sse_decode(deserializer);
+        let mut var_textRefused = <u32>::sse_decode(deserializer);
         return crate::api::search::ServerSearchResult {
             hits: var_hits,
             asked: var_asked,
             failed: var_failed,
             partial: var_partial,
+            partial_accounts: var_partialAccounts,
+            text_refused: var_textRefused,
         };
     }
 }
@@ -16022,6 +16026,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::search::ServerSearchResult {
             self.asked.into_into_dart().into_dart(),
             self.failed.into_into_dart().into_dart(),
             self.partial.into_into_dart().into_dart(),
+            self.partial_accounts.into_into_dart().into_dart(),
+            self.text_refused.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -19132,6 +19138,8 @@ impl SseEncode for crate::api::search::ServerSearchResult {
         <bool>::sse_encode(self.asked, serializer);
         <u32>::sse_encode(self.failed, serializer);
         <bool>::sse_encode(self.partial, serializer);
+        <Vec<String>>::sse_encode(self.partial_accounts, serializer);
+        <u32>::sse_encode(self.text_refused, serializer);
     }
 }
 

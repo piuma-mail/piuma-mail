@@ -9262,6 +9262,24 @@ abstract class AppLocalizations {
   /// **'Some folders couldn’t be searched in full.'**
   String get searchServerPartial;
 
+  /// No description provided for @searchServerMaybe.
+  ///
+  /// In en, this message translates to:
+  /// **'Older emails, and text this device hasn’t kept, may still be on the server.'**
+  String get searchServerMaybe;
+
+  /// No description provided for @searchServerTextRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 account’s server searches only plain letters (A–Z), so it wasn’t asked for this text.} other{{count} accounts’ servers search only plain letters (A–Z), so they weren’t asked for this text.}}'**
+  String searchServerTextRefused(int count);
+
+  /// No description provided for @searchServerPartialIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Searched only in part: {accounts}. What was found before stopping is here.'**
+  String searchServerPartialIn(String accounts);
+
   /// No description provided for @searchServerFound.
   ///
   /// In en, this message translates to:

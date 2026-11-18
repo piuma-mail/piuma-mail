@@ -108,7 +108,6 @@ class _SearchPanelState extends State<SearchPanel> {
 
   /// With nothing found here, the servers are asked after a pause, so a
   /// word still being typed isn't sent.
-  Timer? _serverSoon;
 
   /// Suggestions for the token being typed, and where that token starts.
   List<SearchSuggestion> _suggestions = const [];
@@ -152,7 +151,6 @@ class _SearchPanelState extends State<SearchPanel> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _serverSoon?.cancel();
     if (_serverRunning) widget.source.cancelServerSearch();
     _changes?.cancel();
     _field.dispose();
@@ -269,7 +267,6 @@ class _SearchPanelState extends State<SearchPanel> {
 
   /// Forgets the server search, stopping it when it runs.
   void _forgetServer() {
-    _serverSoon?.cancel();
     if (_serverRunning) widget.source.cancelServerSearch();
     _server = null;
     _serverQuery = null;
@@ -281,7 +278,6 @@ class _SearchPanelState extends State<SearchPanel> {
   Future<void> _searchServer() async {
     final query = _query;
     if (query.isEmpty || _serverRunning && _serverQuery == query) return;
-    _serverSoon?.cancel();
     setState(() {
       _serverQuery = query;
       _serverRunning = true;
@@ -464,19 +460,6 @@ class _SearchPanelState extends State<SearchPanel> {
           final i = _hits.indexWhere((h) => h.row.key == keep);
           _selected = i < 0 ? 0 : i;
         });
-        // Nothing here: the servers may have older mail, or bodies this
-        // device never kept.
-        if (results.hits.isEmpty &&
-            query.isNotEmpty &&
-            !identical(results, SearchResults.empty) &&
-            _serverQuery == null &&
-            !(_serverSoon?.isActive ?? false)) {
-          _serverSoon = Timer(const Duration(milliseconds: 700), () {
-            if (mounted && _query == query && _results.hits.isEmpty) {
-              _searchServer();
-            }
-          });
-        }
       }
     } finally {
       _searching = false;
@@ -728,7 +711,9 @@ class _SearchPanelState extends State<SearchPanel> {
                 if (searching) ...[
                   const SizedBox(width: 10),
                   Text(
-                    l.searchResults(_results.total),
+                    // What the servers found counts too: "No results"
+                    // above a result from the server read as wrong.
+                    l.searchResults(_results.total + _serverHits.length),
                     style: PiumaType.label.copyWith(color: c.muted),
                   ),
                   const SizedBox(width: 6),
@@ -1459,18 +1444,42 @@ class _SearchPanelState extends State<SearchPanel> {
             style: note,
           ),
         ),
+        if (server.textRefused > 0)
+          Text(l.searchServerTextRefused(server.textRefused), style: note),
         if (server.failed > 0)
           Text(l.searchServerUnreachable(server.failed), style: note),
-        if (server.partial) Text(l.searchServerPartial, style: note),
+        if (server.partial)
+          Text(
+            server.partialAccounts.isEmpty
+                ? l.searchServerPartial
+                : l.searchServerPartialIn(server.partialAccounts.join(', ')),
+            style: note,
+          ),
       ];
     }
     if (_query.isEmpty) return const [];
-    return [_serverButton(context, l.searchOnServer)];
+    // The server is asked only from here (or ⇧⌘↵): never by itself while
+    // typing. With little or nothing here, the button leads.
+    final few = _results.hits.length < _fewResults;
+    return [
+      if (few) ...[
+        Text(l.searchServerMaybe, style: note),
+        const SizedBox(height: 8),
+      ],
+      _serverButton(context, l.searchOnServer, prominent: few),
+    ];
   }
 
-  Widget _serverButton(BuildContext context, String label) => PiumaButton(
+  /// Fewer results here than this, and "Search on server" leads.
+  static const _fewResults = 5;
+
+  Widget _serverButton(
+    BuildContext context,
+    String label, {
+    bool prominent = false,
+  }) => PiumaButton(
     label: label,
-    kind: PiumaButtonKind.secondary,
+    kind: prominent ? PiumaButtonKind.primary : PiumaButtonKind.secondary,
     size: widget.phone ? PiumaButtonSize.touch : PiumaButtonSize.compact,
     shortcut: widget.phone ? null : (_apple ? '⇧⌘↵' : 'Ctrl ⇧ ↵'),
     onPressed: _searchServer,

@@ -6268,6 +6268,27 @@ class AppLocalizationsPt extends AppLocalizations {
       'Algumas pastas não puderam ser pesquisadas por completo.';
 
   @override
+  String get searchServerMaybe =>
+      'E-mails mais antigos, e texto que este dispositivo não guardou, ainda podem estar no servidor.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Os servidores de $count contas só pesquisam letras simples (A–Z), por isso não lhes foi pedido este texto.',
+      one: 'O servidor de 1 conta só pesquisa letras simples (A–Z), por isso não lhe foi pedido este texto.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Pesquisado só em parte: $accounts. O que foi encontrado antes de parar está aqui.';
+  }
+
+  @override
   String searchServerFound(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use flutter_rust_bridge::frb;
-use piuma_core::remote::{Remote, SERVER_HITS};
+use piuma_core::remote::{Remote, ServerFound, SERVER_HITS};
 use piuma_core::{AccountId, Query};
 
 use crate::api::engine::{
@@ -23,8 +23,14 @@ pub struct ServerSearchResult {
     /// Accounts whose server couldn't be reached, refused or took too long.
     pub failed: u32,
     /// Some accounts could only be searched in part: a folder refused,
-    /// accented text the server couldn't take, too many folders.
+    /// accented text the server couldn't take, too many folders, or the
+    /// time ran out after some folders.
     pub partial: bool,
+    /// The accounts searched only in part, by name, for the note.
+    pub partial_accounts: Vec<String>,
+    /// Accounts whose server takes only plain letters (no UTF-8) and the
+    /// text has none to ask for ("日本"): they weren't asked.
+    pub text_refused: u32,
 }
 
 /// How long one account's server search may take.
@@ -52,6 +58,8 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
             asked: false,
             failed: 0,
             partial: false,
+            partial_accounts: Vec::new(),
+            text_refused: 0,
         });
     }
     let accounts: Vec<_> = store()?
@@ -72,16 +80,24 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
                 // The account's own sign-in: OAuth tokens or a password,
                 // with the certificates trusted for its servers.
                 let login = crate::login::load(account.id).ok()?;
+                let mut found = ServerFound::default();
                 let search = async {
                     let mut remote = Remote::open(&account, &login).await?;
-                    let found = remote.search_server(&store, &account, &query, limit).await;
+                    let done = remote
+                        .search_server_into(&store, &account, &query, limit, &mut found)
+                        .await;
                     remote.close().await;
-                    found
+                    done
                 };
-                match tokio::time::timeout(SERVER_TIME, search).await {
-                    Ok(Ok(found)) => Some((account.id, found)),
-                    _ => None,
+                let done = tokio::time::timeout(SERVER_TIME, search).await;
+                match done {
+                    Ok(Ok(())) => {}
+                    // Out of time, or the connection dropped after some
+                    // folders: what they found stays, marked partial.
+                    _ if !found.at.is_empty() => found.partial = true,
+                    _ => return None,
                 }
+                Some((account, found))
             });
         }
         let mut found = Vec::new();
@@ -119,7 +135,7 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
         .iter()
         .flat_map(|(account, f)| {
             f.at.iter()
-                .map(move |(mailbox, uid)| (*account, mailbox.clone(), *uid))
+                .map(move |(mailbox, uid)| (account.id, mailbox.clone(), *uid))
         })
         .collect();
     let store = reader()?;
@@ -139,6 +155,12 @@ pub async fn search_server(query: String, limit: u32) -> Result<ServerSearchResu
         asked: found.iter().any(|(_, f)| f.asked),
         failed,
         partial: found.iter().any(|(_, f)| f.partial),
+        partial_accounts: found
+            .iter()
+            .filter(|(_, f)| f.partial)
+            .map(|(a, _)| a.name.clone())
+            .collect(),
+        text_refused: found.iter().filter(|(_, f)| f.text_refused).count() as u32,
     })
 }
 

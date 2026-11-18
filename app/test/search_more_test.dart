@@ -11,6 +11,7 @@ import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/search/saved_searches.dart';
 import 'package:piuma_mail/search/search_panel.dart';
 import 'package:piuma_mail/search/suggestions.dart';
+import 'package:piuma_mail/widgets/button.dart';
 
 final _now = DateTime(2026, 10, 15, 10, 30);
 
@@ -71,6 +72,19 @@ class _SlowServer extends DemoMailSource {
     if (pending case final p? when !p.isCompleted) {
       p.completeError(StateError('cancelled'));
     }
+  }
+}
+
+/// The demo server, counting how often it is asked.
+class _CountingServer extends DemoMailSource {
+  _CountingServer() : super(now: _now);
+
+  int asked = 0;
+
+  @override
+  Future<ServerResults> searchServer(String query, {int limit = 50}) {
+    asked++;
+    return super.searchServer(query, limit: limit);
   }
 }
 
@@ -208,18 +222,35 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('nothing here: the server is asked, its mail shown and opened', (
+  testWidgets('nothing here: the server is asked from the button only', (
     tester,
   ) async {
-    await _pump(tester, DemoMailSource(now: _now));
+    final source = await _pump(tester, _CountingServer());
     await _open(tester);
     await _type(tester, 'spring catalog');
     expect(_inPanel(find.text('No results')), findsWidgets);
-    // A pause first, so a word still being typed isn't sent.
-    await tester.pump(const Duration(milliseconds: 800));
+    // Never by itself, however long one waits.
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(source.asked, 0);
+    expect(_inPanel(find.text('On the server')), findsNothing);
+    // With nothing here the button leads.
+    final button = tester.widget<PiumaButton>(
+      _inPanel(find.widgetWithText(PiumaButton, 'Search on server')),
+    );
+    expect(button.kind, PiumaButtonKind.primary);
+    expect(
+      _inPanel(find.textContaining('may still be on the server')),
+      findsOneWidget,
+    );
+    await tester.tap(_inPanel(find.text('Search on server')));
     await tester.pump();
     await tester.pumpAndSettle();
+    expect(source.asked, 1);
     expect(_inPanel(find.text('On the server')), findsOneWidget);
+    // The count says what was found, here and on the server.
+    expect(_inPanel(find.text('1 result')), findsOneWidget);
+    expect(_inPanel(find.text('No results')), findsNothing);
     expect(
       _inPanel(find.text('Print quote for the spring catalog')),
       findsWidgets,
@@ -254,6 +285,15 @@ void main() {
     await _type(tester, 'quote');
     expect(_inPanel(find.text('4 results')), findsOneWidget);
     expect(_inPanel(find.text('On the server')), findsNothing);
+    // Few results here: the button still leads.
+    expect(
+      tester
+          .widget<PiumaButton>(
+            _inPanel(find.widgetWithText(PiumaButton, 'Search on server')),
+          )
+          .kind,
+      PiumaButtonKind.primary,
+    );
     // ⇧ Ctrl ↵ asks, as the button does.
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -324,6 +364,28 @@ void main() {
     );
     expect(
       _inPanel(find.text('Some folders couldn’t be searched in full.')),
+      findsOne,
+    );
+
+    // Out of time after some folders: what came is kept, the account named.
+    await _type(tester, 'quotes');
+    await tester.tap(_inPanel(find.text('Search on server')));
+    await tester.pump();
+    source.pending!.complete(
+      const ServerResults(
+        partial: true,
+        partialAccounts: ['Work'],
+        textRefused: 1,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(
+      _inPanel(find.textContaining('Searched only in part: Work.')),
+      findsOne,
+    );
+    expect(
+      _inPanel(find.textContaining('searches only plain letters')),
       findsOne,
     );
   });
@@ -463,13 +525,16 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     });
 
-    testWidgets('nothing here: the server is asked; a tap opens its mail', (
+    testWidgets('nothing here: Search on server asks; a tap opens its mail', (
       tester,
     ) async {
       await _pump(tester, DemoMailSource(now: _now), size: phone);
       await openPhone(tester);
       await _type(tester, 'spring catalog');
-      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(_inPanel(find.text('On the server')), findsNothing);
+      await tester.tap(_inPanel(find.text('Search on server')));
       await tester.pump();
       await tester.pumpAndSettle();
       expect(_inPanel(find.text('On the server')), findsOneWidget);

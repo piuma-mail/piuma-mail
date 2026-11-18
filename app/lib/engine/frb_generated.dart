@@ -11905,13 +11905,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ServerSearchResult dco_decode_server_search_result(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return ServerSearchResult(
       hits: dco_decode_list_search_hit(arr[0]),
       asked: dco_decode_bool(arr[1]),
       failed: dco_decode_u_32(arr[2]),
       partial: dco_decode_bool(arr[3]),
+      partialAccounts: dco_decode_list_String(arr[4]),
+      textRefused: dco_decode_u_32(arr[5]),
     );
   }
 
@@ -15364,11 +15366,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_asked = sse_decode_bool(deserializer);
     var var_failed = sse_decode_u_32(deserializer);
     var var_partial = sse_decode_bool(deserializer);
+    var var_partialAccounts = sse_decode_list_String(deserializer);
+    var var_textRefused = sse_decode_u_32(deserializer);
     return ServerSearchResult(
       hits: var_hits,
       asked: var_asked,
       failed: var_failed,
       partial: var_partial,
+      partialAccounts: var_partialAccounts,
+      textRefused: var_textRefused,
     );
   }
 
@@ -18499,6 +18505,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.asked, serializer);
     sse_encode_u_32(self.failed, serializer);
     sse_encode_bool(self.partial, serializer);
+    sse_encode_list_String(self.partialAccounts, serializer);
+    sse_encode_u_32(self.textRefused, serializer);
   }
 
   @protected

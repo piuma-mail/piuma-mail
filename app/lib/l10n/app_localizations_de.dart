@@ -6290,6 +6290,27 @@ class AppLocalizationsDe extends AppLocalizations {
       'Einige Ordner konnten nicht vollständig durchsucht werden.';
 
   @override
+  String get searchServerMaybe =>
+      'Ältere E-Mails und Text, den dieses Gerät nicht behalten hat, können noch auf dem Server sein.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Die Server von $count Konten suchen nur einfache Buchstaben (A–Z), daher wurden sie nach diesem Text nicht gefragt.',
+      one: 'Der Server von 1 Konto sucht nur einfache Buchstaben (A–Z), daher wurde er nach diesem Text nicht gefragt.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Nur teilweise durchsucht: $accounts. Was bis dahin gefunden wurde, ist hier.';
+  }
+
+  @override
   String searchServerFound(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

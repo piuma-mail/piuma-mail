@@ -88,19 +88,34 @@ class ServerSearchResult {
   final int failed;
 
   /// Some accounts could only be searched in part: a folder refused,
-  /// accented text the server couldn't take, too many folders.
+  /// accented text the server couldn't take, too many folders, or the
+  /// time ran out after some folders.
   final bool partial;
+
+  /// The accounts searched only in part, by name, for the note.
+  final List<String> partialAccounts;
+
+  /// Accounts whose server takes only plain letters (no UTF-8) and the
+  /// text has none to ask for ("日本"): they weren't asked.
+  final int textRefused;
 
   const ServerSearchResult({
     required this.hits,
     required this.asked,
     required this.failed,
     required this.partial,
+    required this.partialAccounts,
+    required this.textRefused,
   });
 
   @override
   int get hashCode =>
-      hits.hashCode ^ asked.hashCode ^ failed.hashCode ^ partial.hashCode;
+      hits.hashCode ^
+      asked.hashCode ^
+      failed.hashCode ^
+      partial.hashCode ^
+      partialAccounts.hashCode ^
+      textRefused.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -110,5 +125,7 @@ class ServerSearchResult {
           hits == other.hits &&
           asked == other.asked &&
           failed == other.failed &&
-          partial == other.partial;
+          partial == other.partial &&
+          partialAccounts == other.partialAccounts &&
+          textRefused == other.textRefused;
 }

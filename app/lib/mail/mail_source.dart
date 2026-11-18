@@ -1995,6 +1995,8 @@ class ServerResults {
     this.asked = true,
     this.failed = 0,
     this.partial = false,
+    this.partialAccounts = const [],
+    this.textRefused = 0,
   });
 
   static const empty = ServerResults();
@@ -2010,8 +2012,17 @@ class ServerResults {
   /// Accounts whose server couldn't be reached or refused.
   final int failed;
 
-  /// Some accounts could be searched only in part.
+  /// Some accounts could be searched only in part: a folder refused,
+  /// accented text cut to plain letters, or the time ran out (what came
+  /// before stays).
   final bool partial;
+
+  /// The accounts searched only in part, by name.
+  final List<String> partialAccounts;
+
+  /// Accounts whose server takes only plain letters, while the text has
+  /// none to ask for ("日本"): they weren't asked.
+  final int textRefused;
 }
 
 /// A search kept under a name, in the sidebar.

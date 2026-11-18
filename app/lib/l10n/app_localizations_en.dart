@@ -6239,6 +6239,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'Some folders couldn’t be searched in full.';
 
   @override
+  String get searchServerMaybe =>
+      'Older emails, and text this device hasn’t kept, may still be on the server.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count accounts’ servers search only plain letters (A–Z), so they weren’t asked for this text.',
+      one: '1 account’s server searches only plain letters (A–Z), so it wasn’t asked for this text.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Searched only in part: $accounts. What was found before stopping is here.';
+  }
+
+  @override
   String searchServerFound(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
