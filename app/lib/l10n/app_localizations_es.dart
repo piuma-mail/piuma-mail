@@ -3156,6 +3156,13 @@ class AppLocalizationsEs extends AppLocalizations {
   }
 
   @override
+  String get readingOpenIn => 'Abrir los correos en';
+
+  @override
+  String get readingOpenInHint =>
+      'Para los correos con diseño. Puedes cambiar de vista en cada uno, y las imágenes remotas siguen esperando tu permiso.';
+
+  @override
   String get appearanceExample => 'Ejemplo';
 
   @override

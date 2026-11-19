@@ -788,6 +788,8 @@
   "densityCompact": "Compacta",
   "appearancePreview": "Vista previa",
   "previewLines": "{count, plural, =1{1 línea} other{{count} líneas}}",
+  "readingOpenIn": "Abrir los correos en",
+  "readingOpenInHint": "Para los correos con diseño. Puedes cambiar de vista en cada uno, y las imágenes remotas siguen esperando tu permiso.",
   "appearanceExample": "Ejemplo",
   "previewDrawnHere": "Dibujado en este dispositivo",
   "previewKeysPages": "← → páginas",

@@ -195,8 +195,13 @@ void main() {
       tester,
     ) async {
       await _pump(tester, newsletter: true);
-      // A designed email opens as sent.
+      // A designed email opens in the clean view by default.
+      expect(find.byType(OriginalView), findsNothing);
+      await _openMore(tester);
+      await tester.tap(find.text('Original layout'));
+      await tester.pumpAndSettle();
       expect(find.byType(OriginalView), findsOneWidget);
+      expect(find.textContaining('chars of HTML'), findsOneWidget);
       await _openMore(tester);
       expect(find.text('Original layout'), findsNothing);
       await tester.tapAt(const Offset(10, 10));
@@ -205,10 +210,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(OriginalView), findsNothing);
       await _openMore(tester);
-      await tester.tap(find.text('Original layout'));
-      await tester.pumpAndSettle();
-      expect(find.byType(OriginalView), findsOneWidget);
-      expect(find.textContaining('chars of HTML'), findsOneWidget);
+      expect(find.text('Original layout'), findsOneWidget);
     });
 
     testWidgets('without a web view there is none', (tester) async {

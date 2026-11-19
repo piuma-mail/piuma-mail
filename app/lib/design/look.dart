@@ -5,7 +5,8 @@ enum ThemeChoice { light, dark, automatic }
 
 /// Settings › Appearance, as on the `Settings` board: the theme, how
 /// tall the inbox rows are, how many lines of preview they show, and
-/// the language Translate writes in, and the app's own language.
+/// the language Translate writes in, the app's own language, and how an
+/// email built as a layout opens.
 @immutable
 class Appearance {
   const Appearance({
@@ -14,6 +15,7 @@ class Appearance {
     this.previewLines = 2,
     this.translateInto,
     this.language,
+    this.openOriginal = false,
   });
 
   final ThemeChoice theme;
@@ -31,18 +33,26 @@ class Appearance {
   /// device's.
   final String? language;
 
+  /// An email built as a layout opens in the clean reading view (the
+  /// default) or, when true, as it was sent (`ImagesToApprove`). Either
+  /// way the switch over it goes to the other, and remote images still
+  /// wait for consent.
+  final bool openOriginal;
+
   Appearance copyWith({
     ThemeChoice? theme,
     bool? compact,
     int? previewLines,
     String? Function()? translateInto,
     String? Function()? language,
+    bool? openOriginal,
   }) => Appearance(
     theme: theme ?? this.theme,
     compact: compact ?? this.compact,
     previewLines: previewLines ?? this.previewLines,
     translateInto: translateInto == null ? this.translateInto : translateInto(),
     language: language == null ? this.language : language(),
+    openOriginal: openOriginal ?? this.openOriginal,
   );
 
   @override
@@ -52,11 +62,18 @@ class Appearance {
       other.compact == compact &&
       other.previewLines == previewLines &&
       other.translateInto == translateInto &&
-      other.language == language;
+      other.language == language &&
+      other.openOriginal == openOriginal;
 
   @override
-  int get hashCode =>
-      Object.hash(theme, compact, previewLines, translateInto, language);
+  int get hashCode => Object.hash(
+    theme,
+    compact,
+    previewLines,
+    translateInto,
+    language,
+    openOriginal,
+  );
 }
 
 /// The languages the app speaks, each in its own words, as the language
@@ -98,6 +115,12 @@ class PiumaLook extends InheritedWidget {
   /// The defaults where no app is above, as in some tests.
   static Appearance of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PiumaLook>()?.appearance ??
+      const Appearance();
+
+  /// The appearance now, without redrawing when it changes: for a choice
+  /// made once, as how a message opens.
+  static Appearance read(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<PiumaLook>()?.appearance ??
       const Appearance();
 
   static void set(BuildContext context, Appearance appearance) =>

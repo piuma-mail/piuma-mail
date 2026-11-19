@@ -1142,12 +1142,18 @@ class AppearanceSettings {
   /// The app's language ("it"); None follows the device's.
   final String? language;
 
+  /// An email built as a layout opens as it was sent (true) or in the
+  /// clean reading view (false, the default). Remote images wait for
+  /// consent either way.
+  final bool openOriginal;
+
   const AppearanceSettings({
     required this.theme,
     required this.compact,
     required this.previewLines,
     this.translateInto,
     this.language,
+    required this.openOriginal,
   });
 
   @override
@@ -1156,7 +1162,8 @@ class AppearanceSettings {
       compact.hashCode ^
       previewLines.hashCode ^
       translateInto.hashCode ^
-      language.hashCode;
+      language.hashCode ^
+      openOriginal.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1167,7 +1174,8 @@ class AppearanceSettings {
           compact == other.compact &&
           previewLines == other.previewLines &&
           translateInto == other.translateInto &&
-          language == other.language;
+          language == other.language &&
+          openOriginal == other.openOriginal;
 }
 
 /// A file received with a message, for the Attachments board.

@@ -838,6 +838,11 @@ mod tests {
             setting_out("appearance.theme", gid).as_deref(),
             Some("appearance.theme")
         );
+        // How designed emails open travels with the other reading choices.
+        assert_eq!(
+            setting_out("appearance.open_in", gid).as_deref(),
+            Some("appearance.open_in")
+        );
         let local = |g: &str| (g == "abc").then_some(7);
         assert_eq!(
             setting_in("notify.loud.@abc", local).as_deref(),

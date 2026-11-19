@@ -3157,6 +3157,13 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String get readingOpenIn => 'Abrir e-mails em';
+
+  @override
+  String get readingOpenInHint =>
+      'Para e-mails com layout. Você ainda pode trocar a vista em cada um, e as imagens remotas continuam esperando seu ok.';
+
+  @override
   String get appearanceExample => 'Exemplo';
 
   @override

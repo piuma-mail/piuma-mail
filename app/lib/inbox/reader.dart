@@ -1438,12 +1438,18 @@ class _MessageViewState extends State<MessageView> {
 
   /// Tells the reader whether "Original layout" can show now.
   void _tellLayout(Readable r) => widget.onLayout?.call(
-    r.layout && _paperWorks && _original == null ? _showOriginal : null,
+    _hasOriginal(r) && _original == null ? _showOriginal : null,
   );
 
-  /// An email built as a layout opens as it was sent
-  /// (`ImagesToApprove`); the switch over it goes to the clean view.
-  bool _opensOriginal(Readable r) => r.layout && _paperWorks;
+  /// An email built as a layout, on a device that can draw it as sent.
+  bool _hasOriginal(Readable r) => r.layout && _paperWorks;
+
+  /// An email built as a layout opens in the clean view unless
+  /// Settings › Reading says as it was sent (`ImagesToApprove`); the
+  /// switch over it goes to the other. Remote images in the original still wait for
+  /// consent ([_originalOf]).
+  bool _opensOriginal(Readable r) =>
+      _hasOriginal(r) && PiumaLook.read(context).openOriginal;
 
   /// A web view to draw originals with, that hasn't failed to start.
   bool get _paperWorks => originalPaper != null && !originalPaperFailed;
@@ -1528,7 +1534,7 @@ class _MessageViewState extends State<MessageView> {
         widget.source.setBlockRemoteImages(block);
         change(() => current = current.copyWith(blockImages: block));
       },
-      onOriginal: r.layout && _paperWorks
+      onOriginal: _hasOriginal(r)
           ? () {
               setState(() {
                 _original = _originalOf(current);
@@ -1683,7 +1689,7 @@ class _MessageViewState extends State<MessageView> {
             _original == null &&
             _pair != PairStatus.unsupported;
         final warning = _warning;
-        final layout = _opensOriginal(r) && translation == null;
+        final layout = _hasOriginal(r) && translation == null;
         final askImages = !remote && r.remoteImages > 0;
         final column = Column(
           crossAxisAlignment: CrossAxisAlignment.start,

@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:piuma_mail/design/look.dart';
 import 'package:piuma_mail/design/theme.dart';
 import 'package:piuma_mail/inbox/images_bar.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
@@ -18,10 +19,15 @@ import 'package:piuma_mail/widgets/switch.dart';
 
 final _now = DateTime(2026, 10, 15, 10, 30);
 
+/// Settings › Reading › Open emails in › Original layout (the default is
+/// the clean view).
+const _asSent = Appearance(openOriginal: true);
+
 Future<DemoMailSource> _pump(
   WidgetTester tester, {
   bool dark = false,
   Size size = const Size(1440, 900),
+  Appearance appearance = const Appearance(),
   double scale = 1,
 }) async {
   tester.view.physicalSize = size * scale;
@@ -33,6 +39,7 @@ Future<DemoMailSource> _pump(
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
+      appearance: appearance,
       home: (_, _) => InboxScreen(
         source: source,
         onAddAccount: () {},
@@ -251,7 +258,7 @@ void main() {
         ),
       );
       addTearDown(() => originalPaper = null);
-      await _pump(tester, size: const Size(390, 844));
+      await _pump(tester, appearance: _asSent, size: const Size(390, 844));
       await tester.longPress(find.text('Long press here'));
       await tester.pumpAndSettle();
       expect(find.text('lume.example'), findsOneWidget);
@@ -288,7 +295,7 @@ void main() {
       final before = openExternalLink;
       openExternalLink = (uri) async => opened.add(uri);
       addTearDown(() => openExternalLink = before);
-      final source = await _pump(tester);
+      final source = await _pump(tester, appearance: _asSent);
       expect(source.originals, [false]);
       expect(find.byType(ViewSwitch), findsOneWidget);
       expect(find.textContaining('ceramics handmade in Faenza'), findsNothing);
@@ -322,10 +329,38 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     });
 
+    for (final (name, size) in [
+      ('desktop', const Size(1440, 900)),
+      ('phone', const Size(390, 844)),
+    ]) {
+      testWidgets('on the $name, by default, it opens clean', (tester) async {
+        final source = await _pump(tester, size: size);
+        // Nothing made until asked: no web view, nothing fetched.
+        expect(source.originals, isEmpty);
+        expect(source.fetched, isEmpty);
+        expect(find.byType(OriginalView), findsNothing);
+        expect(
+          find.textContaining('ceramics handmade in Faenza'),
+          findsOneWidget,
+        );
+        expect(find.byType(ViewSwitch), findsOneWidget);
+
+        // The switch still brings the original, images still blocked.
+        await tester.tap(
+          find.text(name == 'phone' ? 'Original layout' : 'Original'),
+        );
+        await tester.pumpAndSettle();
+        expect(find.textContaining('characters of HTML'), findsOneWidget);
+        expect(source.originals, [false]);
+        expect(source.fetched, isEmpty);
+        expect(find.byType(ImagesBar), findsOneWidget);
+      });
+    }
+
     testWidgets('the privacy panel still shows it after the clean view', (
       tester,
     ) async {
-      final source = await _pump(tester);
+      final source = await _pump(tester, appearance: _asSent);
       await tester.tap(find.text('Clean'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(PrivacyChip));
@@ -348,7 +383,7 @@ void main() {
             return Text('${html.length} characters of HTML');
           },
         );
-        await _pump(tester);
+        await _pump(tester, appearance: _asSent);
         await tester.pumpAndSettle();
         expect(tester.getSize(find.byType(OriginalView)).height, 1648);
       },
@@ -369,7 +404,7 @@ void main() {
             return const SizedBox.expand(key: ValueKey('web view'));
           },
         );
-        await _pump(tester, scale: 1.5);
+        await _pump(tester, appearance: _asSent, scale: 1.5);
         await tester.pumpAndSettle();
         final points = tester.getSize(find.byKey(const ValueKey('web view')));
         expect(points.height, greaterThan(10000));
@@ -394,7 +429,7 @@ void main() {
           return Text('${html.length} characters of HTML');
         },
       );
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await tester.pumpAndSettle();
       expect(find.text('Check this link'), findsNothing);
       expect(opened, isEmpty);
@@ -426,7 +461,7 @@ void main() {
         onTap: () => onLink('HTTPS://LUME-LOGIN.EXAMPLE'),
         child: const Text('A link inside'),
       );
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await tester.tap(find.text('A link inside'));
       await tester.pumpAndSettle();
       expect(find.text('Check this link'), findsOneWidget);
@@ -451,7 +486,7 @@ void main() {
           return const SizedBox.expand();
         },
       );
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await tester.pumpAndSettle();
       if (find.text('Open anyway').evaluate().isNotEmpty) {
         await tester.tap(find.text('Open anyway'));
@@ -472,7 +507,7 @@ void main() {
           return const SizedBox.expand();
         },
       );
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await tester.pumpAndSettle();
       expect(find.byType(OriginalView), findsNothing);
       expect(
@@ -493,7 +528,7 @@ void main() {
           child: const Text('Hover here'),
         ),
       );
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await tester.tap(find.text('Hover here'));
       await tester.pumpAndSettle();
       expect(
@@ -512,7 +547,7 @@ void main() {
 
     testWidgets('without a web view there is no button', (tester) async {
       originalPaper = null;
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       expect(find.byType(ViewSwitch), findsNothing);
       await tester.tap(find.byType(PrivacyChip));
       await tester.pumpAndSettle();
@@ -520,15 +555,43 @@ void main() {
     });
 
     testWidgets('original layout goldens', (tester) async {
-      await _pump(tester);
+      await _pump(tester, appearance: _asSent);
       await expectLater(
         find.byType(MaterialApp),
         matchesGoldenFile('goldens/reader_original_light.png'),
       );
     }, tags: ['golden']);
 
+    testWidgets('original layout golden dark', (tester) async {
+      await _pump(tester, appearance: _asSent, dark: true);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/reader_original_dark.png'),
+      );
+    }, tags: ['golden']);
+
+    // Settings › Reading › Open emails in › Clean view, the default.
+    for (final dark in [false, true]) {
+      final name = dark ? 'dark' : 'light';
+      testWidgets('opened clean golden $name', (tester) async {
+        await _pump(tester, dark: dark);
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/reader_opens_clean_$name.png'),
+        );
+      }, tags: ['golden']);
+
+      testWidgets('phone opened clean golden $name', (tester) async {
+        await _pump(tester, dark: dark, size: const Size(390, 844));
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/phone_opens_clean_$name.png'),
+        );
+      }, tags: ['golden']);
+    }
+
     testWidgets('phone original layout golden', (tester) async {
-      await _pump(tester, size: const Size(390, 844));
+      await _pump(tester, appearance: _asSent, size: const Size(390, 844));
       expect(find.text('Clean view'), findsOneWidget);
       await expectLater(
         find.byType(MaterialApp),
@@ -543,7 +606,12 @@ void main() {
     }, tags: ['golden']);
 
     testWidgets('phone original layout runs edge to edge', (tester) async {
-      await _pump(tester, dark: true, size: const Size(390, 844));
+      await _pump(
+        tester,
+        appearance: _asSent,
+        dark: true,
+        size: const Size(390, 844),
+      );
       final paper = tester.getRect(
         find
             .descendant(

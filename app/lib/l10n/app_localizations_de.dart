@@ -3161,6 +3161,13 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String get readingOpenIn => 'E-Mails öffnen in';
+
+  @override
+  String get readingOpenInHint =>
+      'Für gestaltete E-Mails. Du kannst die Ansicht bei jeder wechseln, und externe Bilder warten weiter auf dein Okay.';
+
+  @override
   String get appearanceExample => 'Beispiel';
 
   @override
