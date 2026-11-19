@@ -3501,7 +3501,7 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, a busca ainda encontra suas palavras, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre.';
+      'As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, a busca ainda encontra suas palavras, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre. Primeiro saem os e-mails antigos que uma busca encontrou no servidor, a não ser que você os tenha marcado com estrela ou etiquetado: buscando de novo, você os encontra lá.';
 
   @override
   String get storageKeep => 'Guardar as mensagens completas para ler offline';

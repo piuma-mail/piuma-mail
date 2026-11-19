@@ -880,7 +880,7 @@
   "storageClearFailed": "Die zwischengespeicherten E-Mails konnten nicht geleert werden. Versuche es erneut.",
   "storageNoRoom": "Zwischengespeicherte E-Mails geleert. Für eine kleinere Datei ist gerade nicht genug Speicher frei: Piuma nutzt den Platz wieder.",
   "storageClearTitle": "Zwischengespeicherte E-Mails von {name} leeren?",
-  "storageClearNote": "Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die Suche findet ihre Wörter weiterhin, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen.",
+  "storageClearNote": "Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die Suche findet ihre Wörter weiterhin, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen. Zuerst gehen alte E-Mails, die eine Suche auf dem Server gefunden hat, außer markierten oder mit Label versehenen: Eine neue Suche findet sie dort wieder.",
   "storageKeep": "Ganze Nachrichten zum Offline-Lesen behalten",
   "storageKeepHint": "Ältere werden beim Öffnen neu geladen. Die Suche findet ihre Wörter weiterhin.",
   "storageKeepMonth": "1 Monat",

@@ -880,7 +880,7 @@
   "storageClearFailed": "Não foi possível limpar o e-mail guardado. Tente de novo.",
   "storageNoRoom": "E-mail guardado limpo. Não há espaço livre suficiente para diminuir o arquivo agora: o Piuma reutiliza o espaço.",
   "storageClearTitle": "Limpar o e-mail em cache de {name}?",
-  "storageClearNote": "As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, a busca ainda encontra suas palavras, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre.",
+  "storageClearNote": "As mensagens completas e as imagens guardadas para ler offline são removidas deste dispositivo. As listas ficam, a busca ainda encontra suas palavras, o e-mail fica no servidor, e uma mensagem é baixada de novo quando você a abre. Primeiro saem os e-mails antigos que uma busca encontrou no servidor, a não ser que você os tenha marcado com estrela ou etiquetado: buscando de novo, você os encontra lá.",
   "storageKeep": "Guardar as mensagens completas para ler offline",
   "storageKeepHint": "As mais antigas são baixadas de novo quando você as abre. A busca ainda encontra suas palavras.",
   "storageKeepMonth": "1 mês",

@@ -2373,10 +2373,20 @@ impl Store {
                 }
                 to >= last
             }
-            // The cursor holds the time before which bodies go.
-            "evict" => let_go_of_bodies(&tx, None, from)? == 0,
+            // The cursor holds the time before which bodies go (i64::MIN
+            // when whole messages are kept for good). Mail a server search
+            // brought goes first: it can be found and fetched again.
+            "evict" => {
+                let found_before =
+                    crate::pending::now() - i64::from(KEEP_SERVER_FOUND_DAYS) * 86_400;
+                let_go_of_server_found(&tx, None, found_before)? == 0
+                    && let_go_of_bodies(&tx, None, from)? == 0
+            }
             clear if clear.starts_with("clear:") => match clear[6..].parse::<i64>() {
-                Ok(account) => let_go_of_bodies(&tx, Some(account), i64::MAX)? == 0,
+                Ok(account) => {
+                    let_go_of_server_found(&tx, Some(account), i64::MAX)? == 0
+                        && let_go_of_bodies(&tx, Some(account), i64::MAX)? == 0
+                }
                 Err(_) => true,
             },
             // A clear: job with no account in it.
@@ -8586,18 +8596,24 @@ impl Store {
         self.set_setting(KEEP_BODIES, &days.unwrap_or(0).to_string())
     }
 
-    /// Queues letting go of the whole messages and pictures of mail older
-    /// than [`Self::keep_bodies_days`] at `now` (Unix seconds), done by
-    /// [`Self::maintain`]. Their list rows stay, and so does finding them
-    /// by subject and sender; opening one fetches it from the server again.
+    /// Queues the daily clean-up, done by [`Self::maintain`]. First the
+    /// mail a server search brought from outside what the sync covers,
+    /// found more than [`KEEP_SERVER_FOUND_DAYS`] ago, goes whole (unless
+    /// the person starred, labelled, snoozed or is changing it): searching
+    /// again finds it on the server. Then the whole messages and pictures
+    /// of mail older than [`Self::keep_bodies_days`] at `now` (Unix
+    /// seconds) go; their list rows stay, and so does finding them by what
+    /// they said; opening one fetches it from the server again.
     pub fn queue_body_clean_up(&self, now: i64) -> Result<()> {
-        let Some(days) = self.keep_bodies_days()? else {
-            return Ok(());
+        let before = match self.keep_bodies_days()? {
+            Some(days) => now - i64::from(days) * 86_400,
+            // Kept for good: only what a server search brought goes.
+            None => i64::MIN,
         };
         self.conn.execute(
             "INSERT INTO maintenance (job, cursor) VALUES ('evict', ?1)
              ON CONFLICT (job) DO UPDATE SET cursor = excluded.cursor",
-            [now - i64::from(days) * 86_400],
+            [before],
         )?;
         Ok(())
     }
@@ -8917,7 +8933,10 @@ impl Store {
 
     /// Queues letting go of every whole message and picture kept for an
     /// account, done by [`Self::maintain`]: "Clear cached mail". The mail
-    /// stays on the server and in the lists; drafts are kept.
+    /// a server search brought from outside what the sync covers goes
+    /// first, rows and all, unless the person starred, labelled, snoozed
+    /// or is changing it. The rest stays on the server and in the lists;
+    /// drafts are kept.
     pub fn queue_clear_cached(&self, account: AccountId) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO maintenance (job) VALUES (?1)",
@@ -9124,6 +9143,45 @@ pub const KEEP_BODIES_DAYS: u32 = 90;
 
 /// Bodies let go of per step of a clean-up.
 const LET_GO_ROWS: i64 = 500;
+
+/// How many days mail a server search brought from outside what the sync
+/// covers stays on this device after it was found, unless kept by the
+/// person (see [`let_go_of_server_found`]). It goes before any body of
+/// synced mail: searching again brings it back.
+pub const KEEP_SERVER_FOUND_DAYS: u32 = 7;
+
+/// Lets go of up to [`LET_GO_ROWS`] messages a server search brought from
+/// outside what the sync covers (`server_found`, still hidden as
+/// [`OUTSIDE_SYNC`]), found before `before` (of one account, or all): the
+/// whole row goes, with its body, pictures, file previews and search
+/// entry. Kept: what the person starred, labelled or snoozed (here, by its
+/// keyword, or on another device: what sits in Snoozed), what has a
+/// change waiting to reach the server (a move, a star, an action to undo),
+/// and drafts. Returns how many went.
+fn let_go_of_server_found(
+    tx: &rusqlite::Transaction,
+    account: Option<i64>,
+    before: i64,
+) -> Result<usize> {
+    Ok(tx.execute(
+        &format!(
+            "DELETE FROM message WHERE rowid IN (
+                 SELECT m.rowid FROM server_found f
+                 JOIN message m USING (account, mailbox, uid)
+                 WHERE (?1 IS NULL OR f.account = ?1) AND f.found_at < ?2
+                   AND m.hidden = {OUTSIDE_SYNC} AND (m.flags & 2) = 0
+                   AND m.snooze_until IS NULL AND m.folder NOT IN ('drafts', 'snoozed')
+                   AND NOT EXISTS (SELECT 1 FROM message_labels l
+                        WHERE l.account = m.account AND l.mailbox = m.mailbox
+                          AND l.uid = m.uid AND l.labels <> '')
+                   AND NOT EXISTS (SELECT 1 FROM pending_change p
+                        WHERE p.account = m.account AND p.mailbox = m.mailbox
+                          AND p.uid = m.uid)
+                 LIMIT ?3)"
+        ),
+        params![account, before, LET_GO_ROWS],
+    )?)
+}
 
 /// Lets go of up to [`LET_GO_ROWS`] cached bodies of messages received
 /// before `before` (of one account, or all), their inline pictures and file
@@ -15917,6 +15975,163 @@ From: <help@bank.example>\r\n\r\nHi";
             store.setting(crate::rules::NOT_NOW).unwrap().as_deref(),
             Some(format!("{} rule-b", b.0).as_str())
         );
+    }
+
+    /// Mail a server search brought from outside the sync is the first to
+    /// go when room is made, before any body of synced mail, and with its
+    /// row: searching again finds it. What the person kept stays.
+    #[test]
+    fn mail_found_on_the_server_goes_first_when_room_is_made() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F8F83"))
+            .unwrap();
+        let b = store
+            .add_account(&imap_account("Home", "b@example.org", "#E0782F"))
+            .unwrap();
+        let day = 86_400;
+        let now = crate::pending::now();
+        // 1 synced, recent; 2..=6 found by a server search, years old.
+        let mut rows = vec![msg(a, 1, now - day, true)];
+        for uid in 2..=6 {
+            rows.push(msg(a, uid, now - 900 * day, true));
+        }
+        rows.push(msg(b, 7, now - 900 * day, true));
+        store.upsert_messages(&rows).unwrap();
+        for uid in 1..=6 {
+            store.set_body(a, "INBOX", uid, "kept body").unwrap();
+        }
+        store.set_body(b, "INBOX", 7, "kept body").unwrap();
+        store
+            .note_server_found(a, "INBOX", &[2, 3, 4, 5, 6], 7)
+            .unwrap();
+        store.note_server_found(b, "INBOX", &[7], 7).unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO inline_image (account, mailbox, uid, cid, mime, data)
+                 VALUES (?1, 'INBOX', 2, 'logo', 'image/png', x'00')",
+                [a.0],
+            )
+            .unwrap();
+        store.set_thumb(a, "INBOX", 2, "photo.jpg", b"jpg").unwrap();
+        // Snoozed on another device: in Snoozed, with no keyword here.
+        store
+            .upsert_messages(&[msg(a, 8, now - 900 * day, true)])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[8], 7).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE message SET folder = 'snoozed' WHERE account = ?1 AND uid = 8",
+                [a.0],
+            )
+            .unwrap();
+        // Kept by the person: 3 starred, 4 labelled, 5 being moved.
+        store
+            .set_flags(
+                a,
+                "INBOX",
+                3,
+                Flags {
+                    seen: true,
+                    flagged: true,
+                    answered: false,
+                },
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "INSERT INTO message_labels (account, mailbox, uid, labels)
+                 VALUES (?1, 'INBOX', 4, '$label_travel')",
+                [a.0],
+            )
+            .unwrap();
+        store
+            .queue_change(a, "INBOX", 5, Change::MoveTo("Clients".into()))
+            .unwrap();
+        let there = |store: &Store, account: AccountId, uid: u32| -> bool {
+            store
+                .conn
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM message
+                      WHERE account = ?1 AND mailbox = 'INBOX' AND uid = ?2)",
+                    params![account.0, uid],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        // Found just now: the daily clean-up leaves it for a few days.
+        store.queue_body_clean_up(now).unwrap();
+        store.maintain_all().unwrap();
+        assert!((2..=6).all(|uid| there(&store, a, uid)));
+
+        // Found long ago: it goes, whole, before the synced mail's bodies,
+        // which are inside the days kept and stay.
+        store
+            .conn
+            .execute(
+                "UPDATE server_found SET found_at = ?1",
+                [now - (i64::from(KEEP_SERVER_FOUND_DAYS) + 1) * day],
+            )
+            .unwrap();
+        store.queue_body_clean_up(now).unwrap();
+        store.maintain_all().unwrap();
+        assert!(!there(&store, a, 2) && !there(&store, a, 6));
+        assert!(!there(&store, b, 7));
+        assert_eq!(store.body(a, "INBOX", 2).unwrap(), None);
+        assert!(store.inline_image(a, "INBOX", 2, "logo").unwrap().is_none());
+        assert!(store.thumb(a, "INBOX", 2, "photo.jpg").unwrap().is_none());
+        assert!(subjects(&store, "\"Message 2\"").is_empty());
+        assert_eq!(
+            store.server_found_uids(a, "INBOX").unwrap(),
+            [3, 4, 5, 8].into()
+        );
+        // Kept ones stay in the lists of found mail; their bodies follow
+        // the days kept, like synced mail (these are years old).
+        for uid in [3, 4, 5] {
+            assert!(there(&store, a, uid));
+            assert_eq!(store.body(a, "INBOX", uid).unwrap(), None);
+        }
+        assert_eq!(
+            store.body(a, "INBOX", 1).unwrap().as_deref(),
+            Some("kept body")
+        );
+
+        // Kept for good still lets go of what a search brought.
+        store.set_keep_bodies_days(None).unwrap();
+        store
+            .upsert_messages(&[msg(a, 6, now - 900 * day, true)])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[6], 7).unwrap();
+        store
+            .conn
+            .execute("UPDATE server_found SET found_at = 0 WHERE uid = 6", [])
+            .unwrap();
+        store.queue_body_clean_up(now).unwrap();
+        store.maintain_all().unwrap();
+        assert!(!there(&store, a, 6));
+        assert!(there(&store, a, 1));
+
+        // "Clear cached mail" lets go of found mail at once, whenever it
+        // was found, of that account only, and keeps what was kept.
+        store
+            .upsert_messages(&[msg(a, 6, now - 900 * day, true)])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[6], 7).unwrap();
+        store
+            .upsert_messages(&[msg(b, 7, now - 900 * day, true)])
+            .unwrap();
+        store.note_server_found(b, "INBOX", &[7], 7).unwrap();
+        store.queue_clear_cached(a).unwrap();
+        store.maintain_all().unwrap();
+        assert!(!there(&store, a, 6));
+        assert!(there(&store, b, 7));
+        assert!([3, 4, 5].into_iter().all(|uid| there(&store, a, uid)));
+        assert_eq!(store.body(a, "INBOX", 1).unwrap(), None);
+        assert_eq!(store.body(a, "INBOX", 3).unwrap(), None);
     }
 
     #[test]
