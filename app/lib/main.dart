@@ -341,12 +341,35 @@ class _PiumaAppState extends State<PiumaApp> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_reportKey);
+    HardwareKeyboard.instance.addHandler(_quitKey);
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_reportKey);
+    HardwareKeyboard.instance.removeHandler(_quitKey);
     super.dispose();
+  }
+
+  /// Ctrl+Q on Linux quits for good, as GNOME and KDE apps do, even while
+  /// Piuma keeps running in the tray. macOS has ⌘Q in its app menu
+  /// already; on Windows quitting stays in the tray's menu (Alt+F4 closes
+  /// the window, as there).
+  bool _quitKey(KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.keyQ ||
+        defaultTargetPlatform != TargetPlatform.linux) {
+      return false;
+    }
+    final keys = HardwareKeyboard.instance;
+    if (!keys.isControlPressed ||
+        keys.isShiftPressed ||
+        keys.isAltPressed ||
+        keys.isMetaPressed) {
+      return false;
+    }
+    unawaited(Shell.quit());
+    return true;
   }
 
   /// ⇧⌘R on Apple, Ctrl+Shift+R elsewhere: the report sheet, from any

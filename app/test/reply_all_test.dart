@@ -69,6 +69,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(ComposePane), findsOneWidget);
     expect(_inCompose(find.text('Re: Mockup v3 review')), findsOneWidget);
+    // Titled for what it does.
+    expect(_inCompose(find.text('Reply all')), findsOneWidget);
     await tester.tap(find.text('Send'));
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
@@ -100,6 +102,8 @@ void main() {
     await _open(tester, 'Mockup v3 review');
     await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
     await tester.pumpAndSettle();
+    expect(_inCompose(find.text('Reply all')), findsNothing);
+    expect(_inCompose(find.text('Reply')), findsOneWidget);
     await tester.tap(find.text('Send'));
     await tester.pump(const Duration(seconds: 11));
     await tester.pumpAndSettle();
