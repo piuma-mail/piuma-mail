@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
@@ -61,6 +63,61 @@ OriginalPaper? originalPaper = WebViewPlatform.instance != null
     : !kIsWeb && defaultTargetPlatform == TargetPlatform.linux
     ? (html, onLink) => LinuxPaper(html: html, onLink: onLink)
     : null;
+
+/// The tallest a paper grows, in points, before the rest of the email
+/// scrolls inside the web view instead of in the reader.
+///
+/// On Windows WebView2 reaches the app as a Direct3D 11 texture as tall as
+/// the paper ([WindowsPaper]); past 16384 pixels, the most Direct3D 11
+/// allows, the system's capture of the web view crashes the whole app
+/// (feedback #22: a long email on a 4K screen at 150%). The paper stays
+/// a little under that many pixels, whatever the screen's scale.
+double paperMaxHeight(TargetPlatform platform, double devicePixelRatio) {
+  if (platform != TargetPlatform.windows) return _tallestPaper;
+  const pixels = 16000.0;
+  final scale = devicePixelRatio.isFinite && devicePixelRatio > 0
+      ? devicePixelRatio
+      : 1.0;
+  return math.min(_tallestPaper, pixels / scale);
+}
+
+/// The tallest a paper grows anywhere, in points.
+const _tallestPaper = 20000.0;
+
+/// Whether a wheel turn of [dy] points (positive: down) scrolls a web view
+/// that is at [offset] of the [extent] it can scroll, rather than the
+/// reader around it, as nested scrolling works in a browser: the inner
+/// page first, then the outer one once the inner can't go further. A page
+/// that fits its paper ([paperMaxHeight] not reached) never takes it.
+bool innerScrollTakes(double offset, double extent, double dy) {
+  if (extent <= 1 || dy == 0) return false;
+  return dy > 0 ? offset < extent - 1 : offset > 1;
+}
+
+/// Keeps the reader still while a wheel turn scrolls the web view in
+/// [child] ([innerScrollTakes]). The web view gets every wheel turn over
+/// it; without this, a page longer than its paper scrolled together with
+/// the reader, twice as fast (feedback #22).
+class InnerScrollFirst extends StatelessWidget {
+  const InnerScrollFirst({super.key, required this.takes, required this.child});
+
+  /// Whether the web view scrolls with a wheel turn of `dy` points.
+  final bool Function(double dy) takes;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerSignal: (event) {
+      if (event is! PointerScrollEvent) return;
+      if (!takes(event.scrollDelta.dy)) return;
+      // The first to register wins: the reader's Scrollable, further up,
+      // lets this one go.
+      GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+    },
+    child: child,
+  );
+}
 
 /// The email as it was sent (`OriginalToApprove`, opened by default since
 /// `ImagesToApprove`): the original on white paper in the middle of the
@@ -177,7 +234,7 @@ class _OriginalViewState extends State<OriginalView> {
   }
 
   void _setHeight(double height) {
-    final clamped = height.clamp(120.0, 20000.0);
+    final clamped = height.clamp(120.0, _tallestPaper);
     if (_height != null && (_height! - clamped).abs() < 1) return;
     if (mounted) setState(() => _height = clamped);
   }
@@ -191,6 +248,18 @@ class _OriginalViewState extends State<OriginalView> {
       360.0,
       1400.0,
     );
+    // Kept under what the screen's web view can draw, also after the
+    // window moves to a screen with another scale.
+    final measured = _height;
+    final height = measured == null
+        ? null
+        : math.min(
+            measured,
+            paperMaxHeight(
+              defaultTargetPlatform,
+              MediaQuery.devicePixelRatioOf(context),
+            ),
+          );
     final sheet = ColoredBox(
       color: PiumaColors.light.page,
       child: _OriginalPaperScope(
@@ -229,13 +298,13 @@ class _OriginalViewState extends State<OriginalView> {
     // stage around it (feedback #17, variant B approved by Matteo).
     if (widget.phone) {
       return SizedBox(
-        height: _height ?? fallback,
+        height: height ?? fallback,
         child: _EdgeToEdge(child: sheet),
       );
     }
     const pad = 24.0;
     return Container(
-      height: _height != null ? _height! + pad * 2 : fallback,
+      height: height != null ? height + pad * 2 : fallback,
       padding: const EdgeInsets.all(pad),
       decoration: BoxDecoration(
         color: c.stage,
