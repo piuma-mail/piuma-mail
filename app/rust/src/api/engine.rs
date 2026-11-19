@@ -3093,9 +3093,9 @@ pub struct AppearanceSettings {
     pub translate_into: Option<String>,
     /// The app's language ("it"); None follows the device's.
     pub language: Option<String>,
-    /// An email built as a layout opens as it was sent (true, the
-    /// default) or in the clean reading view (false). Remote images wait
-    /// for consent either way.
+    /// An email built as a layout opens as it was sent (true) or in the
+    /// clean reading view (false, the default). Remote images wait for
+    /// consent either way.
     pub open_original: bool,
 }
 
@@ -3116,7 +3116,9 @@ pub fn appearance_settings() -> Result<AppearanceSettings, EngineError> {
         },
         translate_into: store.setting(TRANSLATE_INTO)?.filter(|l| !l.is_empty()),
         language: store.setting(LANGUAGE)?.filter(|l| !l.is_empty()),
-        open_original: store.setting(OPEN_IN)?.as_deref() != Some("clean"),
+        // Only an explicit "original" opens as sent: unset (never chosen,
+        // or set before this setting existed) and unknown values are clean.
+        open_original: store.setting(OPEN_IN)?.as_deref() == Some("original"),
     })
 }
 

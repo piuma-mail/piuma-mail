@@ -1142,9 +1142,9 @@ class AppearanceSettings {
   /// The app's language ("it"); None follows the device's.
   final String? language;
 
-  /// An email built as a layout opens as it was sent (true, the
-  /// default) or in the clean reading view (false). Remote images wait
-  /// for consent either way.
+  /// An email built as a layout opens as it was sent (true) or in the
+  /// clean reading view (false, the default). Remote images wait for
+  /// consent either way.
   final bool openOriginal;
 
   const AppearanceSettings({

@@ -117,12 +117,12 @@ void main() {
     expect(find.text('Open emails in'), findsOneWidget);
     await tester.ensureVisible(find.bySemanticsLabel('Clean view'));
     await tester.pumpAndSettle();
-    await tester.tap(find.bySemanticsLabel('Clean view'));
-    await tester.pumpAndSettle();
-    expect(saved.last.openOriginal, isFalse);
     await tester.tap(find.bySemanticsLabel('Original layout'));
     await tester.pumpAndSettle();
     expect(saved.last.openOriginal, isTrue);
+    await tester.tap(find.bySemanticsLabel('Clean view'));
+    await tester.pumpAndSettle();
+    expect(saved.last.openOriginal, isFalse);
   });
 
   testWidgets('on the phone, Reading keeps how designed emails open', (
@@ -131,11 +131,11 @@ void main() {
     final saved = <Appearance>[];
     await _pump(tester, phone: true, saved: saved);
     await _openPhone(tester, 'Reading, Comfortable');
-    await tester.ensureVisible(find.bySemanticsLabel('Clean view'));
+    await tester.ensureVisible(find.bySemanticsLabel('Original layout'));
     await tester.pumpAndSettle();
-    await tester.tap(find.bySemanticsLabel('Clean view'));
+    await tester.tap(find.bySemanticsLabel('Original layout'));
     await tester.pumpAndSettle();
-    expect(saved.last.openOriginal, isFalse);
+    expect(saved.last.openOriginal, isTrue);
   });
 
   testWidgets('compact rows with one line of preview in the inbox', (
@@ -248,7 +248,7 @@ void main() {
     testWidgets('reading open in golden $name', (tester) async {
       await _pump(
         tester,
-        appearance: Appearance(theme: theme, openOriginal: false),
+        appearance: Appearance(theme: theme, openOriginal: true),
       );
       await _openDesktop(tester, 'Reading');
       await tester.ensureVisible(find.text('Open emails in'));
@@ -263,7 +263,7 @@ void main() {
       await _pump(
         tester,
         phone: true,
-        appearance: Appearance(theme: theme, openOriginal: false),
+        appearance: Appearance(theme: theme, openOriginal: true),
       );
       await _openPhone(tester, 'Reading, Comfortable');
       await tester.ensureVisible(find.text('Open emails in'));

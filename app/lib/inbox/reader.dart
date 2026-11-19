@@ -1444,9 +1444,9 @@ class _MessageViewState extends State<MessageView> {
   /// An email built as a layout, on a device that can draw it as sent.
   bool _hasOriginal(Readable r) => r.layout && _paperWorks;
 
-  /// An email built as a layout opens as it was sent (`ImagesToApprove`)
-  /// unless Settings › Reading says the clean view; the switch over it
-  /// goes to the other. Remote images in the original still wait for
+  /// An email built as a layout opens in the clean view unless
+  /// Settings › Reading says as it was sent (`ImagesToApprove`); the
+  /// switch over it goes to the other. Remote images in the original still wait for
   /// consent ([_originalOf]).
   bool _opensOriginal(Readable r) =>
       _hasOriginal(r) && PiumaLook.read(context).openOriginal;

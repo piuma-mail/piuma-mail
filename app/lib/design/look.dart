@@ -15,7 +15,7 @@ class Appearance {
     this.previewLines = 2,
     this.translateInto,
     this.language,
-    this.openOriginal = true,
+    this.openOriginal = false,
   });
 
   final ThemeChoice theme;
@@ -33,9 +33,10 @@ class Appearance {
   /// device's.
   final String? language;
 
-  /// An email built as a layout opens as it was sent (`ImagesToApprove`),
-  /// or, when false, in the clean reading view. Either way the switch over
-  /// it goes to the other, and remote images still wait for consent.
+  /// An email built as a layout opens in the clean reading view (the
+  /// default) or, when true, as it was sent (`ImagesToApprove`). Either
+  /// way the switch over it goes to the other, and remote images still
+  /// wait for consent.
   final bool openOriginal;
 
   Appearance copyWith({
