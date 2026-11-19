@@ -362,7 +362,9 @@ pub fn sync_info() -> Result<SyncInfo, EngineError> {
 /// The accounts whose removal waits for the person.
 fn held_here(local: &piuma_core::space_merge::Local) -> Result<Vec<HeldAccount>, EngineError> {
     let store = store()?;
-    let home = setting(HOME)?;
+    // From the guard held: `setting` would ask for the database again, and
+    // wait forever on this thread.
+    let home = store.setting(HOME)?;
     let mut out = Vec::new();
     for a in store.accounts()? {
         if store
@@ -1105,4 +1107,64 @@ pub async fn sync_add_invite_account(
         kind,
     };
     add_checked_account(account, password, Vec::new()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::engine::open_engine;
+
+    /// `sync_info` is answered on the thread that draws. On a device linked
+    /// to a space it took the database twice and waited for itself forever:
+    /// the app froze at its first tap, every time (Android ANR).
+    #[test]
+    fn sync_info_on_a_linked_device_answers() {
+        open_engine(":memory:".into()).unwrap();
+        let email = "held.here@studio.it";
+        let id = store()
+            .unwrap()
+            .add_account(&Account {
+                id: AccountId(0),
+                name: "Home".into(),
+                email: email.into(),
+                sender_name: "Matteo".into(),
+                color: "#3451D1".into(),
+                kind: AccountKind::Jmap {
+                    session_url: "https://jmap.studio.invalid/session".into(),
+                    username: "matteo".into(),
+                },
+            })
+            .unwrap();
+        {
+            let store = store().unwrap();
+            let mut local = store.space_local().unwrap();
+            local.held.insert(
+                piuma_core::space_merge::account_id(email),
+                Default::default(),
+            );
+            store.set_space_local(&local).unwrap();
+            store.set_setting(HOME, email).unwrap();
+        }
+        // On a thread of its own, so a deadlock fails the test instead of
+        // hanging it.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(sync_info());
+        });
+        let info = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("sync_info waited for the database it held")
+            .unwrap();
+        assert_eq!(info.home.as_deref(), Some(email));
+        let held = info
+            .held
+            .iter()
+            .find(|h| h.account_id == id.0)
+            .expect("the held account is listed");
+        assert!(held.home);
+        let store = store().unwrap();
+        store.remove_setting(HOME).unwrap();
+        store.set_space_local(&Default::default()).unwrap();
+        store.remove_account(id).unwrap();
+    }
 }

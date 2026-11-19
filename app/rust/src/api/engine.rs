@@ -58,42 +58,116 @@ pub(crate) fn engine() -> Result<&'static Engine, EngineError> {
         .ok_or_else(|| EngineError::new(ErrorKind::NotOpen, "engine not open"))
 }
 
-pub(crate) fn store() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
-    Ok(engine()?.store.lock().unwrap_or_else(|e| e.into_inner()))
+pub(crate) fn store() -> Result<StoreGuard<'static>, EngineError> {
+    hold(&engine()?.store)
 }
 
 /// The database for reading only, for the calls the app makes while it
 /// draws a frame: they wait neither for a write nor for a long read.
-pub(crate) fn reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
+pub(crate) fn reader() -> Result<StoreGuard<'static>, EngineError> {
     let engine = engine()?;
-    Ok(engine
-        .reader
-        .as_ref()
-        .unwrap_or(&engine.store)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()))
+    hold(engine.reader.as_ref().unwrap_or(&engine.store))
 }
 
 /// The database for reading only, for the longer reads the app asks for
 /// off the thread that draws (counts, pages, search): the first of the
 /// connections kept for them that is free, or the first one when none is.
 /// Never [`reader`]'s, so the calls made while drawing don't wait on them.
-pub(crate) fn bulk_reader() -> Result<std::sync::MutexGuard<'static, Store>, EngineError> {
+pub(crate) fn bulk_reader() -> Result<StoreGuard<'static>, EngineError> {
     let engine = engine()?;
     for r in &engine.readers {
+        if holds(r) {
+            continue;
+        }
         match r.try_lock() {
-            Ok(guard) => return Ok(guard),
-            Err(std::sync::TryLockError::Poisoned(e)) => return Ok(e.into_inner()),
+            Ok(guard) => return Ok(StoreGuard::new(r, guard)),
+            Err(std::sync::TryLockError::Poisoned(e)) => {
+                return Ok(StoreGuard::new(r, e.into_inner()))
+            }
             Err(std::sync::TryLockError::WouldBlock) => {}
         }
     }
-    Ok(engine
-        .readers
-        .first()
-        .or(engine.reader.as_ref())
-        .unwrap_or(&engine.store)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()))
+    hold(
+        engine
+            .readers
+            .first()
+            .or(engine.reader.as_ref())
+            .unwrap_or(&engine.store),
+    )
+}
+
+thread_local! {
+    /// The database connections this thread holds now, by address.
+    static HELD_HERE: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn address(m: &Mutex<Store>) -> usize {
+    m as *const Mutex<Store> as usize
+}
+
+fn holds(m: &Mutex<Store>) -> bool {
+    HELD_HERE.with(|h| h.borrow().contains(&address(m)))
+}
+
+/// Takes a database connection, waiting for it. A thread asking again for
+/// one it already holds would wait for itself forever (std's mutex isn't
+/// reentrant): on the thread that draws, the app would freeze for good
+/// (an ANR). That is a bug, so it panics in debug
+/// builds; a release build answers an error instead of hanging.
+fn hold(m: &Mutex<Store>) -> Result<StoreGuard<'_>, EngineError> {
+    if holds(m) {
+        let e = EngineError::new(
+            ErrorKind::Other,
+            "the database was asked for again by the thread that holds it",
+        );
+        if cfg!(debug_assertions) {
+            panic!("{}", e.detail);
+        }
+        log::error!("{}", e.detail);
+        return Err(e);
+    }
+    Ok(StoreGuard::new(
+        m,
+        m.lock().unwrap_or_else(|e| e.into_inner()),
+    ))
+}
+
+/// A database connection held by this thread until dropped; see [`hold`].
+pub(crate) struct StoreGuard<'a> {
+    guard: std::sync::MutexGuard<'a, Store>,
+    at: usize,
+}
+
+impl<'a> StoreGuard<'a> {
+    fn new(m: &'a Mutex<Store>, guard: std::sync::MutexGuard<'a, Store>) -> Self {
+        let at = address(m);
+        HELD_HERE.with(|h| h.borrow_mut().push(at));
+        StoreGuard { guard, at }
+    }
+}
+
+impl Drop for StoreGuard<'_> {
+    fn drop(&mut self) {
+        HELD_HERE.with(|h| {
+            let mut h = h.borrow_mut();
+            if let Some(i) = h.iter().rposition(|&a| a == self.at) {
+                h.swap_remove(i);
+            }
+        });
+    }
+}
+
+impl std::ops::Deref for StoreGuard<'_> {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for StoreGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Store {
+        &mut self.guard
+    }
 }
 
 /// What went wrong, so the app can word it in the person's language.
@@ -4065,7 +4139,10 @@ async fn deliver(id: i64) -> Result<Delivery, EngineError> {
         if let Some(d) = kept_outcome(id) {
             return Ok(d);
         }
-        match store()?.outgoing_state(id)?.as_deref() {
+        // Read first: a guard in the match's scrutinee would be held through
+        // the arms, which ask for the database again.
+        let state = store()?.outgoing_state(id)?;
+        match state.as_deref() {
             None | Some("unfiled") => {
                 // Sent by another process, or taken back.
                 return Ok(Delivery::of(if busy {
@@ -4690,8 +4767,8 @@ pub async fn open_draft(draft: MessageRef) -> Result<OutgoingMessage, EngineErro
     })
 }
 
-fn lock_store(store: &Mutex<Store>) -> std::sync::MutexGuard<'_, Store> {
-    store.lock().unwrap_or_else(|e| e.into_inner())
+fn lock_store(store: &Mutex<Store>) -> StoreGuard<'_> {
+    StoreGuard::new(store, store.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 /// Hides a message from the lists while its action can be undone, or
@@ -6690,6 +6767,50 @@ pub struct InviteSent {
     pub queued: bool,
     /// The calendar the event was put in, if any.
     pub added_to: Option<String>,
+}
+
+#[cfg(test)]
+mod store_guard_tests {
+    use super::*;
+
+    fn connection() -> Mutex<Store> {
+        Mutex::new(Store::open(":memory:").unwrap())
+    }
+
+    #[test]
+    fn a_connection_is_taken_again_once_let_go() {
+        let (a, b) = (connection(), connection());
+        let first = hold(&a).unwrap();
+        // Another connection meanwhile: a reader beside the writer.
+        let other = hold(&b).unwrap();
+        assert!(holds(&a) && holds(&b));
+        drop(first);
+        assert!(!holds(&a));
+        drop(hold(&a).unwrap());
+        drop(other);
+        assert!(!holds(&b));
+    }
+
+    #[test]
+    fn a_connection_held_elsewhere_is_waited_for() {
+        let a: &'static Mutex<Store> = Box::leak(Box::new(connection()));
+        let held = hold(a).unwrap();
+        let other = std::thread::spawn(move || hold(a).map(|_| ()).is_ok());
+        std::thread::sleep(Duration::from_millis(50));
+        drop(held);
+        assert!(other.join().unwrap());
+    }
+
+    /// Asking again on the thread that holds it would wait forever: in a
+    /// debug build it's a panic, so tests catch it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "asked for again")]
+    fn a_connection_asked_for_again_by_its_holder_is_refused() {
+        let a = connection();
+        let _held = hold(&a).unwrap();
+        let _ = hold(&a);
+    }
 }
 
 #[cfg(test)]
