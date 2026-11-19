@@ -2447,7 +2447,10 @@ pub async fn watch_timed(
             // the background, a router that forgot it) says nothing yet:
             // only the next try, failing too, means offline. Otherwise
             // "You're offline" shows for the seconds it takes to reconnect.
-            Err(_) if synced => backoff.fail(crate::backoff::OFFLINE_MOST),
+            // The waits still grow as for any failure: a server that fails
+            // the same way after every inbox sync (a folder it refuses) is
+            // not logged into every minute.
+            Err(e) if synced => backoff.fail(retry_cap(answered, &e)),
             Err(e) => {
                 events(WatchEvent::Offline {
                     account,
