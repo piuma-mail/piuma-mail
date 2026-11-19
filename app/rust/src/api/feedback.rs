@@ -9,13 +9,14 @@ use flutter_rust_bridge::frb;
 use piuma_core::feedback::{self, Kind, Level, Relay, Reports, Status, Ticket, Waiting};
 use piuma_core::AccountKind;
 
-use super::engine::{engine, reader, store, EngineError, ErrorKind};
+use super::engine::{engine, is_open, reader, store, EngineError, ErrorKind};
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 /// A ticket fetched and solved when the sheet opened, for the next Send.
 static PREPARED: Mutex<Option<Ticket>> = Mutex::new(None);
 
-/// Called once the database is open: reports live next to it.
+/// Called before the database opens (so a failure opening it is kept for
+/// a report) and again once it is open: reports live next to it.
 pub(crate) fn opened(db_path: &str) {
     let dir = std::path::Path::new(db_path)
         .parent()
@@ -39,6 +40,11 @@ fn err(e: impl std::fmt::Display) -> EngineError {
 /// The words a report must never carry: every account's names, address,
 /// login and servers.
 fn refresh_personal() {
+    // The first call to `opened` comes before the database: no accounts
+    // yet, and no "engine not open" warning in the log at every start.
+    if !is_open() {
+        return;
+    }
     let Ok(store) = store() else { return };
     let Ok(accounts) = store.accounts() else {
         return;
@@ -514,4 +520,25 @@ pub fn feedback_erasure_email(id: String) -> Result<FeedbackEmail, EngineError> 
 #[frb(sync)]
 pub fn feedback_mark_emailed(id: String) -> Result<FeedbackReport, EngineError> {
     Ok(reports()?.mark_emailed(&id).map_err(err)?.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `open_engine` sets the reports folder before the database opens:
+    /// that must not log "NotOpen: engine not open" at every start (seen
+    /// in "See what's sent" on a first launch).
+    #[test]
+    fn the_reports_folder_before_the_database_logs_nothing() {
+        let dir = std::env::temp_dir().join(format!("piuma-feedback-{}", std::process::id()));
+        if !is_open() {
+            opened(&dir.join("piuma.db").to_string_lossy());
+            assert!(
+                !feedback::recent_log().contains("NotOpen"),
+                "{}",
+                feedback::recent_log()
+            );
+        }
+    }
 }

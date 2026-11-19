@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,21 +18,22 @@ Future<DemoMailSource> _pump(
   bool dark = false,
   Size size = const Size(1440, 900),
   bool junk = true,
+  DemoMailSource? source,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now)..junkFolders = junk;
+  final mail = (source ?? DemoMailSource(now: _now))..junkFolders = junk;
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
       home: (_, _) =>
-          InboxScreen(source: source, onAddAccount: () {}, now: () => _now),
+          InboxScreen(source: mail, onAddAccount: () {}, now: () => _now),
     ),
   );
   await tester.pump(const Duration(seconds: 2));
   await tester.pumpAndSettle();
-  return source;
+  return mail;
 }
 
 Iterable<String> _subjects(WidgetTester tester) => tester
@@ -119,6 +122,29 @@ void main() {
     await tester.tap(find.text('Acme'));
     await tester.pumpAndSettle();
     expect(_subjects(tester), [subject]);
+  });
+
+  testWidgets('Move to asks the server and shows a folder made elsewhere', (
+    tester,
+  ) async {
+    final source = _MadeElsewhere(now: _now);
+    await _pump(tester, source: source);
+    await _openWorkMessage(tester);
+
+    await tester.tap(find.byTooltip('Move to…'));
+    await tester.pumpAndSettle();
+    expect(source.asked, 1);
+    // The list as last seen, at once.
+    expect(
+      find.descendant(of: find.byType(MoveMenu), matching: find.text('Acme')),
+      findsOneWidget,
+    );
+    expect(find.text('Made elsewhere'), findsNothing);
+    // The server answers: the new folder joins the open list.
+    source.answer();
+    await tester.pumpAndSettle();
+    await _pickTarget(tester, 'Made elsewhere');
+    expect(find.text('Moved to Made elsewhere'), findsOneWidget);
   });
 
   testWidgets('M opens Move to and Enter takes the first match', (
@@ -216,5 +242,23 @@ void main() {
         matchesGoldenFile('goldens/move_to_$name.png'),
       );
     }, tags: ['golden']);
+  }
+}
+
+/// A server where a folder was made elsewhere: it shows once
+/// [refreshFolders] is answered.
+class _MadeElsewhere extends DemoMailSource {
+  _MadeElsewhere({super.now});
+
+  int asked = 0;
+  final _answer = Completer<void>();
+
+  void answer() => _answer.complete();
+
+  @override
+  Future<void> refreshFolders(int accountId) async {
+    asked++;
+    await _answer.future;
+    await createFolder(accountId, 'Made elsewhere');
   }
 }

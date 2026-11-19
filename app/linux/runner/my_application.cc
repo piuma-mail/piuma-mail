@@ -21,6 +21,11 @@ struct _MyApplication {
   Shell* shell;
   // Started at sign-in: the window waits for the tray or a launch.
   gboolean start_hidden;
+  // Where the window is, kept for the next launch (window.ini).
+  gint width, height, x, y;
+  gboolean placed;  // x and y are known (X11; Wayland never says).
+  gboolean maximized;
+  guint save_source;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -33,6 +38,112 @@ static void register_app_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) badge =
       fl_plugin_registry_get_registrar_for_plugin(registry, "UnreadBadge");
   unread_badge_register(badge);
+}
+
+// The window's last size and place: $XDG_CONFIG_HOME/<app id>/window.ini.
+static gchar* window_state_path() {
+  return g_build_filename(g_get_user_config_dir(), APPLICATION_ID,
+                          "window.ini", nullptr);
+}
+
+static void save_window_state(MyApplication* self) {
+  if (self->width <= 0 || self->height <= 0) return;
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_key_file_set_integer(file, "window", "width", self->width);
+  g_key_file_set_integer(file, "window", "height", self->height);
+  if (self->placed) {
+    g_key_file_set_integer(file, "window", "x", self->x);
+    g_key_file_set_integer(file, "window", "y", self->y);
+  }
+  g_key_file_set_boolean(file, "window", "maximized", self->maximized);
+  g_autofree gchar* path = window_state_path();
+  g_autofree gchar* folder = g_path_get_dirname(path);
+  g_mkdir_with_parents(folder, 0700);
+  g_key_file_save_to_file(file, path, nullptr);
+}
+
+static gboolean on_save_window_state(gpointer data) {
+  MyApplication* self = MY_APPLICATION(data);
+  self->save_source = 0;
+  save_window_state(self);
+  return G_SOURCE_REMOVE;
+}
+
+// Saved a moment after the last change, not on every step of a drag.
+static void save_window_state_soon(MyApplication* self) {
+  if (self->save_source != 0) g_source_remove(self->save_source);
+  self->save_source = g_timeout_add(500, on_save_window_state, self);
+}
+
+static gboolean on_configure(GtkWidget* widget, GdkEventConfigure*,
+                             gpointer data) {
+  MyApplication* self = MY_APPLICATION(data);
+  // The size to come back to: the one before maximizing, not the screen's.
+  GtkWindow* window = GTK_WINDOW(widget);
+  if (!self->maximized && !gtk_window_is_maximized(window)) {
+    gtk_window_get_size(window, &self->width, &self->height);
+#ifdef GDK_WINDOWING_X11
+    if (GDK_IS_X11_DISPLAY(gtk_widget_get_display(widget))) {
+      gtk_window_get_position(window, &self->x, &self->y);
+      self->placed = TRUE;
+    }
+#endif
+  }
+  save_window_state_soon(self);
+  return FALSE;
+}
+
+static gboolean on_window_state(GtkWidget*, GdkEventWindowState* event,
+                                gpointer data) {
+  MyApplication* self = MY_APPLICATION(data);
+  if (event->changed_mask & GDK_WINDOW_STATE_MAXIMIZED) {
+    self->maximized =
+        (event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED) != 0;
+    save_window_state_soon(self);
+  }
+  return FALSE;
+}
+
+// Back at the last size, place and maximized state; 1280×720 the first
+// time, or when the screen it was on is gone.
+static void restore_window_state(MyApplication* self, GtkWindow* window) {
+  gint width = 1280, height = 720;
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_autofree gchar* path = window_state_path();
+  if (g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, nullptr)) {
+    const gint w = g_key_file_get_integer(file, "window", "width", nullptr);
+    const gint h = g_key_file_get_integer(file, "window", "height", nullptr);
+    if (w >= 200 && h >= 200 && w <= 16384 && h <= 16384) {
+      width = w;
+      height = h;
+    }
+    if (g_key_file_has_key(file, "window", "x", nullptr) &&
+        g_key_file_has_key(file, "window", "y", nullptr)) {
+      const gint x = g_key_file_get_integer(file, "window", "x", nullptr);
+      const gint y = g_key_file_get_integer(file, "window", "y", nullptr);
+      GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(window));
+      // Only onto a screen that is still there.
+      for (int i = 0; i < gdk_display_get_n_monitors(display); i++) {
+        GdkRectangle area;
+        gdk_monitor_get_workarea(gdk_display_get_monitor(display, i), &area);
+        if (x + 40 >= area.x && x + 40 < area.x + area.width &&
+            y + 40 >= area.y && y + 40 < area.y + area.height) {
+          gtk_window_move(window, x, y);
+          break;
+        }
+      }
+    }
+    if (g_key_file_get_boolean(file, "window", "maximized", nullptr)) {
+      gtk_window_maximize(window);
+      self->maximized = TRUE;
+    }
+  }
+  self->width = width;
+  self->height = height;
+  gtk_window_set_default_size(window, width, height);
+  g_signal_connect(window, "configure-event", G_CALLBACK(on_configure), self);
+  g_signal_connect(window, "window-state-event", G_CALLBACK(on_window_state),
+                   self);
 }
 
 // Called when first Flutter frame received.
@@ -81,7 +192,7 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "Piuma Mail");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  restore_window_state(self, window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
@@ -189,9 +300,14 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
+  MyApplication* self = MY_APPLICATION(application);
 
-  // Perform any actions required at application shutdown.
+  // A change still waiting to be kept.
+  if (self->save_source != 0) {
+    g_source_remove(self->save_source);
+    self->save_source = 0;
+    save_window_state(self);
+  }
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
@@ -215,6 +331,10 @@ static void my_application_init(MyApplication* self) {
   self->window = nullptr;
   self->shell = nullptr;
   self->start_hidden = FALSE;
+  self->width = self->height = self->x = self->y = 0;
+  self->placed = FALSE;
+  self->maximized = FALSE;
+  self->save_source = 0;
   self->dart_entrypoint_arguments = nullptr;
 }
 

@@ -45,6 +45,10 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<UnreadBadge> unread_badge_;
 
   bool start_hidden_;
+  // It was maximized when it last closed: shown maximized again.
+  bool maximized_ = false;
+  // Between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE: saved once, at the end.
+  bool sizing_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

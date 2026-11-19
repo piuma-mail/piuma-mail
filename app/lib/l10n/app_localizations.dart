@@ -424,12 +424,6 @@ abstract class AppLocalizations {
   /// **'Older'**
   String get sectionOlder;
 
-  /// No description provided for @defaultAccountName.
-  ///
-  /// In en, this message translates to:
-  /// **'Mail'**
-  String get defaultAccountName;
-
   /// No description provided for @emailAddress.
   ///
   /// In en, this message translates to:
@@ -9991,8 +9985,38 @@ abstract class AppLocalizations {
   /// No description provided for @oauthMicrosoftNoClient.
   ///
   /// In en, this message translates to:
-  /// **'Microsoft no longer lets mail apps sign in with a password, and this copy of Piuma Mail has no Microsoft sign-in set up. Use an official build, or enter your own app’s client ID under Advanced.'**
+  /// **'Microsoft no longer accepts your usual password from mail apps. If your account has an app password, or your organization still allows passwords for IMAP, use it with the server settings instead. If you have your own app registration, enter its client ID under Advanced.'**
   String get oauthMicrosoftNoClient;
+
+  /// No description provided for @oauthNotYet.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign-in with {provider} isn’t available in this version of Piuma Mail yet.'**
+  String oauthNotYet(String provider);
+
+  /// No description provided for @contactsIntroTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Faces you know'**
+  String get contactsIntroTitle;
+
+  /// No description provided for @contactsIntroBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma can show the photos from your contacts next to their mail. They stay on this device: nothing is copied or sent. The system will then ask to let Piuma read your contacts.'**
+  String get contactsIntroBody;
+
+  /// No description provided for @contactPhotosSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Photos from your contacts'**
+  String get contactPhotosSetting;
+
+  /// No description provided for @contactPhotosSettingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Read on this device only, to show a face next to their mail. Turned off in the system settings.'**
+  String get contactPhotosSettingHint;
 
   /// No description provided for @oauthUseAppPassword.
   ///

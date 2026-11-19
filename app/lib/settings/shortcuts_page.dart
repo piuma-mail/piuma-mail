@@ -77,6 +77,11 @@ class ShortcutsPage extends StatelessWidget {
                   (l.zoomReset, apple ? '⌘0' : 'Ctrl 0'),
                   (l.actionDelete, 'Del'),
                   (l.reportProblem, apple ? '⌘⇧R' : 'Ctrl Shift R'),
+                  // Where the system has a key to quit: ⌘Q, Ctrl+Q.
+                  if (defaultTargetPlatform == TargetPlatform.macOS)
+                    (l.trayQuit, '⌘Q'),
+                  if (defaultTargetPlatform == TargetPlatform.linux)
+                    (l.trayQuit, 'Ctrl Q'),
                 ])
                   _Row(label: label, keys: key),
               ],

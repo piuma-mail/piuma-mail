@@ -192,9 +192,6 @@ class AppLocalizationsPt extends AppLocalizations {
   String get sectionOlder => 'Mais antigos';
 
   @override
-  String get defaultAccountName => 'E-mail';
-
-  @override
   String get emailAddress => 'Endereço de e-mail';
 
   @override
@@ -6826,7 +6823,26 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get oauthMicrosoftNoClient =>
-      'A Microsoft não permite mais que apps de e-mail entrem com senha, e esta cópia do Piuma Mail não tem a entrada da Microsoft configurada. Use uma versão oficial ou informe o ID do cliente do seu próprio app em Avançado.';
+      'A Microsoft não aceita mais sua senha de sempre em apps de e-mail. Se sua conta tem uma senha de app, ou sua organização ainda permite senhas para IMAP, use-a com as configurações do servidor. Se você tem seu próprio registro do app, informe o ID do cliente em Avançado.';
+
+  @override
+  String oauthNotYet(String provider) {
+    return 'A entrada com a $provider ainda não está disponível nesta versão do Piuma Mail.';
+  }
+
+  @override
+  String get contactsIntroTitle => 'Rostos conhecidos';
+
+  @override
+  String get contactsIntroBody =>
+      'O Piuma pode mostrar as fotos dos seus contatos ao lado dos e-mails deles. Elas ficam neste dispositivo: nada é copiado nem enviado. Depois o sistema vai pedir para o Piuma ler seus contatos.';
+
+  @override
+  String get contactPhotosSetting => 'Fotos dos seus contatos';
+
+  @override
+  String get contactPhotosSettingHint =>
+      'Lidas só neste dispositivo, para mostrar um rosto ao lado dos e-mails deles. Desative nas configurações do sistema.';
 
   @override
   String get oauthUseAppPassword => 'Usar uma senha de app';

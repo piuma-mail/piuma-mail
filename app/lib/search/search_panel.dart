@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../feedback/report_context.dart';
 import '../design/icons.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
@@ -531,7 +532,12 @@ class _SearchPanelState extends State<SearchPanel> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ReportScreen(
+    name: 'Search',
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final words = searchWords(_field.text);

@@ -192,9 +192,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sectionOlder => 'Älter';
 
   @override
-  String get defaultAccountName => 'Mail';
-
-  @override
   String get emailAddress => 'E-Mail-Adresse';
 
   @override
@@ -6849,7 +6846,26 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get oauthMicrosoftNoClient =>
-      'Microsoft lässt Mail-Apps nicht mehr mit einem Passwort anmelden, und in dieser Kopie von Piuma Mail ist keine Microsoft-Anmeldung eingerichtet. Nutze einen offiziellen Build oder gib unter Erweitert die Client-ID deiner eigenen App ein.';
+      'Microsoft nimmt dein gewohntes Passwort von Mail-Apps nicht mehr an. Wenn dein Konto ein App-Passwort hat oder deine Organisation Passwörter für IMAP noch erlaubt, nutze es stattdessen mit den Servereinstellungen. Wenn du eine eigene App-Registrierung hast, gib ihre Client-ID unter Erweitert ein.';
+
+  @override
+  String oauthNotYet(String provider) {
+    return 'Die Anmeldung mit $provider ist in dieser Version von Piuma Mail noch nicht verfügbar.';
+  }
+
+  @override
+  String get contactsIntroTitle => 'Bekannte Gesichter';
+
+  @override
+  String get contactsIntroBody =>
+      'Piuma kann die Fotos deiner Kontakte neben ihren Mails zeigen. Sie bleiben auf diesem Gerät: Nichts wird kopiert oder gesendet. Danach fragt das System, ob Piuma deine Kontakte lesen darf.';
+
+  @override
+  String get contactPhotosSetting => 'Fotos aus deinen Kontakten';
+
+  @override
+  String get contactPhotosSettingHint =>
+      'Nur auf diesem Gerät gelesen, um neben ihren Mails ein Gesicht zu zeigen. Ausgeschaltet wird es in den Systemeinstellungen.';
 
   @override
   String get oauthUseAppPassword => 'Stattdessen ein App-Passwort nutzen';

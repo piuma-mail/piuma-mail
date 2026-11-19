@@ -38,25 +38,57 @@ class BackgroundSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return IntroSheet(
+      icon: PiumaIcon.bell,
+      title: l.backgroundTitle,
+      body: l.backgroundBody,
+    );
+  }
+}
+
+/// What the app is about to ask the system for, and why, before the
+/// system's own question: Continue pops true, Not now false.
+class IntroSheet extends StatelessWidget {
+  const IntroSheet({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.body,
+    this.sheet = true,
+  });
+
+  final PiumaIcon icon;
+  final String title;
+  final String body;
+
+  /// In a sheet from the bottom, with its handle; false in a dialog.
+  final bool sheet;
+
+  @override
+  Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+      padding: sheet
+          ? const EdgeInsets.fromLTRB(22, 0, 22, 8)
+          : EdgeInsets.zero,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(
-            child: Container(
-              width: 36,
-              height: 5,
-              margin: const EdgeInsets.only(bottom: 18),
-              decoration: BoxDecoration(
-                color: c.line,
-                borderRadius: BorderRadius.circular(999),
+          if (sheet)
+            Center(
+              child: Container(
+                width: 36,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 18),
+                decoration: BoxDecoration(
+                  color: c.line,
+                  borderRadius: BorderRadius.circular(999),
+                ),
               ),
             ),
-          ),
           Container(
             width: 44,
             height: 44,
@@ -65,18 +97,15 @@ class BackgroundSheet extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             alignment: Alignment.center,
-            child: PiumaIconView(PiumaIcon.bell, size: 20, color: c.fg),
+            child: PiumaIconView(icon, size: 20, color: c.fg),
           ),
           const SizedBox(height: 12),
           Text(
-            l.backgroundTitle,
+            title,
             style: PiumaType.title.copyWith(color: c.fg, fontSize: 22),
           ),
           const SizedBox(height: 8),
-          Text(
-            l.backgroundBody,
-            style: PiumaType.body.copyWith(color: c.muted),
-          ),
+          Text(body, style: PiumaType.body.copyWith(color: c.muted)),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,

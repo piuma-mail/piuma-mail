@@ -173,9 +173,13 @@ class AccountErrorView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            accountErrorText(l, error),
-            style: TextStyle(fontSize: 14, color: c.danger),
+          // Said as soon as it appears, wherever the focus is.
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              accountErrorText(l, error),
+              style: TextStyle(fontSize: 14, color: c.danger),
+            ),
           ),
           if (error == AddAccountError.certificate && cert != null) ...[
             const SizedBox(height: PiumaSpace.s12),

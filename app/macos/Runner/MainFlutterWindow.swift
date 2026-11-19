@@ -15,6 +15,9 @@ class MainFlutterWindow: NSWindow {
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+    // Back at the last size and place (and full screen or zoomed, which
+    // macOS keeps itself), kept in the app's defaults.
+    self.setFrameAutosaveName("PiumaMainWindow")
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     OnDeviceModel.listen(flutterViewController.engine.binaryMessenger)

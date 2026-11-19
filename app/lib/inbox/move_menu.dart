@@ -21,18 +21,26 @@ Future<AccountFolder?> showMoveTo(
   bool copy = false,
 }) async {
   final l = AppLocalizations.of(context);
-  final own = await source.folders(account.id);
-  if (!context.mounted) return null;
-  final targets = [
+  List<AccountFolder> targetsOf(List<AccountFolder> own) => [
     if (from != 'INBOX') AccountFolder(mailbox: 'INBOX', name: l.inbox),
     for (final f in own)
       if (f.mailbox != from) f,
   ];
+  // The folders as last seen show at once; the server is asked meanwhile,
+  // so a folder made elsewhere a moment ago joins the list when it answers.
+  final updated = source
+      .refreshFolders(account.id)
+      .then((_) => source.folders(account.id))
+      .then<List<AccountFolder>?>(targetsOf, onError: (_) => null);
+  final own = await source.folders(account.id);
+  if (!context.mounted) return null;
+  final targets = targetsOf(own);
   // "Copy to…" is the same list under its own name.
   final title = copy ? l.copyTo : l.moveTo;
   final menu = MoveMenu(
     account: account,
     targets: targets,
+    updated: updated,
     hint: copy ? l.copyToIn(account.name) : l.moveToIn(account.name),
     phone: phone,
   );
@@ -66,10 +74,15 @@ class MoveMenu extends StatefulWidget {
     required this.account,
     required this.targets,
     required this.hint,
+    this.updated,
     this.phone = false,
   });
 
   final MailAccount account;
+
+  /// [targets] as the server lists them now, once it answers (null when
+  /// it can't): they replace [targets].
+  final Future<List<AccountFolder>?>? updated;
 
   /// What the empty search field says.
   final String hint;
@@ -84,6 +97,15 @@ class MoveMenu extends StatefulWidget {
 
 class _MoveMenuState extends State<MoveMenu> {
   final _field = TextEditingController();
+  late var _targets = widget.targets;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.updated?.then((targets) {
+      if (mounted && targets != null) setState(() => _targets = targets);
+    });
+  }
 
   @override
   void dispose() {
@@ -95,9 +117,9 @@ class _MoveMenuState extends State<MoveMenu> {
   /// with the folders that only hold others shown but not taken.
   List<AccountFolder> get _shown {
     final q = _field.text.trim().toLowerCase();
-    if (q.isEmpty) return widget.targets;
+    if (q.isEmpty) return _targets;
     return [
-      for (final f in widget.targets)
+      for (final f in _targets)
         if (f.selectable && f.name.toLowerCase().contains(q))
           AccountFolder(mailbox: f.mailbox, name: f.name, unread: f.unread),
     ];

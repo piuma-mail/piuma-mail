@@ -394,7 +394,9 @@ fn rules() -> &'static Rules {
             ipv4: re(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
             ipv6: re(r"(?i)\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b"),
             host: re(r"(?i)\b(?:[a-z0-9-]+\.)+([a-z]{2,})\b"),
-            quoted: re(r#""([^"\n]*)""#),
+            // With the `{` or `,` before it and the colon after it, when
+            // they are there: a key of JSON.
+            quoted: re(r#"([{,]\s*)?"([^"\n]*)"(\s*:)?"#),
             // 'text' only where a quote opens and closes, so "doesn't"
             // and "can't … won't" stay as they are.
             single_quoted: re(r"(^|[\s(\[=:,])'([^'\n]{1,300})'"),
@@ -516,9 +518,26 @@ pub fn clean(text: &str) -> String {
             "<text>".to_string()
         }
     };
+    let text = s.clone();
     s = r
         .quoted
-        .replace_all(&s, |c: &Captures| format!("\"{}\"", keep_code(&c[1])))
+        .replace_all(&text, |c: &Captures| {
+            let before = c.get(1).map_or("", |m| m.as_str());
+            let colon = c.get(3).map_or("", |m| m.as_str());
+            // What follows the colon: a JSON value, not prose
+            // ("folder, \"lawyer\": permission denied").
+            let value = text[c.get(0).map_or(0, |m| m.end())..]
+                .trim_start()
+                .starts_with(|ch: char| "\"{[-0123456789tfn".contains(ch));
+            // A key of JSON ({"subject": …) names a field, never what it
+            // holds: kept, so the line still reads; its value is not.
+            let inner = if !before.is_empty() && !colon.is_empty() && value && is_key(&c[2]) {
+                c[2].to_string()
+            } else {
+                keep_code(&c[2])
+            };
+            format!("{before}\"{inner}\"{colon}")
+        })
         .into_owned();
     s = r
         .backticks
@@ -535,6 +554,17 @@ pub fn clean(text: &str) -> String {
             format!("{}{}{}", &c[1], keep_code(&c[2]), &c[3])
         })
         .into_owned()
+}
+
+/// A field's name as code writes it: one short word of letters, digits,
+/// `_` or `-`, starting with a lowercase letter ("notAfter", "host_name").
+/// A capital first letter reads as a name ("Giulia", "Lawyer"), a folder
+/// or a person's, and stays hidden.
+fn is_key(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && text.len() <= 32
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 fn replace_ignoring_case(text: &str, word: &str, with: &str) -> String {
@@ -1863,6 +1893,19 @@ mod tests {
             ("dial 192.168.1.20 refused", "dial <ip> refused"),
             ("dial 2001:db8:0:1::1 refused", "dial <ip>::1 refused"),
             ("SELECT \"Bills 2026\"", "SELECT \"<text>\""),
+            (
+                "Certificate: {\"host\":\"Mail Server\",\"notAfter\":\"Jan 2027\"}",
+                "Certificate: {\"host\":\"<text>\",\"notAfter\":\"<text>\"}",
+            ),
+            ("open \"Invoices\": failed", "open \"<text>\": failed"),
+            (
+                "counts: {\"Medical\": 4, \"Giulia\":\"x\"}",
+                "counts: {\"<text>\": 4, \"<text>\":\"<text>\"}",
+            ),
+            (
+                "open folder, \"lawyer\": permission denied",
+                "open folder, \"<text>\": permission denied",
+            ),
             ("Subject: Your payslip", "Subject: <text>"),
             ("see https://host.example/x?token=1", "see <url>"),
             (

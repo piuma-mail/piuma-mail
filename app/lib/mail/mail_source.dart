@@ -1395,6 +1395,7 @@ class Draft {
     this.plainText = false,
     this.readReceipt = false,
     this.highPriority = false,
+    this.replyAll = false,
   });
 
   /// The account it goes out from.
@@ -1454,6 +1455,10 @@ class Draft {
   /// Marked important (`Importance: high`).
   final bool highPriority;
 
+  /// Answers everyone (Reply all): compose is titled so. Only how it was
+  /// opened, never saved with it.
+  final bool replyAll;
+
   Draft withCopy(DraftCopy? copy) => Draft(
     accountId: accountId,
     fromEmail: fromEmail,
@@ -1475,6 +1480,7 @@ class Draft {
     plainText: plainText,
     readReceipt: readReceipt,
     highPriority: highPriority,
+    replyAll: replyAll,
   );
 
   /// Total size of the attached files and the pictures inside the text,
@@ -2722,6 +2728,11 @@ abstract class MailSource with ComposeExtras {
   /// spam), in the server's tree order, siblings as the person ordered them.
   Future<List<AccountFolder>> folders(int accountId);
 
+  /// Asks the account's server for its folders now (no messages), so
+  /// [folders] has one made elsewhere a moment ago; "Move to…" calls it as
+  /// it opens. Throws when the server can't be reached.
+  Future<void> refreshFolders(int accountId) async {}
+
   /// Keeps the order the person dragged some sibling folders into, first
   /// to last; [folders] lists them so from then on.
   Future<void> setFolderOrder(int accountId, List<String> mailboxes);
@@ -3008,6 +3019,9 @@ abstract class MailSource with ComposeExtras {
     MailRow? row,
     bool opened = false,
   }) async => null;
+
+  /// Access to the contacts book changed: their photos are read again.
+  void contactsChanged() => pictures.clear();
 
   /// The pictures already asked for, shared by every list and reader.
   late final SenderPictures pictures = SenderPictures(

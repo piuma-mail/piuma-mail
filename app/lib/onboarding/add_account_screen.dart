@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../feedback/report_context.dart';
 import '../design/icons.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
@@ -83,6 +84,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   /// With [AddAccountError.certificate]: the certificate refused.
   CertificateProblem? _certificate;
+
+  /// The error and its report link, scrolled into view when they appear.
+  final _errorKey = GlobalKey();
 
   /// Certificates the person chose to trust for this account.
   final _trusted = <TrustedCertificate>[];
@@ -320,6 +324,24 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _go(_Step.manual);
   }
 
+  /// From a sign-in page this build can't offer: the servers by hand, for
+  /// an app password or an organization that still takes passwords. The
+  /// provider's servers when the lookup found them, else Microsoft's.
+  void _manualWithPassword() {
+    _fillServers(_found);
+    if (_found == null && _oauth == 'microsoft') {
+      _imapHost.text = 'outlook.office365.com';
+      _imapPort.text = '993';
+      _imapSecurity = ServerSecurity.tls;
+      _smtpHost.text = 'smtp.office365.com';
+      _smtpPort.text = '587';
+      _smtpSecurity = ServerSecurity.startTls;
+      _jmap = false;
+    }
+    _notFound = false;
+    _go(_Step.manual);
+  }
+
   void _submit() => switch (_step) {
     _Step.email => _lookUp(),
     _Step.pec => null,
@@ -340,6 +362,20 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   void _failed(Object e) {
     if (!mounted) return;
+    // What went wrong sits under the button, often below the fold of a
+    // long form: bring it into view, or "Verify and connect" looks like it
+    // did nothing. Screen readers hear it from the view's live region.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final there = _errorKey.currentContext;
+      if (!mounted || there == null) return;
+      final instant = reduceMotion(context);
+      Scrollable.ensureVisible(
+        there,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        duration: instant ? Duration.zero : PiumaMotion.move,
+        curve: PiumaMotion.curve,
+      );
+    });
     setState(() {
       if (e is AddAccountException) {
         _error = e.error;
@@ -407,7 +443,6 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   Future<void> _connect() async {
     if (!_ready || _busy) return;
-    final l = AppLocalizations.of(context);
     setState(() {
       _busy = true;
       _error = null;
@@ -423,8 +458,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     try {
       final account = jmapUrl != null
           ? await widget.source.addJmapAccount(
+              // Unnamed, it goes by its address: never a vague "Mail".
               name: _name.text.trim().isEmpty
-                  ? l.defaultAccountName
+                  ? _email.text.trim()
                   : _name.text.trim(),
               email: _email.text.trim(),
               senderName: _sender.text.trim(),
@@ -434,8 +470,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
               trusted: List.of(_trusted),
             )
           : await widget.source.addImapAccount(
+              // Unnamed, it goes by its address: never a vague "Mail".
               name: _name.text.trim().isEmpty
-                  ? l.defaultAccountName
+                  ? _email.text.trim()
                   : _name.text.trim(),
               email: _email.text.trim(),
               senderName: _sender.text.trim(),
@@ -511,8 +548,28 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     }
   }
 
+  /// For reports: the step in front.
+  String get _reportName {
+    if (_scanning) return 'Add account › Scan code';
+    if (_added != null) return 'Add account › Connected';
+    final step = switch (_step) {
+      _Step.email => null,
+      _Step.found => 'Found settings',
+      _Step.manual => 'Manual setup',
+      _Step.pec => 'PEC',
+      _Step.provider => _provider?.label,
+      _Step.oauth => 'Sign in with ${_oauthName(_oauth ?? '')}',
+    };
+    return step == null ? 'Add account' : 'Add account › $step';
+  }
+
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) => ReportScreen(
+    name: _reportName,
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
       final phone = box.maxWidth < phoneWidth;
       if (_scanning) {
@@ -562,17 +619,33 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
 
   Widget _desktop(BuildContext context) {
     final c = PiumaTheme.of(context);
+    // The brand and the card scroll together: in a short window nothing
+    // passes under the brand, and the card's foot is reached in full.
+    const pad = EdgeInsets.symmetric(horizontal: 32, vertical: 28);
+    const brandGap = 24.0;
     return Scaffold(
       backgroundColor: c.bg,
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const PiumaBrand(),
-            Expanded(
-              child: Center(
-                child: SingleChildScrollView(
+      body: LayoutBuilder(
+        builder: (context, box) => SingleChildScrollView(
+          padding: pad,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const PiumaBrand(size: _brandSize),
+              const SizedBox(height: brandGap),
+              ConstrainedBox(
+                // What's left under the brand: the card sits in its middle
+                // while it fits, as before.
+                constraints: BoxConstraints(
+                  minHeight: max(
+                    0.0,
+                    box.maxHeight -
+                        pad.vertical -
+                        _brandSize * 1.45 -
+                        2 * brandGap,
+                  ),
+                ),
+                child: Center(
                   child: PiumaEnter(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 980),
@@ -626,12 +699,15 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  /// The brand's wordmark on the desktop pages; its tile is 1.45 times it.
+  static const _brandSize = 18.0;
 
   Widget _form(BuildContext context) {
     final c = PiumaTheme.of(context);
@@ -687,12 +763,18 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           ],
           if (_error != null) ...[
             const SizedBox(height: 14),
-            AccountErrorView(
-              error: _error!,
-              certificate: _certificate,
-              onTrust: _busy ? null : _trustAndRetry,
+            Column(
+              key: _errorKey,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AccountErrorView(
+                  error: _error!,
+                  certificate: _certificate,
+                  onTrust: _busy ? null : _trustAndRetry,
+                ),
+                _reportLink(context),
+              ],
             ),
-            _reportLink(context),
           ],
         ],
       ),
@@ -812,12 +894,21 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final builtIn = info?.builtIn ?? false;
     final ownClient = info?.ownClient ?? true;
     final muted = TextStyle(fontSize: 13, height: 1.4, color: c.muted);
+    // Without a client of the build's (the case of any build whose
+    // maintainer hasn't registered one yet, official or a fork's) the page
+    // says so plainly, and points to the way in that works today.
+    final appPasswords = info?.appPasswords ?? id == 'google';
     return [
-      Text(
-        l.oauthLead(name),
-        style: TextStyle(fontSize: 15, height: 1.45, color: c.muted),
+      ListenableBuilder(
+        listenable: _clientId,
+        builder: (context, _) => Text(
+          builtIn || _ownClient != null
+              ? l.oauthLead(name)
+              : l.oauthNotYet(name),
+          style: TextStyle(fontSize: 15, height: 1.45, color: c.muted),
+        ),
       ),
-      if (!builtIn && !(info?.appPasswords ?? id == 'google')) ...[
+      if (!builtIn && !appPasswords) ...[
         const SizedBox(height: 12),
         Text(l.oauthMicrosoftNoClient, style: muted),
       ],
@@ -834,14 +925,16 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
       Wrap(
         spacing: 16,
         children: [
-          if (id == 'google')
+          if (id == 'google' || !builtIn)
             SizedBox(
               height: 44,
               child: Align(
                 widthFactor: 1,
                 child: _TextLink(
                   label: l.oauthUseAppPassword,
-                  onTap: () => _pick(MailProvider.gmail),
+                  onTap: id == 'google'
+                      ? () => _pick(MailProvider.gmail)
+                      : _manualWithPassword,
                 ),
               ),
             ),
@@ -1521,12 +1614,18 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 },
                 if (_error != null) ...[
                   const SizedBox(height: 16),
-                  AccountErrorView(
-                    error: _error!,
-                    certificate: _certificate,
-                    onTrust: _busy ? null : _trustAndRetry,
+                  Column(
+                    key: _errorKey,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      AccountErrorView(
+                        error: _error!,
+                        certificate: _certificate,
+                        onTrust: _busy ? null : _trustAndRetry,
+                      ),
+                      _reportLink(context),
+                    ],
                   ),
-                  _reportLink(context),
                 ],
               ],
             ),

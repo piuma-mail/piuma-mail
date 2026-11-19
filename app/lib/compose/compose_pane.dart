@@ -8,6 +8,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:intl/intl.dart';
 
+import '../feedback/report_context.dart';
 import '../design/icons.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
@@ -878,8 +879,22 @@ class _ComposePaneState extends State<ComposePane> {
     return true;
   }
 
+  /// For reports: what is being written.
+  String get _reportName => widget.initial.forward
+      ? 'Forward'
+      : widget.initial.replyAll
+      ? 'Reply all'
+      : widget.initial.isReply
+      ? 'Reply'
+      : 'Compose';
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ReportScreen(
+    name: _reportName,
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final apple =
@@ -995,7 +1010,7 @@ class _ComposePaneState extends State<ComposePane> {
     final title = widget.initial.forward
         ? l.actionForward
         : widget.initial.isReply
-        ? l.replyTitle
+        ? (widget.initial.replyAll ? l.actionReplyAll : l.replyTitle)
         : l.newMessage;
     final recipientFields = <Widget>[
       _Line(
