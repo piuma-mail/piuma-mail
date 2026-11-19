@@ -4,6 +4,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
+#include "window_place.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project,
                              bool start_hidden)
@@ -15,6 +16,8 @@ bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
   }
+  // Still hidden: back where it was last time.
+  maximized_ = RestoreWindowPlace(GetHandle());
 
   RECT frame = GetClientArea();
 
@@ -41,7 +44,11 @@ bool FlutterWindow::OnCreate() {
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     if (!start_hidden_) {
-      this->Show();
+      if (maximized_) {
+        ::ShowWindow(GetHandle(), SW_SHOWMAXIMIZED);
+      } else {
+        this->Show();
+      }
     }
   });
 
@@ -73,6 +80,27 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // could answer it first.
   if (message == WM_ENDSESSION && wparam == TRUE && shell_) {
     shell_->EndSession();
+  }
+
+  // Where the window is, for the next launch: after a move or a resize,
+  // on maximizing or restoring, and before it closes or the session ends.
+  switch (message) {
+    case WM_ENTERSIZEMOVE:
+      sizing_ = true;
+      break;
+    case WM_EXITSIZEMOVE:
+      sizing_ = false;
+      SaveWindowPlace(hwnd);
+      break;
+    case WM_SIZE:
+      if (!sizing_ && (wparam == SIZE_MAXIMIZED || wparam == SIZE_RESTORED)) {
+        SaveWindowPlace(hwnd);
+      }
+      break;
+    case WM_CLOSE:
+    case WM_QUERYENDSESSION:
+      SaveWindowPlace(hwnd);
+      break;
   }
 
   // Give Flutter, including plugins, an opportunity to handle window messages.

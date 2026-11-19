@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../feedback/report_context.dart';
 import '../compose/writing_settings.dart';
 import '../design/icons.dart';
 import '../design/look.dart';
@@ -13,6 +14,8 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../inbox/message_list.dart' show initials;
 import '../l10n/app_localizations.dart';
+import '../inbox/inbox_screen.dart' show phoneWidth;
+import '../mail/contact_photos.dart';
 import '../mail/mail_source.dart';
 import '../outside/shell.dart';
 import '../version.dart';
@@ -194,8 +197,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  /// For reports: the section in front (the list, on the phone).
+  String get _reportName {
+    final phone = MediaQuery.sizeOf(context).width < phoneWidth;
+    final section = phone ? _open : _section;
+    return section == null ? 'Settings' : 'Settings › ${section.name}';
+  }
+
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) => ReportScreen(
+    name: _reportName,
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) => LayoutBuilder(
     builder: (context, box) =>
         box.maxWidth < 600 ? _phone(context) : _desktop(context),
   );
@@ -2805,6 +2820,8 @@ class _PrivacyPageState extends State<PrivacyPage> {
                 value: s.senderPictures,
                 onChanged: (v) => _set(s.copyWith(senderPictures: v)),
               ),
+              if (ContactPhotos.supported && s.senderPictures)
+                _ContactsRow(source: widget.source),
               _SwitchRow(
                 icon: PiumaIcon.external,
                 label: l.websiteIconsSetting,
@@ -2915,6 +2932,65 @@ class _PrivacyPageState extends State<PrivacyPage> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// "Photos from your contacts": the one place that asks for the
+/// contacts book again after "Not now", or sends to the system settings
+/// once Android won't ask any more; turning it off is done there too.
+class _ContactsRow extends StatefulWidget {
+  const _ContactsRow({required this.source});
+  final MailSource source;
+
+  @override
+  State<_ContactsRow> createState() => _ContactsRowState();
+}
+
+class _ContactsRowState extends State<_ContactsRow> {
+  bool? _on;
+  late final AppLifecycleListener _life;
+
+  @override
+  void initState() {
+    super.initState();
+    _life = AppLifecycleListener(onResume: _check);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    _life.dispose();
+    super.dispose();
+  }
+
+  /// Again on coming back from the system settings.
+  Future<void> _check() async {
+    final on =
+        await ContactsPermission.current.status() == ContactsAccess.granted;
+    if (!mounted) return;
+    if (_on != null && on != _on) widget.source.contactsChanged();
+    setState(() => _on = on);
+  }
+
+  Future<void> _change(bool on) async {
+    final permission = ContactsPermission.current;
+    if (!on) return permission.openSettings();
+    if (await permission.request()) {
+      widget.source.contactsChanged();
+      if (mounted) setState(() => _on = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return _SwitchRow(
+      icon: PiumaIcon.user,
+      label: l.contactPhotosSetting,
+      hint: l.contactPhotosSettingHint,
+      value: _on ?? false,
+      onChanged: _change,
     );
   }
 }

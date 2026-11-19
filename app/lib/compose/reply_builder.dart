@@ -138,6 +138,7 @@ class ReplyBuilder {
       ],
       signatureId: signatureId,
       plainText: plainText(row, fromEmail),
+      replyAll: mode == ReplyMode.all && to == null,
     );
   }
 

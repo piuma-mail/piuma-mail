@@ -193,9 +193,6 @@ class AppLocalizationsFr extends AppLocalizations {
   String get sectionOlder => 'Plus ancien';
 
   @override
-  String get defaultAccountName => 'Mail';
-
-  @override
   String get emailAddress => 'Adresse e-mail';
 
   @override
@@ -6845,7 +6842,26 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get oauthMicrosoftNoClient =>
-      'Microsoft ne permet plus aux applications de messagerie de se connecter avec un mot de passe, et cette copie de Piuma Mail n’a pas de connexion Microsoft configurée. Utilisez une version officielle, ou saisissez l’ID client de votre propre application dans Avancé.';
+      'Microsoft n’accepte plus votre mot de passe habituel depuis les applications de messagerie. Si votre compte a un mot de passe d’application, ou si votre organisation autorise encore les mots de passe pour IMAP, utilisez-le plutôt avec les paramètres du serveur. Si vous avez votre propre inscription d’application, saisissez son ID client dans Avancé.';
+
+  @override
+  String oauthNotYet(String provider) {
+    return 'La connexion avec $provider n’est pas encore disponible dans cette version de Piuma Mail.';
+  }
+
+  @override
+  String get contactsIntroTitle => 'Des visages connus';
+
+  @override
+  String get contactsIntroBody =>
+      'Piuma peut afficher les photos de vos contacts à côté de leurs e-mails. Elles restent sur cet appareil : rien n’est copié ni envoyé. Le système vous demandera ensuite d’autoriser Piuma à lire vos contacts.';
+
+  @override
+  String get contactPhotosSetting => 'Photos de vos contacts';
+
+  @override
+  String get contactPhotosSettingHint =>
+      'Lues uniquement sur cet appareil, pour afficher un visage à côté de leurs e-mails. Se désactive dans les réglages du système.';
 
   @override
   String get oauthUseAppPassword =>

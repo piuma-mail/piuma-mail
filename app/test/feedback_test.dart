@@ -100,6 +100,40 @@ Finder _inSheet(Finder f) =>
     find.descendant(of: find.byType(ReportSheet), matching: f);
 
 void main() {
+  group('report screens', () {
+    setUp(ReportContext.reset);
+
+    test('the screen in front is the one reported, back as they close', () {
+      ReportContext.enter('Inbox');
+      ReportContext.enter('Add account');
+      ReportContext.rename('Add account', 'Add account › Manual setup');
+      expect(ReportContext.current, 'Add account › Manual setup');
+      ReportContext.leave('Add account › Manual setup');
+      expect(ReportContext.current, 'Inbox');
+      expect(ReportContext.screens.map((s) => s.substring(9)), [
+        'Inbox',
+        'Add account',
+        'Add account › Manual setup',
+        'Inbox',
+      ]);
+    });
+
+    test('as many screens as a report keeps', () {
+      for (var i = 0; i < 30; i++) {
+        ReportContext.visit('Screen $i');
+      }
+      expect(ReportContext.screens, hasLength(ReportContext.kept));
+      expect(ReportContext.screens.last, endsWith('Screen 29'));
+    });
+
+    test('the system is named once', () {
+      final system = ReportContext.system();
+      // Never "linux Linux …" or "windows Windows …".
+      expect(system.toLowerCase().split(' ').take(2).toSet(), hasLength(2));
+      expect(system, isNot(contains('#')));
+    });
+  });
+
   setUpAll(() => initializeDateFormatting('en'));
   setUp(Shake.reset);
   setUp(ReportSheet.forgetDraft);

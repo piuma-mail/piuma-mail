@@ -17,7 +17,13 @@ abstract final class ReportContext {
 
   static final _trail = <String>[];
 
-  /// Notes that [name] is now on screen (route names only, never what
+  /// As many as a report keeps (the engine's `clamp`): the latest.
+  static const kept = 12;
+
+  /// The screens open now, the one in front last ([ReportScreen]).
+  static final _open = <String>[];
+
+  /// Notes that [name] is now on screen (screen names only, never what
   /// they show).
   static void visit(String name) {
     final last = _trail.lastOrNull;
@@ -25,17 +31,81 @@ abstract final class ReportContext {
     final t = DateTime.now();
     String two(int n) => n.toString().padLeft(2, '0');
     _trail.add('${two(t.hour)}:${two(t.minute)}:${two(t.second)} $name');
-    if (_trail.length > 25) _trail.removeAt(0);
+    if (_trail.length > kept) _trail.removeAt(0);
+  }
+
+  /// [name] opened in front of the others.
+  static void enter(String name) {
+    _open.add(name);
+    visit(name);
+  }
+
+  /// [name] closed: the one under it is in front again.
+  static void leave(String name) {
+    final i = _open.lastIndexOf(name);
+    if (i < 0) return;
+    final front = i == _open.length - 1;
+    _open.removeAt(i);
+    if (front && _open.isNotEmpty) visit(_open.last);
+  }
+
+  /// The screen [from] became [to] (a step of the same flow).
+  static void rename(String from, String to) {
+    final i = _open.lastIndexOf(from);
+    if (i < 0) return enter(to);
+    _open[i] = to;
+    if (i == _open.length - 1) visit(to);
   }
 
   /// The last screens, oldest first.
   static List<String> get screens => List.unmodifiable(_trail);
 
-  /// The screen the report is about.
-  static String get current => _trail.lastOrNull?.substring(9) ?? 'Inbox';
+  /// The screen the report is about: the one in front.
+  static String get current =>
+      _open.lastOrNull ?? _trail.lastOrNull?.substring(9) ?? 'Inbox';
 
   @visibleForTesting
-  static void reset() => _trail.clear();
+  static void reset() {
+    _trail.clear();
+    _open.clear();
+  }
+
+  /// The system as people call it, once: "Ubuntu 24.04.1 LTS (Linux
+  /// 6.8.0-45-generic)", "Windows 11 Pro 10.0 (Build 26100)", "macOS 15.1
+  /// (Build 24B83)". Android's comes from the system ([addNetwork]).
+  static String system() {
+    if (kIsWeb) return 'Web';
+    // Windows quotes its product name ("Windows 11 Pro"), which the
+    // engine's cleaning would hide as a quoted word.
+    final version = Platform.operatingSystemVersion.replaceAll('"', '').trim();
+    if (Platform.isLinux) {
+      // "Linux 6.8.0-45-generic #45-Ubuntu SMP …": the release is enough.
+      final parts = version.split(' ');
+      final kernel = parts.length > 1 ? 'Linux ${parts[1]}' : version;
+      final name = _osRelease();
+      return name == null ? kernel : '$name ($kernel)';
+    }
+    if (Platform.isMacOS) {
+      return 'macOS ${version.replaceFirst(RegExp(r'^Version\s*'), '')}';
+    }
+    if (Platform.isIOS) return 'iOS $version';
+    if (Platform.isAndroid) return 'Android';
+    return version;
+  }
+
+  /// The distribution's own name, from `/etc/os-release`.
+  static String? _osRelease() {
+    try {
+      for (final line in File('/etc/os-release').readAsLinesSync()) {
+        if (!line.startsWith('PRETTY_NAME=')) continue;
+        final name = line.substring(12).replaceAll('"', '').trim();
+        return name.isEmpty ? null : name;
+      }
+    } catch (_) {
+      // A system without the file: the kernel alone.
+    }
+    return null;
+  }
 
   /// App, system, device, screen size, language and the screen it came
   /// from, in the order "See what's sent" shows them; [addNetwork] adds
@@ -44,12 +114,7 @@ abstract final class ReportContext {
   static List<(String, String)> device(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final ratio = MediaQuery.devicePixelRatioOf(context);
-    // Windows quotes its product name ("Windows 11 Pro"), which the
-    // engine's cleaning would hide as a quoted word.
-    final system = kIsWeb
-        ? 'Web'
-        : '${Platform.operatingSystem} '
-              '${Platform.operatingSystemVersion.replaceAll('"', '')}';
+    final system = ReportContext.system();
     return [
       ('App', 'Piuma $appVersionShown'),
       ('System', system),
@@ -116,4 +181,39 @@ abstract final class ReportContext {
         .then((png) => png?.buffer.asUint8List(), onError: (Object _) => null)
         .whenComplete(image.dispose);
   }
+}
+
+/// Names its screen for reports while it is open ("From", "Recent
+/// screens"): never what the screen shows.
+class ReportScreen extends StatefulWidget {
+  const ReportScreen({super.key, required this.name, required this.child});
+
+  final String name;
+  final Widget child;
+
+  @override
+  State<ReportScreen> createState() => _ReportScreenState();
+}
+
+class _ReportScreenState extends State<ReportScreen> {
+  @override
+  void initState() {
+    super.initState();
+    ReportContext.enter(widget.name);
+  }
+
+  @override
+  void didUpdateWidget(ReportScreen old) {
+    super.didUpdateWidget(old);
+    if (old.name != widget.name) ReportContext.rename(old.name, widget.name);
+  }
+
+  @override
+  void dispose() {
+    ReportContext.leave(widget.name);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

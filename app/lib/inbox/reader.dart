@@ -8,6 +8,7 @@ import 'package:flutter/services.dart'
     show HardwareKeyboard, KeyDownEvent, KeyEvent, LogicalKeyboardKey;
 import 'package:intl/intl.dart';
 
+import '../feedback/report_context.dart';
 import '../compose/remind_me.dart';
 import '../design/icons.dart';
 import '../design/look.dart';
@@ -515,7 +516,12 @@ class _ReaderState extends State<Reader> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ReportScreen(
+    name: 'Message',
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final row = widget.row;

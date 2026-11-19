@@ -22,7 +22,9 @@ void main() {
     expect(reads, 2);
   });
 
-  test('a refusal is not asked again', () async {
+  test('without access it is looked at once, again only when told', () async {
+    // Reading never asks for access (`ContactsPermission` does), so
+    // looking again after access may have changed is safe.
     var reads = 0;
     final photos = ContactPhotos(
       read: () async {
@@ -31,9 +33,11 @@ void main() {
       },
     );
     expect(await photos.of('giulia@example.com'), isNull);
+    expect(await photos.of('marco@example.com'), isNull);
+    expect(reads, 1);
     photos.forget();
     expect(await photos.of('giulia@example.com'), isNull);
-    expect(reads, 1);
+    expect(reads, 2);
   });
 
   test('a failing contacts book keeps the letters', () async {

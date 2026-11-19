@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:piuma_mail/design/tokens.g.dart';
+import 'package:piuma_mail/feedback/report_context.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
@@ -85,6 +87,41 @@ class _Scripted extends DemoMailSource {
   }
 }
 
+/// Remembers the name an account was added with.
+class _Named extends _Scripted {
+  _Named(this.onName);
+  final void Function(String) onName;
+
+  @override
+  Future<MailAccount> addImapAccount({
+    required String name,
+    required String email,
+    String senderName = '',
+    required Color color,
+    required String host,
+    required int port,
+    required ServerSecurity security,
+    required String username,
+    required String password,
+    MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
+  }) {
+    onName(name);
+    return super.addImapAccount(
+      name: name,
+      email: email,
+      color: color,
+      host: host,
+      port: port,
+      security: security,
+      username: username,
+      password: password,
+      smtp: smtp,
+      trusted: trusted,
+    );
+  }
+}
+
 const _desktop = Size(1440, 900);
 const _phone = Size(390, 844);
 
@@ -121,6 +158,9 @@ Future<void> _tap(WidgetTester tester, String text, {bool last = false}) async {
   await tester.ensureVisible(f);
   await tester.pumpAndSettle();
   await tester.tap(f);
+  await tester.pumpAndSettle();
+  // What came in starts its entrance on the next tick (`PiumaEnter`).
+  await tester.pump(PiumaMotion.enter);
   await tester.pumpAndSettle();
 }
 
@@ -319,7 +359,15 @@ void main() {
     await _pump(tester, source);
     await tester.tap(find.text('Outlook'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('no Microsoft sign-in set up'), findsOneWidget);
+    // Honest for every build without a client, the official one too: no
+    // "opens Microsoft's page", no "use an official build".
+    expect(
+      find.textContaining('isn’t available in this version of Piuma Mail'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('opens Microsoft’s page'), findsNothing);
+    expect(find.textContaining('official build'), findsNothing);
+    expect(find.text('Use an app password instead'), findsOneWidget);
     await tester.enterText(_field('Email address'), 'anna@outlook.com');
     await tester.pump();
     await _tap(tester, 'Sign in with Microsoft', last: true);
@@ -327,12 +375,89 @@ void main() {
 
     await _tap(tester, 'Advanced: your own client ID');
     await tester.enterText(_field('Client ID'), ' my-client ');
+    await tester.pump();
+    // With a client of one's own it does open Microsoft's page.
+    expect(find.textContaining('opens Microsoft’s page'), findsOneWidget);
     await tester.enterText(_field('Tenant (optional)'), 'organizations');
     await tester.pump();
     await _tap(tester, 'Sign in with Microsoft', last: true);
     expect(source.oauthClient?.clientId, 'my-client');
     expect(source.oauthClient?.tenant, 'organizations');
     expect(source.oauthClient?.clientSecret, isNull);
+  });
+
+  testWidgets('without a Microsoft client, an app password goes by hand', (
+    tester,
+  ) async {
+    final source = _Scripted();
+    await _pump(tester, source);
+    await tester.tap(find.text('Outlook'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field('Email address'), 'anna@outlook.com');
+    await tester.pump();
+    await _tap(tester, 'Use an app password instead');
+    expect(find.text('Set up manually'), findsWidgets);
+    expect(
+      find.widgetWithText(TextField, 'outlook.office365.com'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(TextField, 'smtp.office365.com'),
+      findsOneWidget,
+    );
+    await tester.enterText(_field('Password'), 'app-password');
+    await tester.pump();
+    await _tap(tester, 'Verify and connect', last: true);
+    expect(source.adds, 1);
+    expect(source.host, 'outlook.office365.com');
+  });
+
+  for (final size in [_desktop, _phone]) {
+    testWidgets('a failed verify scrolls its error into view, '
+        '${size == _phone ? 'phone' : 'desktop'}', (tester) async {
+      final source = _Scripted(
+        fail: const AddAccountException(AddAccountError.unreachable),
+      );
+      // Short, so the form runs past the bottom.
+      await _pump(
+        tester,
+        source,
+        size: size == _phone ? _phone : Size(size.width, 560),
+      );
+      if (size == _phone) {
+        // The phone's form of the same kind: an app password.
+        await _tap(tester, 'Gmail');
+        await tester.enterText(_field('Email address'), 'anna@gmail.com');
+        await tester.enterText(_field('App password'), 'abcd efgh ijkl mnop');
+        await tester.pump();
+        await _tap(tester, 'Connect', last: true);
+      } else {
+        await _manual(tester, 'anna@example.org');
+        await _tap(tester, 'Verify and connect', last: true);
+      }
+      final error = find.textContaining('could not be reached');
+      expect(error, findsOneWidget);
+      final box = tester.getRect(error);
+      expect(box.bottom, lessThanOrEqualTo(tester.view.physicalSize.height));
+      expect(box.top, greaterThanOrEqualTo(0));
+      // A report from here names this screen, not the inbox.
+      expect(
+        ReportContext.current,
+        size == _phone ? 'Add account › Gmail' : 'Add account › Manual setup',
+      );
+      // Said to screen readers as it appears.
+      expect(tester.getSemantics(error), isSemantics(isLiveRegion: true));
+    });
+  }
+
+  testWidgets('an account left unnamed goes by its address', (tester) async {
+    late String named;
+    final source = _Named((n) => named = n);
+    await _pump(tester, source);
+    await _manual(tester, 'anna@example.org');
+    await tester.tap(find.text('Verify and connect'));
+    await tester.pumpAndSettle();
+    expect(named, 'anna@example.org');
   });
 
   testWidgets('a lookup that finds Microsoft goes to its sign-in', (

@@ -19,6 +19,7 @@ import '../mail/mail_source.dart';
 import '../mail/senders.dart';
 import '../notify/android_background.dart';
 import '../notify/background_sheet.dart';
+import '../notify/contacts_sheet.dart';
 import '../notify/notifier.dart';
 import '../outside/arrivals.dart';
 import '../outside/arrive.dart';
@@ -1250,6 +1251,8 @@ class _InboxScreenState extends State<InboxScreen> {
       _readerUp = true;
     });
     _markSeen([row], true);
+    // With a sender's face in front of them, once: the contacts' photos.
+    unawaited(askContactPhotos(context, widget.source));
   }
 
   void _pick(List<MailRow> rows, bool on) => setState(() {
@@ -2038,7 +2041,6 @@ class _InboxScreenState extends State<InboxScreen> {
     int? signature,
     int? account,
   }) async {
-    ReportContext.visit('Settings');
     final write = await Navigator.of(context).push(
       PiumaRoute.of<Draft>(
         context,
@@ -2054,7 +2056,6 @@ class _InboxScreenState extends State<InboxScreen> {
         ),
       ),
     );
-    ReportContext.visit('Inbox');
     if (write != null && mounted) _openCompose(write);
     _refreshSync();
     // Signatures may have changed under an open compose pane.
@@ -2333,7 +2334,12 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ReportScreen(
+    name: 'Inbox',
+    child: Builder(builder: _screen),
+  );
+
+  Widget _screen(BuildContext context) {
     // A message asked for from outside while another was being written.
     if (_composing == null && _arrived.isNotEmpty) {
       final next = _arrived.removeAt(0);

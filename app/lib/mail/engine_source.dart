@@ -2560,6 +2560,12 @@ class EngineMailSource extends MailSource with EngineCompose {
   }
 
   @override
+  void contactsChanged() {
+    _contactPhotos.forget();
+    super.contactsChanged();
+  }
+
+  @override
   Future<void> setPrivacySettings(PrivacySettings s) async {
     await engine.setPrivacySettings(
       settings: engine.PrivacySettings(
