@@ -34,8 +34,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [async-trait](https://github.com/dtolnay/async-trait) | 0.1.92 | MIT OR Apache-2.0 |
 | [atomic](https://github.com/Amanieu/atomic-rs) | 0.5.3 | Apache-2.0/MIT |
 | [atomic-waker](https://github.com/smol-rs/atomic-waker) | 1.1.2 | Apache-2.0 OR MIT |
-| [aws-lc-rs](https://github.com/aws/aws-lc-rs) | 1.18.2 | ISC AND (Apache-2.0 OR ISC) |
-| [aws-lc-sys](https://github.com/aws/aws-lc-rs) | 0.46.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) |
+| [aws-lc-rs](https://github.com/aws/aws-lc-rs) | 1.19.0 | ISC AND (Apache-2.0 OR ISC) |
+| [aws-lc-sys](https://github.com/aws/aws-lc-rs) | 0.47.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) |
 | [backtrace](https://github.com/rust-lang/backtrace-rs) | 0.3.76 | MIT OR Apache-2.0 |
 | [base64](https://github.com/marshallpierce/rust-base64) | 0.23.1 | MIT OR Apache-2.0 |
 | [bip39](https://github.com/rust-bitcoin/rust-bip39/) | 3.0.0 | CC0-1.0 |
@@ -237,7 +237,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [linux-raw-sys](https://github.com/sunfishcode/linux-raw-sys) | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | [litemap](https://github.com/unicode-org/icu4x) | 0.8.3 | Unicode-3.0 |
 | [lock_api](https://github.com/Amanieu/parking_lot) | 0.4.14 | MIT OR Apache-2.0 |
-| [log](https://github.com/rust-lang/log) | 0.4.34 | MIT OR Apache-2.0 |
+| [log](https://github.com/rust-lang/log) | 0.4.35 | MIT OR Apache-2.0 |
 | [lru](https://github.com/jeromefroe/lru-rs.git) | 0.18.5 | MIT |
 | [lru-slab](https://github.com/Ralith/lru-slab) | 0.1.3 | MIT OR Apache-2.0 OR Zlib |
 | [mail-parser](https://github.com/stalwartlabs/mail-parser) | 1.0.1 | Apache-2.0 OR MIT |
@@ -520,7 +520,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [zerovec](https://github.com/unicode-org/icu4x) | 0.11.8 | Unicode-3.0 |
 | [zerovec-derive](https://github.com/unicode-org/icu4x) | 0.11.6 | Unicode-3.0 |
 | [zip](https://github.com/zip-rs/zip2) | 8.6.0 | MIT |
-| [zip](https://github.com/zip-rs/zip2) | 9.1.3 | MIT |
+| [zip](https://github.com/zip-rs/zip2) | 9.3.0 | MIT |
 | [zlib-rs](https://github.com/trifectatechfoundation/zlib-rs) | 0.6.8 | Zlib |
 | [zmij](https://github.com/dtolnay/zmij) | 1.0.23 | MIT |
 | [zopfli](https://github.com/zopfli-rs/zopfli) | 0.8.4 | Apache-2.0 |
