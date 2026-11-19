@@ -7712,4 +7712,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get specialRefused =>
       'Dieser Ordner kann diese Aufgabe nicht übernehmen: Er ist der Posteingang oder hat schon eine andere Aufgabe, bei der Post gelöscht würde.';
+
+  @override
+  String get fileTypeImages => 'Bilder';
+
+  @override
+  String get fileTypeEmail => 'E-Mail-Nachricht';
 }

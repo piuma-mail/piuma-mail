@@ -7697,4 +7697,10 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get specialRefused =>
       'Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo.';
+
+  @override
+  String get fileTypeImages => 'Imágenes';
+
+  @override
+  String get fileTypeEmail => 'Mensaje de correo';
 }

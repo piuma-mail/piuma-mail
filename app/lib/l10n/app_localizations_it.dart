@@ -7720,4 +7720,10 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get specialRefused =>
       'Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.';
+
+  @override
+  String get fileTypeImages => 'Immagini';
+
+  @override
+  String get fileTypeEmail => 'Messaggio email';
 }

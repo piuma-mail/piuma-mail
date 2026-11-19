@@ -13,10 +13,11 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/text_field.dart';
 
-/// Asks the person for a logo. Tests replace it.
-Future<XFile?> Function() pickLogo = () => openFile(
-  acceptedTypeGroups: const [
-    XTypeGroup(label: 'Images', extensions: ['png', 'jpg', 'jpeg']),
+/// Asks the person for a logo; [label] names the images in the system's
+/// window. Tests replace it.
+Future<XFile?> Function(String label) pickLogo = (label) => openFile(
+  acceptedTypeGroups: [
+    XTypeGroup(label: label, extensions: const ['png', 'jpg', 'jpeg']),
   ],
 );
 
@@ -246,7 +247,7 @@ class SignaturesPageState extends State<SignaturesPage> {
   }
 
   Future<void> _upload(MailSignature s) async {
-    final file = await pickLogo();
+    final file = await pickLogo(AppLocalizations.of(context).fileTypeImages);
     if (file == null) return;
     try {
       final logo = await widget.source.shrinkLogo(await file.readAsBytes());

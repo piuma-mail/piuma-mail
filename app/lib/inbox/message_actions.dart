@@ -21,17 +21,18 @@ import '../widgets/segments.dart';
 import '../widgets/text_field.dart';
 
 /// Where Save as .eml puts the file on a computer: the system's save
-/// window, with [name] suggested; null when the person closed it. Tests
-/// replace it.
-Future<String?> Function(String name) pickSaveLocation = (name) async {
-  final picked = await getSaveLocation(
-    suggestedName: name,
-    acceptedTypeGroups: const [
-      XTypeGroup(label: 'Email', extensions: ['eml']),
-    ],
-  );
-  return picked?.path;
-};
+/// window, with [name] suggested and [label] naming the file type; null
+/// when the person closed it. Tests replace it.
+Future<String?> Function(String name, String label) pickSaveLocation =
+    (name, label) async {
+      final picked = await getSaveLocation(
+        suggestedName: name,
+        acceptedTypeGroups: [
+          XTypeGroup(label: label, extensions: const ['eml']),
+        ],
+      );
+      return picked?.path;
+    };
 
 /// Writes a picked file. Tests replace it.
 Future<void> Function(String path, Uint8List data) writeSavedFile = (
@@ -320,7 +321,7 @@ class MessageActions {
         }
         return;
       }
-      final path = await pickSaveLocation(name);
+      final path = await pickSaveLocation(name, l.fileTypeEmail);
       if (path == null) return;
       await writeSavedFile(path, raw);
       if (context.mounted) {

@@ -7720,4 +7720,10 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get specialRefused =>
       'Ce dossier ne peut pas faire ce travail : c’est la boîte de réception, ou il en fait déjà un autre qui supprimerait des e-mails.';
+
+  @override
+  String get fileTypeImages => 'Images';
+
+  @override
+  String get fileTypeEmail => 'Message e-mail';
 }

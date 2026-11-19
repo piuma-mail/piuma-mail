@@ -296,13 +296,13 @@ void main() {
   ) async {
     String? suggested;
     Uint8List? written;
-    pickSaveLocation = (name) async {
+    pickSaveLocation = (name, _) async {
       suggested = name;
       return '/picked/$name';
     };
     writeSavedFile = (path, data) async => written = data;
     addTearDown(() {
-      pickSaveLocation = (name) async => null;
+      pickSaveLocation = (name, _) async => null;
     });
     await _pump(tester);
     await _open(tester, 'Mockup v3 review');
@@ -631,7 +631,7 @@ void main() {
   testWidgets('desktop: Save as .eml offers Open too', (tester) async {
     String? opened;
     openLocalFile = (path) async => opened = path;
-    pickSaveLocation = (name) async => '/picked/$name';
+    pickSaveLocation = (name, _) async => '/picked/$name';
     writeSavedFile = (path, data) async {};
     await _pump(tester);
     await _open(tester, 'Mockup v3 review');

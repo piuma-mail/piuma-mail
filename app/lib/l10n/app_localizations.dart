@@ -11181,6 +11181,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.'**
   String get specialRefused;
+
+  /// No description provided for @fileTypeImages.
+  ///
+  /// In en, this message translates to:
+  /// **'Images'**
+  String get fileTypeImages;
+
+  /// No description provided for @fileTypeEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Email message'**
+  String get fileTypeEmail;
 }
 
 class _AppLocalizationsDelegate

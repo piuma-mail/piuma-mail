@@ -1846,5 +1846,7 @@
   "moreShort": "Mais",
   "swipeNote": "Os deslizes funcionam em telefones e tablets. No computador, as mesmas ações estão na barra, nos menus e nos atalhos de teclado.",
   "folderDeleteProtected": "“{name}” não pode ser excluída: contém {inside}, que seria excluída junto.",
-  "specialRefused": "Essa pasta não pode fazer esse trabalho: é a caixa de entrada ou já faz outro que apagaria e-mails."
+  "specialRefused": "Essa pasta não pode fazer esse trabalho: é a caixa de entrada ou já faz outro que apagaria e-mails.",
+  "fileTypeImages": "Imagens",
+  "fileTypeEmail": "Mensagem de e-mail"
 }

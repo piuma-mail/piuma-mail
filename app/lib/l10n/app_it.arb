@@ -1856,5 +1856,7 @@
   "moreShort": "Altro",
   "swipeNote": "Gli scorrimenti funzionano su telefoni e tablet. Sul computer le stesse azioni sono nella barra, nei menu e nelle scorciatoie da tastiera.",
   "folderDeleteProtected": "“{name}” non si può eliminare: contiene {inside}, che verrebbe eliminata con lei.",
-  "specialRefused": "Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta."
+  "specialRefused": "Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.",
+  "fileTypeImages": "Immagini",
+  "fileTypeEmail": "Messaggio email"
 }

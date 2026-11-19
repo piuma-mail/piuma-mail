@@ -7691,4 +7691,10 @@ class AppLocalizationsPt extends AppLocalizations {
   @override
   String get specialRefused =>
       'Essa pasta não pode fazer esse trabalho: é a caixa de entrada ou já faz outro que apagaria e-mails.';
+
+  @override
+  String get fileTypeImages => 'Imagens';
+
+  @override
+  String get fileTypeEmail => 'Mensagem de e-mail';
 }
