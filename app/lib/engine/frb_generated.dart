@@ -86,7 +86,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => 2116516571;
+  int get rustContentHash => 401470561;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -1190,17 +1190,41 @@ abstract class RustLibApi extends BaseApi {
     required String color,
   });
 
+  Future<UpdatePrefs> crateApiUpdatesUpdatePrefsDefault();
+
   Future<UpdateStartup> crateApiUpdatesUpdateStartupDefault();
 
-  Future<UpdateRelease?> crateApiUpdatesUpdatesCheck({required String feed});
+  Future<UpdateRelease?> crateApiUpdatesUpdatesCheck({
+    required String feed,
+    required String channel,
+  });
 
-  Stream<int> crateApiUpdatesUpdatesDownload({required String feed});
+  Stream<int> crateApiUpdatesUpdatesDownload({
+    required String feed,
+    required String channel,
+  });
+
+  void crateApiUpdatesUpdatesLaunched();
+
+  Future<UpdateNotice?> crateApiUpdatesUpdatesNotice({
+    required String feed,
+    required String channel,
+    required int build,
+  });
+
+  UpdatePrefs crateApiUpdatesUpdatesPrefs();
 
   UpdateRelease? crateApiUpdatesUpdatesReady();
 
   Future<void> crateApiUpdatesUpdatesRestart();
 
-  UpdateStartup crateApiUpdatesUpdatesStartup({required String supportDir});
+  void crateApiUpdatesUpdatesSetPrefs({required UpdatePrefs prefs});
+
+  UpdateStartup crateApiUpdatesUpdatesStartup({
+    required String supportDir,
+    required String feed,
+    required String channel,
+  });
 
   Future<List<VaultCard>> crateApiEngineVaultCards({PlatformInt64? account});
 
@@ -10157,7 +10181,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   );
 
   @override
-  Future<UpdateStartup> crateApiUpdatesUpdateStartupDefault() {
+  Future<UpdatePrefs> crateApiUpdatesUpdatePrefsDefault() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
@@ -10166,6 +10190,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             generalizedFrbRustBinding,
             serializer,
             funcId: 290,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_update_prefs,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiUpdatesUpdatePrefsDefaultConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiUpdatesUpdatePrefsDefaultConstMeta =>
+      const TaskConstMeta(debugName: "update_prefs_default", argNames: []);
+
+  @override
+  Future<UpdateStartup> crateApiUpdatesUpdateStartupDefault() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 291,
             port: port_,
           );
         },
@@ -10184,16 +10235,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "update_startup_default", argNames: []);
 
   @override
-  Future<UpdateRelease?> crateApiUpdatesUpdatesCheck({required String feed}) {
+  Future<UpdateRelease?> crateApiUpdatesUpdatesCheck({
+    required String feed,
+    required String channel,
+  }) {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(feed, serializer);
+          sse_encode_String(channel, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 291,
+            funcId: 292,
             port: port_,
           );
         },
@@ -10202,17 +10257,23 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_engine_error,
         ),
         constMeta: kCrateApiUpdatesUpdatesCheckConstMeta,
-        argValues: [feed],
+        argValues: [feed, channel],
         apiImpl: this,
       ),
     );
   }
 
   TaskConstMeta get kCrateApiUpdatesUpdatesCheckConstMeta =>
-      const TaskConstMeta(debugName: "updates_check", argNames: ["feed"]);
+      const TaskConstMeta(
+        debugName: "updates_check",
+        argNames: ["feed", "channel"],
+      );
 
   @override
-  Stream<int> crateApiUpdatesUpdatesDownload({required String feed}) {
+  Stream<int> crateApiUpdatesUpdatesDownload({
+    required String feed,
+    required String channel,
+  }) {
     final progress = RustStreamSink<int>();
     unawaited(
       handler.executeNormal(
@@ -10220,11 +10281,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           callFfi: (port_) {
             final serializer = SseSerializer(generalizedFrbRustBinding);
             sse_encode_String(feed, serializer);
+            sse_encode_String(channel, serializer);
             sse_encode_StreamSink_i_32_Sse(progress, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 292,
+              funcId: 293,
               port: port_,
             );
           },
@@ -10233,7 +10295,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_engine_error,
           ),
           constMeta: kCrateApiUpdatesUpdatesDownloadConstMeta,
-          argValues: [feed, progress],
+          argValues: [feed, channel, progress],
           apiImpl: this,
         ),
       ),
@@ -10244,8 +10306,97 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiUpdatesUpdatesDownloadConstMeta =>
       const TaskConstMeta(
         debugName: "updates_download",
-        argNames: ["feed", "progress"],
+        argNames: ["feed", "channel", "progress"],
       );
+
+  @override
+  void crateApiUpdatesUpdatesLaunched() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 294,
+          )!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiUpdatesUpdatesLaunchedConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiUpdatesUpdatesLaunchedConstMeta =>
+      const TaskConstMeta(debugName: "updates_launched", argNames: []);
+
+  @override
+  Future<UpdateNotice?> crateApiUpdatesUpdatesNotice({
+    required String feed,
+    required String channel,
+    required int build,
+  }) {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(feed, serializer);
+          sse_encode_String(channel, serializer);
+          sse_encode_u_32(build, serializer);
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 295,
+            port: port_,
+          );
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_opt_box_autoadd_update_notice,
+          decodeErrorData: sse_decode_engine_error,
+        ),
+        constMeta: kCrateApiUpdatesUpdatesNoticeConstMeta,
+        argValues: [feed, channel, build],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiUpdatesUpdatesNoticeConstMeta =>
+      const TaskConstMeta(
+        debugName: "updates_notice",
+        argNames: ["feed", "channel", "build"],
+      );
+
+  @override
+  UpdatePrefs crateApiUpdatesUpdatesPrefs() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 296,
+          )!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_update_prefs,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiUpdatesUpdatesPrefsConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiUpdatesUpdatesPrefsConstMeta =>
+      const TaskConstMeta(debugName: "updates_prefs", argNames: []);
 
   @override
   UpdateRelease? crateApiUpdatesUpdatesReady() {
@@ -10256,7 +10407,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           return pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 293,
+            funcId: 297,
           )!;
         },
         codec: SseCodec(
@@ -10282,7 +10433,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 294,
+            funcId: 298,
             port: port_,
           );
         },
@@ -10301,16 +10452,49 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "updates_restart", argNames: []);
 
   @override
-  UpdateStartup crateApiUpdatesUpdatesStartup({required String supportDir}) {
+  void crateApiUpdatesUpdatesSetPrefs({required UpdatePrefs prefs}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_box_autoadd_update_prefs(prefs, serializer);
+          return pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 299,
+          )!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_engine_error,
+        ),
+        constMeta: kCrateApiUpdatesUpdatesSetPrefsConstMeta,
+        argValues: [prefs],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiUpdatesUpdatesSetPrefsConstMeta =>
+      const TaskConstMeta(debugName: "updates_set_prefs", argNames: ["prefs"]);
+
+  @override
+  UpdateStartup crateApiUpdatesUpdatesStartup({
+    required String supportDir,
+    required String feed,
+    required String channel,
+  }) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(supportDir, serializer);
+          sse_encode_String(feed, serializer);
+          sse_encode_String(channel, serializer);
           return pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 295,
+            funcId: 300,
           )!;
         },
         codec: SseCodec(
@@ -10318,7 +10502,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiUpdatesUpdatesStartupConstMeta,
-        argValues: [supportDir],
+        argValues: [supportDir, feed, channel],
         apiImpl: this,
       ),
     );
@@ -10327,7 +10511,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiUpdatesUpdatesStartupConstMeta =>
       const TaskConstMeta(
         debugName: "updates_startup",
-        argNames: ["supportDir"],
+        argNames: ["supportDir", "feed", "channel"],
       );
 
   @override
@@ -10340,7 +10524,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 296,
+            funcId: 301,
             port: port_,
           );
         },
@@ -10370,7 +10554,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 297,
+            funcId: 302,
             port: port_,
           );
         },
@@ -10401,7 +10585,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 298,
+            funcId: 303,
             port: port_,
           );
         },
@@ -10431,7 +10615,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 299,
+            funcId: 304,
             port: port_,
           );
         },
@@ -10461,7 +10645,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 300,
+              funcId: 305,
               port: port_,
             );
           },
@@ -10494,7 +10678,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           return pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 301,
+            funcId: 306,
           )!;
         },
         codec: SseCodec(
@@ -10530,7 +10714,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           return pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 302,
+            funcId: 307,
           )!;
         },
         codec: SseCodec(
@@ -11056,6 +11240,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_u_64(raw);
+  }
+
+  @protected
+  UpdateNotice dco_decode_box_autoadd_update_notice(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_update_notice(raw);
+  }
+
+  @protected
+  UpdatePrefs dco_decode_box_autoadd_update_prefs(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_update_prefs(raw);
   }
 
   @protected
@@ -12503,6 +12699,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateNotice? dco_decode_opt_box_autoadd_update_notice(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_update_notice(raw);
+  }
+
+  @protected
   UpdateRelease? dco_decode_opt_box_autoadd_update_release(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_update_release(raw);
@@ -13375,6 +13577,30 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateNotice dco_decode_update_notice(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return UpdateNotice(
+      release: dco_decode_update_release(arr[0]),
+      url: dco_decode_String(arr[1]),
+    );
+  }
+
+  @protected
+  UpdatePrefs dco_decode_update_prefs(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return UpdatePrefs(
+      automatic: dco_decode_bool(arr[0]),
+      early: dco_decode_bool(arr[1]),
+    );
+  }
+
+  @protected
   UpdateRelease dco_decode_update_release(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -13391,11 +13617,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   UpdateStartup dco_decode_update_startup(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return UpdateStartup(
       installed: dco_decode_bool(arr[0]),
       updatedTo: dco_decode_opt_box_autoadd_update_release(arr[1]),
+      previousLaunchFailed: dco_decode_bool(arr[2]),
     );
   }
 
@@ -14065,6 +14292,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_u_64(deserializer));
+  }
+
+  @protected
+  UpdateNotice sse_decode_box_autoadd_update_notice(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_update_notice(deserializer));
+  }
+
+  @protected
+  UpdatePrefs sse_decode_box_autoadd_update_prefs(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_update_prefs(deserializer));
   }
 
   @protected
@@ -16188,6 +16431,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateNotice? sse_decode_opt_box_autoadd_update_notice(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_update_notice(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
   UpdateRelease? sse_decode_opt_box_autoadd_update_release(
     SseDeserializer deserializer,
   ) {
@@ -17163,6 +17419,22 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  UpdateNotice sse_decode_update_notice(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_release = sse_decode_update_release(deserializer);
+    var var_url = sse_decode_String(deserializer);
+    return UpdateNotice(release: var_release, url: var_url);
+  }
+
+  @protected
+  UpdatePrefs sse_decode_update_prefs(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_automatic = sse_decode_bool(deserializer);
+    var var_early = sse_decode_bool(deserializer);
+    return UpdatePrefs(automatic: var_automatic, early: var_early);
+  }
+
+  @protected
   UpdateRelease sse_decode_update_release(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_version = sse_decode_String(deserializer);
@@ -17180,7 +17452,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_installed = sse_decode_bool(deserializer);
     var var_updatedTo = sse_decode_opt_box_autoadd_update_release(deserializer);
-    return UpdateStartup(installed: var_installed, updatedTo: var_updatedTo);
+    var var_previousLaunchFailed = sse_decode_bool(deserializer);
+    return UpdateStartup(
+      installed: var_installed,
+      updatedTo: var_updatedTo,
+      previousLaunchFailed: var_previousLaunchFailed,
+    );
   }
 
   @protected
@@ -17907,6 +18184,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_64(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_update_notice(
+    UpdateNotice self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_update_notice(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_update_prefs(
+    UpdatePrefs self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_update_prefs(self, serializer);
   }
 
   @protected
@@ -19733,6 +20028,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_update_notice(
+    UpdateNotice? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_update_notice(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_update_release(
     UpdateRelease? self,
     SseSerializer serializer,
@@ -20454,6 +20762,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_update_notice(UpdateNotice self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_update_release(self.release, serializer);
+    sse_encode_String(self.url, serializer);
+  }
+
+  @protected
+  void sse_encode_update_prefs(UpdatePrefs self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.automatic, serializer);
+    sse_encode_bool(self.early, serializer);
+  }
+
+  @protected
   void sse_encode_update_release(UpdateRelease self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.version, serializer);
@@ -20466,6 +20788,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_bool(self.installed, serializer);
     sse_encode_opt_box_autoadd_update_release(self.updatedTo, serializer);
+    sse_encode_bool(self.previousLaunchFailed, serializer);
   }
 
   @protected

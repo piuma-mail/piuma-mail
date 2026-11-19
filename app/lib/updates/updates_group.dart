@@ -9,12 +9,15 @@ import '../mail/readable.dart' show fileSize;
 import '../version.dart';
 import '../widgets/button.dart';
 import '../widgets/progress.dart';
+import '../widgets/switch.dart';
 import 'updates.dart';
 import 'whats_new.dart';
 
 /// Settings › Help & feedback › Updates (`UpdatesToApprove` section 3):
-/// the version you have, where the update stands, and the notes. Only
-/// where the build can update (the desktop installs).
+/// the version you have, where the update stands, the notes, and the
+/// choices: automatic checks and early releases. Only where the build
+/// can update (the Windows installs) or say a release is out (Android,
+/// macOS, Linux).
 class UpdatesGroup extends StatelessWidget {
   const UpdatesGroup({super.key, required this.now});
 
@@ -25,13 +28,16 @@ class UpdatesGroup extends StatelessWidget {
     final updates = Updates.instance;
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
-    return ValueListenableBuilder<UpdateState>(
-      valueListenable: updates.state,
-      builder: (context, state, _) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([updates.state, updates.prefs]),
+      builder: (context, _) {
+        final state = updates.state.value;
+        final prefs = updates.prefs.value;
         // The notes to show: the version waiting, else the one just
         // restarted into.
         final notes = switch (state) {
           UpdateReady(:final release) => release,
+          UpdateNotice(:final release) => release,
           _ => updates.updatedTo,
         };
         final rows = <Widget>[
@@ -72,6 +78,24 @@ class UpdatesGroup extends StatelessWidget {
                 ),
               ),
             ),
+          _Row(
+            title: l.updatesAutomatic,
+            subtitle: l.updatesAutomaticHint,
+            trailing: PiumaSwitch(
+              value: prefs.automatic,
+              label: l.updatesAutomatic,
+              onChanged: updates.setAutomatic,
+            ),
+          ),
+          _Row(
+            title: l.updatesEarly,
+            subtitle: l.updatesEarlyHint,
+            trailing: PiumaSwitch(
+              value: prefs.early,
+              label: l.updatesEarly,
+              onChanged: updates.setEarly,
+            ),
+          ),
         ];
         return Container(
           clipBehavior: Clip.antiAlias,
@@ -108,6 +132,16 @@ class UpdatesGroup extends StatelessWidget {
       onPressed: state is UpdateChecking ? null : updates.check,
     );
     switch (state) {
+      case final UpdateNotice notice:
+        return _Row(
+          title: l.updateAvailableTitle(shownVersion(notice.release.version)),
+          subtitle: l.updateAvailableHint,
+          trailing: PiumaButton(
+            label: l.updateDownload,
+            size: PiumaButtonSize.compact,
+            onPressed: () => updates.openNotice(notice).ignore(),
+          ),
+        );
       case UpdateReady(:final release):
         return _Row(
           title: l.updateReadyTitle(shownVersion(release.version)),
@@ -159,7 +193,11 @@ class UpdatesGroup extends StatelessWidget {
       case UpdateIdle():
         final at = updates.checkedAt;
         return _Row(
-          title: state is UpToDate ? l.upToDate : l.updatesAuto,
+          title: state is UpToDate
+              ? l.upToDate
+              : updates.prefs.value.automatic
+              ? l.updatesAuto
+              : l.updatesOnlyWhenAsked,
           subtitle: at == null ? null : _checked(l, now().difference(at)),
           trailing: check,
         );

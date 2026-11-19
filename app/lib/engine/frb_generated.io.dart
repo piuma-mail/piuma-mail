@@ -237,6 +237,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt dco_decode_box_autoadd_u_64(dynamic raw);
 
   @protected
+  UpdateNotice dco_decode_box_autoadd_update_notice(dynamic raw);
+
+  @protected
+  UpdatePrefs dco_decode_box_autoadd_update_prefs(dynamic raw);
+
+  @protected
   UpdateRelease dco_decode_box_autoadd_update_release(dynamic raw);
 
   @protected
@@ -735,6 +741,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
 
   @protected
+  UpdateNotice? dco_decode_opt_box_autoadd_update_notice(dynamic raw);
+
+  @protected
   UpdateRelease? dco_decode_opt_box_autoadd_update_release(dynamic raw);
 
   @protected
@@ -949,6 +958,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UnsubscribeKind dco_decode_unsubscribe_kind(dynamic raw);
+
+  @protected
+  UpdateNotice dco_decode_update_notice(dynamic raw);
+
+  @protected
+  UpdatePrefs dco_decode_update_prefs(dynamic raw);
 
   @protected
   UpdateRelease dco_decode_update_release(dynamic raw);
@@ -1224,6 +1239,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   BigInt sse_decode_box_autoadd_u_64(SseDeserializer deserializer);
+
+  @protected
+  UpdateNotice sse_decode_box_autoadd_update_notice(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  UpdatePrefs sse_decode_box_autoadd_update_prefs(SseDeserializer deserializer);
 
   @protected
   UpdateRelease sse_decode_box_autoadd_update_release(
@@ -1842,6 +1865,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   BigInt? sse_decode_opt_box_autoadd_u_64(SseDeserializer deserializer);
 
   @protected
+  UpdateNotice? sse_decode_opt_box_autoadd_update_notice(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   UpdateRelease? sse_decode_opt_box_autoadd_update_release(
     SseDeserializer deserializer,
   );
@@ -2074,6 +2102,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   UnsubscribeKind sse_decode_unsubscribe_kind(SseDeserializer deserializer);
+
+  @protected
+  UpdateNotice sse_decode_update_notice(SseDeserializer deserializer);
+
+  @protected
+  UpdatePrefs sse_decode_update_prefs(SseDeserializer deserializer);
 
   @protected
   UpdateRelease sse_decode_update_release(SseDeserializer deserializer);
@@ -2437,6 +2471,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_box_autoadd_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_update_notice(
+    UpdateNotice self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_update_prefs(
+    UpdatePrefs self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_update_release(
@@ -3237,6 +3283,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_u_64(BigInt? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_update_notice(
+    UpdateNotice? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_update_release(
     UpdateRelease? self,
     SseSerializer serializer,
@@ -3526,6 +3578,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     UnsubscribeKind self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_update_notice(UpdateNotice self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_update_prefs(UpdatePrefs self, SseSerializer serializer);
 
   @protected
   void sse_encode_update_release(UpdateRelease self, SseSerializer serializer);

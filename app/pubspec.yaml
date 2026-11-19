@@ -40,6 +40,7 @@ flutter:
   generate: true
   assets:
     - assets/fonts/OFL-Geist.txt
+    - assets/licenses/rust_crates.json
   fonts:
     - family: Geist
       fonts:

@@ -1,0 +1,26 @@
+name: Throwaway Android key
+description: >
+  Makes a one-off keystore for a release-mode Android build and points
+  PIUMA_KEYSTORE_FILE, PIUMA_KEYSTORE_PASSWORD and PIUMA_KEY_ALIAS at it
+  (app/android/app/build.gradle.kts refuses to sign a release build with
+  the debug key on CI). Pull requests build with it; the "Release"
+  workflow builds with it too and then re-signs the APKs with the real key
+  in a job that compiles nothing, so the key never meets the build.
+  Needs Java (keytool) on the PATH.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        dir="$RUNNER_TEMP/throwaway-key"
+        mkdir -p "$dir"
+        pass=$(openssl rand -hex 24)
+        echo "::add-mask::$pass"
+        keytool -genkeypair -keystore "$dir/throwaway.p12" -storetype PKCS12 \
+          -storepass "$pass" -keypass "$pass" -alias piuma -keyalg RSA -keysize 3072 \
+          -validity 2 -dname "CN=Piuma Mail throwaway CI key" -noprompt
+        {
+          echo "PIUMA_KEYSTORE_FILE=$dir/throwaway.p12"
+          echo "PIUMA_KEYSTORE_PASSWORD=$pass"
+          echo "PIUMA_KEY_ALIAS=piuma"
+        } >> "$GITHUB_ENV"

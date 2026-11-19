@@ -1063,7 +1063,9 @@ class _AddAccountItem extends StatelessWidget {
 
 /// "Update ready · 0.1.0 (612)" above Settings, in the accent color,
 /// once a downloaded update waits (`UpdatesToApprove` section 1); on the
-/// rail just its icon. It grows into What's new.
+/// rail just its icon. It grows into What's new. Where the app cannot
+/// install updates it reads "New version · 0.1.0 (612)" and opens the
+/// release's page.
 class _UpdateLine extends StatelessWidget {
   const _UpdateLine({this.rail = false});
 
@@ -1084,15 +1086,25 @@ class _UpdateLine extends StatelessWidget {
     return ValueListenableBuilder<UpdateState>(
       valueListenable: updates.state,
       builder: (context, state, _) {
-        if (state is! UpdateReady) return const SizedBox.shrink();
         final c = PiumaTheme.of(context);
         final l = AppLocalizations.of(context);
-        final text = l.updateReadyLine(shownVersion(state.release.version));
+        final String text;
+        final Future<void> Function(BuildContext) open;
+        switch (state) {
+          case UpdateReady(:final release):
+            text = l.updateReadyLine(shownVersion(release.version));
+            open = (context) => _open(context, release);
+          case final UpdateNotice notice:
+            text = l.updateAvailableLine(shownVersion(notice.release.version));
+            open = (_) => updates.openNotice(notice);
+          default:
+            return const SizedBox.shrink();
+        }
         if (rail) {
           return Builder(
             builder: (context) => _RailItem(
               label: text,
-              onTap: () => _open(context, state.release),
+              onTap: () => open(context),
               height: 36,
               child: PiumaIconView(
                 PiumaIcon.update,
@@ -1104,7 +1116,7 @@ class _UpdateLine extends StatelessWidget {
         }
         return Builder(
           builder: (context) => PiumaPressable(
-            onTap: () => _open(context, state.release),
+            onTap: () => open(context),
             semanticLabel: text,
             child: Container(
               height: 36,

@@ -509,14 +509,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text(
-                        l.appVersionLine(appVersionShown),
-                        style: TextStyle(
-                          fontFamily: PiumaFonts.sans,
-                          fontSize: 12,
-                          color: c.muted,
+                    // Opens the licenses screen, as About does on phones.
+                    PiumaPressable(
+                      onTap: () => showLicensePage(
+                        context: context,
+                        applicationName: l.appName,
+                        applicationVersion: appVersionShown,
+                      ),
+                      semanticLabel: l.appVersionLine(appVersionShown),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text(
+                          l.appVersionLine(appVersionShown),
+                          style: TextStyle(
+                            fontFamily: PiumaFonts.sans,
+                            fontSize: 12,
+                            color: c.muted,
+                          ),
                         ),
                       ),
                     ),
@@ -992,13 +1001,29 @@ class _PhoneList extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(
-            height: 52,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(l.openSourceLine, style: text()),
+          // The licenses screen: the app's, the fonts', every Dart
+          // package's and every Rust crate's (`legal.dart`).
+          PiumaPressable(
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: l.appName,
+              applicationVersion: appVersionShown,
+            ),
+            semanticLabel: l.openSourceLine,
+            child: SizedBox(
+              height: 52,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(l.openSourceLine, style: text())),
+                    PiumaIconView(
+                      PiumaIcon.chevronRight,
+                      size: 16,
+                      color: c.muted,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

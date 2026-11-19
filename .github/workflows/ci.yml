@@ -10,13 +10,19 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Every build, every Monday: what nobody touched still builds with
+  # today's runners and toolchains.
+  schedule:
+    - cron: "41 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # By event too: the Monday run never cancels the push run a release
+  # waits for.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -58,6 +64,67 @@ jobs:
         run: python3 tools/gen_rust_licenses.py --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  # The engine against a real IMAP server: the tests in core/tests/ that
+  # need PIUMA_TEST_IMAP (sync, IDLE, Sent copies, the sync space) and
+  # pass without doing anything elsewhere. The server is started by
+  # tools/test-imap-server.sh, as contributors run it, on both Dovecot
+  # versions it supports: the runner's own package (2.4) and the official
+  # 2.3 image, pinned by digest. Started after the checkout, so the script
+  # is there: a service container would start before it.
+  core-imap:
+    name: Rust engine with Dovecot ${{ matrix.dovecot }}
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    strategy:
+      fail-fast: false
+      matrix:
+        dovecot: ["2.4", "2.3"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install system dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ${{ matrix.dovecot == '2.4' && 'libdbus-1-dev dovecot-imapd' || 'libdbus-1-dev' }}
+      - name: Start Dovecot ${{ matrix.dovecot }}
+        env:
+          DOVECOT: ${{ matrix.dovecot }}
+        run: |
+          if [ "$DOVECOT" = 2.3 ]; then
+            # Host network: the script listens on 127.0.0.1.
+            docker run -d --name dovecot --network host -v "$PWD/tools:/tools:ro" \
+              --entrypoint sh \
+              dovecot/dovecot@sha256:547d28f9a893c93a1d2f6dc164880cd7bfa74009106dfa46b36a6a2ee636d921 \
+              /tools/test-imap-server.sh
+          else
+            # The package's own server is not needed.
+            sudo systemctl stop dovecot || true
+            PATH="$PATH:/usr/sbin" nohup sh tools/test-imap-server.sh > "$RUNNER_TEMP/dovecot.out" 2>&1 &
+          fi
+          for _ in $(seq 60); do
+            if (exec 3<>/dev/tcp/127.0.0.1/31143) 2>/dev/null; then
+              { docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out"; } | head -1
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out"
+          exit 1
+      - name: Tests against the server
+        env:
+          PIUMA_TEST_IMAP: 127.0.0.1:31143
+        run: cargo test -p piuma-core --tests
+      - name: Server log
+        if: failure()
+        run: docker logs dovecot 2>/dev/null || cat "$RUNNER_TEMP/dovecot.out" || true
 
   app:
     name: Flutter app
@@ -106,26 +173,66 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 
-  # Builds cost many minutes (macOS counts 10x, Windows 2x): they run only
-  # on main or by hand, not on every PR.
+  # The builds to run: every one on main, on schedule and by hand; on a
+  # pull request those of the platforms it touches.
+  changes:
+    name: Platforms touched
+    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.diff.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # target, platform, runner, name, folder, flags
+          builds='[
+            {"target": "linux", "platform": "linux", "os": "ubuntu-latest"},
+            {"target": "windows", "platform": "windows", "os": "windows-latest"},
+            {"target": "windows", "platform": "windows", "os": "windows-11-arm", "name": "windows-arm64"},
+            {"target": "macos", "platform": "macos", "os": "macos-latest"},
+            {"target": "ios", "platform": "ios", "os": "macos-latest", "flags": "--no-codesign"},
+            {"target": "apk", "platform": "android", "os": "ubuntu-latest"},
+            {"target": "apk", "platform": "wear", "os": "ubuntu-latest", "name": "wear-apk", "dir": "wear"}
+          ]'
+          if [ "$EVENT" = pull_request ]; then
+            files=$(git diff --name-only "$BASE...$HEAD")
+            has() { printf '%s\n' "$files" | grep -Eq "$1"; }
+            # The engine, the bridge, dependencies and native plugins reach
+            # every platform.
+            common='^(core/|app/rust/|app/rust_builder/|third_party/|Cargo\.(toml|lock)$|app/pubspec\.(yaml|lock)$|\.github/workflows/ci\.yml$|\.github/actions/)'
+            touched=""
+            for p in android windows macos linux ios; do
+              if has "$common" || has "^app/$p/"; then touched="$touched $p"; fi
+            done
+            if has "$common" || has '^wear/(android/|pubspec)'; then touched="$touched wear"; fi
+            builds=$(echo "$builds" | jq -c --arg t "$touched" '[.[] | select(.platform as $p | ($t | split(" ") | index($p)))]')
+          fi
+          matrix=$(echo "$builds" | jq -c '{include: .}')
+          echo "Builds: $matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  # Release-mode builds, as the "Release" workflow makes them (R8 and
+  # ProGuard on Android, release compilers elsewhere). macOS minutes count
+  # 10x, Windows 2x: pull requests build only what they touch.
   build:
     name: Build ${{ matrix.name || matrix.target }}
-    needs: app
-    if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' || !github.event.repository.private)
+    needs: [app, core, changes]
+    if: needs.changes.outputs.matrix != '{"include":[]}'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { target: linux, os: ubuntu-latest }
-          - { target: windows, os: windows-latest }
-          # Flutter builds for Windows on ARM only on an ARM64 machine.
-          - { target: windows, os: windows-11-arm, name: windows-arm64 }
-          - { target: macos, os: macos-latest }
-          - { target: apk, os: ubuntu-latest }
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: app
+        working-directory: ${{ matrix.dir || 'app' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,10 +252,41 @@ jobs:
       - if: matrix.target == 'linux'
         uses: ./.github/actions/apt-install
         with:
-          packages: ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev
+          packages: ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev libdbus-1-dev
       - if: matrix.target == 'apk'
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 17
-      - run: flutter build ${{ matrix.target }} --debug
+      # A release build on CI must be signed with a real key: a one-off.
+      - if: matrix.target == 'apk'
+        uses: ./.github/actions/android-throwaway-key
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+          FLAGS: ${{ matrix.flags }}
+        shell: bash
+        # shellcheck disable=SC2086 # FLAGS is empty or one flag
+        run: flutter build "$TARGET" --release $FLAGS
+
+  # One fixed name for branch protection: the builds' names depend on the
+  # matrix, and a pull request may run none of them.
+  builds:
+    name: Builds
+    needs: [app, core, changes, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Builds are skipped when the app or the engine fail: that must not
+      # read as a pass.
+      - env:
+          APP: ${{ needs.app.result }}
+          CORE: ${{ needs.core.result }}
+          CHANGES: ${{ needs.changes.result }}
+          MATRIX: ${{ needs.changes.outputs.matrix }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "App: $APP, engine: $CORE, platforms: $CHANGES, builds: $BUILD"
+          [ "$APP" = success ] && [ "$CORE" = success ] && [ "$CHANGES" = success ] || exit 1
+          if [ "$MATRIX" = '{"include":[]}' ]; then exit 0; fi
+          [ "$BUILD" = success ]

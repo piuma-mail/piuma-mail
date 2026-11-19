@@ -1,18 +1,18 @@
-# Known vulnerabilities in the dependencies: the Rust crates (cargo-deny,
-# deny.toml) and the report relay's npm packages. Runs when a lock file
-# changes and every Monday, so a new advisory shows up even when nothing
-# changed here. The app's and watch's Dart packages are covered by
-# Dependabot alerts.
+# What the dependencies bring: known vulnerabilities in the Rust crates,
+# the Dart packages and the report relay's npm packages, the Rust crates'
+# licenses and banned crates (cargo-deny, deny.toml), and the age of the
+# PEC trust lists. Runs on every pull request and every push to main, with
+# no path filter, so its checks can be required and the release gate finds
+# a result on every commit; and every Monday, so a new advisory shows up
+# even when nothing changed here.
 # On main it also checks the Rust license list, which Dependabot's pull
 # requests don't update.
 name: Dependencies
 
 on:
   pull_request:
-    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", "core/src/pec_anchors.pem", "core/src/pec_providers.txt", "tools/gen_pec_trust.py", ".github/workflows/dependencies.yml"]
   push:
     branches: [main]
-    paths: ["**/Cargo.lock", "**/Cargo.toml", "deny.toml", "relay/package*.json", "core/src/pec_anchors.pem", "core/src/pec_providers.txt", "tools/gen_pec_trust.py", ".github/workflows/dependencies.yml"]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
@@ -32,6 +32,21 @@ jobs:
         with:
           arguments: ""
           command: check advisories sources
+
+  # Separate from the advisories so a new advisory (outside our control)
+  # and a license or banned crate (a change in a pull request) fail
+  # different checks.
+  rust-policy:
+    name: Rust licenses and bans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          arguments: ""
+          command: check licenses bans
 
   # The trust lists PEC receipts are checked against (tools/gen_pec_trust.py)
   # go stale as AgID updates them: a warning once they are 90 days old.
@@ -61,6 +76,18 @@ jobs:
           toolchain: stable
       - name: Up to date
         run: python3 tools/gen_rust_licenses.py --check
+
+  # The app's and the watch's Dart packages, against OSV (GitHub's
+  # advisories for pub). Dependabot alerts cover them too, but don't stop
+  # a pull request.
+  dart:
+    name: Dart advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 tools/pub_advisories.py app/pubspec.lock wear/pubspec.lock
 
   relay:
     name: Relay npm audit

@@ -126,6 +126,8 @@ enum Shell {
   private static func send(_ words: [String]) {
     channel?.invokeMethod("open", arguments: words)
   }
+}
+
 /// How many emails are unread, on the app's icon in the Dock; nothing
 /// while none is.
 enum UnreadBadge {

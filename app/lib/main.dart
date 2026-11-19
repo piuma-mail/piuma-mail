@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, Platform, exit, stderr;
 import 'dart:ui' show AppExitResponse;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -16,6 +16,7 @@ import 'dev_copy.dart';
 import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
 import 'engine/frb_generated.dart';
+import 'engine/api/updates.dart' as engine_updates;
 import 'feedback/report_context.dart';
 import 'feedback/report_sheet.dart';
 import 'home.dart';
@@ -37,6 +38,7 @@ Future<void> main(List<String> args) async {
   if (args.firstOrNull == 'multi_window') {
     return _readerWindow(args.elementAtOrNull(2) ?? '');
   }
+  if (args.contains('--smoke-test')) return _smokeTest();
   // First, so whatever goes wrong from here on is kept for a report.
   _keepCrashes();
   WidgetsFlutterBinding.ensureInitialized();
@@ -116,6 +118,37 @@ Future<void> _start(String dir) async {
       ),
     ),
   );
+  // This launch worked: the next one need not look for a fix first.
+  WidgetsBinding.instance.addPostFrameCallback((_) => Updates.launched());
+}
+
+/// `piuma_mail --smoke-test`, run by the "Release" workflow on the
+/// installed app: the start-up part of updates and the engine, on a
+/// throwaway folder, then exit 0 (1 on any error). Nothing is drawn and
+/// nothing reaches the network.
+Future<void> _smokeTest() async {
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    await RustLib.init();
+    final dir = await Directory.systemTemp.createTemp('piuma-smoke-');
+    // No feed: a smoke test never looks for updates.
+    final s = engine_updates.updatesStartup(
+      supportDir: dir.path,
+      feed: '',
+      channel: updateChannel,
+    );
+    if (s.previousLaunchFailed) throw StateError('a new folder has a marker');
+    engine.openEngine(dbPath: '${dir.path}/piuma.db');
+    // A first query through the open database.
+    engine.appearanceSettings();
+    engine_updates.updatesLaunched();
+    // The folder stays: the open database keeps it busy on Windows, and
+    // the runner is thrown away.
+    exit(0);
+  } catch (e, stack) {
+    stderr.writeln('Smoke test failed: $e\n$stack');
+    exit(1);
+  }
 }
 
 String _feedbackAddress() {

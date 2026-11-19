@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
 """List the Rust crates that ship in the app, with their licenses.
 
-Writes THIRD_PARTY_RUST.md from `cargo metadata`: every crate reachable from the
-workspace through normal dependencies (dev and build dependencies don't ship).
-Run after changing Cargo.lock; `--check` fails if the file is out of date.
+Writes, from `cargo metadata`, every crate reachable from the workspace through
+normal dependencies (dev and build dependencies don't ship):
+
+- THIRD_PARTY_RUST.md: the list, with each crate's license;
+- app/assets/licenses/rust_crates.json: each crate's license and notice files,
+  which the app shows on its licenses screen (`app/lib/legal.dart`), so the
+  notices travel with every binary.
+
+Run after changing Cargo.lock; `--check` fails if either file is out of date.
+The crates' sources must be downloaded (`cargo metadata` does that).
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "THIRD_PARTY_RUST.md"
+ASSET = ROOT / "app" / "assets" / "licenses" / "rust_crates.json"
 # Crates whose Cargo.toml has no license field, read from their LICENSE file.
 LICENSE_FILES = {"allo-isolate": "Apache-2.0"}
+# Files in a crate's folder that carry its license or notices.
+LICENSE_NAME = re.compile(r"^(licen[sc]e|copying|copyright|notice|unlicense)([-_.].*)?$", re.I)
+# Code vendored inside a crate, with licenses of its own (see THIRD_PARTY.md).
+VENDORED = {
+    "fxtranslate": ["vendor/gemmology/LICENSE", "vendor/xsimd/LICENSE"],
+}
 
 
 def shipped_crates():
@@ -24,7 +39,8 @@ def shipped_crates():
             cwd=ROOT,
             check=True,
             capture_output=True,
-            text=True,
+            # cargo writes UTF-8; Windows would decode it with its own code page.
+            encoding="utf-8",
         ).stdout
     )
     packages = {p["id"]: p for p in meta["packages"]}
@@ -63,13 +79,63 @@ def render(crates):
     return "\n".join(lines) + "\n"
 
 
+def license_files(crate):
+    """The license and notice files of a crate, as (name, text), sorted."""
+    root = Path(crate["manifest_path"]).parent
+    found = []
+    for path in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+        if path.is_file() and LICENSE_NAME.match(path.name):
+            found.append(path)
+        # REUSE-style folders: LICENSES/MIT.txt and the like.
+        elif path.is_dir() and path.name.lower() in ("licenses", "license"):
+            found += sorted((p for p in path.iterdir() if p.is_file()), key=lambda p: p.name.lower())
+    found += [root / rel for rel in VENDORED.get(crate["name"], []) if (root / rel).is_file()]
+    out = []
+    for path in found:
+        text = path.read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
+        if text:
+            out.append((path.relative_to(root).as_posix(), text))
+    return out
+
+
+def license_texts(crates):
+    """The asset: one entry per distinct text, with every crate it covers.
+
+    Many crates share a text word for word (the Apache 2.0 license above
+    all), so each text is kept once.
+    """
+    by_text = {}
+    missing = []
+    for p in crates:
+        expr = p.get("license") or LICENSE_FILES.get(p["name"], "see crate")
+        files = license_files(p)
+        if not files:
+            missing.append(f"{p['name']} {p['version']}")
+            ids = re.findall(r"[A-Za-z0-9.+-]+", expr)
+            ids = [i for i in ids if i not in ("AND", "OR", "WITH")]
+            links = "\n".join(f"https://spdx.org/licenses/{i}.html" for i in ids)
+            files = [("", f"{p['name']} {p['version']} is distributed under {expr}. Its package carries no license file; the license text is at:\n{links}")]
+        for _, text in files:
+            by_text.setdefault(text, set()).add(p["name"])
+    if missing:
+        print("No license file in: " + ", ".join(missing), file=sys.stderr)
+    entries = [{"crates": sorted(names, key=str.lower), "text": text} for text, names in by_text.items()]
+    entries.sort(key=lambda e: ([c.lower() for c in e["crates"]], e["text"]))
+    return json.dumps(entries, ensure_ascii=False, indent=0, sort_keys=True) + "\n"
+
+
 def main():
-    text = render(shipped_crates())
+    crates = shipped_crates()
+    outputs = {OUT: render(crates), ASSET: license_texts(crates)}
     if "--check" in sys.argv:
-        if not OUT.exists() or OUT.read_text() != text:
-            sys.exit("THIRD_PARTY_RUST.md is out of date: run python3 tools/gen_rust_licenses.py")
+        stale = [p for p, text in outputs.items() if not p.exists() or p.read_text(encoding="utf-8") != text]
+        if stale:
+            names = ", ".join(str(p.relative_to(ROOT)) for p in stale)
+            sys.exit(f"{names} out of date: run python3 tools/gen_rust_licenses.py")
         return
-    OUT.write_text(text)
+    for path, text in outputs.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

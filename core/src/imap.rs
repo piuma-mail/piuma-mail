@@ -173,6 +173,36 @@ pub struct Connection {
     /// The deadline and budget of the commands under way.
     limits: Arc<crate::watchdog::Limits>,
     timing: Timing,
+    /// What the last [`Self::sync_round`] of each mailbox found when it
+    /// selected it, for [`Self::reselect`].
+    synced: HashMap<String, Selected>,
+}
+
+/// A mailbox as SELECT described it: UIDVALIDITY, message count,
+/// UIDNEXT and, with CONDSTORE, its highest modseq.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Selected {
+    uid_validity: Option<u32>,
+    exists: u32,
+    uid_next: Option<u32>,
+    modseq: Option<u64>,
+}
+
+impl Selected {
+    fn of(m: &async_imap::types::Mailbox) -> Self {
+        Selected {
+            uid_validity: m.uid_validity,
+            exists: m.exists,
+            uid_next: m.uid_next,
+            modseq: m.highest_modseq,
+        }
+    }
+}
+
+/// Whether `now` differs from what the last sync of the mailbox saw
+/// (`synced`), or the mailbox was never synced on this connection.
+fn changed_since(synced: Option<&Selected>, now: &async_imap::types::Mailbox) -> bool {
+    synced != Some(&Selected::of(now))
 }
 
 /// How long the connection waits on the server, and how long the watcher
@@ -330,6 +360,7 @@ impl Connection {
             roles: Vec::new(),
             limits,
             timing,
+            synced: HashMap::new(),
         })
     }
 
@@ -453,6 +484,9 @@ impl Connection {
         if !keeps_keywords(&selected) {
             lock(store).set_labels_local(account)?;
         }
+        self.synced
+            .insert(mailbox.to_owned(), Selected::of(&selected));
+        let session = self.session()?;
 
         let (prior, local, unchanged, found) = {
             let store = lock(store);
@@ -880,6 +914,21 @@ impl Connection {
             .try_collect()
             .await?;
         Ok(fetches.iter().find_map(|f| f.body().map(<[u8]>::to_vec)))
+    }
+
+    /// Selects `mailbox` again after commands on other folders, for IDLE
+    /// to watch it. True when it changed since the last
+    /// [`Self::sync_round`] of it: mail that came in meanwhile is told
+    /// only in SELECT's own answer, and IDLE would never report it.
+    pub async fn reselect(&mut self, mailbox: &str) -> Result<bool> {
+        let condstore = self.condstore;
+        let session = self.session()?;
+        let selected = if condstore {
+            session.select_condstore(mailbox).await?
+        } else {
+            session.select(mailbox).await?
+        };
+        Ok(changed_since(self.synced.get(mailbox), &selected))
     }
 
     /// Waits on the selected folder until the server reports a change or
@@ -2325,8 +2374,11 @@ pub async fn watch_timed(
                     };
                     folders_more = conn.sync_folders_round(&store, account, round).await?;
                     folders_synced = Some(std::time::Instant::now());
-                    // IDLE watches the selected folder.
-                    conn.session()?.select(&mailbox).await?;
+                    // IDLE watches the selected folder. Mail that came in
+                    // during the other folders' round is synced first.
+                    if conn.reselect(&mailbox).await? {
+                        continue;
+                    }
                 }
                 // A whole round went through: the next failure is a new
                 // one, with a short wait.
@@ -3991,6 +4043,50 @@ pub(crate) fn attachment_data_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reselect_notices_any_change_since_the_last_sync() {
+        let seen = async_imap::types::Mailbox {
+            exists: 10,
+            uid_next: Some(41),
+            uid_validity: Some(7),
+            highest_modseq: Some(900),
+            ..Default::default()
+        };
+        let synced = Selected::of(&seen);
+        assert!(!changed_since(Some(&synced), &seen));
+        assert!(changed_since(None, &seen));
+        // New mail, mail gone with the same count, a flag change, a
+        // recreated mailbox: each one is synced before IDLE.
+        for now in [
+            async_imap::types::Mailbox {
+                exists: 11,
+                uid_next: Some(42),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                uid_next: Some(42),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                highest_modseq: Some(901),
+                ..seen.clone()
+            },
+            async_imap::types::Mailbox {
+                uid_validity: Some(8),
+                ..seen.clone()
+            },
+        ] {
+            assert!(changed_since(Some(&synced), &now), "{now:?}");
+        }
+        // RECENT and UNSEEN alone are not a change to sync for.
+        let now = async_imap::types::Mailbox {
+            recent: 3,
+            unseen: Some(2),
+            ..seen.clone()
+        };
+        assert!(!changed_since(Some(&synced), &now));
+    }
 
     #[test]
     fn folder_names_under_inbox_are_compared_by_character() {

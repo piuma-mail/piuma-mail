@@ -1,0 +1,61 @@
+# Dependencies RustSec cannot follow for us, checked every Monday:
+# - third_party/fxtranslate, our patched copy of fxtranslate: a path
+#   dependency, so advisories about the published crate never match it.
+#   Its upstream version is the one in its Cargo.toml (see its PIUMA.md).
+# - velopack, pinned (=x.y.z) in app/rust/Cargo.toml and as the vpk tool:
+#   the zip advisories in deny.toml go away with a stable release on zip 9.
+# When crates.io has a newer stable release, it opens an issue (once).
+name: Upstream versions
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Vendored and pinned crates
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare with crates.io
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          newest() {
+            curl -fsS -A "piuma-mail-upstream-watch (github.com/$REPO)" "https://crates.io/api/v1/crates/$1" |
+              jq -r '.crate.max_stable_version'
+          }
+          report() { # crate ours theirs what-to-do
+            title="Upstream: $1 $3 is out (we have $2)"
+            if [ -n "$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+              echo "Already reported: $title"
+              return
+            fi
+            body=$(printf '%s\n\n%s\n\nhttps://crates.io/crates/%s/%s\n\nOpened by the "Upstream versions" workflow.' \
+              "$title." "$4" "$1" "$3")
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          }
+          fx=$(sed -n 's/^version = "\(.*\)"/\1/p' third_party/fxtranslate/Cargo.toml | head -1)
+          fx_up=$(newest fxtranslate)
+          echo "fxtranslate: ours $fx, crates.io $fx_up"
+          if [ "$fx" != "$fx_up" ]; then
+            report fxtranslate "$fx" "$fx_up" "Compare its changes and security fixes with our copy in third_party/fxtranslate (changes listed in its PIUMA.md): move the copy to the new version and re-apply the patches, or drop the copy if upstream has them."
+          fi
+          vp=$(sed -n 's/^velopack = "=\(.*\)"/\1/p' app/rust/Cargo.toml | head -1)
+          vp_up=$(newest velopack)
+          echo "velopack: ours $vp, crates.io $vp_up"
+          if [ -n "$vp" ] && [ "$vp" != "$vp_up" ]; then
+            report velopack "$vp" "$vp_up" "Bump velopack in app/rust/Cargo.toml and the vpk tool (release.yml, tools/windows-release.ps1, CONTRIBUTING.md) together; if it moves to zip 9, remove the zip ignores in deny.toml."
+          fi

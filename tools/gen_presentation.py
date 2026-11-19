@@ -13,7 +13,7 @@ from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
-TOKENS = json.loads((ROOT / "design/tokens.json").read_text())
+TOKENS = json.loads((ROOT / "design/tokens.json").read_text(encoding="utf-8"))
 # File name, token theme and the background's description for each variant.
 VARIANTS = (
     ("cover.svg", "light", "warm neutral"),
@@ -23,7 +23,7 @@ VARIANTS = (
 
 def icon_constants():
     """Read the existing feather without importing the raster icon generator."""
-    tree = ast.parse((ROOT / "tools/gen_icons.py").read_text())
+    tree = ast.parse((ROOT / "tools/gen_icons.py").read_text(encoding="utf-8"))
     return {
         node.targets[0].id: ast.literal_eval(node.value)
         for node in tree.body
@@ -84,7 +84,7 @@ def main():
     icon = icon_constants()
     for name, theme, background in VARIANTS:
         svg = cover(icon, TOKENS["color"][theme], background)
-        (ROOT / "docs/images" / name).write_text(svg)
+        (ROOT / "docs/images" / name).write_text(svg, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

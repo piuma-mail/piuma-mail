@@ -18,3 +18,12 @@ a few places. Each change is marked "Piuma Mail:" in the source.
   decompression bomb (RUSTSEC-2026-0344); its decoder is now in `decoding`.
 
 Drop this copy when upstream has the same fixes.
+
+## Upstream version
+
+Based on **fxtranslate 0.5.0** from crates.io (the `version` in this folder's `Cargo.toml`, which
+stays the upstream one). Being a path dependency, this copy is invisible to RustSec and Dependabot:
+the "Upstream versions" workflow (`.github/workflows/upstream-watch.yml`) compares it with the latest
+crates.io release every Monday and opens an issue when they differ. Moving to a new upstream version:
+replace the files, re-apply every "Piuma Mail:" change above, update this section and
+`THIRD_PARTY.md`, and run `python3 tools/gen_rust_licenses.py`.

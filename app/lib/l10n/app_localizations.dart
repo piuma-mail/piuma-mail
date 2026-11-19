@@ -9256,6 +9256,60 @@ abstract class AppLocalizations {
   /// **'Updated to {version}'**
   String updatedTo(String version);
 
+  /// No description provided for @updateAvailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Available · {version}'**
+  String updateAvailableTitle(String version);
+
+  /// No description provided for @updateAvailableHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Download it from its release page'**
+  String get updateAvailableHint;
+
+  /// No description provided for @updateDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get updateDownload;
+
+  /// No description provided for @updateAvailableLine.
+  ///
+  /// In en, this message translates to:
+  /// **'New version · {version}'**
+  String updateAvailableLine(String version);
+
+  /// No description provided for @updatesAutomatic.
+  ///
+  /// In en, this message translates to:
+  /// **'Look for new versions'**
+  String get updatesAutomatic;
+
+  /// No description provided for @updatesAutomaticHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Asks GitHub every few hours'**
+  String get updatesAutomaticHint;
+
+  /// No description provided for @updatesOnlyWhenAsked.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma looks only when you ask'**
+  String get updatesOnlyWhenAsked;
+
+  /// No description provided for @updatesEarly.
+  ///
+  /// In en, this message translates to:
+  /// **'Early releases'**
+  String get updatesEarly;
+
+  /// No description provided for @updatesEarlyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'New versions a few days sooner, with more bugs'**
+  String get updatesEarlyHint;
+
   /// No description provided for @swipeHintArchiveSnooze.
   ///
   /// In en, this message translates to:

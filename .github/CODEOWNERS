@@ -1,0 +1,20 @@
+# Reviews required (with "Require review from Code Owners" in the branch
+# protection of main) for what can change the release chain, the
+# dependency policy or the security documents. One maintainer for now;
+# add people (or a team) here as the project grows. A fork replaces the
+# owner with its own.
+*                           @TeoVader
+/.github/                   @TeoVader
+/tools/                     @TeoVader
+/deny.toml                  @TeoVader
+/Cargo.lock                 @TeoVader
+/app/pubspec.lock           @TeoVader
+/wear/pubspec.lock          @TeoVader
+/relay/package-lock.json    @TeoVader
+/third_party/               @TeoVader
+/app/android/app/build.gradle.kts   @TeoVader
+/wear/android/app/build.gradle.kts  @TeoVader
+/app/rust/src/api/updates.rs        @TeoVader
+/SECURITY.md                @TeoVader
+/docs/threat-model.md       @TeoVader
+/docs/incident-runbook.md   @TeoVader
