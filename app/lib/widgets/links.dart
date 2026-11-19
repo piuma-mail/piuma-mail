@@ -122,7 +122,7 @@ LinkParts? describeLink(String url) {
   final uri = Uri.tryParse(url.trim());
   if (uri == null) return null;
   if (uri.scheme.toLowerCase() == 'mailto') {
-    final to = Uri.decodeComponent(uri.path);
+    final to = _decodeHost(uri.path);
     final at = to.lastIndexOf('@');
     final (host, ascii) = _readableHost(
       at < 0 ? to : to.substring(at + 1).toLowerCase(),
@@ -173,11 +173,14 @@ String _rest(Uri uri) {
 }
 
 /// A host's percent-encoding undone, or the host as it is when that
-/// doesn't read.
+/// doesn't read (a bad escape, or bytes that aren't UTF-8: `a%ff.example`).
+/// A host left with its `%` never opens ([isMailLinkAllowed]).
 String _decodeHost(String host) {
   try {
     return Uri.decodeComponent(host);
   } on ArgumentError {
+    return host;
+  } on FormatException {
     return host;
   }
 }
@@ -255,8 +258,13 @@ String? _unpunycodeLabel(String label) {
 }
 
 /// The registrable domain of [host]: its last two labels, or three under a
-/// country's second level (`bank.co.uk`), as the engine reckons it.
+/// country's second level (`bank.co.uk`), as the engine reckons it. A
+/// trailing dot (`bank.example.`, the same host to a browser) is kept, not
+/// counted as a label.
 String registrableDomain(String host) {
+  if (host.length > 1 && host.endsWith('.')) {
+    return '${registrableDomain(host.substring(0, host.length - 1))}.';
+  }
   final labels = host.split('.');
   final n = labels.length;
   if (n < 3) return host;

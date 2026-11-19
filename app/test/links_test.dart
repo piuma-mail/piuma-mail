@@ -184,6 +184,24 @@ void main() {
     expect(parts.rest, '/login');
   });
 
+  test(
+    'a host whose percent-encoding isn\'t UTF-8 never opens, and never throws',
+    () {
+      for (final link in ['https://a%ff.example/', 'https://a%C3.example/x']) {
+        expect(isMailLinkAllowed(Uri.parse(link)), isFalse, reason: link);
+        expect(normalizeLink(link), isNotEmpty, reason: link);
+        expect(describeLink(link), isNotNull, reason: link);
+      }
+      expect(describeLink('mailto:%ff@x.example')!.registrable, 'x.example');
+    },
+  );
+
+  test('a trailing dot doesn\'t hide the registrable part', () {
+    expect(registrableDomain('login.evil.example.'), 'evil.example.');
+    expect(registrableDomain('bank.co.uk.'), 'bank.co.uk.');
+    expect(describeLink('https://paypal.evil.com./')!.registrable, 'evil.com.');
+  });
+
   test('an IPv6 host with a port reads apart from its port', () {
     final uri = Uri.parse('http://[::1]:8080/a?b=c');
     expect(isMailLinkAllowed(uri), isTrue);
