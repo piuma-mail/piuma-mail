@@ -3483,7 +3483,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.';
+      'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it. Old emails that a search found on the server go first, unless you starred or labelled them: searching again finds them there.';
 
   @override
   String get storageKeep => 'Keep whole messages for reading offline';

@@ -890,7 +890,7 @@
   "storageClearFailed": "Non è stato possibile svuotare la posta salvata. Riprova.",
   "storageNoRoom": "Posta salvata svuotata. Non c'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.",
   "storageClearTitle": "Svuotare la posta in cache di {name}?",
-  "storageClearNote": "I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.",
+  "storageClearNote": "I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri. Prima se ne vanno le email vecchie trovate da una ricerca sul server, se non le hai messe tra le Speciali o etichettate: cercando di nuovo le ritrovi lì.",
   "storageKeep": "Tieni i messaggi interi per leggere offline",
   "storageKeepHint": "Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.",
   "storageKeepMonth": "1 mese",

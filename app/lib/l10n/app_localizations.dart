@@ -5389,7 +5389,7 @@ abstract class AppLocalizations {
   /// No description provided for @storageClearNote.
   ///
   /// In en, this message translates to:
-  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.'**
+  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it. Old emails that a search found on the server go first, unless you starred or labelled them: searching again finds them there.'**
   String get storageClearNote;
 
   /// No description provided for @storageKeep.

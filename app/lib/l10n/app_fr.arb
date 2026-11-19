@@ -880,7 +880,7 @@
   "storageClearFailed": "Impossible de vider les e-mails gardés. Réessayez.",
   "storageNoRoom": "E-mails gardés vidés. Il n'y a pas assez d'espace libre pour réduire le fichier maintenant : Piuma réutilise la place.",
   "storageClearTitle": "Vider les e-mails en cache de {name} ?",
-  "storageClearNote": "Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, la recherche trouve toujours leurs mots, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l'ouvrez.",
+  "storageClearNote": "Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, la recherche trouve toujours leurs mots, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l'ouvrez. Les anciens e-mails trouvés par une recherche sur le serveur partent en premier, sauf ceux que vous avez suivis ou étiquetés : une nouvelle recherche les y retrouve.",
   "storageKeep": "Garder les messages complets pour la lecture hors ligne",
   "storageKeepHint": "Les plus anciens sont téléchargés à nouveau quand vous les ouvrez. La recherche trouve toujours leurs mots.",
   "storageKeepMonth": "1 mois",

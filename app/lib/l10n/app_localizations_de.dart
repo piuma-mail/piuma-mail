@@ -3507,7 +3507,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die Suche findet ihre Wörter weiterhin, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen.';
+      'Ganze Nachrichten und Bilder zum Offline-Lesen werden von diesem Gerät entfernt. Die Listen bleiben, die Suche findet ihre Wörter weiterhin, die E-Mails bleiben auf dem Server, und eine Nachricht wird beim Öffnen neu geladen. Zuerst gehen alte E-Mails, die eine Suche auf dem Server gefunden hat, außer markierten oder mit Label versehenen: Eine neue Suche findet sie dort wieder.';
 
   @override
   String get storageKeep => 'Ganze Nachrichten zum Offline-Lesen behalten';
