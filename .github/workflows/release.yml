@@ -140,7 +140,9 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           for wf in ci.yml dependencies.yml; do
-            ok=$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$SHA&event=push&status=success&per_page=1" --jq '.total_count')
+            # No status= filter: the API returns no runs for ci.yml with it.
+            ok=$(gh api "repos/$REPO/actions/workflows/$wf/runs?head_sha=$SHA&event=push&per_page=20" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
             if [ "${ok:-0}" -lt 1 ]; then
               echo "::error::$wf has not passed on main for $SHA. Wait for it (or re-run it), then release again."
               exit 1
