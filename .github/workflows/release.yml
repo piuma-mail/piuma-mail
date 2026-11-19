@@ -370,9 +370,19 @@ jobs:
           Get-Process piuma_mail -ErrorAction SilentlyContinue | Stop-Process -Force
           $exe = "$env:LOCALAPPDATA\PiumaMail\current\piuma_mail.exe"
           if (-not (Test-Path $exe)) { throw "Not installed where expected: $exe" }
-          $app = Start-Process $exe -ArgumentList '--smoke-test' -PassThru
-          if (-not $app.WaitForExit(180000)) { $app | Stop-Process -Force; throw 'The app did not finish its smoke test in 3 minutes.' }
-          if ($app.ExitCode) { throw "The installed app failed its smoke test ($($app.ExitCode))." }
+          # What the app writes (the failing step and its error) is shown
+          # below, success or not.
+          $out = "$env:RUNNER_TEMP\smoke-stdout.txt"
+          $err = "$env:RUNNER_TEMP\smoke-stderr.txt"
+          $app = Start-Process $exe -ArgumentList '--smoke-test' -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          # Held from the start: without it ExitCode can read as empty.
+          $null = $app.Handle
+          $done = $app.WaitForExit(180000)
+          if (-not $done) { $app | Stop-Process -Force }
+          Write-Host '--- smoke test stdout'; Get-Content $out -ErrorAction SilentlyContinue
+          Write-Host '--- smoke test stderr'; Get-Content $err -ErrorAction SilentlyContinue
+          if (-not $done) { throw 'The app did not finish its smoke test in 3 minutes.' }
+          if ($app.ExitCode -ne 0) { throw "The installed app failed its smoke test (exit code '$($app.ExitCode)'): see its stderr above." }
           Write-Host 'Installed and started.'
 
   android:
@@ -481,7 +491,18 @@ jobs:
               --out "$out" "$apk"
             rm -f "$out.idsig"
             "$tools/apksigner" verify --print-certs "$out" | tee "$RUNNER_TEMP/certs.txt"
-            sha=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt")
+            # One line per signer: "Signer #1 certificate SHA-256 digest: …"
+            # from older build-tools, "V3.0 Signer: certificate SHA-256
+            # digest: …" (one per scheme) from build-tools 37.
+            sha=$(sed -n -E 's/^(Signer #[0-9]+|V[0-9.]+ Signer( #[0-9]+)?:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\3/p' "$RUNNER_TEMP/certs.txt" | tr 'A-F' 'a-f' | sort -u)
+            if [ -z "$sha" ]; then
+              echo "::error::No signer certificate SHA-256 digest found in apksigner's output for $(basename "$out") (see above): has its format changed?"
+              exit 1
+            fi
+            if [ "$(printf '%s\n' "$sha" | wc -l)" != 1 ]; then
+              echo "::error::$(basename "$out") has more than one signer certificate: $(echo $sha)."
+              exit 1
+            fi
             echo "$(basename "$out"): $sha"
             echo "$sha" >> "$RUNNER_TEMP/shas.txt"
             if [ -n "$EXPECTED" ] && [ "$sha" != "$(echo "$EXPECTED" | tr -d ': ' | tr 'A-F' 'a-f')" ]; then

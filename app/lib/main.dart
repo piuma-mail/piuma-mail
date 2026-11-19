@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Directory, Platform, exit, stderr;
+import 'dart:io' show Directory, IOSink, Platform, exit, stderr, stdout;
 import 'dart:ui' show AppExitResponse;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -127,10 +127,14 @@ Future<void> _start(String dir) async {
 /// throwaway folder, then exit 0 (1 on any error). Nothing is drawn and
 /// nothing reaches the network.
 Future<void> _smokeTest() async {
+  // Printed with a failure, so the workflow's log says which step broke.
+  var step = 'start';
   try {
     WidgetsFlutterBinding.ensureInitialized();
+    step = 'RustLib.init';
     await RustLib.init();
     final dir = await Directory.systemTemp.createTemp('piuma-smoke-');
+    step = 'updatesStartup';
     // No feed: a smoke test never looks for updates.
     final s = engine_updates.updatesStartup(
       supportDir: dir.path,
@@ -138,17 +142,35 @@ Future<void> _smokeTest() async {
       channel: updateChannel,
     );
     if (s.previousLaunchFailed) throw StateError('a new folder has a marker');
-    engine.openEngine(dbPath: '${dir.path}/piuma.db');
+    step = 'openEngine';
+    // Awaited: the engine opens off this thread, and every call before it
+    // is done fails with "engine not open".
+    await engine.openEngine(dbPath: '${dir.path}/piuma.db');
+    step = 'appearanceSettings';
     // A first query through the open database.
     engine.appearanceSettings();
+    step = 'updatesLaunched';
     engine_updates.updatesLaunched();
+    await _say(stdout, 'Smoke test passed (${dir.path}).');
     // The folder stays: the open database keeps it busy on Windows, and
     // the runner is thrown away.
     exit(0);
   } catch (e, stack) {
-    stderr.writeln('Smoke test failed: $e\n$stack');
+    final detail = e is engine.EngineError
+        ? '${e.kind.name}: ${e.detail}'
+        : '$e';
+    await _say(stderr, 'Smoke test failed at $step: $detail\n$stack');
     exit(1);
   }
+}
+
+/// A line for the workflow's log. A window app may have nowhere to
+/// write it; the exit code still tells.
+Future<void> _say(IOSink sink, String line) async {
+  try {
+    sink.writeln(line);
+    await sink.flush();
+  } catch (_) {}
 }
 
 String _feedbackAddress() {
