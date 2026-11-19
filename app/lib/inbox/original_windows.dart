@@ -42,7 +42,19 @@ function _reportHeight() {
   var d = document.documentElement ? document.documentElement.scrollHeight : 0;
   var h = Math.max(b, d);
   if (h > 0) window.chrome.webview.postMessage('#height:' + h);
+  _reportScroll();
 }
+// Where the page is scrolled, and how far it can go, once it is longer
+// than its paper (paperMaxHeight): wheel turns go to it first.
+function _reportScroll() {
+  var e = document.scrollingElement || document.documentElement;
+  if (!e) return;
+  var max = Math.max(0, e.scrollHeight - window.innerHeight);
+  window.chrome.webview.postMessage(
+    '#scroll:' + Math.round(window.scrollY) + ',' + Math.round(max));
+}
+window.addEventListener('scroll', _reportScroll, {passive: true});
+window.addEventListener('resize', _reportScroll);
 document.addEventListener('click', function (e) {
   var a = e.target.closest && e.target.closest('a[href]');
   if (!a) return;
@@ -98,6 +110,8 @@ class _WindowsPaperState extends State<WindowsPaper> {
   final _controller = WebviewController();
   final _subs = <StreamSubscription<Object?>>[];
   bool _shown = false;
+  double _scrollY = 0;
+  double _scrollMax = 0;
 
   @override
   void initState() {
@@ -121,6 +135,13 @@ class _WindowsPaperState extends State<WindowsPaper> {
             if (m.startsWith('#height:')) {
               final h = double.tryParse(m.substring('#height:'.length));
               if (mounted && h != null) OriginalView.setHeight(context, h);
+              return;
+            }
+            if (m.startsWith('#scroll:')) {
+              final parts = m.substring('#scroll:'.length).split(',');
+              if (parts.length != 2) return;
+              _scrollY = double.tryParse(parts[0]) ?? 0;
+              _scrollMax = double.tryParse(parts[1]) ?? 0;
               return;
             }
             if (m.startsWith('#hover:')) {
@@ -190,6 +211,10 @@ class _WindowsPaperState extends State<WindowsPaper> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      _shown ? Webview(_controller) : const SizedBox.expand();
+  Widget build(BuildContext context) => _shown
+      ? InnerScrollFirst(
+          takes: (dy) => innerScrollTakes(_scrollY, _scrollMax, dy),
+          child: Webview(_controller),
+        )
+      : const SizedBox.expand();
 }

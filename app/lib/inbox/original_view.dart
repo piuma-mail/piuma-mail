@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
@@ -82,6 +83,41 @@ double paperMaxHeight(TargetPlatform platform, double devicePixelRatio) {
 
 /// The tallest a paper grows anywhere, in points.
 const _tallestPaper = 20000.0;
+
+/// Whether a wheel turn of [dy] points (positive: down) scrolls a web view
+/// that is at [offset] of the [extent] it can scroll, rather than the
+/// reader around it, as nested scrolling works in a browser: the inner
+/// page first, then the outer one once the inner can't go further. A page
+/// that fits its paper ([paperMaxHeight] not reached) never takes it.
+bool innerScrollTakes(double offset, double extent, double dy) {
+  if (extent <= 1 || dy == 0) return false;
+  return dy > 0 ? offset < extent - 1 : offset > 1;
+}
+
+/// Keeps the reader still while a wheel turn scrolls the web view in
+/// [child] ([innerScrollTakes]). The web view gets every wheel turn over
+/// it; without this, a page longer than its paper scrolled together with
+/// the reader, twice as fast (feedback #22).
+class InnerScrollFirst extends StatelessWidget {
+  const InnerScrollFirst({super.key, required this.takes, required this.child});
+
+  /// Whether the web view scrolls with a wheel turn of `dy` points.
+  final bool Function(double dy) takes;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerSignal: (event) {
+      if (event is! PointerScrollEvent) return;
+      if (!takes(event.scrollDelta.dy)) return;
+      // The first to register wins: the reader's Scrollable, further up,
+      // lets this one go.
+      GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+    },
+    child: child,
+  );
+}
 
 /// The email as it was sent (`OriginalToApprove`, opened by default since
 /// `ImagesToApprove`): the original on white paper in the middle of the

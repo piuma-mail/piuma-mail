@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/original_view.dart';
 
@@ -53,5 +54,59 @@ void main() {
     ]) {
       expect(paperMaxHeight(platform, 2), 20000);
     }
+  });
+
+  test('a wheel turn goes to a page longer than its paper first', () {
+    // A page that fits its paper leaves every turn to the reader.
+    expect(innerScrollTakes(0, 0, 40), isFalse);
+    expect(innerScrollTakes(0, 1, 40), isFalse);
+    // Down while there is more below, up while there is more above.
+    expect(innerScrollTakes(0, 1200, 40), isTrue);
+    expect(innerScrollTakes(0, 1200, -40), isFalse);
+    expect(innerScrollTakes(1200, 1200, 40), isFalse);
+    expect(innerScrollTakes(1200, 1200, -40), isTrue);
+    expect(innerScrollTakes(600, 1200, 0), isFalse);
+  });
+
+  testWidgets('the reader keeps still while the web view scrolls', (
+    tester,
+  ) async {
+    var inner = true;
+    final outer = ScrollController();
+    addTearDown(outer.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: ListView(
+          controller: outer,
+          children: [
+            SizedBox(
+              height: 2000,
+              child: InnerScrollFirst(
+                takes: (_) => inner,
+                child: const ColoredBox(
+                  key: ValueKey('web view'),
+                  color: Color(0xFFFFFFFF),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    // Over the web view, which is taller than the screen.
+    final at =
+        tester.getTopLeft(find.byKey(const ValueKey('web view'))) +
+        const Offset(100, 100);
+    final mouse = TestPointer(1, PointerDeviceKind.mouse);
+    await tester.sendEventToBinding(mouse.hover(at));
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
+    await tester.pumpAndSettle();
+    expect(outer.offset, 0);
+    // At the end of the page the reader scrolls on.
+    inner = false;
+    await tester.sendEventToBinding(mouse.scroll(const Offset(0, 120)));
+    await tester.pumpAndSettle();
+    expect(outer.offset, 120);
   });
 }
