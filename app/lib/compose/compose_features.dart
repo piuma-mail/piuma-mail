@@ -1,10 +1,11 @@
 part of 'compose_pane.dart';
 
-/// Asks the person for pictures to put in the text. Tests replace it.
-Future<List<XFile>> Function() pickPictures = () => openFiles(
-  acceptedTypeGroups: const [
+/// Asks the person for pictures to put in the text; [label] names them in
+/// the system's window. Tests replace it.
+Future<List<XFile>> Function(String label) pickPictures = (label) => openFiles(
+  acceptedTypeGroups: [
     XTypeGroup(
-      label: 'images',
+      label: label,
       extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
       mimeTypes: ['image/*'],
       uniformTypeIdentifiers: ['public.image'],
@@ -103,7 +104,10 @@ extension _ComposeFeatures on _ComposePaneState {
       case ComposeOption.readReceipt:
         _update(() => x.readReceipt = !x.readReceipt);
       case ComposeOption.insertPicture:
-        await _dropFiles(await pickPictures(), pictures: true);
+        await _dropFiles(
+          await pickPictures(AppLocalizations.of(context).fileTypeImages),
+          pictures: true,
+        );
         return;
       case ComposeOption.pastePicture:
         await _paste(fromMenu: true);

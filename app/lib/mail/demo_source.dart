@@ -4668,6 +4668,13 @@ class DemoMailSource extends MailSource {
       size: 530000,
     ),
     MailAttachment(
+      part: 6,
+      name: 'Statement.html',
+      mime: 'text/html',
+      size: 18000,
+      risk: FileRisk.web,
+    ),
+    MailAttachment(
       part: 5,
       name: 'Quote Acme.docx',
       mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

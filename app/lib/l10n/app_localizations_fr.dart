@@ -3512,7 +3512,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, la recherche trouve toujours leurs mots, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l\'ouvrez.';
+      'Les messages complets et les images gardés pour la lecture hors ligne sont retirés de cet appareil. Les listes restent, la recherche trouve toujours leurs mots, les e-mails restent sur le serveur, et un message est téléchargé à nouveau quand vous l\'ouvrez. Les anciens e-mails trouvés par une recherche sur le serveur partent en premier, sauf ceux que vous avez suivis ou étiquetés : une nouvelle recherche les y retrouve.';
 
   @override
   String get storageKeep =>
@@ -7720,4 +7720,10 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get specialRefused =>
       'Ce dossier ne peut pas faire ce travail : c’est la boîte de réception, ou il en fait déjà un autre qui supprimerait des e-mails.';
+
+  @override
+  String get fileTypeImages => 'Images';
+
+  @override
+  String get fileTypeEmail => 'Message e-mail';
 }

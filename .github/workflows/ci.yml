@@ -5,7 +5,10 @@ name: CI
 # hand; the same checks run locally before each push (see CONTRIBUTING.md).
 #
 # Every action is pinned by commit (the tag in the comment); Dependabot
-# proposes the updates (.github/dependabot.yml).
+# proposes the updates (.github/dependabot.yml). The repository setting that
+# would require it stays off on purpose: subosito/flutter-action calls
+# actions/cache by tag, which that setting refuses (CONTRIBUTING.md › Actions
+# policy). Keep new steps pinned by hand.
 on:
   pull_request:
   push:

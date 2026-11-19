@@ -3508,7 +3508,7 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.';
+      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri. Prima se ne vanno le email vecchie trovate da una ricerca sul server, se non le hai messe tra le Speciali o etichettate: cercando di nuovo le ritrovi lì.';
 
   @override
   String get storageKeep => 'Tieni i messaggi interi per leggere offline';
@@ -7720,4 +7720,10 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get specialRefused =>
       'Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.';
+
+  @override
+  String get fileTypeImages => 'Immagini';
+
+  @override
+  String get fileTypeEmail => 'Messaggio email';
 }

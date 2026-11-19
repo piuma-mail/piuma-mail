@@ -65,7 +65,9 @@ name: Release
 #     PIUMA_ANDROID_CERT_SHA256   the key's certificate fingerprint; when
 #                              set, the signed APKs must match it
 #
-# Every action is pinned by commit (the tag in the comment).
+# Every action is pinned by commit (the tag in the comment), by hand: the
+# repository setting that would require it stays off (CONTRIBUTING.md ›
+# Actions policy).
 on:
   workflow_dispatch:
     inputs:

@@ -55,24 +55,25 @@ ReportAttachmentKind? reportAttachmentKind(String name) {
 }
 
 /// The system's file picker for images and videos; tests replace it.
-Future<List<XFile>> Function() pickReportFiles = () => openFiles(
-  acceptedTypeGroups: [
-    XTypeGroup(
-      label: 'Images and videos',
-      extensions: [..._imageTypes.keys, ..._videoTypes.keys],
-      mimeTypes: {..._imageTypes.values, ..._videoTypes.values}.toList(),
-      uniformTypeIdentifiers: const [
-        'public.png',
-        'public.jpeg',
-        'org.webmproject.webp',
-        'com.compuserve.gif',
-        'public.mpeg-4',
-        'org.webmproject.webm',
-        'com.apple.quicktime-movie',
+Future<List<XFile>> Function(String label) pickReportFiles = (label) =>
+    openFiles(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: label,
+          extensions: [..._imageTypes.keys, ..._videoTypes.keys],
+          mimeTypes: {..._imageTypes.values, ..._videoTypes.values}.toList(),
+          uniformTypeIdentifiers: const [
+            'public.png',
+            'public.jpeg',
+            'org.webmproject.webp',
+            'com.compuserve.gif',
+            'public.mpeg-4',
+            'org.webmproject.webm',
+            'com.apple.quicktime-movie',
+          ],
+        ),
       ],
-    ),
-  ],
-);
+    );
 
 /// Opens the report sheet of `FeedbackToApprove`: a bottom sheet on the
 /// phone, a centered sheet on the desktop. The screen under it is captured
@@ -199,7 +200,7 @@ class _ReportSheetState extends State<ReportSheet> {
     String size(int bytes) => fileSize(bytes, locale: locale);
     String? problem;
     try {
-      final files = await pickReportFiles();
+      final files = await pickReportFiles(l.reportAttachments);
       for (final file in files) {
         if (!mounted) return;
         final kind = reportAttachmentKind(file.name);

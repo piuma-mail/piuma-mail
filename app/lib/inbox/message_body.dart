@@ -343,6 +343,14 @@ class _SuspiciousLink extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
+    // The host as people read it (Unicode, an IPv6 address in brackets),
+    // with its ASCII form when the two differ.
+    final parts = describeLink(uri.toString());
+    final host = switch (parts) {
+      null => uri.host,
+      LinkParts(:final host, ascii: final ascii?) => '$host ($ascii)',
+      LinkParts(:final host) => host,
+    };
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -359,8 +367,8 @@ class _SuspiciousLink extends StatelessWidget {
         ),
         const SizedBox(height: PiumaSpace.s16),
         Text(switch (shown) {
-          final shown? => l.suspiciousLinkBody(shown, uri.host),
-          null => l.impostorLinkBody(uri.host),
+          final shown? => l.suspiciousLinkBody(shown, host),
+          null => l.impostorLinkBody(host),
         }, style: PiumaType.body.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s8),
         Text(

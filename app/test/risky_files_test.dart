@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
-import 'package:piuma_mail/inbox/risky_file.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
-import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
 import 'package:piuma_mail/widgets/attachment_chip.dart';
 import 'package:piuma_mail/widgets/links.dart';
@@ -48,13 +46,65 @@ Future<void> _tapFile(WidgetTester tester, String name) async {
 }
 
 void main() {
-  testWidgets('risky files say so on their chips', (tester) async {
-    await _pump(tester);
-    expect(find.byType(AttachmentChip), findsNWidgets(4));
-    expect(find.text('A program, named like a PDF'), findsOneWidget);
-    expect(find.text('Has macros that can run'), findsOneWidget);
-    expect(find.text('documents.zip'), findsOneWidget);
-  });
+  // Phone and desktop at parity: the chips say the same on both, and
+  // each risky file asks before it opens (a sheet on the phone).
+  for (final (layout, size) in [
+    ('desktop', const Size(1440, 900)),
+    ('phone', const Size(390, 844)),
+  ]) {
+    group(layout, () {
+      testWidgets('risky files say so on their chips', (tester) async {
+        await _pump(tester, size: size);
+        expect(find.byType(AttachmentChip), findsNWidgets(5));
+        expect(find.text('A program, named like a PDF'), findsOneWidget);
+        expect(find.text('Has macros that can run'), findsOneWidget);
+        expect(find.text('A web page'), findsOneWidget);
+        expect(find.text('documents.zip'), findsOneWidget);
+      });
+
+      testWidgets('a web page warns about passwords, not programs', (
+        tester,
+      ) async {
+        final opened = await _pump(tester, size: size);
+        await _tapFile(tester, 'Statement.html');
+        expect(find.text('Open this web page?'), findsOneWidget);
+        expect(
+          find.textContaining('Never type a password there'),
+          findsOneWidget,
+        );
+        expect(find.text('Open this program?'), findsNothing);
+        await tester.tap(find.text('Don’t open'));
+        await tester.pumpAndSettle();
+        expect(find.text('Open this web page?'), findsNothing);
+        expect(opened, isEmpty);
+      });
+
+      testWidgets('Open anyway opens a file with macros', (tester) async {
+        final opened = await _pump(tester, size: size);
+        await _tapFile(tester, 'Budget 2027.xlsm');
+        expect(find.text('Open this file?'), findsOneWidget);
+        await tester.tap(find.text('Open anyway'));
+        await tester.pumpAndSettle();
+        expect(opened.single, endsWith('Budget 2027.xlsm'));
+      });
+
+      testWidgets('a locked archive asks once it is saved', (tester) async {
+        final opened = await _pump(tester, size: size);
+        await _tapFile(tester, 'documents.zip');
+        expect(find.text('Open this archive?'), findsOneWidget);
+        await tester.tap(find.text('Don’t open'));
+        await tester.pumpAndSettle();
+        expect(opened, isEmpty);
+      });
+
+      testWidgets('a safe file opens without asking', (tester) async {
+        final opened = await _pump(tester, size: size);
+        await _tapFile(tester, 'Quote Acme.docx');
+        expect(find.text('Open anyway'), findsNothing);
+        expect(opened.single, endsWith('Quote Acme.docx'));
+      });
+    });
+  }
 
   testWidgets('a disguised program asks, and Don’t open keeps it shut', (
     tester,
@@ -70,67 +120,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Open this program?'), findsNothing);
     expect(opened, isEmpty);
-  });
-
-  testWidgets('Open anyway opens a file with macros', (tester) async {
-    final opened = await _pump(tester);
-    await _tapFile(tester, 'Budget 2027.xlsm');
-    expect(find.text('Open this file?'), findsOneWidget);
-    await tester.tap(find.text('Open anyway'));
-    await tester.pumpAndSettle();
-    expect(opened.single, endsWith('Budget 2027.xlsm'));
-  });
-
-  testWidgets('a locked archive asks once it is saved', (tester) async {
-    final opened = await _pump(tester);
-    await _tapFile(tester, 'documents.zip');
-    expect(find.text('Open this archive?'), findsOneWidget);
-    await tester.tap(find.text('Don’t open'));
-    await tester.pumpAndSettle();
-    expect(opened, isEmpty);
-  });
-
-  testWidgets('a web page warns about passwords, not programs', (tester) async {
-    await _pump(tester);
-    final context = tester.element(find.byType(InboxScreen));
-    final row = MailRow(
-      accountId: 1,
-      mailbox: 'INBOX',
-      uid: 1,
-      fromName: 'Luca',
-      fromEmail: 'luca@example.com',
-      subject: 'Sign in',
-      preview: '',
-      receivedAt: _now,
-      seen: false,
-    );
-    const page = MailAttachment(
-      part: 9,
-      name: 'Statement.html',
-      mime: 'text/html',
-      risk: FileRisk.web,
-    );
-    final answer = mayOpenFile(
-      context,
-      DemoMailSource(now: _now),
-      row,
-      page,
-      'Statement.html',
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Open this web page?'), findsOneWidget);
-    expect(find.textContaining('Never type a password there'), findsOneWidget);
-    expect(find.text('Open this program?'), findsNothing);
-    await tester.tap(find.text('Don’t open'));
-    await tester.pumpAndSettle();
-    expect(await answer, isFalse);
-  });
-
-  testWidgets('a safe file opens without asking', (tester) async {
-    final opened = await _pump(tester);
-    await _tapFile(tester, 'Quote Acme.docx');
-    expect(find.text('Open anyway'), findsNothing);
-    expect(opened.single, endsWith('Quote Acme.docx'));
   });
 
   testWidgets('on the phone the question is a sheet', (tester) async {
