@@ -4846,6 +4846,18 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 line} other{{count} lines}}'**
   String previewLines(int count);
 
+  /// Settings › Reading: whether an email built as a layout opens as sent or in the clean view
+  ///
+  /// In en, this message translates to:
+  /// **'Open emails in'**
+  String get readingOpenIn;
+
+  /// No description provided for @readingOpenInHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For emails built as a layout. You can still switch on each one, and remote images still wait for your OK.'**
+  String get readingOpenInHint;
+
   /// No description provided for @appearanceExample.
   ///
   /// In en, this message translates to:

@@ -8,9 +8,9 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `bulk_reader`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_images`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `image_data`, `in_conversation`, `inbox_row`, `invite_info`, `keep_account`, `keep_following`, `keep_outcome`, `kept_outcome`, `kick_maintenance`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `start_maintenance`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `take_restored`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `address`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `bulk_reader`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_images`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `hold`, `holds`, `image_data`, `in_conversation`, `inbox_row`, `invite_info`, `keep_account`, `keep_following`, `keep_outcome`, `kept_outcome`, `kick_maintenance`, `lock_store`, `log_moves`, `new`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `start_maintenance`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `take_restored`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`, `StoreGuard`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `deref_mut`, `deref`, `drop`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
 /// Opens (or creates) the local database. Call once at startup, and wait
@@ -1133,12 +1133,18 @@ class AppearanceSettings {
   /// The app's language ("it"); None follows the device's.
   final String? language;
 
+  /// An email built as a layout opens as it was sent (true, the
+  /// default) or in the clean reading view (false). Remote images wait
+  /// for consent either way.
+  final bool openOriginal;
+
   const AppearanceSettings({
     required this.theme,
     required this.compact,
     required this.previewLines,
     this.translateInto,
     this.language,
+    required this.openOriginal,
   });
 
   @override
@@ -1147,7 +1153,8 @@ class AppearanceSettings {
       compact.hashCode ^
       previewLines.hashCode ^
       translateInto.hashCode ^
-      language.hashCode;
+      language.hashCode ^
+      openOriginal.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1158,7 +1165,8 @@ class AppearanceSettings {
           compact == other.compact &&
           previewLines == other.previewLines &&
           translateInto == other.translateInto &&
-          language == other.language;
+          language == other.language &&
+          openOriginal == other.openOriginal;
 }
 
 /// A file received with a message, for the Attachments board.

@@ -799,6 +799,8 @@
   "densityCompact": "Compatta",
   "appearancePreview": "Anteprima",
   "previewLines": "{count, plural, =1{1 riga} other{{count} righe}}",
+  "readingOpenIn": "Apri le email in",
+  "readingOpenInHint": "Per le email impaginate. Puoi sempre cambiare vista su ognuna, e le immagini remote aspettano comunque il tuo ok.",
   "appearanceExample": "Esempio",
   "previewDrawnHere": "Disegnato su questo dispositivo",
   "previewKeysPages": "← → pagine",

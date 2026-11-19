@@ -3064,6 +3064,7 @@ const COMPACT: &str = "appearance.compact";
 const PREVIEW_LINES: &str = "appearance.preview_lines";
 const TRANSLATE_INTO: &str = "appearance.translate_into";
 const LANGUAGE: &str = "appearance.language";
+const OPEN_IN: &str = "appearance.open_in";
 
 /// Settings › Appearance: light, dark, or as the system is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3084,6 +3085,10 @@ pub struct AppearanceSettings {
     pub translate_into: Option<String>,
     /// The app's language ("it"); None follows the device's.
     pub language: Option<String>,
+    /// An email built as a layout opens as it was sent (true, the
+    /// default) or in the clean reading view (false). Remote images wait
+    /// for consent either way.
+    pub open_original: bool,
 }
 
 #[frb(sync)]
@@ -3103,6 +3108,7 @@ pub fn appearance_settings() -> Result<AppearanceSettings, EngineError> {
         },
         translate_into: store.setting(TRANSLATE_INTO)?.filter(|l| !l.is_empty()),
         language: store.setting(LANGUAGE)?.filter(|l| !l.is_empty()),
+        open_original: store.setting(OPEN_IN)?.as_deref() != Some("clean"),
     })
 }
 
@@ -3127,6 +3133,12 @@ pub fn set_appearance_settings(settings: AppearanceSettings) -> Result<(), Engin
         settings.translate_into.as_deref().unwrap_or_default(),
     )?;
     store.set_setting(LANGUAGE, settings.language.as_deref().unwrap_or_default())?;
+    let open_in = if settings.open_original {
+        "original"
+    } else {
+        "clean"
+    };
+    store.set_setting(OPEN_IN, open_in)?;
     Ok(())
 }
 

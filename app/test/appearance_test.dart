@@ -110,6 +110,34 @@ void main() {
     expect(tester.getSize(example.first).height, lessThan(tall));
   });
 
+  testWidgets('Reading keeps how designed emails open', (tester) async {
+    final saved = <Appearance>[];
+    await _pump(tester, saved: saved);
+    await _openDesktop(tester, 'Reading');
+    expect(find.text('Open emails in'), findsOneWidget);
+    await tester.ensureVisible(find.bySemanticsLabel('Clean view'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Clean view'));
+    await tester.pumpAndSettle();
+    expect(saved.last.openOriginal, isFalse);
+    await tester.tap(find.bySemanticsLabel('Original layout'));
+    await tester.pumpAndSettle();
+    expect(saved.last.openOriginal, isTrue);
+  });
+
+  testWidgets('on the phone, Reading keeps how designed emails open', (
+    tester,
+  ) async {
+    final saved = <Appearance>[];
+    await _pump(tester, phone: true, saved: saved);
+    await _openPhone(tester, 'Reading, Comfortable');
+    await tester.ensureVisible(find.bySemanticsLabel('Clean view'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel('Clean view'));
+    await tester.pumpAndSettle();
+    expect(saved.last.openOriginal, isFalse);
+  });
+
   testWidgets('compact rows with one line of preview in the inbox', (
     tester,
   ) async {
@@ -214,6 +242,35 @@ void main() {
       await expectLater(
         find.byType(MaterialApp),
         matchesGoldenFile('goldens/phone_appearance_$name.png'),
+      );
+    }, tags: ['golden']);
+
+    testWidgets('reading open in golden $name', (tester) async {
+      await _pump(
+        tester,
+        appearance: Appearance(theme: theme, openOriginal: false),
+      );
+      await _openDesktop(tester, 'Reading');
+      await tester.ensureVisible(find.text('Open emails in'));
+      await tester.pumpAndSettle();
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/settings_reading_open_in_$name.png'),
+      );
+    }, tags: ['golden']);
+
+    testWidgets('phone reading open in golden $name', (tester) async {
+      await _pump(
+        tester,
+        phone: true,
+        appearance: Appearance(theme: theme, openOriginal: false),
+      );
+      await _openPhone(tester, 'Reading, Comfortable');
+      await tester.ensureVisible(find.text('Open emails in'));
+      await tester.pumpAndSettle();
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/phone_reading_open_in_$name.png'),
       );
     }, tags: ['golden']);
   }

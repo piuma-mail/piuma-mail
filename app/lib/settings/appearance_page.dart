@@ -93,7 +93,8 @@ class AppearancePage extends StatelessWidget {
 }
 
 /// Settings › Reading (`SettingsOrderToApprove`, B): how the list looks,
-/// and the on-device helpers with the language Translate writes in.
+/// how a designed email opens, and the on-device helpers with the
+/// language Translate writes in.
 class ReadingPage extends StatelessWidget {
   const ReadingPage({
     super.key,
@@ -178,6 +179,33 @@ class ReadingPage extends StatelessWidget {
             ],
           ),
           _Example(source: source, phone: phone, now: now),
+          const SizedBox(height: PiumaSpace.s32),
+          heading(l.readingOpenIn),
+          const SizedBox(height: 10),
+          PiumaSegments(
+            label: l.readingOpenIn,
+            items: [
+              (
+                l.originalLayout,
+                look.openOriginal,
+                () => set(look.copyWith(openOriginal: true)),
+              ),
+              (
+                l.cleanView,
+                !look.openOriginal,
+                () => set(look.copyWith(openOriginal: false)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            l.readingOpenInHint,
+            style: TextStyle(
+              fontFamily: PiumaFonts.sans,
+              fontSize: 12.5,
+              color: c.muted,
+            ),
+          ),
           const SizedBox(height: PiumaSpace.s32),
           ListOptions(source: source, phone: phone),
           const SizedBox(height: PiumaSpace.s32),

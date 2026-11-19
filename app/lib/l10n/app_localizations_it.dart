@@ -3165,6 +3165,13 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String get readingOpenIn => 'Apri le email in';
+
+  @override
+  String get readingOpenInHint =>
+      'Per le email impaginate. Puoi sempre cambiare vista su ognuna, e le immagini remote aspettano comunque il tuo ok.';
+
+  @override
   String get appearanceExample => 'Esempio';
 
   @override

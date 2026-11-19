@@ -10726,12 +10726,14 @@ impl SseDecode for crate::api::engine::AppearanceSettings {
         let mut var_previewLines = <u8>::sse_decode(deserializer);
         let mut var_translateInto = <Option<String>>::sse_decode(deserializer);
         let mut var_language = <Option<String>>::sse_decode(deserializer);
+        let mut var_openOriginal = <bool>::sse_decode(deserializer);
         return crate::api::engine::AppearanceSettings {
             theme: var_theme,
             compact: var_compact,
             preview_lines: var_previewLines,
             translate_into: var_translateInto,
             language: var_language,
+            open_original: var_openOriginal,
         };
     }
 }
@@ -15158,6 +15160,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::AppearanceSettings {
             self.preview_lines.into_into_dart().into_dart(),
             self.translate_into.into_into_dart().into_dart(),
             self.language.into_into_dart().into_dart(),
+            self.open_original.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -18716,6 +18719,7 @@ impl SseEncode for crate::api::engine::AppearanceSettings {
         <u8>::sse_encode(self.preview_lines, serializer);
         <Option<String>>::sse_encode(self.translate_into, serializer);
         <Option<String>>::sse_encode(self.language, serializer);
+        <bool>::sse_encode(self.open_original, serializer);
     }
 }
 

@@ -3169,6 +3169,13 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String get readingOpenIn => 'Ouvrir les e-mails en';
+
+  @override
+  String get readingOpenInHint =>
+      'Pour les e-mails mis en page. Vous pouvez toujours changer de vue sur chacun, et les images distantes attendent toujours votre accord.';
+
+  @override
   String get appearanceExample => 'Exemple';
 
   @override

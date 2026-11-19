@@ -279,6 +279,7 @@ Appearance _loadAppearance() {
       previewLines: a.previewLines,
       translateInto: a.translateInto,
       language: a.language,
+      openOriginal: a.openOriginal,
     );
   } catch (_) {
     return const Appearance();
@@ -294,6 +295,7 @@ void _saveAppearance(Appearance a) {
         previewLines: a.previewLines,
         translateInto: a.translateInto,
         language: a.language,
+        openOriginal: a.openOriginal,
       ),
     );
   } catch (_) {

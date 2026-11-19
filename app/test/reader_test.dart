@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:piuma_mail/design/look.dart';
 import 'package:piuma_mail/design/theme.dart';
 import 'package:piuma_mail/inbox/images_bar.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
@@ -21,6 +22,7 @@ Future<DemoMailSource> _pump(
   WidgetTester tester, {
   bool dark = false,
   Size size = const Size(1440, 900),
+  Appearance appearance = const Appearance(),
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -31,6 +33,7 @@ Future<DemoMailSource> _pump(
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
+      appearance: appearance,
       home: (_, _) => InboxScreen(
         source: source,
         onAddAccount: () {},
@@ -320,6 +323,40 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     });
 
+    for (final (name, size) in [
+      ('desktop', const Size(1440, 900)),
+      ('phone', const Size(390, 844)),
+    ]) {
+      testWidgets('on the $name, set to open clean, it opens clean', (
+        tester,
+      ) async {
+        final source = await _pump(
+          tester,
+          size: size,
+          appearance: const Appearance(openOriginal: false),
+        );
+        // Nothing made until asked: no web view, nothing fetched.
+        expect(source.originals, isEmpty);
+        expect(source.fetched, isEmpty);
+        expect(find.byType(OriginalView), findsNothing);
+        expect(
+          find.textContaining('ceramics handmade in Faenza'),
+          findsOneWidget,
+        );
+        expect(find.byType(ViewSwitch), findsOneWidget);
+
+        // The switch still brings the original, images still blocked.
+        await tester.tap(
+          find.text(name == 'phone' ? 'Original layout' : 'Original'),
+        );
+        await tester.pumpAndSettle();
+        expect(find.textContaining('characters of HTML'), findsOneWidget);
+        expect(source.originals, [false]);
+        expect(source.fetched, isEmpty);
+        expect(find.byType(ImagesBar), findsOneWidget);
+      });
+    }
+
     testWidgets('the privacy panel still shows it after the clean view', (
       tester,
     ) async {
@@ -500,6 +537,43 @@ void main() {
         matchesGoldenFile('goldens/reader_original_light.png'),
       );
     }, tags: ['golden']);
+
+    testWidgets('original layout golden dark', (tester) async {
+      await _pump(tester, dark: true);
+      await expectLater(
+        find.byType(MaterialApp),
+        matchesGoldenFile('goldens/reader_original_dark.png'),
+      );
+    }, tags: ['golden']);
+
+    // Settings › Reading › Open emails in › Clean view.
+    for (final dark in [false, true]) {
+      final name = dark ? 'dark' : 'light';
+      testWidgets('opened clean golden $name', (tester) async {
+        await _pump(
+          tester,
+          dark: dark,
+          appearance: const Appearance(openOriginal: false),
+        );
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/reader_opens_clean_$name.png'),
+        );
+      }, tags: ['golden']);
+
+      testWidgets('phone opened clean golden $name', (tester) async {
+        await _pump(
+          tester,
+          dark: dark,
+          size: const Size(390, 844),
+          appearance: const Appearance(openOriginal: false),
+        );
+        await expectLater(
+          find.byType(MaterialApp),
+          matchesGoldenFile('goldens/phone_opens_clean_$name.png'),
+        );
+      }, tags: ['golden']);
+    }
 
     testWidgets('phone original layout golden', (tester) async {
       await _pump(tester, size: const Size(390, 844));

@@ -10832,14 +10832,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   AppearanceSettings dco_decode_appearance_settings(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return AppearanceSettings(
       theme: dco_decode_theme_choice(arr[0]),
       compact: dco_decode_bool(arr[1]),
       previewLines: dco_decode_u_8(arr[2]),
       translateInto: dco_decode_opt_String(arr[3]),
       language: dco_decode_opt_String(arr[4]),
+      openOriginal: dco_decode_bool(arr[5]),
     );
   }
 
@@ -13825,12 +13826,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_previewLines = sse_decode_u_8(deserializer);
     var var_translateInto = sse_decode_opt_String(deserializer);
     var var_language = sse_decode_opt_String(deserializer);
+    var var_openOriginal = sse_decode_bool(deserializer);
     return AppearanceSettings(
       theme: var_theme,
       compact: var_compact,
       previewLines: var_previewLines,
       translateInto: var_translateInto,
       language: var_language,
+      openOriginal: var_openOriginal,
     );
   }
 
@@ -17699,6 +17702,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_u_8(self.previewLines, serializer);
     sse_encode_opt_String(self.translateInto, serializer);
     sse_encode_opt_String(self.language, serializer);
+    sse_encode_bool(self.openOriginal, serializer);
   }
 
   @protected
