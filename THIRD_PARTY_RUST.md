@@ -5,6 +5,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 
 | Crate | Version | License |
 |---|---|---|
+| [ab_glyph_rasterizer](https://github.com/alexheretic/ab-glyph) | 0.1.10 | Apache-2.0 |
 | [addr2line](https://github.com/gimli-rs/addr2line) | 0.25.1 | Apache-2.0 OR MIT |
 | [adler2](https://github.com/oyvindln/adler2) | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
 | [aead](https://github.com/RustCrypto/traits) | 0.6.1 | MIT OR Apache-2.0 |
@@ -172,14 +173,15 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.17.1 | MIT OR Apache-2.0 |
 | [hashify](https://github.com/stalwartlabs/hashify) | 0.3.2 | Apache-2.0 OR MIT |
 | [hashlink](https://github.com/djc/hashlink) | 0.12.2 | MIT OR Apache-2.0 |
-| [hayro](https://github.com/LaurenzV/hayro) | 0.8.0 | Apache-2.0 OR MIT |
-| [hayro-ccitt](https://github.com/LaurenzV/hayro) | 0.4.0 | Apache-2.0 OR MIT |
-| [hayro-cmap](https://github.com/LaurenzV/hayro) | 0.1.0 | Apache-2.0 OR MIT |
-| [hayro-interpret](https://github.com/LaurenzV/hayro) | 0.8.0 | Apache-2.0 OR MIT |
-| [hayro-jbig2](https://github.com/LaurenzV/hayro) | 0.3.1 | Apache-2.0 OR MIT |
-| [hayro-jpeg2000](https://github.com/LaurenzV/hayro) | 0.4.1 | Apache-2.0 OR MIT |
-| [hayro-postscript](https://github.com/LaurenzV/hayro) | 0.1.0 | Apache-2.0 OR MIT |
-| [hayro-syntax](https://github.com/LaurenzV/hayro) | 0.8.0 | Apache-2.0 OR MIT |
+| [hayro](https://github.com/LaurenzV/hayro) | 0.9.0 | Apache-2.0 OR MIT |
+| [hayro-ccitt](https://github.com/LaurenzV/hayro) | 0.5.0 | Apache-2.0 OR MIT |
+| [hayro-cmap](https://github.com/LaurenzV/hayro) | 0.1.1 | Apache-2.0 OR MIT |
+| [hayro-font](https://github.com/LaurenzV/hayro) | 0.5.0 | Apache-2.0 OR MIT |
+| [hayro-interpret](https://github.com/LaurenzV/hayro) | 0.9.0 | Apache-2.0 OR MIT |
+| [hayro-jbig2](https://github.com/LaurenzV/hayro) | 0.4.0 | Apache-2.0 OR MIT |
+| [hayro-jpeg2000](https://github.com/LaurenzV/hayro) | 0.5.0 | Apache-2.0 OR MIT |
+| [hayro-postscript](https://github.com/LaurenzV/hayro) | 0.2.0 | Apache-2.0 OR MIT |
+| [hayro-syntax](https://github.com/LaurenzV/hayro) | 0.9.0 | Apache-2.0 OR MIT |
 | [hermit-abi](https://github.com/hermit-os/hermit-rs) | 0.5.3 | MIT OR Apache-2.0 |
 | [hex](https://github.com/KokaKiwi/rust-hex) | 0.4.3 | MIT OR Apache-2.0 |
 | [hex-conservative](https://github.com/rust-bitcoin/hex-conservative) | 0.2.3 | CC0-1.0 |
@@ -327,7 +329,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [rand_core](https://github.com/rust-random/rand) | 0.6.4 | MIT OR Apache-2.0 |
 | [rand_pcg](https://github.com/rust-random/rngs) | 0.10.2 | MIT OR Apache-2.0 |
 | [read-fonts](https://github.com/googlefonts/fontations) | 0.41.0 | MIT OR Apache-2.0 |
-| [read-fonts](https://github.com/googlefonts/fontations) | 0.43.3 | MIT OR Apache-2.0 |
+| [read-fonts](https://github.com/googlefonts/fontations) | 0.46.0 | MIT OR Apache-2.0 |
 | [redox_syscall](https://gitlab.redox-os.org/redox-os/syscall) | 0.5.18 | MIT |
 | [redox_users](https://gitlab.redox-os.org/redox-os/users) | 0.5.3 | MIT |
 | [regex](https://github.com/rust-lang/regex) | 1.13.1 | MIT OR Apache-2.0 |
@@ -379,7 +381,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [simplecss](https://github.com/linebender/simplecss) | 0.2.2 | Apache-2.0 OR MIT |
 | [siphasher](https://github.com/jedisct1/rust-siphash) | 1.0.4 | MIT OR Apache-2.0 |
 | [skrifa](https://github.com/googlefonts/fontations) | 0.44.0 | MIT OR Apache-2.0 |
-| [skrifa](https://github.com/googlefonts/fontations) | 0.46.2 | MIT OR Apache-2.0 |
+| [skrifa](https://github.com/googlefonts/fontations) | 0.49.0 | MIT OR Apache-2.0 |
 | [slab](https://github.com/tokio-rs/slab) | 0.4.12 | MIT |
 | [smallvec](https://github.com/servo/rust-smallvec) | 1.16.3 | MIT OR Apache-2.0 |
 | [socket2](https://github.com/rust-lang/socket2) | 0.6.5 | MIT OR Apache-2.0 |
