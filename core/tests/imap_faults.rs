@@ -36,6 +36,12 @@ struct Script {
     stall_body: bool,
     /// Answers to UID MOVE, in turn; OK once they run out.
     moves: Arc<Mutex<VecDeque<&'static str>>>,
+    /// Offers IDLE, and drops the connection at this many IDLEs (one per
+    /// connection) before it lets one go on: a connection that died while
+    /// the app was in the background.
+    idle_drops: Option<Arc<Mutex<usize>>>,
+    /// Answers SELECT with NO once more than this many logins came.
+    refuse_select_after: Option<usize>,
 }
 
 /// What the server saw: every command, and when each login came.
@@ -113,14 +119,39 @@ async fn session(stream: tokio::net::TcpStream, script: Script, seen: Seen) {
             .unwrap()
             .push(format!("{verb} {rest}").trim().to_owned());
         let reply = match verb.as_str() {
+            "CAPABILITY" if script.idle_drops.is_some() => {
+                format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS IDLE\r\n{tag} OK done\r\n")
+            }
             "CAPABILITY" => {
                 format!("* CAPABILITY IMAP4rev1 MOVE UIDPLUS\r\n{tag} OK done\r\n")
+            }
+            "IDLE" => {
+                if let Some(drops) = &script.idle_drops {
+                    let mut left = drops.lock().unwrap();
+                    if *left > 0 {
+                        *left -= 1;
+                        return;
+                    }
+                }
+                if write.write_all(b"+ idling\r\n").await.is_err() {
+                    return;
+                }
+                // Until DONE.
+                match lines.next_line().await {
+                    Ok(Some(_)) => format!("{tag} OK idle done\r\n"),
+                    _ => return,
+                }
             }
             "LOGIN" => {
                 seen.logins.lock().unwrap().push(Instant::now());
                 format!("{tag} OK logged in\r\n")
             }
-            "SELECT" | "EXAMINE" if script.refuse_select => {
+            "SELECT" | "EXAMINE"
+                if script.refuse_select
+                    || script
+                        .refuse_select_after
+                        .is_some_and(|n| seen.logins.lock().unwrap().len() > n) =>
+            {
                 format!("{tag} NO [UNAVAILABLE] Mailbox is being rebuilt\r\n")
             }
             "SELECT" | "EXAMINE" => {
@@ -543,4 +574,99 @@ async fn a_folder_answer_without_uidvalidity_touches_and_drops_nothing() {
     assert_eq!(s.count(Folder::Inbox).unwrap(), 1);
     // The stored numbers are kept for the next sync to check.
     assert!(s.message(account, "Drafts", 4).unwrap().is_some());
+}
+
+/// A connection that synced and then dropped (the phone back from the
+/// background) is not being offline: the watcher connects again and
+/// syncs without an Offline event, which would show "You're offline"
+/// for as long as reconnecting takes.
+#[tokio::test]
+async fn a_dropped_connection_that_reconnects_is_not_offline() {
+    let drops = Arc::new(Mutex::new(1));
+    let (cfg, seen) = serve(Script {
+        idle_drops: Some(drops.clone()),
+        ..Script::default()
+    })
+    .await;
+    let (store, account) = store_with_account();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = events.clone();
+    let task = tokio::spawn(watch_timed(
+        cfg,
+        store,
+        account,
+        "INBOX".into(),
+        move |e| kept.lock().unwrap().push(e),
+        quick(),
+    ));
+    let synced = || {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, WatchEvent::Synced { .. }))
+            .count()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while synced() < 2 || *drops.lock().unwrap() > 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no sync after the drop"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    task.abort();
+    assert!(seen.logins.lock().unwrap().len() >= 2);
+    let events = events.lock().unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, WatchEvent::Offline { .. })),
+        "{events:?}"
+    );
+}
+
+/// A connection that dropped and can't be made again is offline: the
+/// failed reconnection says so.
+#[tokio::test]
+async fn a_dropped_connection_that_cannot_reconnect_is_offline() {
+    let drops = Arc::new(Mutex::new(1));
+    let (cfg, _) = serve(Script {
+        idle_drops: Some(drops),
+        refuse_select_after: Some(1),
+        ..Script::default()
+    })
+    .await;
+    let (store, account) = store_with_account();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = events.clone();
+    let task = tokio::spawn(watch_timed(
+        cfg,
+        store,
+        account,
+        "INBOX".into(),
+        move |e| kept.lock().unwrap().push(e),
+        quick(),
+    ));
+    let offline = || {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, WatchEvent::Offline { .. }))
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !offline() {
+        assert!(std::time::Instant::now() < deadline, "never offline");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    task.abort();
+    let events = events.lock().unwrap();
+    assert!(
+        matches!(
+            events[0],
+            WatchEvent::Synced { .. } | WatchEvent::Progress { .. }
+        ),
+        "{events:?}"
+    );
 }

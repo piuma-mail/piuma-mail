@@ -22,6 +22,26 @@ val googleOAuthScheme: String = (System.getenv("PIUMA_OAUTH_CLIENTS") ?: "")
     ?.joinToString(".")
     ?: "mail.piuma.app.google"
 
+// The ABIs this build carries follow `flutter build apk --target-platform`
+// (Gradle property "target-platform"; all three when it is not given). The
+// Flutter Gradle Plugin always lets all three through, so plugins that ship
+// prebuilt libraries for every ABI (CameraX, jni) put lib/x86_64 and
+// lib/armeabi-v7a into an arm64-only APK: Android then picks one of those
+// ABIs, where libflutter.so and libpiuma_bridge.so are missing, and the app
+// crashes at launch. Carrying only the built ABIs makes Android refuse the
+// install on any other device instead.
+val flutterAbis = mapOf(
+    "android-arm" to "armeabi-v7a",
+    "android-arm64" to "arm64-v8a",
+    "android-x64" to "x86_64",
+)
+val targetAbis: List<String> =
+    ((project.findProperty("target-platform") as String?) ?: flutterAbis.keys.joinToString(","))
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { flutterAbis[it] ?: throw GradleException("Unknown target platform: $it") }
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -55,6 +75,13 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["googleOAuthScheme"] = googleOAuthScheme
+        // With --split-per-abi the splits choose the ABIs instead.
+        if (!project.hasProperty("split-per-abi")) {
+            ndk {
+                abiFilters.clear()
+                abiFilters.addAll(targetAbis)
+            }
+        }
     }
 
     signingConfigs {

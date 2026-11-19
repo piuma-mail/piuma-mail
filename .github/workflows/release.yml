@@ -428,6 +428,10 @@ jobs:
             --build-name 0.1.0 --build-number "$BUILD" \
             --dart-define=PIUMA_BUILD="$BUILD" --dart-define=PIUMA_UPDATE_URL="$FEED" \
             --dart-define=PIUMA_UPDATE_CHANNEL=beta
+          # Only arm64, and every library in it: an ABI folder without the
+          # engine installs on other phones and crashes at launch.
+          PIUMA_APK_ABIS=arm64-v8a sh ../tools/check-apk-abis.sh \
+            build/app/outputs/flutter-apk/app-release.apk libpiuma_bridge.so
           mkdir -p "$RUNNER_TEMP/apk"
           cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/apk/PiumaMail-android-arm64.apk"
       # The watch talks only to a phone app signed with the same key: it
@@ -438,6 +442,7 @@ jobs:
           BUILD: ${{ needs.gate.outputs.build }}
         run: |
           flutter build apk --release --build-name 0.1.0 --build-number "$BUILD"
+          sh ../tools/check-apk-abis.sh build/app/outputs/flutter-apk/app-release.apk
           cp build/app/outputs/flutter-apk/app-release.apk "$RUNNER_TEMP/apk/PiumaMail-wear.apk"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

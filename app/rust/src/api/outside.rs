@@ -176,9 +176,9 @@ pub async fn save_eml_attachment(
         .attachments
         .iter()
         .find(|a| a.part == part_id)
-        .ok_or(EngineError::new(ErrorKind::Other, "no such attachment"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such attachment"))?;
     let data = piuma_core::imap::attachment_data(&raw, part_id)
-        .ok_or(EngineError::new(ErrorKind::Other, "no such attachment"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such attachment"))?;
     let saved = files::save_new(Path::new(&folder), &file.name, &data)
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?;
     Ok(saved.to_string_lossy().into_owned())
@@ -193,7 +193,7 @@ pub async fn import_eml(account_id: i64, mailbox: String, path: String) -> Resul
     let (raw, _) = load(&path)?;
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     engine
         .runtime
