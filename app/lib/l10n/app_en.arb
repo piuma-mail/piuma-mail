@@ -1229,7 +1229,7 @@
   "storageNoRoom": "Cached mail cleared. There isn't enough free space to make the file smaller now: Piuma reuses the room.",
   "storageClearTitle": "Clear the cached mail of {name}?",
   "@storageClearTitle": {"placeholders": {"name": {"type": "String"}}},
-  "storageClearNote": "Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.",
+  "storageClearNote": "Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it. Old emails that a search found on the server go first, unless you starred or labelled them: searching again finds them there.",
   "storageKeep": "Keep whole messages for reading offline",
   "storageKeepHint": "Older ones are downloaded again when you open them. Search still finds their words.",
   "storageKeepMonth": "1 month",
@@ -2477,5 +2477,7 @@
   "swipeNote": "Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.",
   "folderDeleteProtected": "“{name}” can’t be deleted: {inside} is inside it, and would go with it.",
   "@folderDeleteProtected": {"placeholders": {"name": {"type": "String"}, "inside": {"type": "String"}}},
-  "specialRefused": "That folder can’t do this job: it’s the inbox, or already does another job that would delete mail."
+  "specialRefused": "That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.",
+  "fileTypeImages": "Images",
+  "fileTypeEmail": "Email message"
 }

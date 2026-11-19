@@ -91,6 +91,8 @@ Piuma Mail is free software: you can build, sign and ship your own copy. Nothing
 | environment `signing` | environment | for signing | `main`-only deployment rule, no reviewers: holds the signing secrets above. |
 | environment `release` | environment | recommended | Required reviewers and a `main`-only deployment rule: the upload and publish jobs wait for approval. |
 
+**Actions policy (Settings › Actions › General).** Allow GitHub's own actions plus the few third-party ones the workflows use (`subosito/flutter-action`, `dtolnay/rust-toolchain`, `Swatinem/rust-cache`, `EmbarkStudios/cargo-deny-action`), and keep the default workflow token read-only. Every `uses:` in `.github/workflows` and `.github/actions` is pinned to a full commit SHA, with its tag in a comment, and Dependabot proposes the updates; new or changed steps must keep that form. Leave **"Require actions to be pinned to a full-length commit SHA" off**: GitHub applies it to the actions other actions call too, and `subosito/flutter-action` calls `actions/cache` by tag, so with it on every Flutter job fails before it starts. The pins in our own files give the same protection for the code we choose; turn the setting on only once every action we use pins its own dependencies.
+
 **Build-time values (`--dart-define` or Cargo environment):**
 
 | Name | Where | Default | What it is |

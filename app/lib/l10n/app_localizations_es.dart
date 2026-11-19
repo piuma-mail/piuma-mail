@@ -3501,7 +3501,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get storageClearNote =>
-      'Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, la búsqueda sigue encontrando sus palabras, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo.';
+      'Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, la búsqueda sigue encontrando sus palabras, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo. Primero se van los correos antiguos que una búsqueda encontró en el servidor, salvo los que destacaste o etiquetaste: al buscar de nuevo los encuentras allí.';
 
   @override
   String get storageKeep =>
@@ -7697,4 +7697,10 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get specialRefused =>
       'Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo.';
+
+  @override
+  String get fileTypeImages => 'Imágenes';
+
+  @override
+  String get fileTypeEmail => 'Mensaje de correo';
 }

@@ -158,6 +158,71 @@ void main() {
     expect(parts.rest, '/login');
   });
 
+  test('an uppercase IDN host is the same host as its lowercase form', () {
+    // [Uri] lowercases only ASCII letters: `Ü` stays percent-encoded.
+    for (final url in ['https://BÜCHER.de/x', 'https://XN--BCHER-KVA.DE/x']) {
+      expect(normalizeLink(url), 'https://xn--bcher-kva.de/x', reason: url);
+      final parts = describeLink(url)!;
+      expect(parts.host, 'bücher.de', reason: url);
+      expect(parts.ascii, 'xn--bcher-kva.de', reason: url);
+    }
+  });
+
+  test('an @ hidden in a host\'s percent-encoding never opens', () {
+    for (final link in [
+      'https://bank.example%40evil.example/',
+      'https://bank.example%2540evil.example/',
+      'https://BANK.example%40evil.example/login',
+    ]) {
+      expect(isMailLinkAllowed(Uri.parse(link)), isFalse, reason: link);
+      // Still compared and shown, without throwing.
+      expect(normalizeLink(link), isNotEmpty, reason: link);
+    }
+    final parts = describeLink('https://bank.example%40evil.example/login')!;
+    expect(parts.host, 'bank.example@evil.example');
+    expect(parts.registrable, 'evil.example');
+    expect(parts.rest, '/login');
+  });
+
+  test(
+    'a host whose percent-encoding isn\'t UTF-8 never opens, and never throws',
+    () {
+      for (final link in ['https://a%ff.example/', 'https://a%C3.example/x']) {
+        expect(isMailLinkAllowed(Uri.parse(link)), isFalse, reason: link);
+        expect(normalizeLink(link), isNotEmpty, reason: link);
+        expect(describeLink(link), isNotNull, reason: link);
+      }
+      expect(describeLink('mailto:%ff@x.example')!.registrable, 'x.example');
+    },
+  );
+
+  test('a trailing dot doesn\'t hide the registrable part', () {
+    expect(registrableDomain('login.evil.example.'), 'evil.example.');
+    expect(registrableDomain('bank.co.uk.'), 'bank.co.uk.');
+    expect(describeLink('https://paypal.evil.com./')!.registrable, 'evil.com.');
+  });
+
+  test('an IPv6 host with a port reads apart from its port', () {
+    final uri = Uri.parse('http://[::1]:8080/a?b=c');
+    expect(isMailLinkAllowed(uri), isTrue);
+    final parts = describeLink('http://[::1]:8080/a?b=c')!;
+    expect(parts.host, '[::1]');
+    expect(parts.registrable, '[::1]');
+    expect(parts.ascii, isNull);
+    expect(parts.rest, ':8080/a?b=c');
+    expect(describeLink('http://[FE80::1]/')!.host, '[fe80::1]');
+    expect(
+      normalizeLink('HTTP://[FE80::1]:8080'),
+      normalizeLink('http://[fe80::1]:8080/'),
+    );
+    expect(normalizeLink('http://[::1]:8080/'), 'http://[::1]:8080/');
+    // An IPv4 address has no registrable part either.
+    expect(
+      describeLink('http://192.168.1.10:81/')!.registrable,
+      '192.168.1.10',
+    );
+  });
+
   testWidgets('the status line keeps the whole host, whatever the path', (
     tester,
   ) async {
@@ -195,5 +260,7 @@ void main() {
     expect(long, startsWith('$label.example'));
     final idn = await shown('https://xn--l-7sba6dbr.com/${'p/' * 60}');
     expect(idn, startsWith('раураl.com  xn--l-7sba6dbr.com/'));
+    final ipv6 = await shown('http://[::1]:8080/admin');
+    expect(ipv6, '[::1]:8080/admin');
   });
 }

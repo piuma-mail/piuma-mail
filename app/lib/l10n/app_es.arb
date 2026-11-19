@@ -880,7 +880,7 @@
   "storageClearFailed": "No se pudo vaciar el correo guardado. Vuelve a intentarlo.",
   "storageNoRoom": "Correo guardado vaciado. No hay espacio libre suficiente para reducir el archivo ahora: Piuma reutiliza el espacio.",
   "storageClearTitle": "¿Vaciar el correo en caché de {name}?",
-  "storageClearNote": "Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, la búsqueda sigue encontrando sus palabras, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo.",
+  "storageClearNote": "Los mensajes completos y las imágenes guardados para leer sin conexión se quitan de este dispositivo. Las listas siguen, la búsqueda sigue encontrando sus palabras, el correo sigue en el servidor y un mensaje se descarga de nuevo al abrirlo. Primero se van los correos antiguos que una búsqueda encontró en el servidor, salvo los que destacaste o etiquetaste: al buscar de nuevo los encuentras allí.",
   "storageKeep": "Guardar los mensajes completos para leer sin conexión",
   "storageKeepHint": "Los más antiguos se descargan de nuevo al abrirlos. La búsqueda sigue encontrando sus palabras.",
   "storageKeepMonth": "1 mes",
@@ -1846,5 +1846,7 @@
   "moreShort": "Más",
   "swipeNote": "Los deslizamientos funcionan en teléfonos y tabletas. En el ordenador, las mismas acciones están en la barra, los menús y los atajos de teclado.",
   "folderDeleteProtected": "«{name}» no se puede eliminar: contiene {inside}, que se eliminaría con ella.",
-  "specialRefused": "Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo."
+  "specialRefused": "Esa carpeta no puede hacer este trabajo: es la bandeja de entrada o ya hace otro que borraría correo.",
+  "fileTypeImages": "Imágenes",
+  "fileTypeEmail": "Mensaje de correo"
 }

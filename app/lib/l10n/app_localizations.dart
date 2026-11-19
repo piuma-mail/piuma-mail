@@ -5389,7 +5389,7 @@ abstract class AppLocalizations {
   /// No description provided for @storageClearNote.
   ///
   /// In en, this message translates to:
-  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it.'**
+  /// **'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it. Old emails that a search found on the server go first, unless you starred or labelled them: searching again finds them there.'**
   String get storageClearNote;
 
   /// No description provided for @storageKeep.
@@ -11181,6 +11181,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.'**
   String get specialRefused;
+
+  /// No description provided for @fileTypeImages.
+  ///
+  /// In en, this message translates to:
+  /// **'Images'**
+  String get fileTypeImages;
+
+  /// No description provided for @fileTypeEmail.
+  ///
+  /// In en, this message translates to:
+  /// **'Email message'**
+  String get fileTypeEmail;
 }
 
 class _AppLocalizationsDelegate

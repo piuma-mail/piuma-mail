@@ -890,7 +890,7 @@
   "storageClearFailed": "Non è stato possibile svuotare la posta salvata. Riprova.",
   "storageNoRoom": "Posta salvata svuotata. Non c'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.",
   "storageClearTitle": "Svuotare la posta in cache di {name}?",
-  "storageClearNote": "I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri.",
+  "storageClearNote": "I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri. Prima se ne vanno le email vecchie trovate da una ricerca sul server, se non le hai messe tra le Speciali o etichettate: cercando di nuovo le ritrovi lì.",
   "storageKeep": "Tieni i messaggi interi per leggere offline",
   "storageKeepHint": "Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.",
   "storageKeepMonth": "1 mese",
@@ -1856,5 +1856,7 @@
   "moreShort": "Altro",
   "swipeNote": "Gli scorrimenti funzionano su telefoni e tablet. Sul computer le stesse azioni sono nella barra, nei menu e nelle scorciatoie da tastiera.",
   "folderDeleteProtected": "“{name}” non si può eliminare: contiene {inside}, che verrebbe eliminata con lei.",
-  "specialRefused": "Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta."
+  "specialRefused": "Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.",
+  "fileTypeImages": "Immagini",
+  "fileTypeEmail": "Messaggio email"
 }
