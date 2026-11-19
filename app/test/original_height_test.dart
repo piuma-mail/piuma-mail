@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/original_view.dart';
 
@@ -30,5 +31,27 @@ void main() {
     expect(paperHeight('1e9,600', 360), isNull);
     expect(paperHeight(' 1200,600', 360), isNull);
     expect(paperHeight('1200.5,600', 600), 1200.5);
+  });
+
+  test('on Windows the paper stays under what Direct3D 11 can draw', () {
+    // 16384 pixels is the tallest texture: at 150% that is 10922 points.
+    for (final scale in [1.0, 1.25, 1.5, 2.0, 3.0]) {
+      final points = paperMaxHeight(TargetPlatform.windows, scale);
+      expect(points * scale, lessThanOrEqualTo(16384), reason: '$scale');
+    }
+    expect(paperMaxHeight(TargetPlatform.windows, 1.5), closeTo(10666, 1));
+    expect(paperMaxHeight(TargetPlatform.windows, 0), 16000);
+    expect(paperMaxHeight(TargetPlatform.windows, double.nan), 16000);
+  });
+
+  test('elsewhere the paper takes the whole email, as before', () {
+    for (final platform in [
+      TargetPlatform.android,
+      TargetPlatform.linux,
+      TargetPlatform.macOS,
+      TargetPlatform.iOS,
+    ]) {
+      expect(paperMaxHeight(platform, 2), 20000);
+    }
   });
 }

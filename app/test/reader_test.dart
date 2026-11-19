@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,9 +22,10 @@ Future<DemoMailSource> _pump(
   WidgetTester tester, {
   bool dark = false,
   Size size = const Size(1440, 900),
+  double scale = 1,
 }) async {
-  tester.view.physicalSize = size;
-  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = size * scale;
+  tester.view.devicePixelRatio = scale;
   addTearDown(tester.view.reset);
   RemoteImages.clear();
   final source = DemoMailSource(now: _now, newsletter: true);
@@ -349,6 +351,30 @@ void main() {
         await _pump(tester);
         await tester.pumpAndSettle();
         expect(tester.getSize(find.byType(OriginalView)).height, 1648);
+      },
+    );
+
+    testWidgets(
+      'on Windows a very long email never makes the web view taller than '
+      'Direct3D 11 can draw (feedback #22)',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        originalPaper = (html, onLink) => Builder(
+          builder: (context) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              // A long thread quoted in a reply, on a 4K screen at 150%.
+              OriginalView.setHeight(context, 18000);
+            });
+            return const SizedBox.expand(key: ValueKey('web view'));
+          },
+        );
+        await _pump(tester, scale: 1.5);
+        await tester.pumpAndSettle();
+        final points = tester.getSize(find.byKey(const ValueKey('web view')));
+        expect(points.height, greaterThan(10000));
+        expect(points.height * 1.5, lessThanOrEqualTo(16384));
+        debugDefaultTargetPlatformOverride = null;
       },
     );
 
