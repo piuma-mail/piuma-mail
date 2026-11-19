@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io' show Directory, exit, stderr;
+import 'dart:io' show Directory, Platform, exit, stderr;
+import 'dart:ui' show AppExitResponse;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +27,7 @@ import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
 import 'outside/arrivals.dart';
+import 'outside/shell.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
 import 'updating.dart';
@@ -84,6 +86,7 @@ Future<void> _start(String dir) async {
     );
     return;
   }
+  _watchExits();
   // A password the system can no longer read leaves its account asking
   // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
@@ -157,7 +160,10 @@ String _feedbackAddress() {
 }
 
 /// Keeps what went wrong for the next start, where the inbox offers to
-/// report it. Only the error and its stack: nothing from the screen.
+/// report it. Only the error and its stack: nothing from the screen. The
+/// engine keeps the message's first line, scrubbed, and the frames. In a
+/// release build nothing goes to the console either: an exception's text
+/// can quote mail, and on Android the console is the system log.
 void _keepCrashes() {
   void keep(Object error, StackTrace? stack) {
     try {
@@ -170,12 +176,50 @@ void _keepCrashes() {
   final flutter = FlutterError.onError;
   FlutterError.onError = (details) {
     if (!details.silent) keep(details.exception, details.stack);
-    flutter?.call(details);
+    if (!kReleaseMode) flutter?.call(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     keep(error, stack);
-    return false;
+    // Handled in a release build, so the engine doesn't print it.
+    return kReleaseMode;
   };
+}
+
+/// What stopped the app without a Dart or Rust error, kept like a crash to
+/// offer a report at this start: on Android, what the system recorded
+/// (stopped responding, native crashes); on the desktop, a last session
+/// that never closed normally. Every way out ends the session: the window
+/// or Cmd-Q (asked to exit), the engine going away (detached), the tray's
+/// Quit (the shell asks first), and signing out or shutting down, where
+/// the shell removes the session's marker itself.
+void _watchExits() {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    void end() {
+      try {
+        feedback.feedbackSessionEnd();
+      } catch (_) {}
+    }
+
+    try {
+      feedback.feedbackSessionStart();
+      Shell.watchSession(
+        marker: feedback.feedbackSessionMarker(),
+        onQuitting: end,
+      ).ignore();
+    } catch (_) {}
+    AppLifecycleListener(
+      onExitRequested: () async {
+        end();
+        return AppExitResponse.exit;
+      },
+      onDetach: end,
+    );
+  }
+  AndroidBackground.exitReasons().then((reasons) {
+    for (final r in reasons) {
+      feedback.feedbackRecordCrash(text: r);
+    }
+  }).ignore();
 }
 
 /// A reader window: the engine is already open in this process, and

@@ -4,12 +4,14 @@
 # Repository secrets it needs:
 #   CLOUDFLARE_API_TOKEN   token from the "Edit Cloudflare Workers" template
 #   CLOUDFLARE_ACCOUNT_ID  the Cloudflare account id
-#   FEEDBACK_GITHUB_TOKEN  fine-grained PAT on the feedback repository only: Issues + Contents, read & write
+#   FEEDBACK_GITHUB_TOKEN  fine-grained PAT on the feedback repository only: Issues, read & write
 # Optional repository variable (Settings → Secrets and variables → Actions → Variables):
 #   FEEDBACK_REPO          "owner/name" of the repository the issues go to. Unset, the relay uses
 #                          REPO from relay/wrangler.toml.
 # tools/deploy-relay.sh runs the same steps by hand.
-# The ticket-signing secret is generated on the first deploy and stays on Cloudflare.
+# The ticket-signing secret (TICKET_SECRET) and the attachment-link secret (FILES_SECRET, apart so
+# links in issues survive a TICKET_SECRET rotation) are generated on the first deploy and stay on
+# Cloudflare. After the deploy, /health/deep must find GitHub and storage working.
 #
 # Secrets are given only to the steps that use them; wrangler is pinned in relay/package-lock.json
 # and installed without install scripts; actions are pinned by commit.
@@ -94,9 +96,14 @@ jobs:
           FEEDBACK_GITHUB_TOKEN: ${{ secrets.FEEDBACK_GITHUB_TOKEN }}
         run: |
           printf '%s' "$FEEDBACK_GITHUB_TOKEN" | npx --no-install wrangler secret put GITHUB_TOKEN
-          if ! npx --no-install wrangler secret list | jq -e '.[] | select(.name == "TICKET_SECRET")' > /dev/null; then
-            openssl rand -hex 32 | tr -d '\n' | npx --no-install wrangler secret put TICKET_SECRET
-          fi
+          secrets=$(npx --no-install wrangler secret list)
+          for name in TICKET_SECRET FILES_SECRET; do
+            if ! printf '%s' "$secrets" | jq -e --arg n "$name" '.[] | select(.name == $n)' > /dev/null; then
+              openssl rand -hex 32 | tr -d '\n' | npx --no-install wrangler secret put "$name"
+            fi
+          done
+          npx --no-install wrangler secret list | jq -e '.[] | select(.name == "FILES_SECRET")' > /dev/null \
+            || { echo "::error::FILES_SECRET is missing: reports would arrive without attachments"; exit 1; }
 
       - name: Health check
         if: steps.ready.outputs.ok == 'true'
@@ -106,3 +113,12 @@ jobs:
           echo "### Report relay: $url" >> "$GITHUB_STEP_SUMMARY"
           sleep 5
           curl -fsS "$url/health" | jq -e '.ok == true'
+          # A new version checks again at once: GitHub (the token) and R2 (with FILES_SECRET) must
+          # work. A failed last report alone is a warning; it clears with the next report.
+          deep=$(curl -sS --max-time 30 "$url/health/deep")
+          echo "$deep" | jq .
+          echo "$deep" | jq -e '.github == true and .storage != false' > /dev/null \
+            || { echo "::error::Relay deployed but /health/deep fails: see relay/README.md, Monitoring"; exit 1; }
+          if echo "$deep" | jq -e '.lastReportFailed == true' > /dev/null; then
+            echo "::warning::The last report before this deploy could not be filed"
+          fi

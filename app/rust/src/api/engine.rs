@@ -546,6 +546,11 @@ impl SyncEvent {
 #[frb(init)]
 pub fn init_app() {
     flutter_rust_bridge::setup_default_user_utils();
+    // The bridge's panic hook prints the whole message, and a slicing panic
+    // quotes the mail it was cutting: in a release build only "panic at
+    // file:line" reaches stderr and logcat; the scrubbed message waits for
+    // the next launch to offer a report.
+    piuma_core::feedback::install_panic_hook(!cfg!(debug_assertions));
     // The bridge logs everything on Android, and the HTML parser's debug
     // lines carry the text of the mail: only warnings reach the system log
     // in a release build, so other apps and bug reports never see a message.

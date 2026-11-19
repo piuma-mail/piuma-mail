@@ -29,6 +29,9 @@ class Shell {
   std::optional<LRESULT> HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
                                        LPARAM lparam);
 
+  // Removes the running session's marker: the app closed normally.
+  void EndSession();
+
   // Message of the tray icon's clicks.
   static constexpr UINT kTrayMessage = WM_APP + 0x50;
 
@@ -51,6 +54,8 @@ class Shell {
   std::wstring compose_label_ = L"Compose";
   std::wstring quit_label_ = L"Quit";
   std::wstring tooltip_ = L"Piuma Mail";
+  // The running session's marker (core/src/feedback.rs, session_marker).
+  std::wstring session_marker_;
   // Explorer restarted: the tray icon is added again.
   UINT taskbar_created_ = 0;
 };

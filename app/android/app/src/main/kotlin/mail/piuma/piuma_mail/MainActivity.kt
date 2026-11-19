@@ -135,6 +135,8 @@ class MainActivity : FlutterActivity() {
                         android.provider.Settings.Global.getString(contentResolver, "device_name")
                             ?: android.os.Build.MODEL
                     )
+                    // Why the app stopped since the last look, for a report.
+                    "exits" -> result.success(ExitReasons.unseen(context))
                     // Wi-Fi, mobile or offline, for a report.
                     "network" -> result.success(NetworkWatch.kind(context))
                     // The model and Android version, for a report. Never

@@ -42,10 +42,18 @@ enum Shell {
   private static var channel: FlutterMethodChannel?
   private static var ready = false
   private static var waiting: [[String]] = []
+  /// The running session's marker (core/src/feedback.rs, session_marker).
+  private static var sessionMarker: URL?
 
   static func listen(_ messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "piuma/shell", binaryMessenger: messenger)
     Shell.channel = channel
+    // Every way out of a Mac app ends here (Cmd-Q and the Dock's Quit go
+    // through applicationShouldTerminate, which asks Dart first; signing
+    // out and shutting down too): a normal end, not a crash.
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+    ) { _ in endSession() }
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "ready":
@@ -63,6 +71,15 @@ enum Shell {
         ) { _ in
           DispatchQueue.main.async { result(defaultMail()) }
         }
+      case "session":
+        // Only ever the marker the engine names (an absolute path to a
+        // file called "running"), never another file to remove.
+        if let path = (call.arguments as? [String: Any])?["marker"] as? String,
+          path.hasPrefix("/"), (path as NSString).lastPathComponent == "running"
+        {
+          sessionMarker = URL(fileURLWithPath: path)
+        }
+        result(nil)
       case "quit":
         result(nil)
         NSApp.terminate(nil)
@@ -71,6 +88,15 @@ enum Shell {
         // System Settings' on a Mac.
         result(FlutterMethodNotImplemented)
       }
+    }
+  }
+
+  /// The app is ending normally (Cmd-Q, the Dock, signing out or shutting
+  /// down): the next start offers no crash report. Dart ends the session
+  /// too when it hears the exit request; this covers the times it can't.
+  static func endSession() {
+    if let marker = sessionMarker {
+      try? FileManager.default.removeItem(at: marker)
     }
   }
 

@@ -19,6 +19,7 @@ import '../widgets/chip.dart';
 import '../widgets/dialog.dart';
 import '../widgets/route.dart';
 import '../widgets/switch.dart';
+import 'privacy_notice.dart';
 import 'report_context.dart';
 
 /// What a report can carry besides the screenshot and the log: the same
@@ -577,6 +578,32 @@ class _ReportSheetState extends State<ReportSheet> {
             ],
           ),
         ],
+        const SizedBox(height: PiumaSpace.s8),
+        // Where it goes, in one line, and the notice behind it.
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: '${l.reportPrivacyLine} '),
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: PiumaPressable(
+                  onTap: () => showPrivacyNotice(context, widget.source),
+                  semanticLabel: l.reportPrivacyLink,
+                  child: Text(
+                    l.reportPrivacyLink,
+                    style: PiumaType.small.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: c.accentText,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          style: PiumaType.small.copyWith(fontSize: 12, color: c.muted),
+        ),
         if (_attachmentError case final error?) ...[
           const SizedBox(height: PiumaSpace.s8),
           Text(

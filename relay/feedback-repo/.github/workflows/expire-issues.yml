@@ -1,0 +1,106 @@
+# Deletes issues closed more than two years ago, as the privacy notice promises (PRIVACY.md in
+# piuma-mail/piuma-mail, "How long it is kept"). For the private feedback repository
+# piuma-mail/piuma-mail-feedback: it lives in piuma-mail/piuma-mail under relay/feedback-repo/ and
+# is copied there by hand (relay/feedback-repo/README.md).
+#
+# Dry run by default: it lists what it would delete and deletes nothing, until the repository
+# variable EXPIRE_ISSUES_DELETE is "true" (scheduled runs) or a manual run ticks "delete".
+# Issue text is untrusted: the log names issues by number and closing date only, never by title.
+#
+# Needs the secret ISSUE_EXPIRY_TOKEN: a fine-grained token, resource owner piuma-mail, this
+# repository only, with an expiry date. GitHub lets only repository administrators delete issues,
+# so it needs Issues (read and write) and Administration (read and write) on this repository, and
+# nothing else. The workflow's own GITHUB_TOKEN gets no permissions.
+#
+# Optional repository variables: EXPIRE_ISSUES_DELETE ("true" to delete), EXPIRE_ISSUES_AFTER_DAYS
+# (730 when unset). An issue labelled "keep" is never deleted.
+name: Expire closed issues
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: "Delete them (unticked: only list what would go)"
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: expire-issues
+  cancel-in-progress: false
+
+jobs:
+  expire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Find, and delete when asked
+        env:
+          GH_TOKEN: ${{ secrets.ISSUE_EXPIRY_TOKEN }}
+          REPO: ${{ github.repository }}
+          DELETE: ${{ (github.event_name == 'workflow_dispatch' && inputs.delete) || (github.event_name == 'schedule' && vars.EXPIRE_ISSUES_DELETE == 'true') }}
+          AFTER_DAYS: ${{ vars.EXPIRE_ISSUES_AFTER_DAYS || '730' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Add the ISSUE_EXPIRY_TOKEN secret (see the comment at the top of this workflow)."
+            exit 1
+          fi
+          case "$AFTER_DAYS" in ''|*[!0-9]*) echo "::error::EXPIRE_ISSUES_AFTER_DAYS must be a number"; exit 1 ;; esac
+          if [ "$AFTER_DAYS" -lt 730 ]; then
+            echo "::error::EXPIRE_ISSUES_AFTER_DAYS is below the two years the privacy notice states"; exit 1
+          fi
+          cutoff=$(date -u -d "-$AFTER_DAYS days" +%Y-%m-%d)
+          # Search finds at most 1000; a weekly run never has more than a few, and the rest
+          # wait for the next run. At most 200 deletions per run.
+          gh api -X GET search/issues --paginate \
+            -f q="repo:$REPO is:issue is:closed closed:<$cutoff -label:keep" -f per_page=100 \
+            --jq '.items[] | [.number, .node_id, .closed_at] | @tsv' > found.tsv
+          sort -n found.tsv | head -n 200 > expired.tsv
+          count=$(wc -l < expired.tsv | tr -d ' ')
+          mode=$([ "$DELETE" = "true" ] && echo "delete" || echo "dry run")
+          {
+            echo "### Expire closed issues ($mode)"
+            echo
+            echo "Closed before $cutoff ($AFTER_DAYS days): $count issue(s)."
+            echo
+            echo "| Issue | Closed | Result |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'number\tclosed_at\tresult\n' > log.tsv
+          failed=0
+          while IFS="$(printf '\t')" read -r number node closed; do
+            [ -n "$number" ] || continue
+            # Only what the search returned, checked again: a number and a node id.
+            case "$number" in *[!0-9]*) continue ;; esac
+            case "$node" in *[!A-Za-z0-9_=-]*) continue ;; esac
+            result="would delete"
+            if [ "$DELETE" = "true" ]; then
+              if gh api graphql -f query='mutation($id: ID!) { deleteIssue(input: {issueId: $id}) { clientMutationId } }' \
+                -f id="$node" > /dev/null; then
+                result="deleted"
+              else
+                result="failed"
+                failed=$((failed + 1))
+              fi
+            fi
+            echo "#$number closed $closed: $result"
+            printf '%s\t%s\t%s\n' "$number" "$closed" "$result" >> log.tsv
+            echo "| #$number | $closed | $result |" >> "$GITHUB_STEP_SUMMARY"
+          done < expired.tsv
+          if [ "$DELETE" != "true" ]; then
+            echo "Dry run: nothing deleted. Set EXPIRE_ISSUES_DELETE to true, or run it by hand with delete ticked."
+          fi
+          [ "$failed" -eq 0 ] || { echo "::error::$failed deletion(s) failed"; exit 1; }
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: expire-issues-${{ github.run_id }}
+          path: log.tsv
+          if-no-files-found: ignore
+          retention-days: 90

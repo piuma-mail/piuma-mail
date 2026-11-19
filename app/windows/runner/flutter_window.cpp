@@ -67,6 +67,14 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Signing out, restarting or shutting down: Windows may end the process
+  // as soon as this returns, before Dart hears anything. A normal end,
+  // not a crash for the next start to report. Seen before Flutter, which
+  // could answer it first.
+  if (message == WM_ENDSESSION && wparam == TRUE && shell_) {
+    shell_->EndSession();
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =

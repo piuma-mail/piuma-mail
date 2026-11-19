@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'mailto.dart';
+import 'shell.dart';
 
 /// Something another app or the system asks Piuma to do: write a message
 /// (a `mailto:` link, files to send, a share) or show an email file.
@@ -140,6 +141,9 @@ class Arrivals {
           compose();
         case 'shared':
           if (sharedArrival(call.arguments) case final a?) add(a);
+        case 'quitting':
+          // The tray's Quit: the session ends before the app goes.
+          Shell.quitting();
       }
       return null;
     });

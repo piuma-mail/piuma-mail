@@ -321,6 +321,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FeedbackPreview dco_decode_feedback_preview(dynamic raw);
 
   @protected
+  FeedbackPrivacy dco_decode_feedback_privacy(dynamic raw);
+
+  @protected
   FeedbackReport dco_decode_feedback_report(dynamic raw);
 
   @protected
@@ -1334,6 +1337,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   FeedbackPreview sse_decode_feedback_preview(SseDeserializer deserializer);
+
+  @protected
+  FeedbackPrivacy sse_decode_feedback_privacy(SseDeserializer deserializer);
 
   @protected
   FeedbackReport sse_decode_feedback_report(SseDeserializer deserializer);
@@ -2586,6 +2592,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_feedback_preview(
     FeedbackPreview self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_feedback_privacy(
+    FeedbackPrivacy self,
     SseSerializer serializer,
   );
 

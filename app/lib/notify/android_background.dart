@@ -25,6 +25,21 @@ class AndroidBackground {
     if (on) await _background.invokeMethod<void>('setMode', {'mode': mode});
   }
 
+  /// Why the app stopped since the last look, as Android recorded it
+  /// (Android 11 and later): stopped responding, native crashes and
+  /// crashes outside Dart, one line each, never a trace. Each is said once.
+  static Future<List<String>> exitReasons() async {
+    if (!on) return const [];
+    try {
+      final reasons = await _background.invokeListMethod<String>('exits');
+      return reasons ?? const [];
+    } on PlatformException {
+      return const [];
+    } on MissingPluginException {
+      return const [];
+    }
+  }
+
   /// Starts what the choice needs, at app start.
   static Future<void> apply() async {
     if (on) await _background.invokeMethod<void>('apply');

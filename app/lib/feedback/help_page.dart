@@ -15,7 +15,9 @@ import '../updates/updates.dart';
 import '../updates/updates_group.dart';
 import '../updates/whats_new.dart';
 import '../widgets/dialog.dart';
+import '../widgets/links.dart';
 import '../widgets/switch.dart';
+import 'privacy_notice.dart';
 import 'report_sheet.dart';
 import 'shake.dart';
 
@@ -85,9 +87,45 @@ class _HelpPageState extends State<HelpPage> {
     await _load();
   }
 
+  /// Deleting here never reaches the issue: for a report already sent,
+  /// the person is told so and may ask the maintainers to erase it too.
   Future<void> _delete(SentReport r) async {
+    final issue = r.issue;
+    if (r.status == ReportStatus.sent && issue != null) {
+      final pick = await askDeleteSent(context, issue);
+      if (pick == null) return;
+      if (pick == DeleteSent.andErase) await _askErasure(r);
+    }
     await widget.source.deleteReport(r.id);
     await _load();
+  }
+
+  /// The erasure request as an email: in compose from the person's own
+  /// account, or in the system's mail app when there is none.
+  Future<void> _askErasure(SentReport r) async {
+    final e = await widget.source.erasureEmail(r.id);
+    final write = widget.onWrite;
+    final accounts = widget.source.accounts;
+    if (write != null && accounts.isNotEmpty) {
+      write(
+        Draft(
+          accountId: accounts.first.id,
+          to: [e.to],
+          subject: e.subject,
+          body: e.body,
+        ),
+      );
+      return;
+    }
+    await openExternalLink(
+      Uri(
+        scheme: 'mailto',
+        path: e.to,
+        query:
+            'subject=${Uri.encodeComponent(e.subject)}'
+            '&body=${Uri.encodeComponent(e.body)}',
+      ),
+    );
   }
 
   Future<void> _email(SentReport r) async {
@@ -205,6 +243,11 @@ class _HelpPageState extends State<HelpPage> {
                   showWhatsNew(context, release: release, from: from);
                 },
               ),
+            ),
+            _Link(
+              icon: PiumaIcon.lock,
+              label: l.reportPrivacyTitle,
+              onTap: () => showPrivacyNotice(context, widget.source),
             ),
             if (_canShake)
               ValueListenableBuilder<bool>(
