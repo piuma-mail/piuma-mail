@@ -131,7 +131,8 @@ class ProviderGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final perRow = phone ? 2 : 4;
+    // Five fit in one row on the desktop ("Or start from").
+    final perRow = phone ? 2 : (labels.length == 5 ? 5 : 4);
     final rows = <Widget>[];
     for (var i = 0; i < labels.length; i += perRow) {
       rows.add(

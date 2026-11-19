@@ -2,7 +2,8 @@
 <!-- What the background service writes itself; the app's own words are in
      lib/l10n. Keep notice_channel and notice_title_many in step with
      noticeChannel and noticeTitleMany there, notice_sign_in_title and
-     notice_sign_in_body with noticeSignInTitle and accountPasswordRefused. -->
+     notice_sign_in_body with noticeSignInTitle and accountPasswordRefused,
+     notice_sign_in_certificate with accountCertificateRefused. -->
 <resources>
     <string name="notice_channel">New mail</string>
     <string name="notice_quiet_channel">New mail, quiet hours</string>
@@ -14,9 +15,14 @@
     <string name="notice_reply_hint">Reply to %s</string>
     <string name="notice_archive">Archive</string>
     <string name="notice_snooze">Snooze</string>
+    <string name="notice_delete">Delete</string>
+    <string name="notice_read">Mark read</string>
+    <string name="notice_reply_all">Reply all</string>
+    <string name="notice_reply_all_hint">Reply to %1$s and %2$d more</string>
     <string name="notice_failed">Couldn’t do that from the notification. Open Piuma Mail to try again.</string>
     <string name="notice_sign_in_title">%1$s can\'t sign in</string>
     <string name="notice_sign_in_body">The server refused the password. Did it change?</string>
+    <string name="notice_sign_in_certificate">The server\'s certificate was refused. Sign in again to look at it.</string>
     <string name="vault_notice_label">Vault</string>
     <string name="vault_notice_parcel">Your package arrives today</string>
     <string name="vault_notice_due_today">Due today</string>
@@ -51,4 +57,6 @@
         <item quantity="one">sent %d day ago</item>
         <item quantity="other">sent %d days ago</item>
     </plurals>
+    <!-- Keep in step with compose. -->
+    <string name="shortcut_compose">Compose</string>
 </resources>

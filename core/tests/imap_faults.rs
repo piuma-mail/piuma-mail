@@ -73,7 +73,7 @@ async fn serve(script: Script) -> (ImapConfig, Seen) {
         port,
         security: Security::None,
         username: "me".into(),
-        password: "test".into(),
+        login: "test".into(),
     };
     (cfg, seen)
 }

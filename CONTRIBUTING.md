@@ -29,14 +29,17 @@ The mockup canvas and the app must always show the same thing.
 ```sh
 cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 python3 tools/gen_tokens.py --check
-python3 tools/gen_rust_licenses.py --check   # after changing Cargo.lock
-cargo deny check advisories sources          # after changing Cargo.lock (cargo install cargo-deny)
+python3 tools/gen_rust_licenses.py --check   # after changing Cargo.lock (also writes app/assets/licenses/)
+cargo deny check                             # after changing Cargo.lock (cargo install cargo-deny)
+python3 tools/pub_advisories.py              # after changing a pubspec.lock
 cd app && dart format lib test && flutter analyze && flutter test
 cd ../wear && dart format lib test && flutter analyze && flutter test   # the watch app
 ```
 
 - Dependabot proposes dependency updates every week. Its pull requests don't regenerate `THIRD_PARTY_RUST.md`, so CI skips that check for them; after merging one that changes `Cargo.lock`, the "Dependencies" workflow on `main` fails until a follow-up PR runs `python3 tools/gen_rust_licenses.py`.
-- Engine tests against a real IMAP server: start `tools/test-imap-server.sh` (Dovecot) in another terminal, then `PIUMA_TEST_IMAP=127.0.0.1:31143 cargo test`. The 50,000-message check: add `--release -- --ignored --nocapture`.
+- Engine tests against a real IMAP server: start `tools/test-imap-server.sh` (Dovecot 2.3 or 2.4) in another terminal, then `PIUMA_TEST_IMAP=127.0.0.1:31143 cargo test`. The 50,000-message check: add `--release -- --ignored --nocapture`.
+- What CI runs on a pull request: the "CI" workflow (tokens, the engine, the engine against Dovecot 2.4 and 2.3, the app, the watch, and release-mode builds of the platforms the PR touches: a change to `core/`, `app/rust/`, dependencies or CI itself builds them all, iOS included), "Dependencies" (Rust, Dart and relay advisories; Rust licenses and banned crates, policy in `deny.toml`), "Report relay" (its tests) and "DCO". Every platform builds on `main` and every Monday. A license not in `deny.toml`'s list needs a pull request that adds it and says why it is compatible with GPL-3.0-or-later and `LICENSE-APPSTORE.md`.
+- How the local database holds up as mail piles up (synthetic mailboxes of 10,000, 100,000 and 1,000,000 messages, no server needed): `cargo test -p piuma-core --release --test scale -- --ignored --nocapture`; `PIUMA_SCALE=10000,100000` picks other sizes. The largest takes about a gigabyte of temporary disk and several minutes. A change to a query on `message` should keep `store::tests::hot_lookups_use_an_index` green and say in its PR what `EXPLAIN QUERY PLAN` shows.
 - If you change how a component looks, regenerate the screenshots with `flutter test --update-goldens` and check the images in the PR.
 - Golden screenshots are compared only on Linux, where the references are rendered: other systems draw text slightly differently. On Windows and macOS `flutter test` passes them without comparing (it says so once), so run the comparison and `--update-goldens` on Linux: in CI, or in WSL Ubuntu with a clone on the Linux filesystem (not under `/mnt/`). `PIUMA_GOLDENS=compare flutter test` forces the comparison elsewhere.
 
@@ -45,10 +48,149 @@ cd ../wear && dart format lib test && flutter analyze && flutter test   # the wa
 - Flutter (the version CI uses) and Rust stable.
 - **Android:** the Android SDK with the NDK version Flutter asks for (cargokit builds the Rust core with it). On Windows, turn on Developer Mode (Settings > System > For developers): Flutter plugins need symlinks.
 - **Windows desktop:** Visual Studio 2022 (or its Build Tools) with "Desktop development with C++" **and** the "C++ ATL for latest v143 build tools" component; the notifications plugin needs ATL.
+- **The tools on Windows:** the scripts in `tools/` need Python 3.10 or newer. Install it from python.org with "Add python.exe to PATH" ticked, or use the `py` launcher that comes with it: `py -3 tools\gen_tokens.py --check`, `py -3 tools\gen_rust_licenses.py --check`, `py -3 tools\pub_advisories.py`. The `python3`/`python` names that Windows itself provides only open the Microsoft Store: turn them off in Settings › Apps › Advanced app settings › App execution aliases if they get in the way. The scripts read and write UTF-8 themselves, so nothing depends on the console's code page (an older checkout needed `py -3 -X utf8`). The `.sh` scripts run in Git Bash (`sh tools/android-beta.sh`) or WSL; `tools/test-imap-server.sh` needs Linux (WSL Ubuntu, Dovecot 2.3 or 2.4: `sudo apt install dovecot-imapd`), or Docker as its header says. `tools\windows-release.ps1` runs in PowerShell. In paths with spaces, use PowerShell and single quotes rather than `cmd.exe`.
 - **macOS and iOS:** Xcode.
-- **Windows release:** the "Release" workflow (`.github/workflows/release.yml`, started by hand from the Actions tab) runs `tools\windows-release.ps1` on a Windows runner: it builds the installer and the update packages with Velopack (`dotnet tool install -g vpk --version 1.2.161`) and publishes them as a GitHub prerelease, `v0.1.0-beta.N`. A second job on a Windows ARM64 runner then runs it with `-Arch arm64` and adds the native ARM64 installer and packages to the same release, in Velopack's `win-arm64` channel (Flutter builds for Windows on ARM only on an ARM64 machine); installed apps follow the channel they were installed from. Run by hand without `GITHUB_TOKEN`, the script only builds them, into `app\build\releases`. The changelog comes from `-Notes notes.md`, or from the pull requests merged since the last `v*` tag. The app checks the repository's releases (prereleases included) every few hours and downloads in the background (`app/lib/updates/`); `PIUMA_UPDATE_URL` changes the address it checks.
+- **Releases:** the "Release" workflow (`.github/workflows/release.yml`, started by hand from the Actions tab on `main`) makes `v0.1.0-beta.N` (N = commits on `main` + 700) as a GitHub prerelease, once CI passed on that commit: the Windows installer and update packages for x64 and ARM64 (Velopack, `tools/windows-release.ps1`, `vpk` 1.2.161; ARM64 builds on an ARM64 runner, in Velopack's `win-arm64` channel), the Android phone and Wear OS APKs, a Linux AppImage (`tools/linux-appimage.sh`) and, when Apple credentials exist, a signed and notarised macOS app. Build jobs have no secrets and no write access; separate jobs sign, in the `signing` environment (main only), the only place the signing secrets live; one job uploads everything to a draft release and a last one publishes it once every platform is there, both after approval in the `release` environment. Each file, and `SHA256SUMS`, has a build provenance attestation: `gh attestation verify <file> --repo piuma-mail/piuma-mail --signer-workflow piuma-mail/piuma-mail/.github/workflows/release.yml --source-ref refs/heads/main` (see SECURITY.md); the publish step checks every file against both before the release goes live. Before publishing, the Windows installer is installed on the runner and the app started with `--smoke-test` (it opens its engine on a throwaway folder and exits). The `canary` choice makes an early release (`canary-v0.1.0-beta.N`, Velopack channels `win-canary` and `win-arm64-canary`, no installer) that apps follow only with Settings › Help & feedback › Updates › Early releases on. The changelog lists the pull requests merged since the last `v*` tag. Run by hand, `tools/windows-release.ps1` only builds and packs into `app\build\releases`; it never publishes.
+- **Updates:** installed Windows apps check the feed every few hours and download in the background (`app/lib/updates/`); Android, macOS and Linux builds only show that a newer release is out, with a link to it. Both can be turned off in Settings › Help & feedback › Updates. The feed is `PIUMA_UPDATE_URL` and the channel `PIUMA_UPDATE_CHANNEL` (`beta` follows GitHub prereleases, `stable` only full releases), both set at build time. A release that crashes before its first frame heals itself on Windows: the next launch finds the launch marker the crashed one left, looks for a newer release and restarts into it before opening the engine. A bad release is fixed by the next one, never by going back: see [docs/incident-runbook.md](docs/incident-runbook.md#bad-release).
+- **Linux:** releases carry an unsigned AppImage for x86_64. It brings the app, not GTK, WebKitGTK or the Secret Service: it needs a desktop with `libgtk-3`, `libwebkit2gtk-4.1` and a keyring (GNOME Keyring or KWallet), and glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40 and later). Mark it executable and run it.
+- **macOS:** until the project has an Apple Developer ID, macOS is build-from-source (`flutter build macos`). With one, put the Apple secrets in the `signing` environment and set the variable `PIUMA_MACOS_SIGNING` to `true`: the "Release" workflow then signs with Developer ID, notarises with an App Store Connect API key and staples the ticket (job `macos-sign`); see "Building your own fork".
+- **Default mail app, `mailto:` links and `.eml` files:** every link or file another app hands Piuma comes through `app/lib/outside/` (the command line on Windows and Linux, Apple events on macOS, intents on Android). Installed builds register themselves: Windows per user, from the installer's hooks (`app/windows/runner/mail_handler.cpp`: `HKCU\Software\Classes`, Settings › Default apps; removed on uninstall), macOS from `Info.plist`, Android from its intent filters. A Linux build from source registers nothing; to try it, install the desktop file with the path of your build, then pick Piuma in Settings › Notifications › This device or with `xdg-settings`:
+
+  ```sh
+  sed "s|^Exec=piuma_mail|Exec=$PWD/app/build/linux/x64/release/bundle/piuma_mail|" \
+    app/linux/packaging/mail.piuma.piuma_mail.desktop > ~/.local/share/applications/mail.piuma.piuma_mail.desktop
+  update-desktop-database ~/.local/share/applications
+  xdg-settings set default-url-scheme-handler mailto mail.piuma.piuma_mail.desktop
+  ```
+
+  Closing the window keeps Piuma running in the tray on Windows and Linux (Settings › Notifications › This device). On Linux the tray needs `libayatana-appindicator3` or `libappindicator3` and a desktop that shows them (on GNOME, the AppIndicator extension); without one, closing the window quits as before.
 - **Wear OS watch:** `wear/` is a small Flutter app with no engine of its own: the phone app sends it the inbox over the watch connection (`WatchLink.kt`, `app/rust/src/watch.rs`) and does what its buttons ask. It shares the phone app's application id and key, as Wear OS requires. `cd wear && flutter test`; to try it, start a Wear OS emulator (Round, API 33 or later), pair it with a phone or phone emulator through the Wear OS app, then `flutter run -d <watch>` with the phone app installed on the phone. Its icons and tokens come from `tools/gen_icons.py` and `tools/gen_tokens.py`, like the phone's.
-- **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without them, release builds keep the local debug key. The "Release" workflow builds the same APK, with the key from repository secrets, and attaches it to the GitHub prerelease.
+- **Android beta:** `sh tools/android-beta.sh` builds a release APK for 64-bit ARM phones signed with the project's beta key, so each build installs over the last. The key never goes in the repository: the script reads it from `PIUMA_KEYSTORE_B64` (the keystore, base64) and `PIUMA_KEYSTORE_PASSWORD` (alias `piuma`, or `PIUMA_KEY_ALIAS`). Without a key a local release build is signed with the debug key and Gradle says so; on CI (`CI` set) that is an error, so pull requests build with a throwaway key (`.github/actions/android-throwaway-key`). The "Release" workflow builds the phone and watch APKs with a throwaway key too, then re-signs both with the project key in a job that compiles nothing, checks they share it and attaches them to the release. The watch app must be signed with the phone app's key or the two never pair.
+- **Keeping the keys:** the Android key cannot be replaced for existing installs: losing it means every user reinstalls. Keep an offline copy of each signing key (Android keystore and its password, the Windows `.pfx`, the Apple `.p12` and API key) outside the workstation and outside GitHub: for example an encrypted USB drive in a safe place plus a second copy with someone you trust, the passwords in a password manager. Check once a year that the copy opens. What to do if one leaks: [docs/incident-runbook.md](docs/incident-runbook.md#signing-key-compromised).
+
+## Building your own fork
+
+Piuma Mail is free software: you can build, sign and ship your own copy. Nothing that identifies the upstream project is required. These are the values a fork sets; where it has none, the default in brackets applies.
+
+**Repository and environment settings (Settings › Secrets and variables › Actions; Settings › Environments).** Signing secrets go in the `signing` environment (deployment branches: `main` only, no reviewers), never in repository secrets: only the signing jobs of the "Release" workflow, running from `main`, can read them.
+
+| Name | Kind | Needed | What it is |
+|---|---|---|---|
+| `PIUMA_UPDATE_URL` | variable | optional | The feed your builds check for updates [this repository's GitHub releases, `https://github.com/<owner>/<repo>`]. Any web folder filled by `vpk upload` works for Windows; only GitHub repositories give the notice on other platforms. |
+| `PIUMA_KEYSTORE_B64`, `PIUMA_KEYSTORE_PASSWORD` | `signing` secrets | for Android | Your Android release keystore (base64) and its password. Make one with `keytool -genkeypair -keystore piuma.p12 -storetype PKCS12 -alias piuma -keyalg RSA -keysize 4096 -validity 10000`. Without them a release has no APKs. |
+| `PIUMA_KEY_ALIAS` | variable | optional | The key's alias [`piuma`]. |
+| `PIUMA_ANDROID_CERT_SHA256` | variable | recommended | The key's certificate SHA-256 (`keytool -list -v`): signed APKs must match it. |
+| `WINDOWS_SIGN_PFX_B64`, `WINDOWS_SIGN_PFX_PASSWORD` | `signing` secrets | optional | An Authenticode code-signing certificate (`.pfx`, base64). |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (secrets); `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE` (variables) | `signing` | optional | Or Azure Trusted Signing instead of a `.pfx`. Without either, Windows packages are unsigned and the workflow warns. |
+| `APPLE_CERT_P12_B64`, `APPLE_CERT_PASSWORD` | `signing` secrets | for macOS | A "Developer ID Application" certificate with its private key (`.p12`, base64). |
+| `APPLE_API_KEY_P8_B64`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_TEAM_ID` | `signing` secrets | for macOS | An App Store Connect API key (role Developer) for notarisation, and your team id. |
+| `PIUMA_MACOS_SIGNING` | variable | for macOS | `true` once the Apple secrets are in `signing`: the release then builds, signs and notarises the macOS app [no macOS app]. |
+| `PIUMA_REPORT_RELAY` | variable | optional | Your report relay's address, compiled into your release builds [the project's relay; leaving it unset never turns reports off]. |
+| `PIUMA_REQUIRE_SIGNED` | variable | optional | Comma-separated platforms (`android`, `windows`) that must be signed: the release fails instead of leaving them out or unsigned. |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `FEEDBACK_GITHUB_TOKEN` (secrets); `FEEDBACK_REPO` (variable) | | for in-app reports | Your report relay, see `.github/workflows/report-relay.yml`. |
+| environment `signing` | environment | for signing | `main`-only deployment rule, no reviewers: holds the signing secrets above. |
+| environment `release` | environment | recommended | Required reviewers and a `main`-only deployment rule: the upload and publish jobs wait for approval. |
+
+**Actions policy (Settings › Actions › General).** Allow GitHub's own actions plus the few third-party ones the workflows use (`subosito/flutter-action`, `dtolnay/rust-toolchain`, `Swatinem/rust-cache`, `EmbarkStudios/cargo-deny-action`), and keep the default workflow token read-only. Every `uses:` in `.github/workflows` and `.github/actions` is pinned to a full commit SHA, with its tag in a comment, and Dependabot proposes the updates; new or changed steps must keep that form. Leave **"Require actions to be pinned to a full-length commit SHA" off**: GitHub applies it to the actions other actions call too, and `subosito/flutter-action` calls `actions/cache` by tag, so with it on every Flutter job fails before it starts. The pins in our own files give the same protection for the code we choose; turn the setting on only once every action we use pins its own dependencies.
+
+**Build-time values (`--dart-define` or Cargo environment):**
+
+| Name | Where | Default | What it is |
+|---|---|---|---|
+| `PIUMA_UPDATE_URL` | app (`--dart-define`) | none: updates off | The update feed; the "Release" workflow passes the variable above, and `tools/windows-release.ps1` uses `PIUMA_UPDATE_URL`, else the GitHub repository it builds (`GITHUB_REPOSITORY` or the `origin` remote). |
+| `PIUMA_UPDATE_CHANNEL` | app (`--dart-define`) | `beta` | `beta` follows GitHub prereleases, `stable` only full releases. |
+| `PIUMA_BUILD` | app (`--dart-define`) | 0 | The build number; 0 shows no number and never offers updates. |
+| `PIUMA_REPORT_RELAY` | engine (environment at `cargo build`; the "Release" workflow passes the variable above when set) | the upstream relay | Your relay's address, so in-app reports reach your repository. Never set it empty: that would turn reports off. |
+| Relay contact and repository | `relay/wrangler.toml`, `FEEDBACK_REPO` | upstream's | Where reports become issues. |
+| OAuth client IDs (Google, Microsoft) | *to be defined by the OAuth work* | none | Placeholder: sign-in with Google and Microsoft accounts needs client IDs registered by whoever ships the build; they will be listed here, overridable at build time. |
+
+Also yours to change: the application ids (`mail.piuma.piuma_mail` in `app/android`, `wear/android`, `app/linux/CMakeLists.txt`, `app/macos`, `app/ios`) if your build should install next to the upstream app, the Velopack package id (`PiumaMail` in `tools/windows-release.ps1`), `.github/CODEOWNERS` and the contact in `SECURITY.md`.
+
+## Platform differences in compose
+
+- **Spell check** uses the platform's own checker, in the language the text is written in (one of the app's six, detected by the engine, else the app's language): Android and, through Flutter, iOS and macOS. Flutter has no spell checker on Windows and Linux yet, so there the body and subject are not checked; nothing else is needed to build.
+- **Pasting a picture** into the text reads the system clipboard through the engine on Windows, macOS and Linux (`arboard`; on Linux it uses the X11 clipboard, which XWayland provides). On Android, pictures come from the keyboard (Gboard's clipboard, GIFs, stickers) through the text field. iOS is not wired yet.
+
+## Sign-in with Microsoft and Google
+
+Microsoft 365 and Outlook.com no longer accept passwords from mail apps, and Gmail takes them only as app passwords. Piuma Mail signs in to them with OAuth 2.0 instead: Authorization Code with PKCE in the system browser (never a web view of the app's own), as RFC 8252 asks of native apps. The engine side is `core/src/oauth.rs`; the providers are data in `core/src/oauth_providers.json` (endpoints, scopes, servers, domains and MX hosts), so another provider is a new entry there, not new code.
+
+Every build needs its own registration with each provider, called a client. **None is in the repository, and none is needed to build**: without one, the app explains that it can't sign in to Microsoft, keeps app passwords for Gmail, and anyone can enter their own client ID under "Advanced: your own client ID" when adding the account.
+
+### Giving a build its clients
+
+The engine reads `PIUMA_OAUTH_CLIENTS` when it is compiled (`flutter build` and `flutter run` compile it through cargokit), as entries separated by `;` or new lines:
+
+```sh
+export PIUMA_OAUTH_CLIENTS="microsoft=<application id>;google=<desktop client id>;google.secret=<desktop client secret>;google.android=<android client id>"
+```
+
+- `<provider>`: the client ID on Windows, macOS and Linux (and on Android when there is no `.android` entry).
+- `<provider>.android`: a client of Android type, used on Android. Google needs it; Microsoft's one client works everywhere.
+- `<provider>.secret`: the client "secret" of a Google **desktop** client. It is not a secret: an installed app can't keep one, anyone can read it from the program, and Google documents it as such for installed apps (RFC 8252 section 8.5). PKCE is what protects the sign-in. Still, keep it out of the repository with the rest.
+- `<provider>.tenant`: Microsoft's tenant, when not `common` (`organizations` for work and school accounts only, or a tenant ID).
+
+The Android build (`app/android/app/build.gradle.kts`) reads the same variable to register Google's redirect scheme (the reversed Android client ID). Microsoft's redirect scheme on Android is always `mail.piuma.app://oauth`.
+
+Refresh tokens are kept only in the system keychain (the Android Keystore on Android), in the account's entry, never in the database or the logs, and never travel through the device-sync space: another device signs in on its own. Access tokens stay in memory and are renewed five minutes before they run out, or once after a server refuses one; a second refusal asks the person to sign in again. Removing an account gives Google its refresh token back (Microsoft has no revocation endpoint for public clients; its token runs out on its own).
+
+### Microsoft (Entra ID)
+
+No paid verification is needed. In the [Microsoft Entra admin center](https://entra.microsoft.com) › Identity › Applications › App registrations › **New registration**:
+
+1. **Name**: Piuma Mail. **Supported account types**: "Accounts in any organizational directory and personal Microsoft accounts" (multitenant and personal), so both Microsoft 365 and Outlook.com sign in.
+2. **Authentication** › Add a platform › **Mobile and desktop applications**, with these redirect URIs:
+   - `http://localhost` (the portal's own suggestion; keeps working if a later version uses it).
+   - `http://127.0.0.1`: what the desktop apps use. The port is chosen at random each time and Microsoft ignores the port of loopback addresses. If the portal refuses an `http` address, add it in the **Manifest** under `replyUrlsWithType` as `{ "url": "http://127.0.0.1", "type": "InstalledClient" }`.
+   - `mail.piuma.app://oauth`: Android.
+   - Turn on **Allow public client flows** (Advanced settings). There is no client secret for Microsoft.
+3. **API permissions** › Add a permission › APIs my organization uses › **Office 365 Exchange Online** (search "Office 365 Exchange Online"), Delegated: `IMAP.AccessAsUser.All` and `SMTP.Send`. `offline_access` (Microsoft Graph, delegated) gives the refresh token; add it too. The app asks for `https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access`.
+4. **Branding & properties**: the publisher domain and the links to the privacy statement and terms.
+5. **Publisher verification** (optional, free with a Microsoft AI Cloud Partner Program ID): without it the consent page shows the app as "unverified", and some organizations' policies stop people from consenting to unverified multitenant apps; their administrator can still consent for the whole organization. Microsoft 365 administrators can also turn off IMAP or SMTP AUTH per mailbox (SMTP AUTH is off by default in newer tenants): that is the organization's choice, not something the app can change.
+6. Copy the **Application (client) ID** into `microsoft=` above.
+
+### Google (Google Cloud)
+
+In the [Google Cloud console](https://console.cloud.google.com), in a project of its own:
+
+1. **Google Auth Platform** › Branding (the OAuth consent screen): app name, support email, logo, the home page, privacy policy and terms links, and the authorized domain they live on. **Audience**: External.
+2. **Data access** › Add scope: `https://mail.google.com/` (full mailbox access, needed for IMAP and SMTP). It is a **restricted** scope.
+3. **Clients** › Create client:
+   - **Desktop app**: for Windows, macOS and Linux. Copy its client ID and client secret into `google=` and `google.secret=`. Desktop clients take any loopback port on `http://127.0.0.1`; there is nothing to add.
+   - **Android**: package name `mail.piuma.piuma_mail` and the SHA-1 of the signing key (the beta key for beta builds, the store key for store builds). In its **Advanced settings**, enable **Custom URI scheme**: Google turned it off by default for new Android clients. The redirect is `com.googleusercontent.apps.<id>:/oauth2redirect`. Copy the client ID into `google.android=`.
+4. **Testing** (before verification): while the app's publishing status is "Testing", only the **test users** listed in Audience can sign in, at most **100**, and their refresh tokens expire after **7 days**, so they must sign in again every week.
+5. **Verification** for "In production": because `https://mail.google.com/` is restricted, Google requires the app verification (brand, domain ownership, a video of the sign-in and of how the data is used, a privacy policy that follows the Google API Services User Data Policy, including its Limited Use requirements) **and** a yearly **CASA security assessment** (Cloud Application Security Assessment) by an authorized assessor, whose cost falls on the publisher. Until it passes, Gmail users outside the test list sign in with an app password, which the app offers on its own.
+
+### Using your own client
+
+A fork, or a person whose organization requires its own app registration, follows the same steps, then either builds with `PIUMA_OAUTH_CLIENTS` or enters the client ID (and, for Microsoft, the tenant; for a Google desktop client, the secret) under "Advanced: your own client ID" in the add-account flow. The client is kept with the account in the keychain and used for every renewal.
+
+One exception: **Google on Android** takes only the client the build was made with. Google sends Android sign-ins back to a scheme made from the client ID (`com.googleusercontent.apps.<id>`), and the app can only answer the scheme registered in its manifest at build time, so the option is hidden there and the engine refuses another Google client on Android. A Microsoft client of one's own works on Android too: its redirect, `mail.piuma.app://oauth`, is the same for every client (add it to your registration).
+
+The sign-in answer is accepted only with this sign-in's `state` (compared in constant time); answers with another `state` are ignored and the app keeps waiting until the five minutes run out. When the provider names itself in the answer (`iss`, RFC 9207; Google does), it must be the `issuer` in `oauth_providers.json`.
+
+## Reports in a fork
+
+In-app reports go to the project's report relay ([`relay/`](relay/README.md)), which files them in
+the project's private feedback repository; the privacy notice ([PRIVACY.md](PRIVACY.md)) names who
+handles them. A fork that ships its own build points these at itself with environment variables
+read when the Rust engine is built (`flutter build`, `flutter run` and `cargo build` all pass them
+through; nothing is read at run time):
+
+| Variable | What | Project default |
+| --- | --- | --- |
+| `PIUMA_REPORT_RELAY` | The relay's address; empty turns the relay off, leaving "Send by email instead" | `https://piuma-report-relay.matte-maraffio.workers.dev` |
+| `PIUMA_FEEDBACK_ADDRESS` | Where "Send by email instead" writes; empty hides it | `piuma@matteomaraffio.com` |
+| `PIUMA_PRIVACY_CONTROLLER` | Who handles reports, as the privacy notice in the app says | `Matteo Maraffio, maintainer of Piuma Mail` |
+| `PIUMA_PRIVACY_CONTACT` | Where to ask about or erase a report | the feedback address |
+| `PIUMA_PRIVACY_URL` | The full privacy notice | this repository's `PRIVACY.md` |
+| `PIUMA_REPORT_FILES_DAYS` | Days the relay keeps attachments, as the notice says | `90` |
+
+For example `PIUMA_REPORT_RELAY=https://reports.example.org flutter build apk`. Run your own relay
+from `relay/` (its README has the setup, including the R2 bucket and its lifecycle rule), set
+`REPO` to your feedback repository, and adapt `PRIVACY.md`. Moving the project's own relay from
+`workers.dev` to a project domain is a maintainer step (DNS, a Workers route, then a build with the
+new address): see the relay's README, "A project domain".
 
 ## License and DCO sign-off
 

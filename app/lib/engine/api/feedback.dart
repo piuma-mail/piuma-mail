@@ -8,8 +8,8 @@ import 'engine.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `err`, `opened`, `refresh_personal`, `reports`, `to_core`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These functions are ignored because they are not marked as `pub`: `err`, `opened`, `refresh_people`, `refresh_personal`, `reports`, `to_core`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 /// "Shake to report": shaking the phone opens the report sheet. Off at
 /// first.
@@ -26,6 +26,24 @@ bool feedbackRelayEnabled() =>
 /// address.
 String feedbackAddress() =>
     RustLib.instance.api.crateApiFeedbackFeedbackAddress();
+
+FeedbackPrivacy feedbackPrivacy() =>
+    RustLib.instance.api.crateApiFeedbackFeedbackPrivacy();
+
+/// The app started (desktop only): a session that never ended is kept as
+/// a crash, to offer a report.
+void feedbackSessionStart() =>
+    RustLib.instance.api.crateApiFeedbackFeedbackSessionStart();
+
+/// The app is closing normally (desktop only).
+void feedbackSessionEnd() =>
+    RustLib.instance.api.crateApiFeedbackFeedbackSessionEnd();
+
+/// The running session's marker file, for the desktop shells to remove on
+/// the ways out that never reach Dart in time (signing out, shutting
+/// down, the tray's Quit). Empty before the engine opens.
+String feedbackSessionMarker() =>
+    RustLib.instance.api.crateApiFeedbackFeedbackSessionMarker();
 
 /// Adds a line to the recent log (cleaned before it is kept). `level` is
 /// "info", "warn" or "error".
@@ -93,6 +111,11 @@ void feedbackDelete({required String id}) =>
 /// The report as an email for the composer.
 FeedbackEmail feedbackEmail({required String id}) =>
     RustLib.instance.api.crateApiFeedbackFeedbackEmail(id: id);
+
+/// "Delete" on a report already sent: an email asking the maintainers to
+/// erase it too, to the privacy contact. No files go with it.
+FeedbackEmail feedbackErasureEmail({required String id}) =>
+    RustLib.instance.api.crateApiFeedbackFeedbackErasureEmail(id: id);
 
 /// The email went: the report is marked so and stops waiting.
 FeedbackReport feedbackMarkEmailed({required String id}) =>
@@ -237,6 +260,52 @@ class FeedbackPreview {
           runtimeType == other.runtimeType &&
           report == other.report &&
           log == other.log;
+}
+
+/// What the privacy notice says about who handles reports, as this build
+/// sets it (see CONTRIBUTING.md, "Reports in a fork").
+class FeedbackPrivacy {
+  /// Who decides what happens to reports.
+  final String controller;
+
+  /// Where to ask what is kept, or to have it erased.
+  final String contact;
+
+  /// The full notice.
+  final String url;
+
+  /// The relay's host; empty when this build has none.
+  final String relayHost;
+
+  /// Days attachments are kept.
+  final int filesDays;
+
+  const FeedbackPrivacy({
+    required this.controller,
+    required this.contact,
+    required this.url,
+    required this.relayHost,
+    required this.filesDays,
+  });
+
+  @override
+  int get hashCode =>
+      controller.hashCode ^
+      contact.hashCode ^
+      url.hashCode ^
+      relayHost.hashCode ^
+      filesDays.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FeedbackPrivacy &&
+          runtimeType == other.runtimeType &&
+          controller == other.controller &&
+          contact == other.contact &&
+          url == other.url &&
+          relayHost == other.relayHost &&
+          filesDays == other.filesDays;
 }
 
 /// A report in Your reports.

@@ -4,6 +4,11 @@
 //! password, and carries a long one-time code that stands in for the six
 //! digits: the linked device answers a request made with it on its own.
 //! No password ever travels in the code.
+//!
+//! Anyone can print a code, so what it says about servers is only a hint:
+//! a code that asks for a connection without encryption is no invite, the
+//! address's own known or published settings come first ([resolve]), and
+//! the app shows the server before the person types the password.
 
 use url::Url;
 
@@ -106,10 +111,12 @@ impl Invite {
         }
         let username = get("u").unwrap_or_else(|| email.clone());
         let kind = match get("j") {
-            Some(session_url) => AccountKind::Jmap {
+            // Only over HTTPS: the password goes there.
+            Some(session_url) if session_url.starts_with("https://") => AccountKind::Jmap {
                 session_url,
                 username,
             },
+            Some(_) => return None,
             None => AccountKind::Imap {
                 imap: parse_server(&get("i")?)?,
                 smtp: parse_server(&get("o")?)?,
@@ -133,11 +140,65 @@ fn parse_server(s: &str) -> Option<Server> {
     if host.is_empty() {
         return None;
     }
+    let security = Security::from_tag(security);
+    // The password would cross the network in the clear.
+    if security == Security::None {
+        return None;
+    }
     Some(Server {
         host,
         port,
-        security: Security::from_tag(security),
+        security,
     })
+}
+
+/// The servers to sign in to with a scanned invite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved {
+    pub kind: AccountKind,
+    /// They come from the code itself (the address has no known or
+    /// published settings): the person checks the host before signing in.
+    pub from_invite: bool,
+}
+
+impl Resolved {
+    /// The host the password goes to, to show before signing in.
+    pub fn host(&self) -> String {
+        match &self.kind {
+            AccountKind::Imap { imap, .. } => imap.host.clone(),
+            AccountKind::Jmap { session_url, .. } => Url::parse(session_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_else(|| session_url.clone()),
+        }
+    }
+}
+
+/// Where to sign in for `invite`: the address's known or published
+/// settings when there are any, the code's otherwise.
+pub async fn resolve(invite: &Invite) -> Resolved {
+    if let AccountKind::Imap { .. } = invite.kind {
+        let found = match crate::autoconfig::known(&invite.email) {
+            Some(s) => Some(s),
+            None => crate::autoconfig::discover(&invite.email).await,
+        };
+        if let Some(s) =
+            found.filter(|s| s.imap.security != Security::None && s.smtp.security != Security::None)
+        {
+            return Resolved {
+                kind: AccountKind::Imap {
+                    imap: s.imap,
+                    smtp: s.smtp,
+                    username: s.username,
+                },
+                from_invite: false,
+            };
+        }
+    }
+    Resolved {
+        kind: invite.kind.clone(),
+        from_invite: true,
+    }
 }
 
 /// The QR code of `text`, as rows of dark modules, `width` by `width`,
@@ -224,6 +285,38 @@ mod tests {
             Invite::from_link("piuma:pair?v=2&a=x%40y.z&j=h&c=123456789012"),
             None
         );
+    }
+
+    #[test]
+    fn a_code_that_would_send_the_password_in_the_clear_is_refused() {
+        let mut invite = Invite::new(&account(imap()));
+        if let AccountKind::Imap { imap, .. } = &mut invite.kind {
+            imap.security = Security::None;
+        }
+        assert_eq!(Invite::from_link(&invite.to_link()), None);
+        let mut invite = Invite::new(&account(imap()));
+        if let AccountKind::Imap { smtp, .. } = &mut invite.kind {
+            smtp.security = Security::None;
+        }
+        assert_eq!(Invite::from_link(&invite.to_link()), None);
+        let jmap = Invite::new(&account(AccountKind::Jmap {
+            session_url: "http://mail.example.org/jmap".into(),
+            username: String::new(),
+        }));
+        assert_eq!(Invite::from_link(&jmap.to_link()), None);
+    }
+
+    #[tokio::test]
+    async fn the_address_s_own_settings_come_before_the_code_s() {
+        // A code for a Gmail address that points somewhere else.
+        let invite = Invite {
+            email: "matteo@gmail.com".into(),
+            kind: imap(),
+            code: invite_code(),
+        };
+        let r = resolve(&invite).await;
+        assert!(!r.from_invite);
+        assert_eq!(r.host(), "imap.gmail.com");
     }
 
     #[test]

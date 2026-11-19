@@ -649,6 +649,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get openAnyway => 'Open anyway';
 
   @override
+  String get linkTargetTitle => 'Where this link goes';
+
+  @override
+  String get linkOpen => 'Open link';
+
+  @override
+  String get linkCopy => 'Copy link';
+
+  @override
+  String get linkCopied => 'Link copied';
+
+  @override
   String get dontOpen => 'Don’t open';
 
   @override
@@ -1581,6 +1593,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'The connection broke as it went. Check Sent before sending it again.';
 
   @override
+  String get outboxRedirectTitle => 'Redirect waiting';
+
+  @override
+  String get outboxRedirectLine => 'Redirected unchanged';
+
+  @override
+  String get outboxRedirectBody =>
+      'A redirect goes as the email came, so there’s nothing to edit. Cancel it, or try sending it again.';
+
+  @override
+  String get outboxCancelRedirect => 'Cancel redirect';
+
+  @override
+  String get outboxRedirectCancelled => 'Redirect cancelled';
+
+  @override
   String get dataProblemTitle => 'Piuma couldn’t open its data';
 
   @override
@@ -1680,6 +1708,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'A message goes from your account to $address to ask. What already came stays here.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'To: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Subject: $subject';
   }
 
   @override
@@ -2971,6 +3009,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Receipts stay out of the inbox and gather on the message they belong to. Receipt saves the signed proof as a file.';
 
   @override
+  String get pecUnverified => 'Unverified';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Says “$status”, but the provider’s signature couldn’t be checked: this isn’t proof.';
+  }
+
+  @override
   String get pickDateTime => 'Pick date & time';
 
   @override
@@ -3328,6 +3374,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server refused the password. Did it change?';
 
   @override
+  String get accountCertificateRefused =>
+      'The server’s certificate was refused. Sign in again to look at it.';
+
+  @override
   String get accountEditServers => 'Edit servers';
 
   @override
@@ -3351,6 +3401,108 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountRemoveConfirm => 'Remove';
+
+  @override
+  String accountRemoveBlocked(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count messages written here haven\'t gone yet. Send or delete them, then remove the account.',
+      one: '1 message written here hasn\'t gone yet. Send it or delete it, then remove the account.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get accountUnsentDraft => 'Draft kept on this device';
+
+  @override
+  String get accountUnsentSendNow => 'Send now';
+
+  @override
+  String get accountUnsentSaveNow => 'Save now';
+
+  @override
+  String get accountUnsentFailed =>
+      'That didn\'t work. Check the connection and try again, or delete it.';
+
+  @override
+  String get updatingMail => 'Updating your mail';
+
+  @override
+  String get updatingMailNote =>
+      'Piuma was updated and is getting your mail ready. It only happens once, and closing the app meanwhile loses nothing.';
+
+  @override
+  String get storageTitle => 'Storage';
+
+  @override
+  String get storageSubtitle =>
+      'The mail kept on this device. Everything stays on the server.';
+
+  @override
+  String storageTotal(String size) {
+    return '$size on this device';
+  }
+
+  @override
+  String storageAccountLine(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails',
+      one: '1 email',
+    );
+    return '$_temp0 · $size kept for reading offline';
+  }
+
+  @override
+  String get storageClear => 'Clear cached mail';
+
+  @override
+  String get storageClearing => 'Clearing…';
+
+  @override
+  String storageBackup(String size) {
+    return 'Of which $size is a copy kept from before the last update, removed at the next start.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Couldn\'t clear the cached mail. Try again.';
+
+  @override
+  String get storageNoRoom =>
+      'Cached mail cleared. There isn\'t enough free space to make the file smaller now: Piuma reuses the room.';
+
+  @override
+  String storageClearTitle(String name) {
+    return 'Clear the cached mail of $name?';
+  }
+
+  @override
+  String get storageClearNote =>
+      'Whole messages and pictures kept for reading offline are removed from this device. The lists stay, search still finds their words, the mail stays on the server, and a message is downloaded again when you open it. Old emails that a search found on the server go first, unless you starred or labelled them: searching again finds them there.';
+
+  @override
+  String get storageKeep => 'Keep whole messages for reading offline';
+
+  @override
+  String get storageKeepHint =>
+      'Older ones are downloaded again when you open them. Search still finds their words.';
+
+  @override
+  String get storageKeepMonth => '1 month';
+
+  @override
+  String get storageKeepMonths => '3 months';
+
+  @override
+  String get storageKeepYear => '1 year';
+
+  @override
+  String get storageKeepAlways => 'Always';
 
   @override
   String get accountServersTitle => 'Servers';
@@ -4122,6 +4274,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get pairPhraseWrong =>
       'These words don\'t open your space. Check them and try again.';
+
+  @override
+  String get pairPhraseOld =>
+      'This recovery phrase was replaced: your space got a newer one when a device was unlinked or turned sync off. Use the newest phrase, or a code from a linked device.';
+
+  @override
+  String get pairConflict =>
+      'Two of your devices removed each other, so this space can\'t be joined yet. Change the password of the mailbox that holds it, sync a device you still have, then try again.';
 
   @override
   String get pairContinue => 'Continue';
@@ -5554,7 +5714,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportLog => 'App log';
 
   @override
-  String get reportLogHint => 'No addresses or subjects';
+  String get reportLogHint =>
+      'Addresses and names removed. Check before sending';
 
   @override
   String get reportDevice => 'Device and app info';
@@ -5674,10 +5835,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get reportDelete => 'Delete';
 
   @override
+  String get reportPrivacyLine =>
+      'Becomes a private issue on GitHub for the maintainers.';
+
+  @override
+  String get reportPrivacyLink => 'How reports are handled';
+
+  @override
+  String get reportPrivacyTitle => 'Reports and privacy';
+
+  @override
+  String get reportPrivacyWhat =>
+      'What is sent: only what “See what\'s sent” shows. Your words, device and app details, and the screenshot, log and files you leave on. The log is scrubbed of addresses, names and subjects, but scrubbing can miss something: check it before sending.';
+
+  @override
+  String reportPrivacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days days',
+      one: '1 day',
+    );
+    return 'Where it goes: through the project\'s relay on Cloudflare ($relay) to a private issue on GitHub, in the United States. Attachments stay in Cloudflare storage in the EU and are deleted after $_temp0.';
+  }
+
+  @override
+  String reportPrivacyWhereEmail(String contact) {
+    return 'Where it goes: by email from your own account to $contact.';
+  }
+
+  @override
+  String reportPrivacyWho(String controller) {
+    return 'Who sees it: $controller, the people who help maintain Piuma Mail, and the tools they use to sort reports, AI assistants included. Reports are never sold or used for advertising.';
+  }
+
+  @override
+  String get reportPrivacyKeep =>
+      'How long: the issue is kept while it helps fix the problem. Deleting a report in Your reports removes only the copy on this device.';
+
+  @override
+  String reportPrivacyErase(String contact) {
+    return 'To see what is kept or have it erased, write to $contact with the report number.';
+  }
+
+  @override
+  String get reportPrivacyFull => 'Full privacy notice';
+
+  @override
+  String get reportDeleteTitle => 'Delete this report?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'This removes it from this device. The report you sent (#$number) stays with the maintainers: you can ask them to erase it too.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Delete from this device';
+
+  @override
+  String get reportDeleteAndErase => 'Also ask to erase it';
+
+  @override
   String get reportOptions => 'Report options';
 
   @override
-  String get crashLine => 'Piuma closed unexpectedly. Send a report?';
+  String get crashLine => 'Piuma ran into a problem last time. Send a report?';
 
   @override
   String get crashReport => 'Report';
@@ -6053,6 +6275,38 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String updateAvailableTitle(String version) {
+    return 'Available · $version';
+  }
+
+  @override
+  String get updateAvailableHint => 'Download it from its release page';
+
+  @override
+  String get updateDownload => 'Download';
+
+  @override
+  String updateAvailableLine(String version) {
+    return 'New version · $version';
+  }
+
+  @override
+  String get updatesAutomatic => 'Look for new versions';
+
+  @override
+  String get updatesAutomaticHint => 'Asks GitHub every few hours';
+
+  @override
+  String get updatesOnlyWhenAsked => 'Piuma looks only when you ask';
+
+  @override
+  String get updatesEarly => 'Early releases';
+
+  @override
+  String get updatesEarlyHint =>
+      'New versions a few days sooner, with more bugs';
+
+  @override
   String get swipeHintArchiveSnooze => 'Swipe right to archive, left to snooze';
 
   @override
@@ -6132,6 +6386,428 @@ class AppLocalizationsEn extends AppLocalizations {
       '## Mail, made light\n- Original email layouts with single-page scrolling and image controls\n- Formatting bar and full-editor switch in replies\n- Deliberate horizontal mail swipes\n- Sender warnings for brand impersonation and look-alike domains\n- Vault monthly CSV export with merchant VAT numbers';
 
   @override
+  String syncHeldTitle(String email) {
+    return '$email was removed on another device';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Here it still has $what. Remove it from this device too, or keep it on all your devices?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails waiting to be sent',
+      one: '1 email waiting to be sent',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count drafts not saved to the server yet',
+      one: '1 draft not saved to the server yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count changes not on the server yet',
+      one: '1 change not on the server yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'Its mailbox holds your sync space, so it stays here. Keep it, or move the space to another mailbox first.';
+
+  @override
+  String get syncHeldRemove => 'Remove here';
+
+  @override
+  String get syncHeldKeep => 'Keep it';
+
+  @override
+  String get syncRollbackTitle => 'An older copy of your space was left out';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Someone with access to $email, or a device you unlinked, may have put it back. Nothing was taken from it. If this happens again, change that mailbox’s password.';
+  }
+
+  @override
+  String get syncOutdatedTitle => 'Update Piuma to sync this device’s changes';
+
+  @override
+  String get syncOutdatedBody =>
+      'Another device saved your space with a newer version. This one still receives changes, and keeps its own until it is updated.';
+
+  @override
+  String get syncExposedTitle => 'Change these passwords';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name can’t read your space any more, but it still knows the passwords of these mailboxes. Change them with your provider to keep it out of your mail too.';
+  }
+
+  @override
+  String get syncExposedDone => 'Got it';
+
+  @override
+  String get syncPaused => 'Paused on this device';
+
+  @override
+  String get syncConfirmTitle => 'Confirm this device';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma now checks which devices belong to your space. Until you confirm this one with your recovery phrase, or with a code from a device that’s already updated, nothing syncs here.';
+
+  @override
+  String get syncConfirm => 'Confirm';
+
+  @override
+  String get syncConflictTitle => 'Two devices removed each other';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names each removed the other from your space, and one of them may not be yours any more. Sync stopped on this device: link it again from a device you still have.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Link again';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name removed this device';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'Sync stopped on this device; its accounts and mail stay here. If that wasn’t you, link it again from a device you still have. Otherwise, turn sync off here.';
+
+  @override
+  String get syncExposedNowTitle => 'Change these passwords now';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name still knows these passwords. Start with $email: until its password changes, $name can still reach the folder that holds your space.';
+  }
+
+  @override
+  String get syncExposedChanged => 'I changed them';
+
+  @override
+  String get syncExposedFirst => 'First: it holds your space';
+
+  @override
+  String get syncFailRollback =>
+      'Only an older copy of your space is in this mailbox. Nothing was changed.';
+
+  @override
+  String get syncFailOutdated =>
+      'Your space was saved by a newer version of Piuma. Update Piuma on this device.';
+
+  @override
+  String pairServer(String host) {
+    return 'Signs in at $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'This server comes from the code, not from your provider’s settings. Make sure it is your provider’s before you type the password.';
+
+  @override
+  String get pairServerChecking => 'Checking the server…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Your phone said this wasn\'t you.',
+      'tablet': 'Your tablet said this wasn\'t you.',
+      'other': 'Your computer said this wasn\'t you.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Open Piuma on your phone and enter the code.',
+      'tablet': 'Open Piuma on your tablet and enter the code.',
+      'other': 'Open Piuma on your computer and enter the code.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Waiting for your phone to confirm…',
+      'tablet': 'Waiting for your tablet to confirm…',
+      'other': 'Waiting for your computer to confirm…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Your phone will show “$title”',
+      'tablet': 'Your tablet will show “$title”',
+      'other': 'Your computer will show “$title”',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'For security, confirm from a device that\'s already paired: your phone, active $ago.',
+      'tablet':
+          'For security, confirm from a device that\'s already paired: your tablet, active $ago.',
+      'other':
+          'For security, confirm from a device that\'s already paired: your computer, active $ago.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Write down your new recovery phrase';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Your space got a new key and a new recovery phrase, because a device left or two were unlinked at the same time. The one you wrote down no longer works.';
+
+  @override
+  String get saveSearch => 'Save search';
+
+  @override
+  String get savedSearchEdit => 'Edit saved search';
+
+  @override
+  String get savedSearchName => 'Name';
+
+  @override
+  String get savedSearchSave => 'Save';
+
+  @override
+  String get savedSearchDelete => 'Delete search';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Only the saved search goes: the emails stay where they are.';
+
+  @override
+  String get savedSearchNameTaken => 'Another saved search has this name.';
+
+  @override
+  String get savedSearchesSection => 'SAVED SEARCHES';
+
+  @override
+  String get savedSearches => 'Saved searches';
+
+  @override
+  String get searchSuggestions => 'Suggestions';
+
+  @override
+  String get searchOnServer => 'Search on server';
+
+  @override
+  String get searchOnServerHeading => 'On the server';
+
+  @override
+  String get searchingServers => 'Searching on the server…';
+
+  @override
+  String get searchServerError => 'Couldn’t search on the server.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'This search can only look at this device.';
+
+  @override
+  String get searchServerNothing => 'Nothing more on the server.';
+
+  @override
+  String get searchFromServer => 'Found on the server';
+
+  @override
+  String get searchServerPartial =>
+      'Some folders couldn’t be searched in full.';
+
+  @override
+  String get searchServerMaybe =>
+      'Older emails, and text this device hasn’t kept, may still be on the server.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count accounts’ servers search only plain letters (A–Z), so they weren’t asked for this text.',
+      one: '1 account’s server searches only plain letters (A–Z), so it wasn’t asked for this text.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Searched only in part: $accounts. What was found before stopping is here.';
+  }
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more emails found on the server, now on this device.',
+      one: '1 more email found on the server, now on this device.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count accounts’ servers couldn’t be reached.',
+      one: '1 account’s server couldn’t be reached.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Rename or delete $name';
+  }
+
+  @override
+  String get errorNoKeyring =>
+      'Piuma keeps passwords in the system keyring, and none is running. Install and start one, such as GNOME Keyring or KWallet, then try again. Passwords are never saved in a plain file.';
+
+  @override
+  String get errorCertificate => 'The server’s certificate can’t be trusted.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'This copy of Piuma Mail can’t sign in to this provider. Enter your own client ID under Advanced, or use an app password where the provider allows one.';
+
+  @override
+  String get errorSignInCancelled =>
+      'The sign-in page was closed before it finished. Try again.';
+
+  @override
+  String get errorSignInDenied =>
+      'The provider didn’t allow the sign-in. Try again, or check the client ID under Advanced.';
+
+  @override
+  String get errorOAuthServers =>
+      'This account signs in with its provider’s page, so it keeps the provider’s own servers, over a secure connection.';
+
+  @override
+  String get errorPort => 'A port is a number from 1 to 65535.';
+
+  @override
+  String get certUntrusted =>
+      'No authority your system trusts vouches for this certificate. Servers that make their own certificate look like this.';
+
+  @override
+  String get certExpired => 'This certificate is expired, or not valid yet.';
+
+  @override
+  String get certNameMismatch =>
+      'This certificate was made for another server name.';
+
+  @override
+  String get certChanged =>
+      'This isn’t the certificate you trusted for this server before. It may have been renewed, or someone may be listening in between. Trust it only if you know why it changed.';
+
+  @override
+  String get certInvalid =>
+      'This certificate isn’t valid, and trusting it wouldn’t make the connection safe.';
+
+  @override
+  String get certProvider =>
+      'This is a big provider’s server, and an authority always vouches for its certificates. Someone may be in the way of the connection: try another network, and check this device’s date and time.';
+
+  @override
+  String get certIssuedTo => 'Issued to';
+
+  @override
+  String get certIssuedBy => 'Issued by';
+
+  @override
+  String get certValidUntil => 'Valid until';
+
+  @override
+  String get certFingerprint => 'SHA-256 fingerprint';
+
+  @override
+  String get certTrust => 'Trust this certificate';
+
+  @override
+  String get certTrustNew => 'Trust the new certificate';
+
+  @override
+  String get certCopyFingerprint => 'Copy fingerprint';
+
+  @override
+  String get certTrustHint =>
+      'Only for this account and this exact certificate. Compare the fingerprint with the one your mail provider or administrator gives you first.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Sign in with $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail opens $provider’s page in your browser. Sign in there, then come back here: your password stays with $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'Waiting for the browser…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft no longer lets mail apps sign in with a password, and this copy of Piuma Mail has no Microsoft sign-in set up. Use an official build, or enter your own app’s client ID under Advanced.';
+
+  @override
+  String get oauthUseAppPassword => 'Use an app password instead';
+
+  @override
+  String get oauthAdvanced => 'Advanced: your own client ID';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'For your own app registration with $provider. Leave it empty to use this build’s.';
+  }
+
+  @override
+  String get oauthClientId => 'Client ID';
+
+  @override
+  String get oauthTenant => 'Tenant (optional)';
+
+  @override
+  String get oauthClientSecret => 'Client secret (Google desktop apps only)';
+
+  @override
   String get listFailed => 'Couldn’t show these emails.';
 
   @override
@@ -6149,4 +6825,836 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get composeOptions => 'Options';
+
+  @override
+  String get composePlainText => 'Plain text';
+
+  @override
+  String get composeHighPriority => 'High priority';
+
+  @override
+  String get composeReadReceipt => 'Ask for a read receipt';
+
+  @override
+  String get composePlainTitle => 'Switch to plain text?';
+
+  @override
+  String get composePlainBody =>
+      'Plain text has no bold, italic, links or pictures. Links keep their address in brackets and pictures are attached as files.';
+
+  @override
+  String get composePlainConfirm => 'Switch to plain text';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Forgot the attachment?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Your message mentions an attachment, but nothing is attached.';
+
+  @override
+  String get sendNoSubjectTitle => 'Send without a subject?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'A subject helps people find your message later.';
+
+  @override
+  String get sendAddSubject => 'Add a subject';
+
+  @override
+  String get sendAnyway => 'Send anyway';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name is too big: attachments can be up to $size in all.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name is too big to go in the text.';
+  }
+
+  @override
+  String get pastedImage => 'The pasted picture';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count addresses',
+      one: '1 address',
+      zero: 'No addresses',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Group';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender asked to be told when you read this.';
+  }
+
+  @override
+  String get readReceiptSend => 'Send receipt';
+
+  @override
+  String get readReceiptDontSend => 'Don’t send';
+
+  @override
+  String get readReceiptNever => 'Never for this sender';
+
+  @override
+  String get readReceiptSent => 'Receipt sent';
+
+  @override
+  String get readReceiptFailed =>
+      'The receipt couldn’t be sent. Try again later.';
+
+  @override
+  String get highPriority => 'High priority';
+
+  @override
+  String get repliesTitle => 'Replies';
+
+  @override
+  String get replyBelowQuote => 'Reply below the quote';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Off, replies start above the quoted message.';
+
+  @override
+  String get quoteSelection => 'Quote only the selected words';
+
+  @override
+  String get quoteSelectionHint =>
+      'With words selected in a message, Reply quotes just them.';
+
+  @override
+  String get plainTextTitle => 'New messages in plain text';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · new messages start as plain text';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Contact groups';
+
+  @override
+  String get contactGroupsHint =>
+      'Type a group’s name in To, Cc or Bcc to add everyone in it.';
+
+  @override
+  String get contactGroupNew => 'New group';
+
+  @override
+  String get contactGroupUntitled => 'Untitled group';
+
+  @override
+  String get contactGroupName => 'Group name';
+
+  @override
+  String get contactGroupAddresses => 'Addresses';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'One per line, or separated by commas.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Delete $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Insert picture';
+
+  @override
+  String get composePastePicture => 'Paste picture';
+
+  @override
+  String get noPictureToPaste => 'There’s no picture on the clipboard.';
+
+  @override
+  String get composeReadReceiptAsked => 'Read receipt asked for';
+
+  @override
+  String get readReceiptQueued =>
+      'The receipt is waiting in the Outbox and goes as soon as it can.';
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'On Android this app can only sign in to $provider with the client it was built with. Use an app password, or a build made with your client.';
+  }
+
+  @override
+  String get actionReplyAll => 'Reply all';
+
+  @override
+  String get actionReplyList => 'Reply to list';
+
+  @override
+  String get actionForwardAttachment => 'Forward as attachment';
+
+  @override
+  String get actionRedirect => 'Redirect';
+
+  @override
+  String get actionEditAsNew => 'Edit as new';
+
+  @override
+  String get actionViewSource => 'View source';
+
+  @override
+  String get actionSaveEml => 'Save as .eml';
+
+  @override
+  String get muteConversation => 'Mute conversation';
+
+  @override
+  String get unmuteConversation => 'Unmute conversation';
+
+  @override
+  String get conversationMuted =>
+      'Conversation muted: new messages arrive read, without a notification';
+
+  @override
+  String get conversationUnmuted => 'Conversation unmuted';
+
+  @override
+  String get conversationMutedLine => 'Muted';
+
+  @override
+  String forwardFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: 'the file',
+    );
+    return 'Getting $_temp0';
+  }
+
+  @override
+  String forwardFilesDone(int done, int total) {
+    return '$done of $total';
+  }
+
+  @override
+  String forwardFilesFailed(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'These files couldn’t be attached:',
+      one: 'This file couldn’t be attached:',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String forwardWithoutFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Go on without them',
+      one: 'Go on without it',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gettingEmail => 'Getting the email';
+
+  @override
+  String get messageFetchFailed =>
+      'Couldn’t get the email from the server. Check the connection and try again.';
+
+  @override
+  String get redirectTitle => 'Redirect this email';
+
+  @override
+  String redirectBody(String sender) {
+    return 'It goes unchanged, as it came from $sender: replies go to $sender, not to you.';
+  }
+
+  @override
+  String get redirectTo => 'To';
+
+  @override
+  String get redirectHint => 'Addresses, separated by commas';
+
+  @override
+  String redirectDone(String to) {
+    return 'Redirected to $to';
+  }
+
+  @override
+  String get redirectFailed =>
+      'Couldn’t redirect the email. Check the addresses and the connection.';
+
+  @override
+  String get sourceTitle => 'Source of the email';
+
+  @override
+  String get sourceHeaders => 'Headers';
+
+  @override
+  String get sourceRaw => 'Raw';
+
+  @override
+  String get sourceCopy => 'Copy';
+
+  @override
+  String emlSaved(String name) {
+    return 'Saved as $name';
+  }
+
+  @override
+  String get emlNotSaved => 'Couldn’t save the email';
+
+  @override
+  String recipientsMore(String names, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return '$names and $_temp0';
+  }
+
+  @override
+  String get recipientYou => 'you';
+
+  @override
+  String get recipientsBcc => 'you were Bcc’d';
+
+  @override
+  String get recipientsTo => 'To';
+
+  @override
+  String get recipientsCc => 'Cc';
+
+  @override
+  String get recipientsBccLabel => 'Bcc';
+
+  @override
+  String get showRecipients => 'Show who received it';
+
+  @override
+  String get hideRecipients => 'Hide who received it';
+
+  @override
+  String replyAllNames(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return '$name and $_temp0';
+  }
+
+  @override
+  String replyAllOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'and $count others',
+      one: 'and 1 other',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutNextEmail => 'Next email';
+
+  @override
+  String get shortcutPreviousEmail => 'Previous email';
+
+  @override
+  String get zoomIn => 'Zoom in';
+
+  @override
+  String get zoomOut => 'Zoom out';
+
+  @override
+  String get zoomReset => 'Actual size';
+
+  @override
+  String zoomLevel(int percent) {
+    return 'Text size $percent%';
+  }
+
+  @override
+  String get textSize => 'Text size';
+
+  @override
+  String sourceCut(int size) {
+    return 'Showing the first $size KB. Save as .eml for the whole email.';
+  }
+
+  @override
+  String get deviceHeading => 'This device';
+
+  @override
+  String get defaultMailTitle => 'Make Piuma your default mail app';
+
+  @override
+  String get defaultMailHint =>
+      'Email addresses you click in other apps and on websites open a new message here.';
+
+  @override
+  String get defaultMailIsTitle => 'Piuma is your default mail app';
+
+  @override
+  String get defaultMailIs =>
+      'Email addresses you click in other apps and on websites open here.';
+
+  @override
+  String get defaultMailButton => 'Make default';
+
+  @override
+  String get defaultMailOtherAndroid =>
+      'Another app opens email addresses now. Clear its defaults in its App info; next time Android asks, pick Piuma and Always.';
+
+  @override
+  String get defaultMailAskAndroid =>
+      'Android asks which app to use when you tap an email address: pick Piuma, then Always.';
+
+  @override
+  String get defaultMailAppInfo => 'Open App info';
+
+  @override
+  String get keepRunningTitle => 'Keep running in the background when closed';
+
+  @override
+  String get keepRunningHint =>
+      'New mail still notifies you. Piuma stays in the tray; quit it from there.';
+
+  @override
+  String get startAtLoginTitle => 'Start when you sign in';
+
+  @override
+  String get startAtLoginHint =>
+      'Piuma starts in the tray, ready for new mail.';
+
+  @override
+  String get trayOpen => 'Open Piuma Mail';
+
+  @override
+  String get trayQuit => 'Quit Piuma Mail';
+
+  @override
+  String trayTooltip(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail: $count unread',
+      one: 'Piuma Mail: 1 unread',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get arrivalWhichAccount => 'Write from which account?';
+
+  @override
+  String get arrivalWaits => 'The new message opens when you close this one.';
+
+  @override
+  String arrivalFilesLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files were too large to attach.',
+      one: '1 file was too large to attach.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emlFromFile => 'Opened from a file';
+
+  @override
+  String get emlImport => 'Import to a folder';
+
+  @override
+  String get emlImportWhichAccount => 'Import into which account?';
+
+  @override
+  String emlImportIn(String account) {
+    return 'Import to a folder in $account';
+  }
+
+  @override
+  String emlImported(String folder) {
+    return 'Imported to $folder';
+  }
+
+  @override
+  String get emlNotImported =>
+      'Couldn’t import it. Check the connection and try again.';
+
+  @override
+  String get emlNotMail => 'This file isn’t an email Piuma can read.';
+
+  @override
+  String get emlTooLarge => 'This email file is too large to open.';
+
+  @override
+  String get arrivalNetworkFile =>
+      'Files in network folders don’t open in Piuma. Copy them to this device first.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count images are off, so no one can see when you open this file.',
+      one: '1 image is off, so no one can see when you open this file.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get newMailClosedLead => 'With Piuma closed';
+
+  @override
+  String get star => 'Star';
+
+  @override
+  String get unstar => 'Remove star';
+
+  @override
+  String get folderStarred => 'Starred';
+
+  @override
+  String get messageStarred => 'Starred';
+
+  @override
+  String starredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations starred',
+      one: 'Starred',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String unstarredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Stars removed from $count conversations',
+      one: 'Star removed',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get starFailed => 'Couldn’t change the star. Try again in a moment.';
+
+  @override
+  String get trashFolder => 'Trash';
+
+  @override
+  String get deleteForever => 'Delete for good';
+
+  @override
+  String deleteForeverTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Delete $count emails for good?',
+      one: 'Delete this email for good?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deleteForeverNote =>
+      'They can’t be brought back, here or on the server.';
+
+  @override
+  String deletedForeverMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails deleted for good',
+      one: 'Deleted for good',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyTrash => 'Empty Trash';
+
+  @override
+  String get emptySpam => 'Empty spam';
+
+  @override
+  String emptyTitle(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Delete all $count emails in $folder for good?',
+      one: 'Delete the email in $folder for good?',
+      zero: '$folder is empty',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyConfirm => 'Empty';
+
+  @override
+  String get emptyFailed => 'Couldn’t empty it. Try again when you’re online.';
+
+  @override
+  String get copyTo => 'Copy to…';
+
+  @override
+  String copyToIn(String name) {
+    return 'Copy to folder in $name';
+  }
+
+  @override
+  String copiedMany(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations copied to $folder',
+      one: 'Copied to $folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderActions(String name) {
+    return 'More for “$name”';
+  }
+
+  @override
+  String get folderRename => 'Rename';
+
+  @override
+  String folderRenameTitle(String name) {
+    return 'Rename “$name”';
+  }
+
+  @override
+  String get folderNewName => 'New name';
+
+  @override
+  String get folderHide => 'Hide from lists';
+
+  @override
+  String get folderShow => 'Show in lists';
+
+  @override
+  String get folderHidden => 'Hidden';
+
+  @override
+  String get folderDelete => 'Delete folder';
+
+  @override
+  String folderDeleteTitle(String name) {
+    return 'Delete “$name”?';
+  }
+
+  @override
+  String folderDeleteEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Its $count emails go to Trash.',
+      one: 'Its email goes to Trash.',
+      zero: 'It holds no emails.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderDeleteSubfolders(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Its $count subfolders go with it.',
+      one: 'Its subfolder goes with it.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get folderDeleteEnd =>
+      'The folder can’t be brought back; its emails can, from Trash.';
+
+  @override
+  String get folderChangeFailed => 'Couldn’t change the folder.';
+
+  @override
+  String hiddenFoldersShow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Show $count hidden folders',
+      one: 'Show 1 hidden folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get hiddenFoldersHide => 'Hide hidden folders';
+
+  @override
+  String folderExpand(String name) {
+    return 'Show the folders in $name';
+  }
+
+  @override
+  String folderCollapse(String name) {
+    return 'Hide the folders in $name';
+  }
+
+  @override
+  String get specialFolders => 'Special folders';
+
+  @override
+  String get specialFoldersNote =>
+      'Piuma finds them from your server’s marks and their names. If one is wrong, pick the right folder.';
+
+  @override
+  String specialFoldersOf(String name) {
+    return 'Special folders of $name';
+  }
+
+  @override
+  String get specialAutomatic => 'As the server says';
+
+  @override
+  String get specialNone => 'None';
+
+  @override
+  String get specialChosen => 'Chosen by you';
+
+  @override
+  String get listsHeading => 'Lists';
+
+  @override
+  String get listOrder => 'Sort';
+
+  @override
+  String get orderNewest => 'Newest first';
+
+  @override
+  String get orderOldest => 'Oldest first';
+
+  @override
+  String get orderSender => 'By sender';
+
+  @override
+  String get listThreads => 'Group into conversations';
+
+  @override
+  String get listThreadsNote => 'Off, every email is a row of its own.';
+
+  @override
+  String get swipeRight => 'Swipe right';
+
+  @override
+  String get swipeLeft => 'Swipe left';
+
+  @override
+  String get swipeRead => 'Read or unread';
+
+  @override
+  String get swipeStar => 'Star';
+
+  @override
+  String get swipeMove => 'Move to…';
+
+  @override
+  String get swipeNothing => 'Nothing';
+
+  @override
+  String get quotaLabel => 'Storage';
+
+  @override
+  String quotaUsed(String used, String limit) {
+    return '$used of $limit';
+  }
+
+  @override
+  String get quotaNearlyFull =>
+      'Nearly full. Delete or archive some mail, or new mail may not arrive.';
+
+  @override
+  String draggedEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count emails',
+      one: '1 email',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutStar => 'Star or remove the star';
+
+  @override
+  String badgeTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail ($count)',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String badgeUnread(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count unread emails',
+      one: '1 unread email',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get moreShort => 'More';
+
+  @override
+  String get swipeNote =>
+      'Swipes work on phones and tablets. On a computer the same actions are in the toolbar, the menus and the keyboard shortcuts.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” can’t be deleted: $inside is inside it, and would go with it.';
+  }
+
+  @override
+  String get specialRefused =>
+      'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.';
+
+  @override
+  String get fileTypeImages => 'Images';
+
+  @override
+  String get fileTypeEmail => 'Email message';
 }

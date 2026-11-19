@@ -3,16 +3,23 @@
 //! All the hard work lives here: protocols (IMAP, SMTP, JMAP), offline-first
 //! sync, local database and search. The Flutter app only draws.
 
+pub mod auth;
 pub mod autoconfig;
 pub mod automation;
 pub mod away;
 pub mod backoff;
 pub mod brief;
 pub mod calendar;
+pub mod cert;
+pub mod compose_image;
+pub mod contact_groups;
 pub mod dates;
+pub mod eml;
+pub mod envelope;
 pub mod features;
 pub mod feedback;
 pub mod files;
+pub mod flowed;
 pub mod groups;
 pub mod guard;
 #[cfg(test)]
@@ -24,10 +31,12 @@ pub mod invite;
 pub mod jmap;
 pub mod label;
 pub mod language;
+pub mod mdn;
 pub mod model;
 pub mod network;
 pub mod newsletter;
 pub mod notify;
+pub mod oauth;
 pub mod original;
 pub mod outbox;
 pub mod pair_qr;
@@ -35,7 +44,9 @@ pub mod pec;
 pub mod pending;
 pub mod pictures;
 pub mod preview;
+pub mod private_files;
 pub mod reading;
+pub mod release_feed;
 pub mod remote;
 pub mod rich;
 pub mod rules;
@@ -43,9 +54,13 @@ pub mod search;
 pub mod sender_auth;
 pub mod sieve;
 pub mod signature;
+pub mod smime;
 pub mod smtp;
 pub mod space;
+pub mod space_log;
+pub mod space_merge;
 pub mod space_sync;
+pub mod space_trust;
 pub mod store;
 pub mod tls;
 mod tokens_g;
@@ -53,15 +68,16 @@ pub mod translate;
 pub mod vault;
 mod watchdog;
 
+pub use auth::Login;
 pub use model::{
-    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, MessageSummary, Section,
-    Security, Server,
+    Account, AccountId, AccountKind, Flags, Folder, ListFilter, ListInfo, ListOrder,
+    MessageSummary, Section, Security, Server,
 };
 pub use reading::Readable;
 pub use search::Query;
 pub use store::{
     AccountFolder, Attachment, Body, Conversation, Found, Hit, MailboxState, MessageTemplate,
-    Person, PrivacyCounts, SenderAddress, Store, StoreError, TrustedSender,
+    Person, PrivacyCounts, Restored, SavedSearch, SenderAddress, Store, StoreError, TrustedSender,
 };
 
 /// Engine version, shown in the app's settings.

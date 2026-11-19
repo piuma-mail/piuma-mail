@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'design/theme.dart';
+import 'inbox/mailbox_actions.dart';
 import 'inbox/reader.dart';
 import 'mail/mail_source.dart';
 
@@ -111,7 +112,7 @@ class ReaderWindow extends StatelessWidget {
   final MailRow? row;
   final DateTime Function() now;
 
-  /// After Archive or Delete, so the inbox shows it.
+  /// After Archive or Delete (or Delete for good), so the inbox shows it.
   final VoidCallback? onChanged;
   final ValueChanged<MailRow>? onReply;
 
@@ -121,6 +122,22 @@ class ReaderWindow extends StatelessWidget {
   Future<void> _apply(MailRow row, MessageAction action) async {
     try {
       await source.apply([row], action);
+    } catch (_) {
+      return;
+    }
+    onChanged?.call();
+    onDone?.call();
+  }
+
+  /// Delete: to Trash, or, in Trash and spam, for good once confirmed,
+  /// as everywhere else in the app. Cancelled, the window stays.
+  Future<void> _delete(BuildContext context, MailRow row) async {
+    if (!source.deletesForGood(row.accountId, row.mailbox)) {
+      return _apply(row, MessageAction.delete);
+    }
+    if (!await confirmDeleteForever(context, count: 1)) return;
+    try {
+      await source.deleteForever([row]);
     } catch (_) {
       return;
     }
@@ -143,7 +160,7 @@ class ReaderWindow extends StatelessWidget {
         onArchive: archived || row?.folder == MailFolder.drafts
             ? null
             : (row) => _apply(row, MessageAction.archive),
-        onDelete: (row) => _apply(row, MessageAction.delete),
+        onDelete: (row) => _delete(context, row),
         onReply: sent || onReply == null
             ? null
             : (row, _, [text = '']) => onReply!(row),

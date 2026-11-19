@@ -17,6 +17,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [android_log-sys](https://github.com/rust-mobile/android_log-sys-rs) | 0.3.2 | MIT OR Apache-2.0 |
 | [android_logger](https://github.com/rust-mobile/android_logger-rs) | 0.15.1 | MIT OR Apache-2.0 |
 | [anyhow](https://github.com/dtolnay/anyhow) | 1.0.104 | MIT OR Apache-2.0 |
+| [arboard](https://github.com/1Password/arboard) | 3.7.0 | MIT OR Apache-2.0 |
 | [arrayref](https://github.com/droundy/arrayref) | 0.3.9 | BSD-2-Clause |
 | [arrayvec](https://github.com/bluss/arrayvec) | 0.7.8 | MIT OR Apache-2.0 |
 | [async-broadcast](https://github.com/smol-rs/async-broadcast) | 0.7.2 | MIT OR Apache-2.0 |
@@ -59,6 +60,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [chrono](https://github.com/chronotope/chrono) | 0.4.45 | MIT OR Apache-2.0 |
 | [cipher](https://github.com/RustCrypto/traits) | 0.4.4 | MIT OR Apache-2.0 |
 | [cipher](https://github.com/RustCrypto/traits) | 0.5.2 | MIT OR Apache-2.0 |
+| [clipboard-win](https://github.com/DoumanAsh/clipboard-win) | 5.4.3 | BSL-1.0 |
 | [cmov](https://github.com/RustCrypto/utils) | 0.5.4 | Apache-2.0 OR MIT |
 | [color](https://github.com/linebender/color) | 0.3.3 | Apache-2.0 OR MIT |
 | [color_quant](https://github.com/image-rs/color_quant.git) | 1.1.0 | MIT |
@@ -101,9 +103,12 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [digest](https://github.com/RustCrypto/traits) | 0.11.3 | MIT OR Apache-2.0 |
 | [dirs](https://github.com/soc/dirs-rs) | 6.0.0 | MIT OR Apache-2.0 |
 | [dirs-sys](https://github.com/dirs-dev/dirs-sys-rs) | 0.5.0 | MIT OR Apache-2.0 |
+| [dispatch2](https://github.com/madsmtm/objc2) | 0.3.1 | Zlib OR Apache-2.0 OR MIT |
 | [displaydoc](https://github.com/yaahc/displaydoc) | 0.2.7 | MIT OR Apache-2.0 |
 | [dtoa](https://github.com/dtolnay/dtoa) | 1.0.11 | MIT OR Apache-2.0 |
 | [dtoa-short](https://github.com/upsuper/dtoa-short) | 0.3.5 | MPL-2.0 |
+| [ed25519](https://github.com/RustCrypto/signatures) | 3.0.0 | Apache-2.0 OR MIT |
+| [ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek) | 3.0.0 | BSD-3-Clause |
 | [ego-tree](https://github.com/rust-scraper/ego-tree) | 0.11.0 | ISC |
 | [either](https://github.com/rayon-rs/either) | 1.19.0 | MIT OR Apache-2.0 |
 | [email-encoding](https://github.com/lettre/email-encoding) | 0.4.3 | MIT OR Apache-2.0 |
@@ -115,6 +120,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [env_filter](https://github.com/rust-cli/env_logger) | 0.1.4 | MIT OR Apache-2.0 |
 | [equivalent](https://github.com/indexmap-rs/equivalent) | 1.0.3 | Apache-2.0 OR MIT |
 | [errno](https://github.com/lambda-fairy/rust-errno) | 0.3.14 | MIT OR Apache-2.0 |
+| [error-code](https://github.com/DoumanAsh/error-code) | 3.4.0 | BSL-1.0 |
 | [euclid](https://github.com/servo/euclid) | 0.22.14 | MIT OR Apache-2.0 |
 | [event-listener](https://github.com/smol-rs/event-listener) | 2.5.3 | Apache-2.0 OR MIT |
 | [event-listener](https://github.com/smol-rs/event-listener) | 5.4.2 | Apache-2.0 OR MIT |
@@ -151,6 +157,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [g2p](https://github.com/WanzenBug/g2p) | 1.2.2 | MIT/Apache-2.0 |
 | [g2poly](https://github.com/WanzenBug/g2p) | 1.2.2 | MIT/Apache-2.0 |
 | [generic-array](https://github.com/fizyk20/generic-array.git) | 0.14.7 | MIT |
+| [gethostname](https://codeberg.org/swsnr/gethostname.rs.git) | 1.1.0 | Apache-2.0 |
 | [getopts](https://github.com/rust-lang/getopts) | 0.2.24 | MIT OR Apache-2.0 |
 | [getrandom](https://github.com/rust-random/getrandom) | 0.2.17 | MIT OR Apache-2.0 |
 | [getrandom](https://github.com/rust-random/getrandom) | 0.4.3 | MIT OR Apache-2.0 |
@@ -260,6 +267,13 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [num-rational](https://github.com/rust-num/num-rational) | 0.4.2 | MIT OR Apache-2.0 |
 | [num-traits](https://github.com/rust-num/num-traits) | 0.2.19 | MIT OR Apache-2.0 |
 | [num_cpus](https://github.com/seanmonstar/num_cpus) | 1.17.0 | MIT OR Apache-2.0 |
+| [objc2](https://github.com/madsmtm/objc2) | 0.6.5 | MIT |
+| [objc2-app-kit](https://github.com/madsmtm/objc2) | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| [objc2-core-foundation](https://github.com/madsmtm/objc2) | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| [objc2-core-graphics](https://github.com/madsmtm/objc2) | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
+| [objc2-encode](https://github.com/madsmtm/objc2) | 4.1.0 | MIT |
+| [objc2-foundation](https://github.com/madsmtm/objc2) | 0.3.2 | MIT |
+| [objc2-io-surface](https://github.com/madsmtm/objc2) | 0.3.2 | Zlib OR Apache-2.0 OR MIT |
 | [object](https://github.com/gimli-rs/object) | 0.37.3 | Apache-2.0 OR MIT |
 | [once_cell](https://github.com/matklad/once_cell) | 1.21.4 | MIT OR Apache-2.0 |
 | [openssl-probe](https://github.com/rustls/openssl-probe) | 0.2.1 | MIT OR Apache-2.0 |
@@ -358,6 +372,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [sha2](https://github.com/RustCrypto/hashes) | 0.10.9 | MIT OR Apache-2.0 |
 | [sha2](https://github.com/RustCrypto/hashes) | 0.11.1 | MIT OR Apache-2.0 |
 | [signal-hook-registry](https://github.com/vorner/signal-hook) | 1.4.8 | MIT OR Apache-2.0 |
+| [signature](https://github.com/RustCrypto/traits) | 3.0.0 | Apache-2.0 OR MIT |
 | [simd-adler32](https://github.com/mcountryman/simd-adler32) | 0.3.10 | MIT |
 | [simd_cesu8](https://github.com/seancroach/simd_cesu8) | 1.2.0 | Apache-2.0 OR MIT |
 | [simdutf8](https://github.com/rusticstuff/simdutf8) | 0.1.5 | MIT OR Apache-2.0 |
@@ -485,6 +500,8 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [windows_x86_64_msvc](https://github.com/microsoft/windows-rs) | 0.53.1 | MIT OR Apache-2.0 |
 | [winnow](https://github.com/winnow-rs/winnow) | 1.0.4 | MIT |
 | [writeable](https://github.com/unicode-org/icu4x) | 0.6.4 | Unicode-3.0 |
+| [x11rb](https://github.com/psychon/x11rb) | 0.13.2 | MIT OR Apache-2.0 |
+| [x11rb-protocol](https://github.com/psychon/x11rb) | 0.13.2 | MIT OR Apache-2.0 |
 | [x25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) | 3.0.0 | BSD-3-Clause |
 | [xdg-home](https://github.com/zeenix/xdg-home) | 1.3.0 | MIT |
 | [xml](https://github.com/kornelski/xml-rs) | 1.4.0 | MIT |

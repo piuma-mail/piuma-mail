@@ -9,6 +9,7 @@ import '../inbox/message_list.dart' show initials;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/message_row.dart';
+import 'saved_searches.dart';
 
 /// The kinds of mail "Search by type" offers, as the operators they add.
 const searchTypes = [
@@ -31,7 +32,15 @@ class SearchStartView extends StatelessWidget {
     required this.onRecent,
     required this.onForget,
     required this.onClear,
+    this.saved = const [],
+    this.onSaved,
+    this.onEditSaved,
   });
+
+  /// Searches kept under a name, above the recent ones.
+  final List<SavedSearch> saved;
+  final ValueChanged<SavedSearch>? onSaved;
+  final ValueChanged<SavedSearch>? onEditSaved;
 
   final SearchStart start;
   final List<MailAccount> accounts;
@@ -100,6 +109,18 @@ class SearchStartView extends StatelessWidget {
               ],
             ),
           ),
+        ],
+        if (saved.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 2),
+            child: title(l.savedSearches),
+          ),
+          for (final s in saved)
+            SavedSearchRow(
+              search: s,
+              onTap: () => onSaved?.call(s),
+              onEdit: () => onEditSaved?.call(s),
+            ),
         ],
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 22, 8, 2),

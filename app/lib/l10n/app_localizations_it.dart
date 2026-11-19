@@ -651,6 +651,18 @@ class AppLocalizationsIt extends AppLocalizations {
   String get openAnyway => 'Apri comunque';
 
   @override
+  String get linkTargetTitle => 'Dove porta questo link';
+
+  @override
+  String get linkOpen => 'Apri il link';
+
+  @override
+  String get linkCopy => 'Copia il link';
+
+  @override
+  String get linkCopied => 'Link copiato';
+
+  @override
   String get dontOpen => 'Non aprire';
 
   @override
@@ -1588,6 +1600,22 @@ class AppLocalizationsIt extends AppLocalizations {
       'La connessione si è interrotta durante l’invio. Controlla in Inviati prima di inviarlo di nuovo.';
 
   @override
+  String get outboxRedirectTitle => 'Inoltro diretto in attesa';
+
+  @override
+  String get outboxRedirectLine => 'Inoltrata senza modifiche';
+
+  @override
+  String get outboxRedirectBody =>
+      'Un inoltro diretto parte com’è arrivata l’email, quindi non c’è niente da modificare. Annullalo o prova a inviarlo di nuovo.';
+
+  @override
+  String get outboxCancelRedirect => 'Annulla inoltro';
+
+  @override
+  String get outboxRedirectCancelled => 'Inoltro annullato';
+
+  @override
   String get dataProblemTitle => 'Piuma non è riuscita ad aprire i suoi dati';
 
   @override
@@ -1688,6 +1716,16 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String unsubscribeMail(String address) {
     return 'Un messaggio parte dal tuo account verso $address per chiederlo. Quello che è già arrivato resta qui.';
+  }
+
+  @override
+  String unsubscribeMailTo(String address) {
+    return 'A: $address';
+  }
+
+  @override
+  String unsubscribeMailSubject(String subject) {
+    return 'Oggetto: $subject';
   }
 
   @override
@@ -2993,6 +3031,14 @@ class AppLocalizationsIt extends AppLocalizations {
       'Le ricevute restano fuori dalla posta in arrivo e si raccolgono sul messaggio a cui si riferiscono. Ricevuta salva la prova firmata come file.';
 
   @override
+  String get pecUnverified => 'Non verificata';
+
+  @override
+  String pecUnverifiedNote(String status) {
+    return 'Risulta «$status», ma la firma del gestore non è verificabile: non vale come prova.';
+  }
+
+  @override
   String get pickDateTime => 'Scegli data e ora';
 
   @override
@@ -3353,6 +3399,10 @@ class AppLocalizationsIt extends AppLocalizations {
       'Il server ha rifiutato la password. È cambiata?';
 
   @override
+  String get accountCertificateRefused =>
+      'Il certificato del server è stato rifiutato. Accedi di nuovo per controllarlo.';
+
+  @override
   String get accountEditServers => 'Modifica server';
 
   @override
@@ -3376,6 +3426,108 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get accountRemoveConfirm => 'Rimuovi';
+
+  @override
+  String accountRemoveBlocked(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count messaggi scritti qui non sono ancora partiti. Inviali o eliminali, poi rimuovi l\'account.',
+      one: '1 messaggio scritto qui non è ancora partito. Invialo o eliminalo, poi rimuovi l\'account.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get accountUnsentDraft => 'Bozza su questo dispositivo';
+
+  @override
+  String get accountUnsentSendNow => 'Invia ora';
+
+  @override
+  String get accountUnsentSaveNow => 'Salva ora';
+
+  @override
+  String get accountUnsentFailed =>
+      'Non ha funzionato. Controlla la connessione e riprova, oppure eliminalo.';
+
+  @override
+  String get updatingMail => 'Aggiornamento della posta';
+
+  @override
+  String get updatingMailNote =>
+      'Piuma è stata aggiornata e sta preparando la tua posta. Succede una volta sola, e chiudere l\'app nel frattempo non fa perdere nulla.';
+
+  @override
+  String get storageTitle => 'Spazio';
+
+  @override
+  String get storageSubtitle =>
+      'La posta tenuta su questo dispositivo. Sul server resta tutto.';
+
+  @override
+  String storageTotal(String size) {
+    return '$size su questo dispositivo';
+  }
+
+  @override
+  String storageAccountLine(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email',
+      one: '1 email',
+    );
+    return '$_temp0 · $size tenuti per leggere offline';
+  }
+
+  @override
+  String get storageClear => 'Svuota la posta in cache';
+
+  @override
+  String get storageClearing => 'Svuotamento…';
+
+  @override
+  String storageBackup(String size) {
+    return 'Di cui $size sono una copia di prima dell\'ultimo aggiornamento, tolta al prossimo avvio.';
+  }
+
+  @override
+  String get storageClearFailed =>
+      'Non è stato possibile svuotare la posta salvata. Riprova.';
+
+  @override
+  String get storageNoRoom =>
+      'Posta salvata svuotata. Non c\'è abbastanza spazio libero per rimpicciolire il file ora: Piuma riusa lo spazio.';
+
+  @override
+  String storageClearTitle(String name) {
+    return 'Svuotare la posta in cache di $name?';
+  }
+
+  @override
+  String get storageClearNote =>
+      'I messaggi interi e le immagini tenuti per leggere offline vengono tolti da questo dispositivo. Le liste restano, la ricerca trova ancora le loro parole, la posta resta sul server, e un messaggio si scarica di nuovo quando lo apri. Prima se ne vanno le email vecchie trovate da una ricerca sul server, se non le hai messe tra le Speciali o etichettate: cercando di nuovo le ritrovi lì.';
+
+  @override
+  String get storageKeep => 'Tieni i messaggi interi per leggere offline';
+
+  @override
+  String get storageKeepHint =>
+      'Quelli più vecchi si scaricano di nuovo quando li apri. La ricerca trova ancora le loro parole.';
+
+  @override
+  String get storageKeepMonth => '1 mese';
+
+  @override
+  String get storageKeepMonths => '3 mesi';
+
+  @override
+  String get storageKeepYear => '1 anno';
+
+  @override
+  String get storageKeepAlways => 'Sempre';
 
   @override
   String get accountServersTitle => 'Server';
@@ -4154,6 +4306,14 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get pairPhraseWrong =>
       'Queste parole non aprono il tuo spazio. Controllale e riprova.';
+
+  @override
+  String get pairPhraseOld =>
+      'Questa frase di recupero è stata sostituita: il tuo spazio ne ha ricevuta una più recente quando un dispositivo è stato scollegato o ha disattivato la sincronizzazione. Usa la frase più recente, o un codice da un dispositivo collegato.';
+
+  @override
+  String get pairConflict =>
+      'Due dei tuoi dispositivi si sono rimossi a vicenda, quindi per ora non puoi unirti a questo spazio. Cambia la password della casella che lo contiene, sincronizza un dispositivo che hai ancora, poi riprova.';
 
   @override
   String get pairContinue => 'Continua';
@@ -5607,7 +5767,8 @@ class AppLocalizationsIt extends AppLocalizations {
   String get reportLog => 'Log dell\'app';
 
   @override
-  String get reportLogHint => 'Senza indirizzi né oggetti';
+  String get reportLogHint =>
+      'Senza indirizzi né nomi. Controllalo prima di inviare';
 
   @override
   String get reportDevice => 'Info su dispositivo e app';
@@ -5728,10 +5889,72 @@ class AppLocalizationsIt extends AppLocalizations {
   String get reportDelete => 'Elimina';
 
   @override
+  String get reportPrivacyLine =>
+      'Diventa una issue privata su GitHub per chi mantiene l\'app.';
+
+  @override
+  String get reportPrivacyLink => 'Come vengono trattati i report';
+
+  @override
+  String get reportPrivacyTitle => 'Report e privacy';
+
+  @override
+  String get reportPrivacyWhat =>
+      'Cosa viene inviato: solo ciò che mostra “Vedi cosa viene inviato”. Le tue parole, i dati del dispositivo e dell\'app, e lo screenshot, il log e i file che lasci attivi. Dal log vengono tolti indirizzi, nomi e oggetti, ma qualcosa può sfuggire: controllalo prima di inviare.';
+
+  @override
+  String reportPrivacyWhere(String relay, int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: '$days giorni',
+      one: '1 giorno',
+    );
+    return 'Dove va: attraverso il relay del progetto su Cloudflare ($relay) a una issue privata su GitHub, negli Stati Uniti. Gli allegati restano nello spazio di Cloudflare nell\'UE e vengono eliminati dopo $_temp0.';
+  }
+
+  @override
+  String reportPrivacyWhereEmail(String contact) {
+    return 'Dove va: per email dal tuo account a $contact.';
+  }
+
+  @override
+  String reportPrivacyWho(String controller) {
+    return 'Chi lo vede: $controller, le persone che aiutano a mantenere Piuma Mail e gli strumenti che usano per smistare i report, assistenti IA compresi. I report non vengono mai venduti né usati per pubblicità.';
+  }
+
+  @override
+  String get reportPrivacyKeep =>
+      'Per quanto: la issue resta finché serve a risolvere il problema. Eliminare un report in I tuoi report toglie solo la copia su questo dispositivo.';
+
+  @override
+  String reportPrivacyErase(String contact) {
+    return 'Per sapere cosa viene conservato o farlo cancellare, scrivi a $contact con il numero del report.';
+  }
+
+  @override
+  String get reportPrivacyFull => 'Informativa completa';
+
+  @override
+  String get reportDeleteTitle => 'Eliminare questo report?';
+
+  @override
+  String reportDeleteSent(int number) {
+    return 'Lo toglie da questo dispositivo. Il report inviato (#$number) resta a chi mantiene l\'app: puoi chiedere di cancellare anche quello.';
+  }
+
+  @override
+  String get reportDeleteHere => 'Elimina da questo dispositivo';
+
+  @override
+  String get reportDeleteAndErase => 'Chiedi anche di cancellarlo';
+
+  @override
   String get reportOptions => 'Opzioni del report';
 
   @override
-  String get crashLine => 'Piuma si è chiusa all\'improvviso. Mandi un report?';
+  String get crashLine =>
+      'L\'ultima volta Piuma ha avuto un problema. Mandi un report?';
 
   @override
   String get crashReport => 'Segnala';
@@ -6111,6 +6334,38 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String updateAvailableTitle(String version) {
+    return 'Disponibile · $version';
+  }
+
+  @override
+  String get updateAvailableHint => 'Scaricala dalla pagina della versione';
+
+  @override
+  String get updateDownload => 'Scarica';
+
+  @override
+  String updateAvailableLine(String version) {
+    return 'Nuova versione · $version';
+  }
+
+  @override
+  String get updatesAutomatic => 'Cerca nuove versioni';
+
+  @override
+  String get updatesAutomaticHint => 'Chiede a GitHub ogni poche ore';
+
+  @override
+  String get updatesOnlyWhenAsked => 'Piuma cerca solo quando lo chiedi';
+
+  @override
+  String get updatesEarly => 'Versioni in anteprima';
+
+  @override
+  String get updatesEarlyHint =>
+      'Le nuove versioni qualche giorno prima, con più bug';
+
+  @override
   String get swipeHintArchiveSnooze =>
       'Scorri a destra per archiviare, a sinistra per posticipare';
 
@@ -6192,6 +6447,433 @@ class AppLocalizationsIt extends AppLocalizations {
       '## La posta, resa leggera\n- Layout originali delle email con scorrimento unico e controllo immagini\n- Barra di formattazione e apertura dell’editor completo nelle risposte\n- Gesti di scorrimento orizzontale più precisi\n- Avvisi mittente per marchi imitati e domini simili\n- Esportazione CSV mensile del Caveau con partita IVA del venditore';
 
   @override
+  String syncHeldTitle(String email) {
+    return '$email è stato rimosso su un altro dispositivo';
+  }
+
+  @override
+  String syncHeldWaiting(String what) {
+    return 'Qui ha ancora $what. Lo rimuovi anche da questo dispositivo o lo tieni su tutti?';
+  }
+
+  @override
+  String syncHeldOutbox(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email in attesa di invio',
+      one: '1 email in attesa di invio',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldDrafts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count bozze non ancora salvate sul server',
+      one: '1 bozza non ancora salvata sul server',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String syncHeldPending(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count modifiche non ancora sul server',
+      one: '1 modifica non ancora sul server',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get syncHeldHome =>
+      'La sua casella contiene il tuo spazio di sincronizzazione, quindi resta qui. Tienilo, oppure sposta prima lo spazio in un’altra casella.';
+
+  @override
+  String get syncHeldRemove => 'Rimuovi qui';
+
+  @override
+  String get syncHeldKeep => 'Tienilo';
+
+  @override
+  String get syncRollbackTitle =>
+      'Una copia più vecchia del tuo spazio è stata ignorata';
+
+  @override
+  String syncRollbackBody(String email) {
+    return 'Potrebbe averla rimessa qualcuno con accesso a $email, o un dispositivo che hai scollegato. Non è stato preso nulla da lì. Se succede di nuovo, cambia la password di quella casella.';
+  }
+
+  @override
+  String get syncOutdatedTitle =>
+      'Aggiorna Piuma per sincronizzare le modifiche di questo dispositivo';
+
+  @override
+  String get syncOutdatedBody =>
+      'Un altro dispositivo ha salvato il tuo spazio con una versione più recente. Questo continua a ricevere le modifiche e tiene le sue finché non viene aggiornato.';
+
+  @override
+  String get syncExposedTitle => 'Cambia queste password';
+
+  @override
+  String syncExposedBody(String name) {
+    return '$name non può più leggere il tuo spazio, ma conosce ancora le password di queste caselle. Cambiale presso il tuo provider per tenerlo fuori anche dalla tua posta.';
+  }
+
+  @override
+  String get syncExposedDone => 'Ho capito';
+
+  @override
+  String get syncPaused => 'In pausa su questo dispositivo';
+
+  @override
+  String get syncConfirmTitle => 'Conferma questo dispositivo';
+
+  @override
+  String get syncConfirmBody =>
+      'Piuma ora controlla quali dispositivi fanno parte del tuo spazio. Finché non confermi questo con la frase di recupero, o con un codice da un dispositivo già aggiornato, qui non si sincronizza nulla.';
+
+  @override
+  String get syncConfirm => 'Conferma';
+
+  @override
+  String get syncConflictTitle => 'Due dispositivi si sono rimossi a vicenda';
+
+  @override
+  String syncConflictBody(String names) {
+    return '$names si sono rimossi a vicenda dal tuo spazio, e uno dei due potrebbe non essere più tuo. La sincronizzazione si è fermata su questo dispositivo: collegalo di nuovo da un dispositivo che hai ancora.';
+  }
+
+  @override
+  String get syncLinkAgain => 'Collega di nuovo';
+
+  @override
+  String syncUnlinkedTitle(String name) {
+    return '$name ha rimosso questo dispositivo';
+  }
+
+  @override
+  String get syncUnlinkedBody =>
+      'La sincronizzazione si è fermata su questo dispositivo; i suoi account e la sua posta restano qui. Se non sei stato tu, collegalo di nuovo da un dispositivo che hai ancora. Altrimenti, disattiva la sincronizzazione qui.';
+
+  @override
+  String get syncExposedNowTitle => 'Cambia subito queste password';
+
+  @override
+  String syncExposedNowBody(String name, String email) {
+    return '$name conosce ancora queste password. Comincia da $email: finché la sua password non cambia, $name può ancora raggiungere la cartella che contiene il tuo spazio.';
+  }
+
+  @override
+  String get syncExposedChanged => 'Le ho cambiate';
+
+  @override
+  String get syncExposedFirst => 'Prima questa: contiene il tuo spazio';
+
+  @override
+  String get syncFailRollback =>
+      'In questa casella c’è solo una copia più vecchia del tuo spazio. Non è stato cambiato nulla.';
+
+  @override
+  String get syncFailOutdated =>
+      'Il tuo spazio è stato salvato da una versione più recente di Piuma. Aggiorna Piuma su questo dispositivo.';
+
+  @override
+  String pairServer(String host) {
+    return 'Accede a $host';
+  }
+
+  @override
+  String get pairServerFromCode =>
+      'Questo server arriva dal codice, non dalle impostazioni del tuo provider. Controlla che sia del tuo provider prima di scrivere la password.';
+
+  @override
+  String get pairServerChecking => 'Controllo del server…';
+
+  @override
+  String pairRefusedDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Il tuo telefono ha detto che non eri tu.',
+      'tablet': 'Il tuo tablet ha detto che non eri tu.',
+      'other': 'Il tuo computer ha detto che non eri tu.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairCodeBodyDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Apri Piuma sul tuo telefono e scrivi il codice.',
+      'tablet': 'Apri Piuma sul tuo tablet e scrivi il codice.',
+      'other': 'Apri Piuma sul tuo computer e scrivi il codice.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairWaitingDevice(String kind) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'In attesa della conferma del tuo telefono…',
+      'tablet': 'In attesa della conferma del tuo tablet…',
+      'other': 'In attesa della conferma del tuo computer…',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairStep1Device(String kind, String title) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone': 'Il tuo telefono mostrerà “$title”',
+      'tablet': 'Il tuo tablet mostrerà “$title”',
+      'other': 'Il tuo computer mostrerà “$title”',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String pairConfirmFromDevice(String kind, String ago) {
+    String _temp0 = intl.Intl.selectLogic(kind, {
+      'phone':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo telefono, attivo $ago.',
+      'tablet':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo tablet, attivo $ago.',
+      'other':
+          'Per sicurezza, conferma da un dispositivo già collegato: il tuo computer, attivo $ago.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get syncRecoveryChangedTitle => 'Scrivi la nuova frase di recupero';
+
+  @override
+  String get syncRecoveryChangedBody =>
+      'Il tuo spazio ha una nuova chiave e una nuova frase di recupero, perché un dispositivo è uscito o due sono stati scollegati insieme. Quella che hai scritto non funziona più.';
+
+  @override
+  String get saveSearch => 'Salva ricerca';
+
+  @override
+  String get savedSearchEdit => 'Modifica ricerca salvata';
+
+  @override
+  String get savedSearchName => 'Nome';
+
+  @override
+  String get savedSearchSave => 'Salva';
+
+  @override
+  String get savedSearchDelete => 'Elimina ricerca';
+
+  @override
+  String get savedSearchDeleteNote =>
+      'Sparisce solo la ricerca salvata: le email restano dove sono.';
+
+  @override
+  String get savedSearchNameTaken =>
+      'Un\'altra ricerca salvata ha già questo nome.';
+
+  @override
+  String get savedSearchesSection => 'RICERCHE SALVATE';
+
+  @override
+  String get savedSearches => 'Ricerche salvate';
+
+  @override
+  String get searchSuggestions => 'Suggerimenti';
+
+  @override
+  String get searchOnServer => 'Cerca sul server';
+
+  @override
+  String get searchOnServerHeading => 'Sul server';
+
+  @override
+  String get searchingServers => 'Ricerca sul server…';
+
+  @override
+  String get searchServerError => 'Non è stato possibile cercare sul server.';
+
+  @override
+  String get searchServerLocalOnly =>
+      'Questa ricerca può guardare solo su questo dispositivo.';
+
+  @override
+  String get searchServerNothing => 'Sul server non c\'è altro.';
+
+  @override
+  String get searchFromServer => 'Trovata sul server';
+
+  @override
+  String get searchServerPartial =>
+      'Alcune cartelle non sono state cercate per intero.';
+
+  @override
+  String get searchServerMaybe =>
+      'Le email più vecchie, e il testo che questo dispositivo non ha tenuto, possono essere ancora sul server.';
+
+  @override
+  String searchServerTextRefused(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'I server di $count account cercano solo lettere semplici (A–Z), quindi non gli è stato chiesto questo testo.',
+      one: 'Il server di 1 account cerca solo lettere semplici (A–Z), quindi non gli è stato chiesto questo testo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerPartialIn(String accounts) {
+    return 'Cercato solo in parte: $accounts. Qui c’è quello che era stato trovato prima di fermarsi.';
+  }
+
+  @override
+  String searchServerFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count email in più trovate sul server, ora su questo dispositivo.',
+      one: '1 email in più trovata sul server, ora su questo dispositivo.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String searchServerUnreachable(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'I server di $count account non erano raggiungibili.',
+      one: 'Il server di 1 account non era raggiungibile.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String savedSearchEditNamed(String name) {
+    return 'Rinomina o elimina $name';
+  }
+
+  @override
+  String get errorNoKeyring =>
+      'Piuma tiene le password nel portachiavi di sistema, e non ce n’è nessuno attivo. Installane e avviane uno, come GNOME Keyring o KWallet, poi riprova. Le password non finiscono mai in un file in chiaro.';
+
+  @override
+  String get errorCertificate => 'Il certificato del server non è affidabile.';
+
+  @override
+  String get errorSignInUnavailable =>
+      'Questa copia di Piuma Mail non può accedere a questo provider. Inserisci un tuo client ID in Avanzate, oppure usa una password per le app dove il provider lo permette.';
+
+  @override
+  String get errorSignInCancelled =>
+      'La pagina di accesso è stata chiusa prima della fine. Riprova.';
+
+  @override
+  String get errorSignInDenied =>
+      'Il provider non ha consentito l’accesso. Riprova, o controlla il client ID in Avanzate.';
+
+  @override
+  String get errorOAuthServers =>
+      'Questo account accede con la pagina del suo provider, quindi resta sui server del provider, con una connessione sicura.';
+
+  @override
+  String get errorPort => 'La porta è un numero da 1 a 65535.';
+
+  @override
+  String get certUntrusted =>
+      'Nessuna autorità di cui il sistema si fida garantisce per questo certificato. Così appaiono i server che si fanno il certificato da soli.';
+
+  @override
+  String get certExpired =>
+      'Questo certificato è scaduto, o non è ancora valido.';
+
+  @override
+  String get certNameMismatch =>
+      'Questo certificato è fatto per un altro nome di server.';
+
+  @override
+  String get certChanged =>
+      'Non è il certificato di cui ti eri fidato per questo server. Potrebbe essere stato rinnovato, oppure qualcuno potrebbe ascoltare nel mezzo. Fidati solo se sai perché è cambiato.';
+
+  @override
+  String get certInvalid =>
+      'Questo certificato non è valido, e fidarsene non renderebbe sicura la connessione.';
+
+  @override
+  String get certProvider =>
+      'Questo è il server di un grande provider, e i suoi certificati sono sempre garantiti da un’autorità. Qualcuno potrebbe intromettersi nella connessione: prova un’altra rete e controlla data e ora di questo dispositivo.';
+
+  @override
+  String get certIssuedTo => 'Rilasciato a';
+
+  @override
+  String get certIssuedBy => 'Rilasciato da';
+
+  @override
+  String get certValidUntil => 'Valido fino al';
+
+  @override
+  String get certFingerprint => 'Impronta SHA-256';
+
+  @override
+  String get certTrust => 'Fidati di questo certificato';
+
+  @override
+  String get certTrustNew => 'Fidati del nuovo certificato';
+
+  @override
+  String get certCopyFingerprint => 'Copia l’impronta';
+
+  @override
+  String get certTrustHint =>
+      'Solo per questo account e per questo preciso certificato. Prima confronta l’impronta con quella che ti dà il tuo provider o amministratore.';
+
+  @override
+  String oauthSignInWith(String provider) {
+    return 'Accedi con $provider';
+  }
+
+  @override
+  String oauthLead(String provider) {
+    return 'Piuma Mail apre la pagina di $provider nel browser. Accedi lì, poi torna qui: la password resta a $provider.';
+  }
+
+  @override
+  String get oauthWaiting => 'In attesa del browser…';
+
+  @override
+  String get oauthMicrosoftNoClient =>
+      'Microsoft non permette più alle app di posta di accedere con la password, e questa copia di Piuma Mail non ha l’accesso Microsoft configurato. Usa una build ufficiale, o inserisci il client ID di una tua app in Avanzate.';
+
+  @override
+  String get oauthUseAppPassword => 'Usa invece una password per le app';
+
+  @override
+  String get oauthAdvanced => 'Avanzate: il tuo client ID';
+
+  @override
+  String oauthAdvancedHint(String provider) {
+    return 'Per una tua registrazione dell’app presso $provider. Lascialo vuoto per usare quella di questa build.';
+  }
+
+  @override
+  String get oauthClientId => 'Client ID';
+
+  @override
+  String get oauthTenant => 'Tenant (facoltativo)';
+
+  @override
+  String get oauthClientSecret => 'Client secret (solo app desktop Google)';
+
+  @override
   String get listFailed => 'Impossibile mostrare queste email.';
 
   @override
@@ -6209,4 +6891,839 @@ class AppLocalizationsIt extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get composeOptions => 'Opzioni';
+
+  @override
+  String get composePlainText => 'Testo semplice';
+
+  @override
+  String get composeHighPriority => 'Priorità alta';
+
+  @override
+  String get composeReadReceipt => 'Chiedi conferma di lettura';
+
+  @override
+  String get composePlainTitle => 'Passare al testo semplice?';
+
+  @override
+  String get composePlainBody =>
+      'Il testo semplice non ha grassetto, corsivo, link né immagini. I link tengono l’indirizzo tra parentesi e le immagini vengono allegate come file.';
+
+  @override
+  String get composePlainConfirm => 'Passa al testo semplice';
+
+  @override
+  String get sendForgotAttachmentTitle => 'Hai dimenticato l’allegato?';
+
+  @override
+  String get sendForgotAttachmentBody =>
+      'Il messaggio parla di un allegato, ma non c’è nessun file allegato.';
+
+  @override
+  String get sendNoSubjectTitle => 'Inviare senza oggetto?';
+
+  @override
+  String get sendNoSubjectBody =>
+      'Un oggetto aiuta a ritrovare il messaggio più avanti.';
+
+  @override
+  String get sendAddSubject => 'Aggiungi un oggetto';
+
+  @override
+  String get sendAnyway => 'Invia comunque';
+
+  @override
+  String fileTooLarge(String name, String size) {
+    return '$name è troppo grande: gli allegati possono arrivare a $size in tutto.';
+  }
+
+  @override
+  String imageTooBig(String name) {
+    return '$name è troppo grande per stare nel testo.';
+  }
+
+  @override
+  String get pastedImage => 'L’immagine incollata';
+
+  @override
+  String contactGroupCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count indirizzi',
+      one: '1 indirizzo',
+      zero: 'Nessun indirizzo',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get contactGroupTag => 'Gruppo';
+
+  @override
+  String readReceiptAsk(String sender) {
+    return '$sender ha chiesto di sapere quando leggi questo messaggio.';
+  }
+
+  @override
+  String get readReceiptSend => 'Invia conferma';
+
+  @override
+  String get readReceiptDontSend => 'Non inviare';
+
+  @override
+  String get readReceiptNever => 'Mai per questo mittente';
+
+  @override
+  String get readReceiptSent => 'Conferma inviata';
+
+  @override
+  String get readReceiptFailed =>
+      'Non sono riuscito a inviare la conferma. Riprova più tardi.';
+
+  @override
+  String get highPriority => 'Priorità alta';
+
+  @override
+  String get repliesTitle => 'Risposte';
+
+  @override
+  String get replyBelowQuote => 'Rispondi sotto la citazione';
+
+  @override
+  String get replyBelowQuoteHint =>
+      'Se spento, le risposte iniziano sopra il messaggio citato.';
+
+  @override
+  String get quoteSelection => 'Cita solo le parole selezionate';
+
+  @override
+  String get quoteSelectionHint =>
+      'Con delle parole selezionate in un messaggio, Rispondi cita solo quelle.';
+
+  @override
+  String get plainTextTitle => 'Nuovi messaggi in testo semplice';
+
+  @override
+  String plainTextOn(String email) {
+    return '$email · i nuovi messaggi partono in testo semplice';
+  }
+
+  @override
+  String get contactGroupsTitle => 'Gruppi di contatti';
+
+  @override
+  String get contactGroupsHint =>
+      'Scrivi il nome di un gruppo in A, Cc o Ccn per aggiungere tutti i suoi indirizzi.';
+
+  @override
+  String get contactGroupNew => 'Nuovo gruppo';
+
+  @override
+  String get contactGroupUntitled => 'Gruppo senza nome';
+
+  @override
+  String get contactGroupName => 'Nome del gruppo';
+
+  @override
+  String get contactGroupAddresses => 'Indirizzi';
+
+  @override
+  String get contactGroupAddressesHint =>
+      'Uno per riga, o separati da virgole.';
+
+  @override
+  String contactGroupDelete(String name) {
+    return 'Elimina $name';
+  }
+
+  @override
+  String get composeInsertPicture => 'Inserisci immagine';
+
+  @override
+  String get composePastePicture => 'Incolla immagine';
+
+  @override
+  String get noPictureToPaste => 'Non c’è nessuna immagine negli appunti.';
+
+  @override
+  String get composeReadReceiptAsked => 'Conferma di lettura richiesta';
+
+  @override
+  String get readReceiptQueued =>
+      'La conferma è nella cartella In uscita e partirà appena possibile.';
+
+  @override
+  String oauthOwnClientNotHere(String provider) {
+    return 'Su Android quest’app può accedere a $provider solo con il client con cui è stata compilata. Usa una password per le app, o una build fatta con il tuo client.';
+  }
+
+  @override
+  String get actionReplyAll => 'Rispondi a tutti';
+
+  @override
+  String get actionReplyList => 'Rispondi alla lista';
+
+  @override
+  String get actionForwardAttachment => 'Inoltra come allegato';
+
+  @override
+  String get actionRedirect => 'Reindirizza';
+
+  @override
+  String get actionEditAsNew => 'Modifica come nuova';
+
+  @override
+  String get actionViewSource => 'Mostra sorgente';
+
+  @override
+  String get actionSaveEml => 'Salva come .eml';
+
+  @override
+  String get muteConversation => 'Silenzia conversazione';
+
+  @override
+  String get unmuteConversation => 'Riattiva conversazione';
+
+  @override
+  String get conversationMuted =>
+      'Conversazione silenziata: i nuovi messaggi arrivano già letti, senza notifica';
+
+  @override
+  String get conversationUnmuted => 'Conversazione riattivata';
+
+  @override
+  String get conversationMutedLine => 'Silenziata';
+
+  @override
+  String forwardFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count file',
+      one: 'il file',
+    );
+    return 'Scarico $_temp0';
+  }
+
+  @override
+  String forwardFilesDone(int done, int total) {
+    return '$done di $total';
+  }
+
+  @override
+  String forwardFilesFailed(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Non è stato possibile allegare questi file:',
+      one: 'Non è stato possibile allegare questo file:',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String forwardWithoutFiles(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Continua senza',
+      one: 'Continua senza',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gettingEmail => 'Scarico l’email';
+
+  @override
+  String get messageFetchFailed =>
+      'Non è stato possibile scaricare l’email dal server. Controlla la connessione e riprova.';
+
+  @override
+  String get redirectTitle => 'Reindirizza questa email';
+
+  @override
+  String redirectBody(String sender) {
+    return 'Parte così com’è, come è arrivata da $sender: le risposte vanno a $sender, non a te.';
+  }
+
+  @override
+  String get redirectTo => 'A';
+
+  @override
+  String get redirectHint => 'Indirizzi, separati da virgole';
+
+  @override
+  String redirectDone(String to) {
+    return 'Reindirizzata a $to';
+  }
+
+  @override
+  String get redirectFailed =>
+      'Non è stato possibile reindirizzare l’email. Controlla gli indirizzi e la connessione.';
+
+  @override
+  String get sourceTitle => 'Sorgente dell’email';
+
+  @override
+  String get sourceHeaders => 'Intestazioni';
+
+  @override
+  String get sourceRaw => 'Originale';
+
+  @override
+  String get sourceCopy => 'Copia';
+
+  @override
+  String emlSaved(String name) {
+    return 'Salvata come $name';
+  }
+
+  @override
+  String get emlNotSaved => 'Non è stato possibile salvare l’email';
+
+  @override
+  String recipientsMore(String names, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'altre $count persone',
+      one: 'un’altra persona',
+    );
+    return '$names e $_temp0';
+  }
+
+  @override
+  String get recipientYou => 'te';
+
+  @override
+  String get recipientsBcc => 'eri in Ccn';
+
+  @override
+  String get recipientsTo => 'A';
+
+  @override
+  String get recipientsCc => 'Cc';
+
+  @override
+  String get recipientsBccLabel => 'Ccn';
+
+  @override
+  String get showRecipients => 'Mostra chi l’ha ricevuta';
+
+  @override
+  String get hideRecipients => 'Nascondi chi l’ha ricevuta';
+
+  @override
+  String replyAllNames(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'altre $count persone',
+      one: 'un’altra persona',
+    );
+    return '$name e $_temp0';
+  }
+
+  @override
+  String replyAllOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'e altre $count persone',
+      one: 'e un’altra persona',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutNextEmail => 'Email successiva';
+
+  @override
+  String get shortcutPreviousEmail => 'Email precedente';
+
+  @override
+  String get zoomIn => 'Ingrandisci';
+
+  @override
+  String get zoomOut => 'Riduci';
+
+  @override
+  String get zoomReset => 'Dimensione reale';
+
+  @override
+  String zoomLevel(int percent) {
+    return 'Dimensione testo $percent%';
+  }
+
+  @override
+  String get textSize => 'Dimensione del testo';
+
+  @override
+  String sourceCut(int size) {
+    return 'Sono mostrati i primi $size KB. Salva come .eml per l’email intera.';
+  }
+
+  @override
+  String get deviceHeading => 'Questo dispositivo';
+
+  @override
+  String get defaultMailTitle => 'Rendi Piuma la tua app di posta predefinita';
+
+  @override
+  String get defaultMailHint =>
+      'Gli indirizzi email che clicchi in altre app e sui siti aprono un nuovo messaggio qui.';
+
+  @override
+  String get defaultMailIsTitle => 'Piuma è la tua app di posta predefinita';
+
+  @override
+  String get defaultMailIs =>
+      'Gli indirizzi email che clicchi in altre app e sui siti si aprono qui.';
+
+  @override
+  String get defaultMailButton => 'Rendi predefinita';
+
+  @override
+  String get defaultMailOtherAndroid =>
+      'Ora gli indirizzi email li apre un’altra app. Cancella le sue impostazioni predefinite nelle Info app; la prossima volta che Android chiede, scegli Piuma e Sempre.';
+
+  @override
+  String get defaultMailAskAndroid =>
+      'Android chiede quale app usare quando tocchi un indirizzo email: scegli Piuma, poi Sempre.';
+
+  @override
+  String get defaultMailAppInfo => 'Apri Info app';
+
+  @override
+  String get keepRunningTitle => 'Resta attivo in background quando chiudi';
+
+  @override
+  String get keepRunningHint =>
+      'La nuova posta continua a notificarti. Piuma resta nell’area di notifica; chiudilo da lì.';
+
+  @override
+  String get startAtLoginTitle => 'Avvia all’accesso';
+
+  @override
+  String get startAtLoginHint =>
+      'Piuma parte nell’area di notifica, pronto per la nuova posta.';
+
+  @override
+  String get trayOpen => 'Apri Piuma Mail';
+
+  @override
+  String get trayQuit => 'Esci da Piuma Mail';
+
+  @override
+  String trayTooltip(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail: $count da leggere',
+      one: 'Piuma Mail: 1 da leggere',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get arrivalWhichAccount => 'Da quale account scrivere?';
+
+  @override
+  String get arrivalWaits => 'Il nuovo messaggio si apre quando chiudi questo.';
+
+  @override
+  String arrivalFilesLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count file erano troppo grandi da allegare.',
+      one: '1 file era troppo grande da allegare.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emlFromFile => 'Aperto da un file';
+
+  @override
+  String get emlImport => 'Importa in una cartella';
+
+  @override
+  String get emlImportWhichAccount => 'In quale account importarlo?';
+
+  @override
+  String emlImportIn(String account) {
+    return 'Importa in una cartella di $account';
+  }
+
+  @override
+  String emlImported(String folder) {
+    return 'Importato in $folder';
+  }
+
+  @override
+  String get emlNotImported =>
+      'Non è stato possibile importarlo. Controlla la connessione e riprova.';
+
+  @override
+  String get emlNotMail => 'Questo file non è un’email che Piuma sa leggere.';
+
+  @override
+  String get emlTooLarge => 'Questo file email è troppo grande da aprire.';
+
+  @override
+  String get arrivalNetworkFile =>
+      'I file nelle cartelle di rete non si aprono in Piuma. Copiali prima su questo dispositivo.';
+
+  @override
+  String imagesOffFile(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count immagini sono spente, così nessuno vede quando apri questo file.',
+      one: '1 immagine è spenta, così nessuno vede quando apri questo file.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get newMailClosedLead => 'Con Piuma chiuso';
+
+  @override
+  String get star => 'Aggiungi stella';
+
+  @override
+  String get unstar => 'Togli stella';
+
+  @override
+  String get folderStarred => 'Speciali';
+
+  @override
+  String get messageStarred => 'Con stella';
+
+  @override
+  String starredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Stella aggiunta a $count conversazioni',
+      one: 'Stella aggiunta',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String unstarredMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Stella tolta da $count conversazioni',
+      one: 'Stella tolta',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get starFailed =>
+      'Non è stato possibile cambiare la stella. Riprova tra poco.';
+
+  @override
+  String get trashFolder => 'Cestino';
+
+  @override
+  String get deleteForever => 'Elimina definitivamente';
+
+  @override
+  String deleteForeverTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Eliminare definitivamente $count email?',
+      one: 'Eliminare definitivamente questa email?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get deleteForeverNote =>
+      'Non si potranno recuperare, né qui né sul server.';
+
+  @override
+  String deletedForeverMany(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email eliminate definitivamente',
+      one: 'Eliminata definitivamente',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyTrash => 'Svuota cestino';
+
+  @override
+  String get emptySpam => 'Svuota spam';
+
+  @override
+  String emptyTitle(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Eliminare definitivamente tutte le $count email in $folder?',
+      one: 'Eliminare definitivamente l’email in $folder?',
+      zero: '$folder è vuoto',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get emptyConfirm => 'Svuota';
+
+  @override
+  String get emptyFailed =>
+      'Non è stato possibile svuotarlo. Riprova quando sei online.';
+
+  @override
+  String get copyTo => 'Copia in…';
+
+  @override
+  String copyToIn(String name) {
+    return 'Copia in una cartella di $name';
+  }
+
+  @override
+  String copiedMany(int count, String folder) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversazioni copiate in $folder',
+      one: 'Copiata in $folder',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderActions(String name) {
+    return 'Altro per “$name”';
+  }
+
+  @override
+  String get folderRename => 'Rinomina';
+
+  @override
+  String folderRenameTitle(String name) {
+    return 'Rinomina “$name”';
+  }
+
+  @override
+  String get folderNewName => 'Nuovo nome';
+
+  @override
+  String get folderHide => 'Nascondi dagli elenchi';
+
+  @override
+  String get folderShow => 'Mostra negli elenchi';
+
+  @override
+  String get folderHidden => 'Nascosta';
+
+  @override
+  String get folderDelete => 'Elimina cartella';
+
+  @override
+  String folderDeleteTitle(String name) {
+    return 'Eliminare “$name”?';
+  }
+
+  @override
+  String folderDeleteEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Le sue $count email vanno nel cestino.',
+      one: 'La sua email va nel cestino.',
+      zero: 'Non contiene email.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String folderDeleteSubfolders(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Vengono eliminate anche le sue $count sottocartelle.',
+      one: 'Viene eliminata anche la sua sottocartella.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get folderDeleteEnd =>
+      'La cartella non si potrà recuperare; le email sì, dal cestino.';
+
+  @override
+  String get folderChangeFailed =>
+      'Non è stato possibile modificare la cartella.';
+
+  @override
+  String hiddenFoldersShow(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Mostra $count cartelle nascoste',
+      one: 'Mostra 1 cartella nascosta',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get hiddenFoldersHide => 'Nascondi le cartelle nascoste';
+
+  @override
+  String folderExpand(String name) {
+    return 'Mostra le cartelle in $name';
+  }
+
+  @override
+  String folderCollapse(String name) {
+    return 'Nascondi le cartelle in $name';
+  }
+
+  @override
+  String get specialFolders => 'Cartelle speciali';
+
+  @override
+  String get specialFoldersNote =>
+      'Piuma le trova dai segni del server e dai loro nomi. Se una è sbagliata, scegli la cartella giusta.';
+
+  @override
+  String specialFoldersOf(String name) {
+    return 'Cartelle speciali di $name';
+  }
+
+  @override
+  String get specialAutomatic => 'Come dice il server';
+
+  @override
+  String get specialNone => 'Nessuna';
+
+  @override
+  String get specialChosen => 'Scelta da te';
+
+  @override
+  String get listsHeading => 'Elenchi';
+
+  @override
+  String get listOrder => 'Ordine';
+
+  @override
+  String get orderNewest => 'Prima le più recenti';
+
+  @override
+  String get orderOldest => 'Prima le meno recenti';
+
+  @override
+  String get orderSender => 'Per mittente';
+
+  @override
+  String get listThreads => 'Raggruppa in conversazioni';
+
+  @override
+  String get listThreadsNote => 'Se disattivato, ogni email ha la sua riga.';
+
+  @override
+  String get swipeRight => 'Scorri a destra';
+
+  @override
+  String get swipeLeft => 'Scorri a sinistra';
+
+  @override
+  String get swipeRead => 'Letta o da leggere';
+
+  @override
+  String get swipeStar => 'Stella';
+
+  @override
+  String get swipeMove => 'Sposta in…';
+
+  @override
+  String get swipeNothing => 'Niente';
+
+  @override
+  String get quotaLabel => 'Spazio';
+
+  @override
+  String quotaUsed(String used, String limit) {
+    return '$used di $limit';
+  }
+
+  @override
+  String get quotaNearlyFull =>
+      'Quasi pieno. Elimina o archivia qualche email, altrimenti la nuova posta potrebbe non arrivare.';
+
+  @override
+  String draggedEmails(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email',
+      one: '1 email',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shortcutStar => 'Aggiungi o togli la stella';
+
+  @override
+  String badgeTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Piuma Mail ($count)',
+      zero: 'Piuma Mail',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String badgeUnread(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count email da leggere',
+      one: '1 email da leggere',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get moreShort => 'Altro';
+
+  @override
+  String get swipeNote =>
+      'Gli scorrimenti funzionano su telefoni e tablet. Sul computer le stesse azioni sono nella barra, nei menu e nelle scorciatoie da tastiera.';
+
+  @override
+  String folderDeleteProtected(String name, String inside) {
+    return '“$name” non si può eliminare: contiene $inside, che verrebbe eliminata con lei.';
+  }
+
+  @override
+  String get specialRefused =>
+      'Quella cartella non può fare questo lavoro: è la posta in arrivo, o fa già un altro lavoro che cancellerebbe la posta.';
+
+  @override
+  String get fileTypeImages => 'Immagini';
+
+  @override
+  String get fileTypeEmail => 'Messaggio email';
 }

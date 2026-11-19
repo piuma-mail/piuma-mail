@@ -1,0 +1,948 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../compose/compose_pane.dart' show undoSendWindow;
+import '../compose/reply_builder.dart';
+import '../design/icons.dart';
+import '../design/theme.dart';
+import '../design/tokens.g.dart';
+import '../l10n/app_localizations.dart';
+import '../mail/mail_source.dart';
+import '../widgets/button.dart';
+import '../widgets/dialog.dart';
+import '../widgets/links.dart' show openLocalFile;
+import '../widgets/progress.dart';
+import '../widgets/segments.dart';
+import '../widgets/text_field.dart';
+
+/// Where Save as .eml puts the file on a computer: the system's save
+/// window, with [name] suggested and [label] naming the file type; null
+/// when the person closed it. Tests replace it.
+Future<String?> Function(String name, String label) pickSaveLocation =
+    (name, label) async {
+      final picked = await getSaveLocation(
+        suggestedName: name,
+        acceptedTypeGroups: [
+          XTypeGroup(label: label, extensions: const ['eml']),
+        ],
+      );
+      return picked?.path;
+    };
+
+/// Writes a picked file. Tests replace it.
+Future<void> Function(String path, Uint8List data) writeSavedFile = (
+  path,
+  data,
+) => File(path).writeAsBytes(data, flush: true);
+
+/// What the reader's More menus do with a message beyond Reply: Forward
+/// (inline, with its files fetched in sight), Forward as attachment, Edit
+/// as new, Redirect, View source, Save as .eml and Mute conversation. The
+/// drafts go to [openCompose]; nothing here sends one.
+class MessageActions {
+  MessageActions({
+    required this.context,
+    required this.source,
+    required this.openCompose,
+    required this.toast,
+    this.phone = false,
+    ReplyBuilder? builder,
+  }) : _given = builder;
+
+  final BuildContext context;
+  final MailSource source;
+  final ValueChanged<Draft> openCompose;
+  final void Function(
+    String text, {
+    String? action,
+    VoidCallback? onAction,
+    Duration? duration,
+  })
+  toast;
+
+  /// A sheet from the bottom, not a dialog.
+  final bool phone;
+
+  AppLocalizations get _l => AppLocalizations.of(context);
+
+  /// Builds the drafts, with Settings › Writing when the screen has them.
+  final ReplyBuilder? _given;
+
+  ReplyBuilder get _builder =>
+      _given ??
+      ReplyBuilder(
+        _l,
+        Localizations.localeOf(context).toLanguageTag(),
+        accounts: source.accounts,
+      );
+
+  /// Forward, as on `ForwardToApprove` (option A), keeping the message's
+  /// formatting: compose opens once its files are here, each fetched in
+  /// sight; any that can't be are named, with Try again.
+  Future<void> forward(MailRow row) async {
+    final (blocks, files, text) = await _content(row);
+    final envelope = await source.envelope(row).catchError((Object _) => null);
+    if (!context.mounted) return;
+    final data = await fetchFiles(row, files);
+    if (data == null || !context.mounted) return;
+    final mine = source.replyFrom(row);
+    openCompose(
+      _builder.forward(
+        row,
+        blocks: blocks,
+        text: text,
+        envelope: envelope,
+        fromEmail: mine,
+        toLine: row.to.isNotEmpty ? row.to : (mine ?? _accountEmail(row)),
+        files: data,
+      ),
+    );
+  }
+
+  /// Forward as attachment: the whole message, as it came, in an empty
+  /// email.
+  Future<void> forwardAsAttachment(MailRow row) async {
+    final raw = await _raw(row);
+    if (raw == null || !context.mounted) return;
+    openCompose(
+      _builder.forwardAsAttachment(row, raw, fromEmail: source.replyFrom(row)),
+    );
+  }
+
+  /// Edit as new: a new email with the message's recipients, subject, text
+  /// and files.
+  Future<void> editAsNew(MailRow row) async {
+    final (blocks, files, text) = await _content(row);
+    final envelope = await source.envelope(row).catchError((Object _) => null);
+    if (!context.mounted) return;
+    final data = await fetchFiles(row, files);
+    if (data == null || !context.mounted) return;
+    openCompose(
+      _builder.editAsNew(
+        row,
+        blocks: blocks,
+        text: text,
+        envelope: envelope,
+        fromEmail: source.replyFrom(row),
+        files: data,
+      ),
+    );
+  }
+
+  /// Redirect: asks where to, then sends the message unchanged.
+  Future<void> redirect(MailRow row) async {
+    final l = _l;
+    Widget panel(BuildContext context) => _RedirectPanel(row: row);
+    final to = phone
+        ? await _sheet<List<String>>(
+            context,
+            label: l.redirectTitle,
+            builder: panel,
+          )
+        : await showPiumaDialog<List<String>>(
+            context,
+            label: l.redirectTitle,
+            builder: panel,
+          );
+    if (to == null || to.isEmpty || !context.mounted) return;
+    await _sendRedirect(row, to);
+  }
+
+  /// Redirect goes through the outbox, as Send does: on disk at once,
+  /// with Undo while its window lasts, then once, or waiting there while
+  /// the server can't be reached.
+  Future<void> _sendRedirect(MailRow row, List<String> to) async {
+    final l = _l;
+    final int id;
+    try {
+      id = await source.redirect(row, to, undoSendWindow);
+    } on SendException catch (e) {
+      if (!context.mounted) return;
+      toast(
+        e.error == SendError.badAddress
+            ? l.sendBadAddress(e.detail)
+            : l.redirectFailed,
+        action: l.tryAgain,
+        onAction: () => redirect(row),
+      );
+      return;
+    } catch (_) {
+      // The message couldn't be fetched (offline): nothing was queued.
+      if (!context.mounted) return;
+      toast(
+        l.redirectFailed,
+        action: l.tryAgain,
+        onAction: () => _sendRedirect(row, to),
+      );
+      return;
+    }
+    await _follow(id, to, undo: true);
+  }
+
+  /// Waits for the Redirect [id] of the outbox to go, with Undo while
+  /// [undo] says its window lasts, and says what became of it. Try again
+  /// sends the same one again: it never leaves the outbox meanwhile.
+  Future<void> _follow(int id, List<String> to, {bool undo = false}) async {
+    final l = _l;
+    final delivery = source.deliver(id);
+    if (!context.mounted) return;
+    toast(
+      l.sending,
+      action: undo ? l.undo : null,
+      duration: undo ? undoSendWindow : null,
+      onAction: undo ? () => source.cancelOutgoing(id).ignore() : null,
+    );
+    final done = await delivery;
+    if (!context.mounted) return;
+    switch (done.outcome) {
+      case SendOutcome.sent:
+        toast(l.redirectDone(to.map(bareAddress).join(', ')));
+      case SendOutcome.waiting:
+        toast(l.inOutbox);
+      case SendOutcome.maybeSent:
+        toast(l.outboxMaybeSentCheck);
+      case SendOutcome.wrongPassword:
+      case SendOutcome.refused:
+      case SendOutcome.insecure:
+        // Kept in the Outbox with its reason; Try again asks once more.
+        toast(
+          l.redirectFailed,
+          action: l.tryAgain,
+          onAction: () => _retry(id, to),
+        );
+      case SendOutcome.gone:
+        // Taken back with Undo.
+        break;
+    }
+  }
+
+  Future<void> _retry(int id, List<String> to) async {
+    try {
+      await source.retryOutgoing(id);
+    } catch (_) {
+      // On its way, or gone meanwhile: nothing to try again.
+      return;
+    }
+    if (context.mounted) await _follow(id, to);
+  }
+
+  /// A Redirect waiting in the Outbox: it has no text of its own to edit,
+  /// so it doesn't open in compose. It is cancelled, or tried again.
+  Future<void> outboxRedirect(OutboxItem item) async {
+    final l = _l;
+    Widget panel(BuildContext context) => _OutboxRedirectPanel(item: item);
+    final pick = phone
+        ? await _sheet<_RedirectPick>(
+            context,
+            label: l.outboxRedirectTitle,
+            builder: panel,
+          )
+        : await showPiumaDialog<_RedirectPick>(
+            context,
+            label: l.outboxRedirectTitle,
+            builder: panel,
+          );
+    if (pick == null || !context.mounted) return;
+    switch (pick) {
+      case _RedirectPick.cancel:
+        try {
+          await source.cancelOutgoing(item.id);
+          if (context.mounted) toast(l.outboxRedirectCancelled);
+        } catch (_) {
+          // On its way right now: it can't be stopped any more.
+          if (context.mounted) toast(l.sending);
+        }
+      case _RedirectPick.retry:
+        await _retry(item.id, item.to);
+    }
+  }
+
+  /// View source: the headers, one by one, and the raw message.
+  Future<void> viewSource(MailRow row) async {
+    final raw = await _raw(row);
+    if (raw == null || !context.mounted) return;
+    // A big message is shown in part, read off the screen's thread.
+    final shown = raw.length > _inlineSource
+        ? await compute(sourceLines, raw)
+        : sourceLines(raw);
+    final headers = [
+      for (final h in source.headersOf(headerBlock(raw)))
+        MailHeader(h.name, cleanSource(h.value)),
+    ];
+    if (!context.mounted) return;
+    Widget panel(BuildContext context) => _SourcePanel(
+      lines: shown.lines,
+      cut: shown.cut,
+      headers: headers,
+      phone: phone,
+      onSave: () => _save(row, raw),
+    );
+    final l = _l;
+    if (phone) {
+      await _sheet<void>(context, label: l.sourceTitle, builder: panel);
+    } else {
+      await showPiumaDialog<void>(
+        context,
+        label: l.sourceTitle,
+        width: 760,
+        builder: panel,
+      );
+    }
+  }
+
+  /// Save as .eml: through the system's save window on a computer, into
+  /// Downloads on a phone.
+  Future<void> saveEml(MailRow row) async {
+    final raw = await _raw(row);
+    if (raw == null || !context.mounted) return;
+    await _save(row, raw);
+  }
+
+  Future<void> _save(MailRow row, Uint8List raw) async {
+    final l = _l;
+    final name = ReplyBuilder.emlName(row.subject);
+    try {
+      // The phone has no save window: Downloads, then Open hands the file
+      // to the system (the app chooser on Android, the preview with Share
+      // on iPhone), as a saved attachment does.
+      if (phone || kIsWeb || Platform.isAndroid || Platform.isIOS) {
+        final path = await source.saveFile(name, raw);
+        if (context.mounted) {
+          toast(
+            l.attachmentSaved(name),
+            action: l.noticeOpen,
+            onAction: () => openLocalFile(path),
+          );
+        }
+        return;
+      }
+      final path = await pickSaveLocation(name, l.fileTypeEmail);
+      if (path == null) return;
+      await writeSavedFile(path, raw);
+      if (context.mounted) {
+        toast(
+          l.emlSaved(path.split(RegExp(r'[\\/]')).last),
+          action: l.noticeOpen,
+          onAction: () => openLocalFile(path),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) toast(l.emlNotSaved);
+    }
+  }
+
+  /// Mute conversation, or unmute it, with Undo.
+  Future<void> setMuted(MailRow row, bool muted, {VoidCallback? done}) async {
+    final l = _l;
+    await source.setThreadMuted(row, muted);
+    done?.call();
+    if (!context.mounted) return;
+    toast(
+      muted ? l.conversationMuted : l.conversationUnmuted,
+      action: l.undo,
+      onAction: () async {
+        await source.setThreadMuted(row, !muted);
+        done?.call();
+      },
+    );
+  }
+
+  /// The message as the reader draws it, its files, and its plain text
+  /// for when the blocks can't be had.
+  Future<(List<BodyBlock>?, List<MailAttachment>, String)> _content(
+    MailRow row,
+  ) async {
+    List<BodyBlock>? blocks;
+    var files = const <MailAttachment>[];
+    try {
+      final r = await source.readable(row);
+      blocks = r.blocks;
+      files = r.attachments;
+    } catch (_) {
+      // Without them it goes as plain text, with no files.
+    }
+    final text = blocks == null
+        ? await source.body(row).catchError((Object _) => '')
+        : '';
+    return (blocks, files, text);
+  }
+
+  /// The raw message, with a word on the screen while it comes; null,
+  /// with Try again, when it can't.
+  Future<Uint8List?> _raw(MailRow row) async {
+    final got = await fetchFiles(row, const [], whole: true);
+    return got == null || got.isEmpty ? null : got.first.data;
+  }
+
+  /// Fetches [files] of [row] (or, with [whole], the message itself) in a
+  /// panel that shows how far it got. Returns them all, or the ones the
+  /// person went on with after some failed; null when they cancelled.
+  /// Nothing to fetch, nothing shown.
+  Future<List<DraftFile>?> fetchFiles(
+    MailRow row,
+    List<MailAttachment> files, {
+    bool whole = false,
+  }) async {
+    if (files.isEmpty && !whole) return const [];
+    final l = _l;
+    final items = whole
+        ? [
+            _Fetch(
+              ReplyBuilder.emlName(row.subject),
+              () => source.rawMessage(row),
+            ),
+          ]
+        : [
+            for (final f in files)
+              _Fetch(f.name, () => source.attachmentData(AttachedFile(row, f))),
+          ];
+    final label = whole ? l.gettingEmail : l.forwardFilesTitle(items.length);
+    Widget panel(BuildContext context) =>
+        _FetchPanel(items: items, title: label, whole: whole);
+    return phone
+        ? _sheet<List<DraftFile>>(context, label: label, builder: panel)
+        : showPiumaDialog<List<DraftFile>>(
+            context,
+            label: label,
+            builder: panel,
+          );
+  }
+
+  /// A sheet from the bottom, its panel in from the edges as the app's
+  /// other sheets have them.
+  Future<T?> _sheet<T>(
+    BuildContext context, {
+    required String label,
+    required WidgetBuilder builder,
+  }) => showPiumaSheet<T>(
+    context,
+    label: label,
+    builder: (context) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: PiumaSpace.s20),
+      child: builder(context),
+    ),
+  );
+
+  String _accountEmail(MailRow row) =>
+      source.accounts.where((a) => a.id == row.accountId).firstOrNull?.email ??
+      '';
+}
+
+/// How much of a message View source shows: the rest is in Save as .eml.
+const sourceShown = 256 * 1024;
+
+/// Up to this size the source is read on the screen's thread.
+const _inlineSource = 64 * 1024;
+
+/// What View source shows of [raw]: its first [sourceShown] bytes as
+/// lines, with control and direction characters taken out (tabs and line
+/// ends stay), and whether it was cut.
+({List<String> lines, bool cut}) sourceLines(Uint8List raw) {
+  final cut = raw.length > sourceShown;
+  final text = utf8.decode(
+    cut ? Uint8List.sublistView(raw, 0, sourceShown) : raw,
+    allowMalformed: true,
+  );
+  return (lines: cleanSource(text).split('\n'), cut: cut);
+}
+
+/// [text] without the characters that would hide or reorder what shows:
+/// C0 and C1 controls but tab and line feed, and the bidirectional marks
+/// and overrides.
+String cleanSource(String text) => text.replaceAll(
+  RegExp(
+    '[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]',
+  ),
+  '',
+);
+
+/// The header block of [raw], up to the first empty line (and no more
+/// than [sourceShown]), for the header list.
+Uint8List headerBlock(Uint8List raw) {
+  final end = raw.length < sourceShown ? raw.length : sourceShown;
+  for (var i = 0; i + 3 < end; i++) {
+    if (raw[i] == 13 &&
+        raw[i + 1] == 10 &&
+        raw[i + 2] == 13 &&
+        raw[i + 3] == 10) {
+      return Uint8List.sublistView(raw, 0, i + 4);
+    }
+  }
+  return Uint8List.sublistView(raw, 0, end);
+}
+
+/// One file to fetch.
+class _Fetch {
+  _Fetch(this.name, this.fetch);
+  final String name;
+  final Future<Uint8List?> Function() fetch;
+  Uint8List? data;
+  bool failed = false;
+}
+
+/// "Getting 3 files": a progress line and each file's state; once they
+/// are all here it closes by itself. Files that failed are named, with
+/// Try again and Go on without them.
+class _FetchPanel extends StatefulWidget {
+  const _FetchPanel({
+    required this.items,
+    required this.title,
+    required this.whole,
+  });
+
+  final List<_Fetch> items;
+  final String title;
+
+  /// The message itself, not its files: failing, there's nothing to go
+  /// on without.
+  final bool whole;
+
+  @override
+  State<_FetchPanel> createState() => _FetchPanelState();
+}
+
+class _FetchPanelState extends State<_FetchPanel> {
+  bool _running = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _run());
+  }
+
+  Iterable<_Fetch> get _failed => widget.items.where((i) => i.failed);
+  int get _done => widget.items.where((i) => i.data != null).length;
+
+  Future<void> _run() async {
+    setState(() => _running = true);
+    final todo = [
+      for (final i in widget.items)
+        if (i.data == null) i,
+    ];
+    for (final i in todo) {
+      i.failed = false;
+    }
+    await Future.wait([
+      for (final i in todo)
+        i
+            .fetch()
+            .then((d) {
+              if (d == null) {
+                i.failed = true;
+              } else {
+                i.data = d;
+              }
+            })
+            .catchError((Object _) {
+              i.failed = true;
+            })
+            .whenComplete(() {
+              if (mounted) setState(() {});
+            }),
+    ]);
+    if (!mounted) return;
+    setState(() => _running = false);
+    if (_failed.isEmpty) _finish();
+  }
+
+  void _finish() => Navigator.of(context).pop([
+    for (final i in widget.items)
+      if (i.data case final d?) DraftFile(i.name, d),
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final total = widget.items.length;
+    final failed = _failed.toList();
+    final stuck = !_running && failed.isNotEmpty;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(widget.title, style: PiumaType.subtitle.copyWith(color: c.fg)),
+        const SizedBox(height: PiumaSpace.s16),
+        if (!stuck) ...[
+          Semantics(
+            label: widget.title,
+            value: l.forwardFilesDone(_done, total),
+            child: PiumaProgress(
+              value: widget.whole ? null : (total == 0 ? null : _done / total),
+              track: c.line,
+            ),
+          ),
+          if (!widget.whole) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            ExcludeSemantics(
+              child: Text(
+                l.forwardFilesDone(_done, total),
+                style: PiumaType.small.copyWith(color: c.muted),
+              ),
+            ),
+          ],
+        ] else ...[
+          Text(
+            widget.whole
+                ? l.messageFetchFailed
+                : l.forwardFilesFailed(failed.length),
+            style: PiumaType.body.copyWith(color: c.fg),
+          ),
+          if (!widget.whole) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            for (final f in failed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    PiumaIconView(PiumaIcon.warning, size: 16, color: c.warn),
+                    const SizedBox(width: PiumaSpace.s8),
+                    Expanded(
+                      child: Text(
+                        f.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: PiumaType.body.copyWith(color: c.fg),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+        const SizedBox(height: PiumaSpace.s24),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: PiumaSpace.s8,
+          runSpacing: PiumaSpace.s8,
+          children: [
+            PiumaButton(
+              label: l.cancel,
+              kind: PiumaButtonKind.tertiary,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            if (stuck && !widget.whole)
+              PiumaButton(
+                label: l.forwardWithoutFiles(failed.length),
+                kind: PiumaButtonKind.secondary,
+                onPressed: _finish,
+              ),
+            if (stuck) PiumaButton(label: l.tryAgain, onPressed: _run),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+enum _RedirectPick { cancel, retry }
+
+/// A Redirect waiting in the Outbox: where it goes, where it stands, and
+/// Cancel redirect or Try again.
+class _OutboxRedirectPanel extends StatelessWidget {
+  const _OutboxRedirectPanel({required this.item});
+
+  final OutboxItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final note = switch (item.state) {
+      OutboxState.refused => l.outboxRefused(item.error ?? ''),
+      OutboxState.maybeSent => l.outboxMaybeSentCheck,
+      _ => l.outboxRedirectBody,
+    };
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l.outboxRedirectTitle,
+          style: PiumaType.subtitle.copyWith(color: c.fg),
+        ),
+        const SizedBox(height: PiumaSpace.s12),
+        Text(
+          l.outboxTo(item.recipients),
+          style: PiumaType.body.copyWith(color: c.fg),
+        ),
+        Text(
+          item.subject.isEmpty ? l.noSubject : item.subject,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: PiumaType.body.copyWith(color: c.muted),
+        ),
+        const SizedBox(height: PiumaSpace.s12),
+        Text(
+          note,
+          style: PiumaType.small.copyWith(
+            color: switch (item.state) {
+              OutboxState.refused => c.danger,
+              OutboxState.maybeSent => c.warn,
+              _ => c.muted,
+            },
+          ),
+        ),
+        const SizedBox(height: PiumaSpace.s24),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: PiumaSpace.s8,
+          runSpacing: PiumaSpace.s8,
+          children: [
+            PiumaButton(
+              label: l.outboxCancelRedirect,
+              kind: PiumaButtonKind.danger,
+              onPressed: item.state == OutboxState.sending
+                  ? null
+                  : () => Navigator.of(context).pop(_RedirectPick.cancel),
+            ),
+            PiumaButton(
+              label: l.tryAgain,
+              onPressed: item.state == OutboxState.sending
+                  ? null
+                  : () => Navigator.of(context).pop(_RedirectPick.retry),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// "Redirect this email": where to, and what it means.
+class _RedirectPanel extends StatefulWidget {
+  const _RedirectPanel({required this.row});
+  final MailRow row;
+
+  @override
+  State<_RedirectPanel> createState() => _RedirectPanelState();
+}
+
+class _RedirectPanelState extends State<_RedirectPanel> {
+  final _to = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _to.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _to.dispose();
+    super.dispose();
+  }
+
+  List<String> get _addresses => splitAddresses(_to.text);
+
+  /// The first address typed that isn't one, said under the field.
+  String? get _wrong {
+    for (final a in _addresses) {
+      if (!validAddress(a)) return a;
+    }
+    return null;
+  }
+
+  void _send() {
+    if (_addresses.isEmpty || _wrong != null) return;
+    Navigator.of(context).pop(_addresses);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    // The field is a material one.
+    return Material(type: MaterialType.transparency, child: _panel(c, l));
+  }
+
+  Widget _panel(PiumaColors c, AppLocalizations l) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(l.redirectTitle, style: PiumaType.subtitle.copyWith(color: c.fg)),
+        const SizedBox(height: PiumaSpace.s12),
+        Text(
+          l.redirectBody(widget.row.sender),
+          style: PiumaType.body.copyWith(color: c.muted),
+        ),
+        const SizedBox(height: PiumaSpace.s16),
+        PiumaTextField(
+          label: l.redirectTo,
+          controller: _to,
+          hint: l.redirectHint,
+          keyboardType: TextInputType.emailAddress,
+          autofocus: true,
+          onSubmitted: (_) => _send(),
+        ),
+        if (_wrong case final wrong?
+            when !_to.text.trimRight().endsWith(',')) ...[
+          const SizedBox(height: PiumaSpace.s8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              l.sendBadAddress(wrong),
+              style: PiumaType.small.copyWith(color: c.warn),
+            ),
+          ),
+        ],
+        const SizedBox(height: PiumaSpace.s24),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: PiumaSpace.s8,
+          runSpacing: PiumaSpace.s8,
+          children: [
+            PiumaButton(
+              label: l.cancel,
+              kind: PiumaButtonKind.tertiary,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            PiumaButton(
+              label: l.actionRedirect,
+              onPressed: _addresses.isEmpty || _wrong != null ? null : _send,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// View source: the headers as a list, or the raw message, to read,
+/// select and copy; Save as .eml beside them.
+class _SourcePanel extends StatefulWidget {
+  const _SourcePanel({
+    required this.lines,
+    required this.cut,
+    required this.headers,
+    required this.phone,
+    required this.onSave,
+  });
+
+  /// The message's first [sourceShown] bytes, line by line.
+  final List<String> lines;
+
+  /// The message is longer than what shows.
+  final bool cut;
+  final List<MailHeader> headers;
+  final bool phone;
+  final VoidCallback onSave;
+
+  @override
+  State<_SourcePanel> createState() => _SourcePanelState();
+}
+
+class _SourcePanelState extends State<_SourcePanel> {
+  bool _raw = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final mono = PiumaType.mono.copyWith(
+      fontSize: 12,
+      height: 1.5,
+      color: c.fg,
+    );
+    final height =
+        MediaQuery.sizeOf(context).height * (widget.phone ? 0.6 : 0.55);
+    // Line by line, built as they scroll in: a long message doesn't hold
+    // up the screen.
+    final list = _raw
+        ? ListView.builder(
+            padding: const EdgeInsets.all(PiumaSpace.s12),
+            itemCount: widget.lines.length,
+            itemBuilder: (context, i) => Text(widget.lines[i], style: mono),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(PiumaSpace.s12),
+            itemCount: widget.headers.length,
+            itemBuilder: (context, i) {
+              final h = widget.headers[i];
+              return Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${h.name}: ',
+                      style: mono.copyWith(color: c.muted),
+                    ),
+                    TextSpan(text: h.value, style: mono),
+                  ],
+                ),
+              );
+            },
+          );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(l.sourceTitle, style: PiumaType.subtitle.copyWith(color: c.fg)),
+        const SizedBox(height: PiumaSpace.s12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: PiumaSegments(
+            label: l.sourceTitle,
+            items: [
+              (l.sourceHeaders, !_raw, () => setState(() => _raw = false)),
+              (l.sourceRaw, _raw, () => setState(() => _raw = true)),
+            ],
+          ),
+        ),
+        const SizedBox(height: PiumaSpace.s12),
+        Container(
+          height: height,
+          decoration: BoxDecoration(
+            color: c.bg,
+            border: Border.all(color: c.line),
+            borderRadius: BorderRadius.circular(PiumaRadius.card),
+          ),
+          child: SelectionArea(child: list),
+        ),
+        if (_raw && widget.cut) ...[
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            l.sourceCut((sourceShown / 1024).round()),
+            style: PiumaType.small.copyWith(color: c.muted),
+          ),
+        ],
+        const SizedBox(height: PiumaSpace.s16),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: PiumaSpace.s8,
+          runSpacing: PiumaSpace.s8,
+          children: [
+            PiumaButton(
+              label: l.sourceCopy,
+              kind: PiumaButtonKind.tertiary,
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: _raw
+                      ? widget.lines.join('\n')
+                      : [
+                          for (final h in widget.headers)
+                            '${h.name}: ${h.value}',
+                        ].join('\n'),
+                ),
+              ),
+            ),
+            PiumaButton(
+              label: l.actionSaveEml,
+              kind: PiumaButtonKind.secondary,
+              onPressed: widget.onSave,
+            ),
+            PiumaButton(
+              label: l.close,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}

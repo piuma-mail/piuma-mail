@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../compose/writing_settings.dart';
 import '../design/icons.dart';
 import '../design/look.dart';
 import '../design/motion.dart';
@@ -12,8 +14,10 @@ import '../design/tokens.g.dart';
 import '../inbox/message_list.dart' show initials;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../outside/shell.dart';
 import '../version.dart';
 import '../widgets/button.dart';
+import '../widgets/dialog.dart';
 import '../widgets/segments.dart';
 import '../widgets/switch.dart';
 import '../widgets/verified.dart';
@@ -52,6 +56,9 @@ enum SettingsSection {
   appearance,
   notifications,
   privacy,
+
+  /// Room the mail takes here, how long whole messages stay, clearing it.
+  storage,
   sync,
 
   /// Desktop only: phones have no keyboard to speak of.
@@ -291,10 +298,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         phone: true,
         onBack: _close,
         openTemplates: open == SettingsSection.templates,
-        templates: TemplatesPage(
+        templates: WritingExtras(
           source: widget.source,
           phone: true,
-          embedded: true,
+          templates: TemplatesPage(
+            source: widget.source,
+            phone: true,
+            embedded: true,
+          ),
         ),
       );
     } else {
@@ -319,6 +330,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   phone: true,
                 ),
                 SettingsSection.privacy => PrivacyPage(source: widget.source),
+                SettingsSection.storage => StoragePage(
+                  source: widget.source,
+                  phone: true,
+                ),
                 SettingsSection.help => HelpPage(
                   source: widget.source,
                   now: widget.now,
@@ -461,6 +476,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         PiumaIcon.shield,
                         l.privacyTitle,
                       ),
+                      (
+                        null,
+                        SettingsSection.storage,
+                        PiumaIcon.layers,
+                        l.storageTitle,
+                      ),
                       (null, SettingsSection.sync, PiumaIcon.sync, l.syncTitle),
                       (
                         null,
@@ -488,14 +509,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                     const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text(
-                        l.appVersionLine(appVersionShown),
-                        style: TextStyle(
-                          fontFamily: PiumaFonts.sans,
-                          fontSize: 12,
-                          color: c.muted,
+                    // Opens the licenses screen, as About does on phones.
+                    PiumaPressable(
+                      onTap: () => showLicensePage(
+                        context: context,
+                        applicationName: l.appName,
+                        applicationVersion: appVersionShown,
+                      ),
+                      semanticLabel: l.appVersionLine(appVersionShown),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text(
+                          l.appVersionLine(appVersionShown),
+                          style: TextStyle(
+                            fontFamily: PiumaFonts.sans,
+                            fontSize: 12,
+                            color: c.muted,
+                          ),
                         ),
                       ),
                     ),
@@ -511,7 +541,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       source: widget.source,
                       initial: _signature,
                       openTemplates: _section == SettingsSection.templates,
-                      templates: TemplatesPage(source: widget.source),
+                      templates: WritingExtras(
+                        source: widget.source,
+                        templates: TemplatesPage(source: widget.source),
+                      ),
                     ),
                   ),
                 )
@@ -593,6 +626,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               zones: ZoneSwitches(source: widget.source),
                             ),
                             SettingsSection.privacy => PrivacyPage(
+                              source: widget.source,
+                            ),
+                            SettingsSection.storage => StoragePage(
                               source: widget.source,
                             ),
                             SettingsSection.shortcuts => const ShortcutsPage(),
@@ -921,6 +957,7 @@ class _PhoneList extends StatelessWidget {
             () => onOpen(SettingsSection.notifications),
           ),
           row(l.privacyTitle, null, () => onOpen(SettingsSection.privacy)),
+          row(l.storageTitle, null, () => onOpen(SettingsSection.storage)),
           row(l.syncTitle, sync, () => onOpen(SettingsSection.sync)),
         ]),
         heading(l.settingsAbout),
@@ -964,13 +1001,29 @@ class _PhoneList extends StatelessWidget {
               ),
             ),
           ),
-          SizedBox(
-            height: 52,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(l.openSourceLine, style: text()),
+          // The licenses screen: the app's, the fonts', every Dart
+          // package's and every Rust crate's (`legal.dart`).
+          PiumaPressable(
+            onTap: () => showLicensePage(
+              context: context,
+              applicationName: l.appName,
+              applicationVersion: appVersionShown,
+            ),
+            semanticLabel: l.openSourceLine,
+            child: SizedBox(
+              height: 52,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(l.openSourceLine, style: text())),
+                    PiumaIconView(
+                      PiumaIcon.chevronRight,
+                      size: 16,
+                      color: c.muted,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1343,6 +1396,264 @@ class _AccountRow extends StatelessWidget {
   }
 }
 
+/// Settings › Storage: how much room the mail takes on this device, per
+/// account with "Clear cached mail", and how long whole messages are kept
+/// for reading offline. Built from the Privacy page's parts until the
+/// canvas has a screen for it.
+class StoragePage extends StatefulWidget {
+  const StoragePage({super.key, required this.source, this.phone = false});
+  final MailSource source;
+  final bool phone;
+
+  @override
+  State<StoragePage> createState() => _StoragePageState();
+}
+
+class _StoragePageState extends State<StoragePage> {
+  StorageUse? _use;
+
+  /// The account whose cache is being cleared.
+  int? _clearing;
+
+  /// What the last Clear cached mail said, when it didn't simply work.
+  String? _problem;
+
+  /// Space between the page's parts, and inside its cards.
+  static const _gap = PiumaSpace.s24;
+  static const _inset = EdgeInsets.symmetric(
+    horizontal: PiumaSpace.s16,
+    vertical: PiumaSpace.s12,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    widget.source.storage().then((use) {
+      if (mounted) setState(() => _use = use);
+    });
+  }
+
+  Future<void> _keep(int? days) async {
+    final use = _use;
+    if (use == null) return;
+    setState(
+      () => _use = StorageUse(
+        totalBytes: use.totalBytes,
+        backupBytes: use.backupBytes,
+        accounts: use.accounts,
+        keepDays: days,
+      ),
+    );
+    await widget.source.setKeepDays(days);
+  }
+
+  Future<void> _clear(MailAccount account) async {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final title = l.storageClearTitle(account.name);
+    Widget panel(BuildContext context) => Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.phone ? PiumaSpace.s20 : 0,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: PiumaType.subtitle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: c.fg,
+            ),
+          ),
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            l.storageClearNote,
+            style: PiumaType.body.copyWith(color: c.muted),
+          ),
+          const SizedBox(height: PiumaSpace.s20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              PiumaButton(
+                label: l.cancel,
+                kind: PiumaButtonKind.tertiary,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: PiumaSpace.s8),
+              PiumaButton(
+                label: l.storageClear,
+                kind: PiumaButtonKind.danger,
+                onPressed: () => Navigator.of(context).pop(true),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final yes = widget.phone
+        ? await showPiumaSheet<bool>(context, label: title, builder: panel)
+        : await showPiumaDialog<bool>(context, label: title, builder: panel);
+    if (yes != true || !mounted) return;
+    setState(() {
+      _clearing = account.id;
+      _problem = null;
+    });
+    StorageUse? use;
+    String? problem;
+    try {
+      use = await widget.source.clearCachedMail(account.id);
+    } on NoRoomToShrink catch (e) {
+      use = e.use;
+      problem = l.storageNoRoom;
+    } catch (_) {
+      problem = l.storageClearFailed;
+      // What is left now, as far as it can be read.
+      use = await widget.source.storage().catchError((_) => _use!);
+    }
+    if (!mounted) return;
+    setState(() {
+      _use = use ?? _use;
+      _problem = problem;
+      _clearing = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    final l = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    final use = _use;
+    String size(int bytes) => fileSize(bytes, locale: locale);
+    final hint = PiumaType.small.copyWith(color: c.muted);
+    final problem = _problem;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SettingsHeader(title: l.storageTitle, subtitle: l.storageSubtitle),
+        const SizedBox(height: _gap),
+        if (use != null) ...[
+          Text(
+            l.storageTotal(size(use.totalBytes)),
+            style: PiumaType.body.copyWith(color: c.fg),
+          ),
+          if (use.backupBytes > 0)
+            Text(l.storageBackup(size(use.backupBytes)), style: hint),
+          const SizedBox(height: PiumaSpace.s12),
+          _Card(
+            children: [
+              for (final a in use.accounts)
+                if (widget.source.accounts
+                        .where((m) => m.id == a.accountId)
+                        .firstOrNull
+                    case final account?)
+                  Padding(
+                    padding: _inset,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: PiumaSpace.s12,
+                          height: PiumaSpace.s12,
+                          decoration: BoxDecoration(
+                            color: account.color,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: PiumaSpace.s12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                account.name,
+                                style: PiumaType.body.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: c.fg,
+                                ),
+                              ),
+                              Text(
+                                l.storageAccountLine(
+                                  a.messages,
+                                  size(a.cachedBytes),
+                                ),
+                                style: hint,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: PiumaSpace.s12),
+                        PiumaButton(
+                          label: _clearing == a.accountId
+                              ? l.storageClearing
+                              : l.storageClear,
+                          kind: PiumaButtonKind.secondary,
+                          size: PiumaButtonSize.compact,
+                          onPressed: _clearing != null || a.cachedBytes == 0
+                              ? null
+                              : () => _clear(account),
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+          if (problem != null) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            Text(
+              problem,
+              style: hint.copyWith(
+                color: problem == l.storageNoRoom ? c.muted : c.danger,
+              ),
+            ),
+          ],
+          const SizedBox(height: _gap),
+          _Card(
+            children: [
+              Padding(
+                padding: _inset.copyWith(
+                  top: PiumaSpace.s16,
+                  bottom: PiumaSpace.s16,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l.storageKeep,
+                      style: PiumaType.body.copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: c.fg,
+                      ),
+                    ),
+                    Text(l.storageKeepHint, style: hint),
+                    const SizedBox(height: PiumaSpace.s12),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: PiumaSegments(
+                        label: l.storageKeep,
+                        items: [
+                          for (final (days, text) in [
+                            (30, l.storageKeepMonth),
+                            (90, l.storageKeepMonths),
+                            (365, l.storageKeepYear),
+                            (null, l.storageKeepAlways),
+                          ])
+                            (text, use.keepDays == days, () => _keep(days)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 /// Privacy & security, as `DesktopPrivacy`.
 /// Settings › Notifications, as in the `Settings` mockup: what to be told
 /// about, and quiet hours. The Vault switches arrive with the Vault.
@@ -1418,10 +1729,27 @@ class _NotificationsPageState extends State<NotificationsPage> {
         if (s != null) ...[
           // Android: how new mail arrives with the app closed
           // (`AndroidBackground`, 3).
-          if (widget.source.backgroundChoice) ...[
+          // How new mail reaches the person with Piuma closed: the same
+          // heading and words on the phone (the background service) and
+          // on the desktop (the tray).
+          if (widget.source.backgroundChoice || Shell.canKeepRunning) ...[
             const SizedBox(height: 32),
             Text(l.newMailHeading, style: heading),
+            const SizedBox(height: 4),
+            Text(
+              l.newMailClosedLead,
+              style: TextStyle(
+                fontFamily: PiumaFonts.sans,
+                fontSize: 13,
+                height: 1.35,
+                color: c.muted,
+              ),
+            ),
             const SizedBox(height: 10),
+          ],
+          if (Shell.canKeepRunning && !widget.source.backgroundChoice)
+            _KeepRunningCard(source: widget.source),
+          if (widget.source.backgroundChoice)
             Semantics(
               label: l.newMailHeading,
               container: true,
@@ -1451,7 +1779,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 ],
               ),
             ),
-          ],
           const SizedBox(height: 32),
           Text(l.notifyAbout, style: heading),
           const SizedBox(height: 10),
@@ -1637,6 +1964,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
               ],
             ),
           ],
+          _DeviceSection(source: widget.source, heading: heading),
         ],
       ],
     );
@@ -1782,6 +2110,176 @@ class _ToggleRow extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           PiumaSwitch(value: value, label: title, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+/// "This device": Piuma as the default mail app, on the phone and on the
+/// desktop (lib/outside/shell.dart). Shows only what the platform allows.
+class _DeviceSection extends StatefulWidget {
+  const _DeviceSection({required this.source, required this.heading});
+
+  final MailSource source;
+  final TextStyle heading;
+
+  @override
+  State<_DeviceSection> createState() => _DeviceSectionState();
+}
+
+class _DeviceSectionState extends State<_DeviceSection> {
+  DefaultMail? _default;
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    _ask();
+    // Back from the system's settings: ask again.
+    _lifecycle = AppLifecycleListener(onResume: _ask);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ask() async {
+    if (!Shell.canBeDefault) return;
+    final state = await Shell.defaultMail();
+    if (mounted) setState(() => _default = state);
+  }
+
+  Future<void> _makeDefault() async {
+    final state = await Shell.makeDefault();
+    if (!mounted) return;
+    // Windows answers in its own Settings: asked again on return.
+    if (state != DefaultMail.unknown) setState(() => _default = state);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final android = defaultTargetPlatform == TargetPlatform.android;
+    final state = _default;
+    final showDefault = state != null && state != DefaultMail.unavailable;
+    final rows = <Widget>[
+      if (showDefault)
+        _DefaultMailRow(
+          state: state,
+          android: android,
+          onMakeDefault: _makeDefault,
+        ),
+    ];
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 32),
+        Text(l.deviceHeading, style: widget.heading),
+        const SizedBox(height: 10),
+        _Card(children: rows),
+      ],
+    );
+  }
+}
+
+/// Under "New mail" on Windows and Linux, where the phone has its
+/// background delivery: keeping running in the tray with the window
+/// closed, and starting at sign-in.
+class _KeepRunningCard extends StatefulWidget {
+  const _KeepRunningCard({required this.source});
+
+  final MailSource source;
+
+  @override
+  State<_KeepRunningCard> createState() => _KeepRunningCardState();
+}
+
+class _KeepRunningCardState extends State<_KeepRunningCard> {
+  late DesktopSettings _desktop = widget.source.desktopSettings;
+
+  void _set(DesktopSettings next) {
+    final l = AppLocalizations.of(context);
+    setState(() => _desktop = next);
+    widget.source.desktopSettings = next;
+    Shell.keepRunning(
+      next.keepRunning,
+      open: l.trayOpen,
+      compose: l.compose,
+      quit: l.trayQuit,
+    ).ignore();
+    Shell.startAtLogin(next.startAtLogin).ignore();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return _Card(
+      children: [
+        _ToggleRow(
+          title: l.keepRunningTitle,
+          hint: l.keepRunningHint,
+          value: _desktop.keepRunning,
+          onChanged: (v) => _set(_desktop.copyWith(keepRunning: v)),
+        ),
+        if (Shell.canStartAtLogin)
+          _ToggleRow(
+            title: l.startAtLoginTitle,
+            hint: l.startAtLoginHint,
+            value: _desktop.startAtLogin,
+            onChanged: (v) => _set(_desktop.copyWith(startAtLogin: v)),
+          ),
+      ],
+    );
+  }
+}
+
+/// "Make Piuma your default mail app", with what the system says now.
+class _DefaultMailRow extends StatelessWidget {
+  const _DefaultMailRow({
+    required this.state,
+    required this.android,
+    required this.onMakeDefault,
+  });
+
+  final DefaultMail state;
+  final bool android;
+  final VoidCallback onMakeDefault;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final ours = state == DefaultMail.piuma;
+    // Android asks by itself while no app holds email addresses.
+    final asks = android && state == DefaultMail.none;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      child: Row(
+        children: [
+          Expanded(
+            child: _Titled(
+              title: ours ? l.defaultMailIsTitle : l.defaultMailTitle,
+              hint: ours
+                  ? l.defaultMailIs
+                  : asks
+                  ? l.defaultMailAskAndroid
+                  : android
+                  ? l.defaultMailOtherAndroid
+                  : l.defaultMailHint,
+            ),
+          ),
+          if (!ours && !asks) ...[
+            const SizedBox(width: 16),
+            PiumaButton(
+              label: android ? l.defaultMailAppInfo : l.defaultMailButton,
+              kind: PiumaButtonKind.secondary,
+              size: PiumaButtonSize.compact,
+              onPressed: onMakeDefault,
+            ),
+          ],
         ],
       ),
     );

@@ -14,6 +14,12 @@ class CheckJob : JobService() {
                 Background.show(applicationContext, Background.reminders())
             } catch (e: Throwable) {
                 // Next time, then.
+            } finally {
+                // A sign-in renewed during the look, whatever went wrong after.
+                try {
+                    Background.keepSecrets(applicationContext)
+                } catch (e: Throwable) {
+                }
             }
             jobFinished(params, false)
         }, "piuma-check").start()

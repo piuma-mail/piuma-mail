@@ -6,8 +6,8 @@ use piuma_core::remote::Remote;
 use piuma_core::AccountId;
 
 use crate::api::engine::{
-    engine, in_conversation, inbox_row, signed_in, store, with_files, EngineError, InboxRow,
-    MessageRef,
+    bulk_reader, engine, in_conversation, inbox_row, signed_in, store, with_files, EngineError,
+    InboxRow, MessageRef,
 };
 
 /// A label, with how many emails carry it.
@@ -102,6 +102,30 @@ pub fn labelled(keyword: String) -> Result<Vec<InboxRow>, EngineError> {
         })
         .collect::<Result<Vec<_>, EngineError>>()?;
     super::engine::combine_rows(&store, rows)
+}
+
+/// Rows `offset..offset+limit` of [`labelled`]. A copy in another
+/// account is combined with the row only on the same page.
+pub fn labelled_page(
+    keyword: String,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<InboxRow>, EngineError> {
+    let store = bulk_reader()?;
+    let rows = store
+        .labelled_page(&keyword, offset, limit)?
+        .into_iter()
+        .map(|m| {
+            let row = inbox_row(&store, m);
+            in_conversation(&store, with_files(&store, row))
+        })
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    super::engine::combine_rows(&store, rows)
+}
+
+/// How many emails carry a label, as [`labelled_page`] counts them.
+pub fn labelled_count(keyword: String) -> Result<u32, EngineError> {
+    Ok(bulk_reader()?.labelled_count(&keyword)?)
 }
 
 /// Whether the account's server keeps no keywords, so its labels stay on

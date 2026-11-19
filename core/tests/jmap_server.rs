@@ -8,9 +8,9 @@ use std::time::Duration;
 use piuma_core::imap::FolderRole;
 use piuma_core::jmap::{discover_at, Client, JmapConfig, JmapError};
 use piuma_core::model::{Account, AccountId, AccountKind};
-use piuma_core::remote::Remote;
+use piuma_core::remote::{Remote, Snapshot};
 use piuma_core::space::{self, Device, Key};
-use piuma_core::space_sync::{self, Me, Round};
+use piuma_core::space_sync::{self, Folder as SpaceFolder, Me, Round};
 use piuma_core::{Folder, Store};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +18,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 const USER: &str = "matteo@example.com";
 const PASSWORD: &str = "secret";
+/// One of the account's aliases, with an identity of its own.
+const ALIAS: &str = "studio@example.com";
 /// The server hands out ids two at a time, to make the engine page.
 const QUERY_CAP: usize = 2;
 
@@ -36,19 +38,43 @@ struct Server {
     blobs: BTreeMap<String, Vec<u8>>,
     next: u32,
     sent: Vec<(String, Vec<String>)>,
+    /// The identity and MAIL FROM of each submission, in order.
+    senders: Vec<(String, String)>,
     changed: Arc<tokio::sync::Notify>,
     /// Whether `header:` properties are answered, as by servers that the
     /// engine asked before it read list headers.
     headers: bool,
     /// The away message (RFC 8621 section 8), on servers that keep one.
     vacation: Option<Value>,
+    /// The filters of the searches asked (queries not of one folder).
+    searches: Vec<Value>,
+    /// Folders inside others: child id to parent id.
+    parents: BTreeMap<String, String>,
+    /// Folders not subscribed to; the rest are.
+    unsubscribed: BTreeSet<String>,
+    /// Bytes used and allowed, on servers that keep quotas (RFC 9425).
+    quota: Option<(u64, u64)>,
     /// The next submission is made, but its answer never arrives.
     drop_submission: bool,
     /// The next submission is refused (`notCreated`).
     refuse_submission: bool,
+    /// The identities (id, address) when not the usual three; an address
+    /// may be a wildcard, `*@domain`.
+    identities: Option<Vec<(String, String)>>,
 }
 
 impl Server {
+    /// The account's identities, as `Identity/get` lists them.
+    fn identities(&self) -> Vec<(String, String)> {
+        self.identities.clone().unwrap_or_else(|| {
+            vec![
+                ("other".into(), "someone@example.com".into()),
+                ("me".into(), USER.into()),
+                ("alias".into(), ALIAS.into()),
+            ]
+        })
+    }
+
     fn add(&mut self, mailbox: &str, from: &str, subject: &str, day: u32, seen: bool) -> String {
         self.next += 1;
         let id = format!("M{}", self.next);
@@ -114,6 +140,7 @@ impl Server {
             "keywords": e.keywords.iter().map(|k| (k.clone(), json!(true))).collect::<serde_json::Map<_, _>>(),
             "from": addr(m.from()),
             "to": addr(m.to()),
+            "cc": addr(m.cc()),
             "replyTo": addr(m.reply_to()),
             "subject": m.subject(),
             "preview": m.body_preview(100),
@@ -144,6 +171,16 @@ impl Server {
             let value = match p.as_str() {
                 "size" => json!(e.raw.len()),
                 "attachments" => json!(attachments),
+                header if header.starts_with("header:") && header.ends_with(":asAddresses") => {
+                    let name = &header["header:".len()..header.len() - ":asAddresses".len()];
+                    match m.headers().get(name) {
+                        Some(h) if self.headers => {
+                            let parsed = h.parse_as(mail_parser::HeaderForm::Addresses);
+                            addr(parsed.value().as_address())
+                        }
+                        _ => Value::Null,
+                    }
+                }
                 header if header.starts_with("header:") && self.headers => m
                     .headers()
                     .get(&header["header:".len()..])
@@ -177,21 +214,76 @@ impl Server {
         let one = |v: Value| vec![(name.to_owned(), v)];
         match name {
             "Mailbox/get" => one(json!({ "list": self.mailboxes.iter().map(|(id, name, role)|
-                json!({ "id": id, "name": name, "role": role })).collect::<Vec<_>>() })),
+                json!({ "id": id, "name": name, "role": role,
+                        "parentId": self.parents.get(id),
+                        "isSubscribed": !self.unsubscribed.contains(id),
+                        "totalEmails": self.emails.values().filter(|e| e.mailboxes.contains(id)).count() }))
+                .collect::<Vec<_>>() })),
             "Mailbox/set" => {
-                let new = &args["create"]["new"];
-                let id = match new["role"].as_str() {
-                    Some(role) => format!("mb-{role}"),
-                    None => format!("mb-{}", self.mailboxes.len() + 1),
-                };
-                self.mailboxes.push((
-                    id.clone(),
-                    new["name"].as_str().unwrap().into(),
-                    new["role"].as_str().map(str::to_owned),
-                ));
-                one(json!({ "created": { "new": { "id": id } } }))
+                let mut answer = json!({});
+                if let Some(new) = args["create"].get("new") {
+                    let id = match new["role"].as_str() {
+                        Some(role) => format!("mb-{role}"),
+                        None => format!("mb-{}", self.mailboxes.len() + 1),
+                    };
+                    self.mailboxes.push((
+                        id.clone(),
+                        new["name"].as_str().unwrap().into(),
+                        new["role"].as_str().map(str::to_owned),
+                    ));
+                    answer["created"] = json!({ "new": { "id": id } });
+                }
+                let mut updated = serde_json::Map::new();
+                for (id, patch) in args["update"].as_object().into_iter().flatten() {
+                    let Some(m) = self.mailboxes.iter_mut().find(|(m, _, _)| m == id) else {
+                        continue;
+                    };
+                    if let Some(name) = patch["name"].as_str() {
+                        m.1 = name.into();
+                    }
+                    match patch["isSubscribed"].as_bool() {
+                        Some(true) => {
+                            self.unsubscribed.remove(id);
+                        }
+                        Some(false) => {
+                            self.unsubscribed.insert(id.clone());
+                        }
+                        None => {}
+                    }
+                    updated.insert(id.clone(), Value::Null);
+                }
+                answer["updated"] = Value::Object(updated);
+                let mut destroyed = Vec::new();
+                let mut not = serde_json::Map::new();
+                for id in args["destroy"].as_array().into_iter().flatten() {
+                    let id = id.as_str().unwrap().to_owned();
+                    let kept = args["onDestroyRemoveEmails"].as_bool() != Some(true);
+                    if self.parents.values().any(|p| *p == id) {
+                        not.insert(id, json!({ "type": "mailboxHasChild" }));
+                    } else if kept && self.emails.values().any(|e| e.mailboxes.contains(&id)) {
+                        not.insert(id, json!({ "type": "mailboxHasEmail" }));
+                    } else {
+                        self.mailboxes.retain(|(m, _, _)| *m != id);
+                        self.parents.remove(&id);
+                        destroyed.push(id);
+                    }
+                }
+                answer["destroyed"] = json!(destroyed);
+                answer["notDestroyed"] = Value::Object(not);
+                one(answer)
             }
-            "Email/query" if args["filter"]["operator"].is_string() => {
+            "Quota/get" => {
+                let (used, limit) = self.quota.unwrap();
+                one(json!({ "list": [
+                    { "id": "q0", "resourceType": "count", "scope": "account", "used": 3, "hardLimit": 50 },
+                    { "id": "q1", "resourceType": "octets", "scope": "account", "used": used, "hardLimit": limit },
+                ] }))
+            }
+            // The outbox's look-up by Message-ID (no sort); searches,
+            // sorted, take the arm below.
+            "Email/query"
+                if args["filter"]["operator"].is_string() && args.get("sort").is_none() =>
+            {
                 let ids: Vec<&String> = self
                     .emails
                     .iter()
@@ -213,16 +305,21 @@ impl Server {
                 one(json!({ "ids": ids }))
             }
             "Email/query" => {
-                let mailbox = args["filter"]["inMailbox"].as_str().unwrap();
+                let filter = &args["filter"];
+                let search = filter.get("inMailbox").is_none();
+                if search {
+                    self.searches.push(filter.clone());
+                }
                 let mut ids: Vec<(&String, &Email)> = self
                     .emails
                     .iter()
-                    .filter(|(_, e)| e.mailboxes.contains(mailbox))
+                    .filter(|(_, e)| matches(e, filter))
                     .collect();
                 ids.sort_by(|a, b| b.1.received.cmp(&a.1.received));
                 let total = ids.len();
-                let position = args["position"].as_u64().unwrap() as usize;
-                let limit = (args["limit"].as_u64().unwrap() as usize).min(QUERY_CAP);
+                let position = args["position"].as_u64().unwrap_or(0) as usize;
+                let limit = args["limit"].as_u64().unwrap() as usize;
+                let limit = if search { limit } else { limit.min(QUERY_CAP) };
                 let page: Vec<&String> = ids
                     .iter()
                     .skip(position)
@@ -301,17 +398,41 @@ impl Server {
                 }
                 one(json!({ "updated": { "singleton": null } }))
             }
-            "Identity/get" => one(json!({ "list": [
-                { "id": "other", "email": "someone@example.com" },
-                { "id": "me", "email": USER },
-            ] })),
+            "Identity/get" => one(json!({ "list": self
+                .identities()
+                .into_iter()
+                .map(|(id, email)| json!({ "id": id, "email": email }))
+                .collect::<Vec<_>>() })),
             "EmailSubmission/set" if self.refuse_submission => {
                 self.refuse_submission = false;
                 one(json!({ "notCreated": { "send": { "type": "forbiddenToSend" } } }))
             }
             "EmailSubmission/set" => {
                 let send = &args["create"]["send"];
-                assert_eq!(send["identityId"], "me");
+                let from = send["envelope"]["mailFrom"]["email"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let identity = send["identityId"].as_str().unwrap().to_owned();
+                // As servers do: the envelope goes from the identity's
+                // own address (any in its domain, for a wildcard), or
+                // nothing goes.
+                let own = self
+                    .identities()
+                    .into_iter()
+                    .find(|(id, _)| *id == identity)
+                    .map(|(_, email)| email)
+                    .unwrap_or_default();
+                let allowed = match own.strip_prefix("*@") {
+                    Some(domain) => from.rsplit_once('@').is_some_and(|(_, d)| d == domain),
+                    None => from == own,
+                };
+                if !allowed {
+                    return one(json!({
+                        "notCreated": { "send": { "type": "forbiddenMailFrom" } }
+                    }));
+                }
+                self.senders.push((identity, from));
                 let email = send["emailId"].as_str().unwrap().to_owned();
                 let rcpt = send["envelope"]["rcptTo"]
                     .as_array()
@@ -446,6 +567,9 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
                 if state.lock().unwrap().vacation.is_some() {
                     capabilities["urn:ietf:params:jmap:vacationresponse"] = json!({});
                 }
+                if state.lock().unwrap().quota.is_some() {
+                    capabilities["urn:ietf:params:jmap:quota"] = json!({});
+                }
                 let session = json!({
                     "capabilities": capabilities,
                     "accounts": { "A1": { "name": USER } },
@@ -558,6 +682,48 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
     }
 }
 
+/// Enough of RFC 8621's Email/query filter for the engine's searches:
+/// operators, folders, keywords, and text in the message, its From, To
+/// or Subject (any case). Other conditions hold.
+fn matches(e: &Email, filter: &Value) -> bool {
+    if let Some(op) = filter["operator"].as_str() {
+        let mut each = filter["conditions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| matches(e, c));
+        return match op {
+            "AND" => each.all(|m| m),
+            "OR" => each.any(|m| m),
+            _ => !each.any(|m| m),
+        };
+    }
+    let raw = String::from_utf8_lossy(&e.raw).to_lowercase();
+    let header = |name: &str| {
+        raw.lines()
+            .find(|l| l.starts_with(&format!("{name}:")))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    filter.as_object().unwrap().iter().all(|(key, v)| {
+        let text = v.as_str().unwrap_or_default().to_lowercase();
+        match key.as_str() {
+            "inMailbox" => e.mailboxes.contains(v.as_str().unwrap()),
+            "inMailboxOtherThan" => e.mailboxes.iter().any(|m| {
+                !v.as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|x| x.as_str() == Some(m.as_str()))
+            }),
+            "hasKeyword" => e.keywords.contains(v.as_str().unwrap()),
+            "notKeyword" => !e.keywords.contains(v.as_str().unwrap()),
+            "text" => raw.contains(&text),
+            "from" | "to" | "subject" => header(key).contains(&text),
+            _ => true,
+        }
+    })
+}
+
 async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
     let mut server = Server {
         mailboxes: vec![
@@ -608,6 +774,7 @@ async fn start() -> (Arc<Mutex<Server>>, JmapConfig) {
         session_url: format!("http://127.0.0.1:{port}/jmap/session"),
         username: USER.into(),
         password: PASSWORD.into(),
+        pins: Vec::new(),
     };
     (state, cfg)
 }
@@ -815,6 +982,22 @@ async fn keeps_drafts_and_sends() {
     assert!(!s.emails[email].keywords.contains("$draft"));
 }
 
+#[tokio::test]
+async fn an_email_file_is_imported_into_the_folder_picked() {
+    let (server, cfg) = start().await;
+    let mut client = Client::open(&cfg).await.unwrap();
+    let raw = "From: ada@example.com\r\nSubject: Notes\r\n\r\nHi.\r\n";
+    client.append_to("INBOX", raw.as_bytes()).await.unwrap();
+    {
+        let s = server.lock().unwrap();
+        let email = s.emails.values().find(|e| e.raw == raw.as_bytes()).unwrap();
+        assert_eq!(email.mailboxes.len(), 1);
+        assert!(email.keywords.contains("$seen"));
+    }
+    // A folder the account doesn't have is refused, not created.
+    assert!(client.append_to("no-such", raw.as_bytes()).await.is_err());
+}
+
 const ONCE: &str = "<once-1@example.com>";
 
 fn once() -> String {
@@ -916,6 +1099,233 @@ async fn a_message_id_that_only_contains_ours_is_not_taken_for_it() {
     assert_ne!(email, &other);
     assert_ne!(email, &shouted);
     assert!(String::from_utf8_lossy(&s.emails[email].raw).contains("Once."));
+}
+
+#[tokio::test]
+async fn keeps_every_recipient_and_redirects() {
+    use piuma_core::envelope::{self, reply_recipients, Address, ReplyMode};
+    let (server, cfg) = start().await;
+    let (store, account) = store_with_account(&cfg);
+    let id = {
+        let mut s = server.lock().unwrap();
+        s.headers = true;
+        s.add_raw(
+            "mb-in",
+            &format!(
+                "From: Anna <anna@x.it>\r\nReply-To: desk@x.it, Bo <bo@x.it>\r\n\
+                 To: Matteo <{USER}>, Carla <carla@x.it>\r\nCc: dan@x.it\r\n\
+                 Mail-Followup-To: team@x.it, Carla <carla@x.it>\r\n\
+                 Subject: Plan for Friday\r\nMessage-ID: <plan@x.it>\r\n\
+                 Content-Type: text/plain\r\n\r\nSee you at 20:30.\r\n"
+            ),
+            9,
+        )
+    };
+    let mut client = Client::open(&cfg).await.unwrap();
+    client
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let row = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 50)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.subject == "Plan for Friday")
+        .unwrap();
+    let e = store
+        .lock()
+        .unwrap()
+        .envelope(account, &row.mailbox, row.uid)
+        .unwrap()
+        .unwrap();
+    let emails = |l: &[Address]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    assert_eq!(emails(&e.reply_to), ["desk@x.it", "bo@x.it"]);
+    assert_eq!(emails(&e.to), [USER, "carla@x.it"]);
+    assert_eq!(emails(&e.cc), ["dan@x.it"]);
+    assert_eq!(emails(&e.followup_to), ["team@x.it", "carla@x.it"]);
+    let own = store.lock().unwrap().own_addresses(account).unwrap();
+    let from = Address::new("Anna", "anna@x.it");
+    let one = reply_recipients(&e, &from, &own, ReplyMode::Sender);
+    assert_eq!(emails(&one.to), ["desk@x.it", "bo@x.it"]);
+    let all = reply_recipients(&e, &from, &own, ReplyMode::All);
+    assert_eq!(emails(&all.to), ["team@x.it", "carla@x.it"]);
+
+    // Redirect, from an alias: the raw message from the server, resent
+    // unchanged through the outbox, from the alias's identity.
+    let mut remote = Remote::Jmap(client);
+    let raw = remote
+        .raw(&store, account, &row.mailbox, row.uid)
+        .await
+        .unwrap();
+    assert_eq!(raw, server.lock().unwrap().emails[&id].raw);
+    let to = vec!["Rossi, Mario <eve@x.it>".to_owned()];
+    let own = vec![USER.to_owned(), ALIAS.to_owned()];
+    let (draft, ready) = envelope::redirect(
+        &raw,
+        "Plan for Friday",
+        Some(ALIAS),
+        &own,
+        &to,
+        1_790_000_000,
+    )
+    .unwrap();
+    let out = piuma_core::outbox::Outgoing {
+        account,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: false,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let account = store.lock().unwrap().account(account).unwrap().unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    {
+        let s = server.lock().unwrap();
+        let (email, rcpt) = s.sent.last().unwrap();
+        assert_eq!(rcpt, &["eve@x.it".to_owned()]);
+        assert_eq!(
+            s.senders.last().unwrap(),
+            &("alias".to_owned(), ALIAS.to_owned())
+        );
+        let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+        assert!(
+            sent.starts_with(&format!("Resent-From: {ALIAS}\r\n")),
+            "{sent}"
+        );
+        assert!(sent.contains("Resent-To: eve@x.it\r\n"), "{sent}");
+        assert!(sent.contains("From: Anna <anna@x.it>\r\n"), "{sent}");
+        assert!(sent.contains("Message-ID: <plan@x.it>\r\n"), "{sent}");
+    }
+
+    // From an alias the server has no identity for: the login's identity
+    // sends it, with the envelope from that identity's address (the alias
+    // would be forbiddenMailFrom); Resent-From still names the alias.
+    let shop = "shop@example.com";
+    let own = vec![USER.to_owned(), ALIAS.to_owned(), shop.to_owned()];
+    let (draft, ready) = envelope::redirect(
+        &raw,
+        "Plan for Friday",
+        Some(shop),
+        &own,
+        &to,
+        1_790_000_100,
+    )
+    .unwrap();
+    assert_eq!(ready.from, shop);
+    let out = piuma_core::outbox::Outgoing {
+        account: account.id,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: true,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    let s = server.lock().unwrap();
+    assert_eq!(
+        s.senders.last().unwrap(),
+        &("me".to_owned(), USER.to_owned())
+    );
+    let (email, _) = s.sent.last().unwrap();
+    let sent = String::from_utf8_lossy(&s.emails[email].raw).into_owned();
+    assert!(
+        sent.starts_with(&format!("Resent-From: {shop}\r\n")),
+        "{sent}"
+    );
+}
+
+/// Sends a redirect of a small message from `from` through the outbox, and
+/// gives the identity and MAIL FROM the server saw.
+async fn redirect_from(
+    server: &Arc<Mutex<Server>>,
+    cfg: &JmapConfig,
+    from: &str,
+    at: i64,
+) -> (String, String) {
+    use piuma_core::envelope;
+    let (store, account) = store_with_account(cfg);
+    let raw = b"From: Anna <anna@x.it>\r\nTo: team@x.it\r\nSubject: Hi\r\n\
+                Message-ID: <hi@x.it>\r\nContent-Type: text/plain\r\n\r\nHi.\r\n";
+    let own = vec![USER.to_owned(), from.to_owned()];
+    let to = vec!["eve@x.it".to_owned()];
+    let (draft, ready) = envelope::redirect(raw, "Hi", Some(from), &own, &to, at).unwrap();
+    assert_eq!(ready.from, from);
+    let out = piuma_core::outbox::Outgoing {
+        account,
+        draft,
+        ready,
+        saved: None,
+        send_at: None,
+        undo: false,
+        redirect: true,
+    };
+    let queued = store.lock().unwrap().queue_outgoing(&out, 0).unwrap();
+    let account = store.lock().unwrap().account(account).unwrap().unwrap();
+    let outcome = piuma_core::outbox::send_one(
+        &store,
+        queued,
+        &mut piuma_core::remote::AccountCourier::new(&account, &PASSWORD.into()),
+        "test",
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, piuma_core::outbox::Outcome::Sent(_)),
+        "{outcome:?}"
+    );
+    server.lock().unwrap().senders.last().unwrap().clone()
+}
+
+#[tokio::test]
+async fn sends_through_a_wildcard_identity() {
+    let (server, cfg) = start().await;
+    // The login is covered only by a wildcard identity for its domain;
+    // another identity has an address of its own, elsewhere.
+    server.lock().unwrap().identities = Some(vec![
+        ("other".into(), "someone@example.org".into()),
+        ("wild".into(), "*@example.com".into()),
+    ]);
+    // An alias the wildcard covers: it sends, and the envelope keeps the
+    // alias as it is.
+    assert_eq!(
+        redirect_from(&server, &cfg, ALIAS, 1_790_000_000).await,
+        ("wild".to_owned(), ALIAS.to_owned())
+    );
+    // An address no identity covers: the login's identity, the wildcard,
+    // sends it, with the envelope from the login (the wildcard has no
+    // address of its own).
+    assert_eq!(
+        redirect_from(&server, &cfg, "shop@elsewhere.net", 1_790_000_100).await,
+        ("wild".to_owned(), USER.to_owned())
+    );
 }
 
 #[tokio::test]
@@ -1059,6 +1469,7 @@ fn me(name: &str, kind: &str) -> Me {
             kind: kind.into(),
             last_seen: 0,
             public: space::public_key(&secret),
+            sign: space::sign_public(&secret),
         },
         secret,
     }
@@ -1076,9 +1487,14 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let mac = me("Matteo's MacBook", "laptop");
     let mut mac_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    let recovery = space_sync::create(&mut mac_jmap, USER, &mac_store, pw(), &mac)
-        .await
-        .unwrap();
+    let recovery = space_sync::create(
+        &mut SpaceFolder::new(&mut mac_jmap, USER),
+        &mac_store,
+        pw(),
+        &mac,
+    )
+    .await
+    .unwrap();
     assert_eq!(recovery.phrase().split(' ').count(), 24);
 
     // The folder is made once, and stays out of the account's folders.
@@ -1104,27 +1520,30 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
     // A phone pairs with a code.
     let phone = me("Pixel 8", "phone");
     let mut phone_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    assert!(space_sync::found(&mut phone_jmap).await.unwrap());
+    let mut phone_f = SpaceFolder::new(&mut phone_jmap, USER);
+    let mut mac_f = SpaceFolder::new(&mut mac_jmap, USER);
+    assert!(space_sync::found(&mut phone_f).await.unwrap());
     let code = space::pair_code();
-    let pairing = space_sync::request(&mut phone_jmap, USER, &code, &phone)
+    let pairing = space_sync::request(&mut phone_f, &code, &phone)
         .await
         .unwrap();
-    let waiting = space_sync::requests(&mut mac_jmap).await.unwrap();
+    let waiting = space_sync::requests(&mut mac_f).await.unwrap();
     assert_eq!(waiting.len(), 1);
-    space_sync::approve_waiting(&mut mac_jmap, USER, &waiting[0].id, &code, &mac)
+    space_sync::approve_waiting(&mut mac_f, &mac_store, &waiting[0].id, &code, &mac)
         .await
         .unwrap();
-    let (space, _) = space_sync::join(
-        &mut phone_jmap,
-        USER,
+    let joined = space_sync::join(
+        &mut phone_f,
         pairing,
         &phone_store,
+        pw(),
         &phone,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await
     .unwrap();
-    assert_eq!(space.content.devices.len(), 2);
+    assert_eq!(joined.space.content.devices.len(), 2);
     assert_eq!(
         phone_store
             .lock()
@@ -1134,40 +1553,29 @@ async fn keeps_the_sync_space_in_a_hidden_folder() {
             .as_deref(),
         Some("all")
     );
-    assert!(space_sync::requests(&mut mac_jmap)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(space_sync::requests(&mut mac_f).await.unwrap().is_empty());
 
     // A change on the Mac reaches the phone, and only one copy of the
     // space stays behind.
-    let mac_space = space_sync::open(&mut mac_jmap, &mac).await.unwrap();
-    let mac_seen = space_sync::seen(&mac_store, pw(), &mac, &mac_space).unwrap();
-    let phone_seen = space_sync::seen(&phone_store, pw(), &phone, &space).unwrap();
     mac_store
         .lock()
         .unwrap()
         .set_setting("notify.mode", "people")
         .unwrap();
-    let Round::Pushed(..) =
-        space_sync::round(&mut mac_jmap, USER, &mac_store, pw(), &mac, &mac_seen)
-            .await
-            .unwrap()
+    let Round::Done(r) = space_sync::round(&mut mac_f, &mac_store, pw(), &mac, Some(USER))
+        .await
+        .unwrap()
     else {
-        panic!("the Mac should push");
+        panic!("the Mac should round");
     };
-    let Round::Took(..) = space_sync::round(
-        &mut phone_jmap,
-        USER,
-        &phone_store,
-        pw(),
-        &phone,
-        &phone_seen,
-    )
-    .await
-    .unwrap() else {
-        panic!("the phone should take");
+    assert!(r.pushed);
+    let Round::Done(r) = space_sync::round(&mut phone_f, &phone_store, pw(), &phone, Some(USER))
+        .await
+        .unwrap()
+    else {
+        panic!("the phone should round");
     };
+    assert!(r.applied.took);
     assert_eq!(
         phone_store
             .lock()
@@ -1327,38 +1735,56 @@ async fn the_sync_space_moves_to_another_mailbox() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let (mac, phone) = (me("Matteo's MacBook", "laptop"), me("Pixel 8", "phone"));
     let mut mac_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
-    let recovery = space_sync::create(&mut mac_old, USER, &mac_store, pw(), &mac)
-        .await
-        .unwrap();
-    let mut phone_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
-    let (space, _) = space_sync::recover(
-        &mut phone_old,
-        USER,
-        &recovery.phrase(),
-        &phone_store,
-        &phone,
+    let recovery = space_sync::create(
+        &mut SpaceFolder::new(&mut mac_old, USER),
+        &mac_store,
+        pw(),
+        &mac,
     )
     .await
     .unwrap();
-    let phone_seen = space_sync::seen(&phone_store, pw(), &phone, &space).unwrap();
-
-    // The Mac moves it: same devices, no pairing again.
-    let mut mac_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
-    let moved = space_sync::relocate(&mut mac_old, USER, &mut mac_new, OTHER, &mac)
-        .await
-        .unwrap();
-    assert_eq!(moved.content.devices.len(), 2);
-    assert!(space_sync::found(&mut mac_new).await.unwrap());
-    assert!(!space_sync::found(&mut mac_old).await.unwrap());
-
-    // The phone finds the note and follows; there it opens the space.
-    let Round::Moved(to) = space_sync::round(
-        &mut phone_old,
-        USER,
+    let mut phone_old = Remote::Jmap(Client::open(&old_cfg).await.unwrap());
+    space_sync::recover(
+        &mut SpaceFolder::new(&mut phone_old, USER),
+        &recovery.phrase(),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(USER),
+    )
+    .await
+    .unwrap();
+
+    // The Mac moves it: same devices, no pairing again.
+    let mut mac_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
+    let moved = space_sync::relocate(
+        &mut SpaceFolder::new(&mut mac_old, USER),
+        &mut SpaceFolder::new(&mut mac_new, OTHER),
+        OTHER,
+        &mac_store,
+        &mac,
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved.content.devices.len(), 2);
+    assert!(
+        space_sync::found(&mut SpaceFolder::new(&mut mac_new, OTHER))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !space_sync::found(&mut SpaceFolder::new(&mut mac_old, USER))
+            .await
+            .unwrap()
+    );
+
+    // The phone finds the note and follows; there it opens the space.
+    let Round::Moved(to) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_old, USER),
+        &phone_store,
+        pw(),
+        &phone,
+        Some(USER),
     )
     .await
     .unwrap() else {
@@ -1366,18 +1792,18 @@ async fn the_sync_space_moves_to_another_mailbox() {
     };
     assert_eq!(to, OTHER);
     let mut phone_new = Remote::Jmap(Client::open(&new_cfg).await.unwrap());
-    let Round::Same(..) = space_sync::round(
-        &mut phone_new,
-        OTHER,
+    let Round::Done(r) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_new, OTHER),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(OTHER),
     )
     .await
     .unwrap() else {
-        panic!("nothing changed, so nothing to do");
+        panic!("the phone should open it there");
     };
+    assert!(!r.applied.took);
 
     // The old folder keeps only the note; the new one the space.
     for (state, left) in [(old_state, 1), (new_state, 1)] {
@@ -1393,17 +1819,24 @@ async fn the_sync_space_moves_to_another_mailbox() {
     }
 
     // Moving back clears that note.
-    space_sync::relocate(&mut mac_new, OTHER, &mut mac_old, USER, &mac)
-        .await
-        .unwrap();
-    assert!(space_sync::found(&mut mac_old).await.unwrap());
-    let Round::Same(..) = space_sync::round(
-        &mut phone_old,
+    space_sync::relocate(
+        &mut SpaceFolder::new(&mut mac_new, OTHER),
+        &mut SpaceFolder::new(&mut mac_old, USER),
         USER,
+        &mac_store,
+        &mac,
+    )
+    .await
+    .unwrap();
+    assert!(space_sync::found(&mut SpaceFolder::new(&mut mac_old, USER))
+        .await
+        .unwrap());
+    let Round::Done(_) = space_sync::round(
+        &mut SpaceFolder::new(&mut phone_old, USER),
         &phone_store,
         pw(),
         &phone,
-        &phone_seen,
+        Some(USER),
     )
     .await
     .unwrap() else {
@@ -1419,7 +1852,8 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     let pw = || vec![(USER.to_owned(), PASSWORD.to_owned())];
     let mac = me("Matteo's MacBook", "laptop");
     let mut mac_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    space_sync::create(&mut mac_jmap, USER, &mac_store, pw(), &mac)
+    let mut mac_f = SpaceFolder::new(&mut mac_jmap, USER);
+    space_sync::create(&mut mac_f, &mac_store, pw(), &mac)
         .await
         .unwrap();
 
@@ -1430,29 +1864,28 @@ async fn a_phone_pairs_by_scanning_the_invite() {
     let codes = [code.clone(), newer];
     let phone = me("Pixel 8", "phone");
     let mut phone_jmap = Remote::Jmap(Client::open(&cfg).await.unwrap());
-    let pairing = space_sync::request_qr(&mut phone_jmap, USER, &code, &phone)
+    let mut phone_f = SpaceFolder::new(&mut phone_jmap, USER);
+    let pairing = space_sync::request_qr(&mut phone_f, &code, &phone)
         .await
         .unwrap();
     // Nobody is asked for digits.
-    assert!(space_sync::requests(&mut mac_jmap)
-        .await
-        .unwrap()
-        .is_empty());
-    let answered = space_sync::answer_invite(&mut mac_jmap, USER, &codes, &mac)
+    assert!(space_sync::requests(&mut mac_f).await.unwrap().is_empty());
+    let answered = space_sync::answer_invite(&mut mac_f, &mac_store, &codes, &mac)
         .await
         .unwrap();
     assert_eq!(answered, ["Pixel 8"]);
-    let (space, _) = space_sync::join(
-        &mut phone_jmap,
-        USER,
+    let joined = space_sync::join(
+        &mut phone_f,
         pairing,
         &phone_store,
+        pw(),
         &phone,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await
     .unwrap();
-    assert_eq!(space.content.devices.len(), 2);
+    assert_eq!(joined.space.content.devices.len(), 2);
 
     // Someone who copies the invite's tag but has not the code gets an
     // answer they can't open.
@@ -1464,18 +1897,383 @@ async fn a_phone_pairs_by_scanning_the_invite() {
         .space_put(&space::Note::Request(guess.request.clone()).to_message(USER, space::now()))
         .await
         .unwrap();
-    space_sync::answer_invite(&mut mac_jmap, USER, &codes, &mac)
+    space_sync::answer_invite(&mut mac_f, &mac_store, &codes, &mac)
         .await
         .unwrap();
     let (s_store, _) = store_with_account(&cfg);
     assert!(space_sync::join(
-        &mut s_jmap,
-        USER,
+        &mut SpaceFolder::new(&mut s_jmap, USER),
         guess,
         &s_store,
+        pw(),
         &stranger,
+        Some(USER),
         Duration::from_millis(50),
     )
     .await
     .is_err());
+}
+
+#[tokio::test]
+async fn searches_on_the_server_and_keeps_what_it_finds() {
+    use piuma_core::Query;
+    let (server, cfg) = start().await;
+    let (store, id) = store_with_account(&cfg);
+    {
+        let mut s = server.lock().unwrap();
+        // Old mail never synced: in the Receipts folder, and in the trash.
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.add("mb-misc", "Shop <orders@shop.it>", "Invoice March", 1, true);
+        s.add(
+            "mb-trash",
+            "Shop <orders@shop.it>",
+            "Invoice April",
+            1,
+            true,
+        );
+    }
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::open(&account, &PASSWORD.into()).await.unwrap();
+    async fn ask(
+        remote: &mut Remote,
+        store: &Mutex<Store>,
+        account: &Account,
+        q: &str,
+    ) -> piuma_core::remote::ServerFound {
+        remote
+            .search_server(store, account, &Query::parse(q), 100)
+            .await
+            .unwrap()
+    }
+
+    // Operators become a filter; the trash is left out unless named.
+    let found = ask(
+        &mut remote,
+        &store,
+        &account,
+        "invoice OR receipt -from:julia",
+    )
+    .await;
+    assert!(found.asked);
+    assert_eq!(found.at.len(), 1);
+    assert_eq!(
+        server.lock().unwrap().searches.last().unwrap(),
+        &json!({ "operator": "AND", "conditions": [
+            { "operator": "AND", "conditions": [
+                { "operator": "OR", "conditions": [{ "text": "invoice" }, { "text": "receipt" }] },
+                { "operator": "NOT", "conditions": [{ "from": "julia" }] },
+            ]},
+            { "inMailboxOtherThan": ["mb-trash"] },
+        ]})
+    );
+    // Kept here in its folder, searchable and openable like synced mail.
+    let (mailbox, uid) = found.at[0].clone();
+    assert_eq!(mailbox, "mb-misc");
+    {
+        let s = store.lock().unwrap();
+        let hits = s.search(&Query::parse("invoice"), 10).unwrap();
+        assert_eq!(hits.hits[0].message.subject, "Invoice March");
+        assert_eq!(
+            s.jmap_email_at(id, "M7").unwrap(),
+            Some((mailbox.clone(), uid))
+        );
+    }
+    let body = remote.full_body(&store, id, &mailbox, uid).await.unwrap();
+    assert!(body.text.contains("Invoice March"));
+
+    // Asked again, nothing is fetched twice; the trash when named.
+    let found = ask(&mut remote, &store, &account, "in:trash invoice").await;
+    assert_eq!(found.at.len(), 1);
+    assert_eq!(found.at[0].0, "mb-trash");
+    assert_eq!(
+        server.lock().unwrap().searches.last().unwrap(),
+        &json!({ "operator": "AND", "conditions": [
+            { "inMailbox": "mb-trash" }, { "text": "invoice" },
+        ]})
+    );
+    let found = ask(&mut remote, &store, &account, "subject:invoice in:receipts").await;
+    assert_eq!(found.at, [("mb-misc".to_owned(), uid)]);
+
+    // Terms only this device knows are never asked.
+    let asked = server.lock().unwrap().searches.len();
+    assert!(
+        !ask(&mut remote, &store, &account, "in:vault invoice")
+            .await
+            .asked
+    );
+    assert!(
+        !ask(&mut remote, &store, &account, "in:nowhere invoice")
+            .await
+            .asked
+    );
+    assert_eq!(server.lock().unwrap().searches.len(), asked);
+}
+
+/// Managing the mailbox over JMAP: stars, copies, deleting for good in
+/// Trash, Empty Trash, folders renamed, hidden and deleted, a folder of
+/// the person's choice for a job, and quota.
+#[tokio::test]
+async fn manages_the_mailbox() {
+    let (server, cfg) = start().await;
+    {
+        let mut s = server.lock().unwrap();
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.mailboxes.push(("mb-old".into(), "Old".into(), None));
+        s.mailboxes.push(("mb-sub".into(), "2026".into(), None));
+        s.mailboxes.push(("mb-bin".into(), "Bin".into(), None));
+        s.parents.insert("mb-sub".into(), "mb-misc".into());
+        s.unsubscribed.insert("mb-old".into());
+        s.add("mb-trash", "Ana <ana@example.org>", "Old news", 1, true);
+        s.add("mb-trash", "Ana <ana@example.org>", "Older news", 1, true);
+        s.add("mb-sub", "Leo <leo@example.org>", "Plans", 1, true);
+        s.quota = Some((900, 1000));
+    }
+    let (store, account) = store_with_account(&cfg);
+    let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
+    remote.sync_folders(&store, account).await.unwrap();
+    remote.sync_mailbox(&store, account, "INBOX").await.unwrap();
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(
+            s.trash_mailbox(account).unwrap().as_deref(),
+            Some("mb-trash")
+        );
+        let folders: Vec<(String, u32, bool)> = s
+            .account_folders(account)
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.mailbox, f.depth, f.subscribed))
+            .collect();
+        assert!(folders.contains(&("mb-old".into(), 0, false)));
+        assert!(folders.contains(&("mb-sub".into(), 1, true)));
+    }
+    let lunch = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 1)
+        .unwrap()[0]
+        .uid;
+    let trashed: Vec<u32> = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    {
+        let s = store.lock().unwrap();
+        s.queue_flags(&[(account, "INBOX".into(), lunch)], true)
+            .unwrap();
+        s.queue_change(
+            account,
+            "INBOX",
+            lunch,
+            piuma_core::pending::Change::CopyTo("mb-misc".into()),
+        )
+        .unwrap();
+        s.queue_erase(account, "mb-trash", &trashed[..1]).unwrap();
+        s.rename_folder(account, "mb-misc", "Paperwork").unwrap();
+        s.subscribe_folder(account, "mb-old", true).unwrap();
+    }
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    {
+        let s = server.lock().unwrap();
+        let lunch = &s.emails["M5"];
+        assert!(lunch.keywords.contains("$flagged"));
+        // One email, now in two folders.
+        assert!(lunch.mailboxes.contains("mb-in") && lunch.mailboxes.contains("mb-misc"));
+        assert_eq!(
+            s.emails
+                .values()
+                .filter(|e| e.mailboxes.contains("mb-trash"))
+                .count(),
+            1
+        );
+        assert!(s
+            .mailboxes
+            .iter()
+            .any(|(id, name, _)| id == "mb-misc" && name == "Paperwork"));
+        assert!(!s.unsubscribed.contains("mb-old"));
+    }
+    // JMAP names folders by id: the rename keeps every name here.
+    assert_eq!(
+        store
+            .lock()
+            .unwrap()
+            .account_folder(account, "mb-misc")
+            .unwrap()
+            .unwrap()
+            .name,
+        "Paperwork"
+    );
+    assert!(store
+        .lock()
+        .unwrap()
+        .pending_changes(account)
+        .unwrap()
+        .is_empty());
+
+    // Deleted with its subfolder: their email goes to Trash first.
+    assert!(store
+        .lock()
+        .unwrap()
+        .delete_folder(account, "mb-misc")
+        .unwrap()
+        .is_some());
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    {
+        let s = server.lock().unwrap();
+        assert!(!s
+            .mailboxes
+            .iter()
+            .any(|(id, _, _)| id == "mb-misc" || id == "mb-sub"));
+        // Plans goes to Trash; the copy of Lunch only leaves the folder,
+        // as it is in the inbox too.
+        assert_eq!(
+            s.emails
+                .values()
+                .filter(|e| e.mailboxes.contains("mb-trash"))
+                .count(),
+            2
+        );
+        assert_eq!(s.emails["M5"].mailboxes, ["mb-in".to_owned()].into());
+    }
+
+    // Empty Trash keeps to what was counted: mail that came after stays.
+    let (n, upto) = remote.count("mb-trash").await.unwrap();
+    assert_eq!(n, 2);
+    let late = server
+        .lock()
+        .unwrap()
+        .add("mb-trash", "Ana <ana@example.org>", "Late", 3, true);
+    assert_eq!(
+        remote
+            .empty(&store, account, "mb-trash", &upto)
+            .await
+            .unwrap(),
+        2
+    );
+    {
+        let s = server.lock().unwrap();
+        let left: Vec<&String> = s
+            .emails
+            .iter()
+            .filter(|(_, e)| e.mailboxes.contains("mb-trash"))
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(left, [&late]);
+    }
+
+    // Counted with the server out of reach: only what is here goes, and
+    // Late isn't here yet, so it stays (re-check finding 1).
+    let here = Snapshot::here(&store, account, "mb-trash").unwrap();
+    remote
+        .empty(&store, account, "mb-trash", &here)
+        .await
+        .unwrap();
+    assert!(server.lock().unwrap().emails.contains_key(&late));
+
+    // A move to Trash of mail already there does nothing: deleting for
+    // good is only ever asked for by name.
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    let again = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    remote
+        .move_messages(&store, account, "mb-trash", &again, FolderRole::Trash)
+        .await
+        .unwrap();
+    assert!(server.lock().unwrap().emails.contains_key(&late));
+
+    // A folder of the person's choice for Trash.
+    store
+        .lock()
+        .unwrap()
+        .set_role_choice(account, FolderRole::Trash, Some("mb-bin"))
+        .unwrap();
+    remote.sync_folders(&store, account).await.unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert_eq!(s.trash_mailbox(account).unwrap().as_deref(), Some("mb-bin"));
+        assert!(s.account_folder(account, "mb-bin").unwrap().is_none());
+    }
+    remote
+        .move_messages(&store, account, "INBOX", &[lunch], FolderRole::Trash)
+        .await
+        .unwrap();
+    assert!(server.lock().unwrap().emails["M5"]
+        .mailboxes
+        .contains("mb-bin"));
+
+    assert_eq!(remote.quota().await.unwrap(), Some((900, 1000)));
+}
+
+/// Deleting for good an email that is in another folder too only takes it
+/// out of Trash (review finding 5); a folder holding the folder chosen as
+/// Trash is refused for good, not tried again for a day (finding 3).
+#[tokio::test]
+async fn deleting_keeps_what_lives_elsewhere_and_trash_itself() {
+    let (server, cfg) = start().await;
+    let both = {
+        let mut s = server.lock().unwrap();
+        s.mailboxes
+            .push(("mb-trash".into(), "Trash".into(), Some("trash".into())));
+        s.mailboxes.push(("mb-bin".into(), "Bin".into(), None));
+        s.parents.insert("mb-bin".into(), "mb-misc".into());
+        let id = s.add("mb-trash", "Ana <ana@example.org>", "Both", 1, true);
+        s.emails
+            .get_mut(&id)
+            .unwrap()
+            .mailboxes
+            .insert("mb-in".into());
+        id
+    };
+    let (store, account) = store_with_account(&cfg);
+    let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
+    remote.sync_folders(&store, account).await.unwrap();
+    remote
+        .sync_mailbox(&store, account, "mb-trash")
+        .await
+        .unwrap();
+    let uids = store.lock().unwrap().uids(account, "mb-trash").unwrap();
+    store
+        .lock()
+        .unwrap()
+        .queue_erase(account, "mb-trash", &uids)
+        .unwrap();
+    assert_eq!(remote.send_pending(&store, account).await.unwrap(), 0);
+    assert_eq!(
+        server.lock().unwrap().emails[&both].mailboxes,
+        ["mb-in".to_owned()].into()
+    );
+
+    // Bin, inside Receipts, becomes Trash.
+    store
+        .lock()
+        .unwrap()
+        .set_role_choice(account, FolderRole::Trash, Some("mb-bin"))
+        .unwrap();
+    remote.sync_folders(&store, account).await.unwrap();
+    {
+        let s = store.lock().unwrap();
+        assert!(s.protected_inside(account, "mb-misc").unwrap().is_some());
+        assert_eq!(s.delete_folder(account, "mb-misc").unwrap(), None);
+        s.queue_change(
+            account,
+            "mb-misc",
+            0,
+            piuma_core::pending::Change::Folder(piuma_core::pending::FolderChange::Delete),
+        )
+        .unwrap();
+    }
+    let mut dropped = 0;
+    for _ in 0..piuma_core::pending::REFUSED_ATTEMPTS {
+        dropped += remote.send_pending(&store, account).await.unwrap();
+        store.lock().unwrap().retry_changes_now(account).unwrap();
+    }
+    assert_eq!(dropped, 1);
+    let s = server.lock().unwrap();
+    assert!(s.mailboxes.iter().any(|(id, _, _)| id == "mb-misc"));
+    assert!(s.mailboxes.iter().any(|(id, _, _)| id == "mb-bin"));
 }

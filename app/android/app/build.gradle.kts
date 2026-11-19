@@ -1,7 +1,26 @@
 // Beta and store builds are signed with the project's own key, given by
 // tools/android-beta.sh through these variables; without them a release
 // build is signed with the local debug key, as before.
+// On CI (CI=true) a release build without a key is an error, never a
+// quiet debug signature: pull requests use a throwaway key
+// (.github/actions/android-throwaway-key), releases the real one.
 val releaseKeystore: String? = System.getenv("PIUMA_KEYSTORE_FILE")
+
+// Google signs Android apps in through the reversed client ID as a URL
+// scheme: from `google.android=<id>` in PIUMA_OAUTH_CLIENTS, the same
+// variable the engine is built with (CONTRIBUTING.md, "Sign-in with
+// Microsoft and Google"). Without it the scheme is one nothing opens.
+val googleOAuthScheme: String = (System.getenv("PIUMA_OAUTH_CLIENTS") ?: "")
+    .split(';', '\n')
+    .map { it.trim() }
+    .firstOrNull { it.startsWith("google.android=") }
+    ?.substringAfter('=')
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?.split('.')
+    ?.reversed()
+    ?.joinToString(".")
+    ?: "mail.piuma.app.google"
 
 plugins {
     id("com.android.application")
@@ -35,6 +54,7 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["googleOAuthScheme"] = googleOAuthScheme
     }
 
     signingConfigs {
@@ -76,4 +96,20 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // A paired Wear OS watch (WatchLink.kt): the Data Layer.
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
+}
+
+// Checked once the tasks are known, so debug builds and `flutter test`
+// keep working without a key.
+gradle.taskGraph.whenReady {
+    val signsRelease = allTasks.any {
+        it.project == project && (it.name == "packageRelease" || it.name == "signReleaseBundle")
+    }
+    if (signsRelease && releaseKeystore == null) {
+        if (System.getenv("CI") != null) {
+            throw GradleException(
+                "PIUMA_KEYSTORE_FILE is not set: CI never signs a release build with the debug key.",
+            )
+        }
+        logger.warn("PIUMA_KEYSTORE_FILE is not set: this release build is signed with the local debug key.")
+    }
 }

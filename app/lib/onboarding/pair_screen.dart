@@ -79,6 +79,13 @@ class _PairScreenState extends State<PairScreen> {
   /// "Matteo's MacBook", or a plain word when the space names none.
   String get _approverName => _approver?.name ?? '';
 
+  /// Spaces no longer name their devices where the mail provider can read
+  /// them: the device to confirm on is told by its kind, then.
+  String? get _approverKind => switch (_approver) {
+    final a? when a.name.isEmpty => a.kind.name,
+    _ => null,
+  };
+
   void _go(_Pair step) => setState(() {
     _step = step;
     _error = null;
@@ -107,9 +114,13 @@ class _PairScreenState extends State<PairScreen> {
       _tick?.cancel();
       setState(() {
         _error = switch (e.problem) {
-          SyncProblem.refused => l.pairRefused(_approverName),
+          SyncProblem.refused => switch (_approverKind) {
+            final kind? => l.pairRefusedDevice(kind),
+            null => l.pairRefused(_approverName),
+          },
           SyncProblem.wrongCode => l.pairWrongCode,
           SyncProblem.expired => l.pairExpired,
+          SyncProblem.conflict => l.pairConflict,
           SyncProblem.offline => l.syncFailOffline(widget.account.email),
           _ => l.syncFailOther,
         };
@@ -131,6 +142,8 @@ class _PairScreenState extends State<PairScreen> {
       setState(() {
         _error = switch (e.problem) {
           SyncProblem.wrongPhrase => l.pairPhraseWrong,
+          SyncProblem.oldPhrase => l.pairPhraseOld,
+          SyncProblem.conflict => l.pairConflict,
           SyncProblem.offline => l.syncFailOffline(widget.account.email),
           _ => l.syncFailOther,
         };
@@ -379,10 +392,16 @@ class _PairScreenState extends State<PairScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            l.pairConfirmFrom(
-                              approver.name,
-                              syncAgo(l, approver.lastSeen, widget.now()),
-                            ),
+                            switch (_approverKind) {
+                              final kind? => l.pairConfirmFromDevice(
+                                kind,
+                                syncAgo(l, approver.lastSeen, widget.now()),
+                              ),
+                              null => l.pairConfirmFrom(
+                                approver.name,
+                                syncAgo(l, approver.lastSeen, widget.now()),
+                              ),
+                            },
                             style: PiumaType.body.copyWith(
                               fontSize: 14,
                               color: c.muted,
@@ -435,7 +454,10 @@ class _PairScreenState extends State<PairScreen> {
                 _heading(l.pairCodeTitle(_approver?.kind.name ?? 'laptop'), c),
                 const SizedBox(height: 8),
                 Text(
-                  l.pairCodeBody(name),
+                  switch (_approverKind) {
+                    final kind? => l.pairCodeBodyDevice(kind),
+                    null => l.pairCodeBody(name),
+                  },
                   style: PiumaType.body.copyWith(fontSize: 15, color: c.muted),
                 ),
                 const SizedBox(height: 36),
@@ -493,7 +515,10 @@ class _PairScreenState extends State<PairScreen> {
                             const SizedBox(width: 10),
                             Flexible(
                               child: Text(
-                                l.pairWaiting(name),
+                                switch (_approverKind) {
+                                  final kind? => l.pairWaitingDevice(kind),
+                                  null => l.pairWaiting(name),
+                                },
                                 style: PiumaType.body.copyWith(
                                   fontSize: 14,
                                   color: c.muted,
@@ -516,7 +541,13 @@ class _PairScreenState extends State<PairScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _Numbered(1, l.pairStep1(name, l.syncAskTitle(mine))),
+                      _Numbered(1, switch (_approverKind) {
+                        final kind? => l.pairStep1Device(
+                          kind,
+                          l.syncAskTitle(mine),
+                        ),
+                        null => l.pairStep1(name, l.syncAskTitle(mine)),
+                      }),
                       const SizedBox(height: 10),
                       _Numbered(2, l.pairStep2),
                     ],

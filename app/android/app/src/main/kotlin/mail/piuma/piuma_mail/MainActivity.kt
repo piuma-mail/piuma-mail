@@ -21,6 +21,8 @@ import javax.crypto.spec.GCMParameterSpec
 class MainActivity : FlutterActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
+    private var shared: Shared? = null
+    private var clipboard: Clipboard? = null
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
@@ -29,13 +31,33 @@ class MainActivity : FlutterActivity() {
         // the app context, so it needs it before Flutter starts.
         init(applicationContext)
         NetworkWatch.follow(applicationContext)
-        launchPayload = Background.payload(intent)
+        launchPayload = Background.payload(applicationContext, intent)
+        oauthRedirect(intent)
         super.onCreate(savedInstanceState)
+        // A link or a share that started the app; not again when Android
+        // brings the activity back after it was gone.
+        if (savedInstanceState == null) shared?.handle(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        Background.payload(intent)?.let { notices?.invokeMethod("open", it) }
+        Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
+        oauthRedirect(intent)
+        shared?.handle(intent)
+    }
+
+    /**
+     * The browser coming back from Microsoft's or Google's sign-in page.
+     * The engine checks the answer's `state` against the sign-in it
+     * started and ignores anything else. Links and files other apps hand
+     * Piuma go to [Shared] instead.
+     */
+    private fun oauthRedirect(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val data = intent.data ?: return
+        val scheme = data.scheme ?: return
+        if (scheme.equals("mailto", ignoreCase = true) || scheme.equals("content", ignoreCase = true)) return
+        MailNative.oauthRedirect(data.toString())
     }
 
     companion object {
@@ -72,7 +94,9 @@ class MainActivity : FlutterActivity() {
             }
         Model(flutterEngine.dartExecutor.binaryMessenger)
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
+        clipboard = Clipboard(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
         val context = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/background")
             .setMethodCallHandler { call, result ->
@@ -111,6 +135,8 @@ class MainActivity : FlutterActivity() {
                         android.provider.Settings.Global.getString(contentResolver, "device_name")
                             ?: android.os.Build.MODEL
                     )
+                    // Why the app stopped since the last look, for a report.
+                    "exits" -> result.success(ExitReasons.unseen(context))
                     // Wi-Fi, mobile or offline, for a report.
                     "network" -> result.success(NetworkWatch.kind(context))
                     // The model and Android version, for a report. Never
@@ -127,11 +153,20 @@ class MainActivity : FlutterActivity() {
         notices = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/notices")
             .apply {
                 setMethodCallHandler { call, result ->
-                    if (call.method == "launch") {
-                        result.success(launchPayload)
-                        launchPayload = null
-                    } else {
-                        result.notImplemented()
+                    when (call.method) {
+                        "launch" -> {
+                            result.success(launchPayload)
+                            launchPayload = null
+                        }
+                        // Notices the Flutter plugin shows carry sealed
+                        // payloads too (notice_seal.dart).
+                        "seal" -> result.success(
+                            NoticeSeal.seal(applicationContext, call.arguments as String),
+                        )
+                        "unseal" -> result.success(
+                            NoticeSeal.open(applicationContext, call.arguments as? String),
+                        )
+                        else -> result.notImplemented()
                     }
                 }
             }
@@ -140,6 +175,10 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         shake?.stop()
         shake = null
+        shared?.stop()
+        shared = null
+        clipboard?.stop()
+        clipboard = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

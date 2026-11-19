@@ -58,6 +58,9 @@ enum PiumaIcon {
   ]),
   trash(['M3 6h18', 'M8 6V4h8v2', 'M6 6l1 14h10l1-14']),
   reply(['M9 14 4 9l5-5', 'M4 9h11a5 5 0 0 1 5 5v6']),
+
+  /// Reply's arrow with a second chevron behind it: Reply all.
+  replyAll(['M7 14 2 9l5-5', 'M12 14 7 9l5-5', 'M7 9h8a5 5 0 0 1 5 5v6']),
   chevronDown(['m6 9 6 6 6-6']),
   search(['M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0z', 'm20 20-3.5-3.5']),
   bolt(['M13 2 3 14h9l-1 8 10-12h-9l1-8z']),
@@ -225,6 +228,10 @@ enum PiumaIcon {
   ]),
 
   /// A map pin: directions to a place.
+  /// Starred mail (`\Flagged`): a five-point star, in amber once on.
+  star([
+    'M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.1l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z',
+  ]),
   pin([
     'M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z',
     'M9.5 9a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z',

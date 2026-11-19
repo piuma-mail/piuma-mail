@@ -39,11 +39,22 @@ fn config(test: &str) -> Option<ImapConfig> {
         port,
         security: Security::None,
         username: format!("{test}-{stamp}-{n}"),
-        password: "test".into(),
+        login: "test".into(),
     })
 }
 
 fn store_with_account() -> (Arc<Mutex<Store>>, AccountId) {
+    store_with_imap_host("localhost")
+}
+
+/// An account whose IMAP host names a PEC provider: receipts count only on
+/// certified mailboxes (`pec::certified`). The connection still goes to
+/// the test server.
+fn store_with_pec_account() -> (Arc<Mutex<Store>>, AccountId) {
+    store_with_imap_host("imaps.pec.example.it")
+}
+
+fn store_with_imap_host(host: &str) -> (Arc<Mutex<Store>>, AccountId) {
     let store = Store::open_in_memory().unwrap();
     let id = store
         .add_account(&Account {
@@ -54,7 +65,7 @@ fn store_with_account() -> (Arc<Mutex<Store>>, AccountId) {
             color: "#2F8F83".into(),
             kind: AccountKind::Imap {
                 imap: Server {
-                    host: "localhost".into(),
+                    host: host.into(),
                     port: 31143,
                     security: Security::None,
                 },
@@ -81,7 +92,7 @@ impl Outside {
         let mut client = async_imap::Client::new(tcp);
         client.read_response().await.unwrap();
         let mut s = client
-            .login(&cfg.username, &cfg.password)
+            .login(&cfg.username, cfg.login.password_text().unwrap())
             .await
             .map_err(|(e, _)| e)
             .unwrap();
@@ -281,6 +292,52 @@ async fn resync_applies_deletes_flags_and_new_mail() {
     assert_eq!(uids, [1, 3, 4]);
     let first = s.message(account, "INBOX", 1).unwrap().unwrap();
     assert!(first.flags.seen && first.flags.flagged);
+}
+
+#[tokio::test]
+async fn an_unchanged_folder_is_not_listed_and_flags_come_without_condstore() {
+    let Some(cfg) = config("unchanged") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    for day in 10..14 {
+        let raw = PLAIN.replace("New website quote", &format!("Day {day}"));
+        outside
+            .deliver(&raw, &format!("{day}-Oct-2026 09:00:00 +0200"))
+            .await;
+    }
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.forget_condstore_for_tests();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    // Nothing came or went: no listing, and still the flags.
+    outside.store(1, "+FLAGS (\\Seen)").await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        (report.added, report.removed, report.flags_changed),
+        (0, 0, 1)
+    );
+    // One gone and one new, with the same count: listed again.
+    outside.store(2, "+FLAGS (\\Deleted)").await;
+    outside.expunge().await;
+    outside
+        .deliver(HTML_ONLY, "15-Oct-2026 08:00:00 +0200")
+        .await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!((report.added, report.removed), (1, 1));
+    let s = store.lock().unwrap();
+    let mut uids = s.uids(account, "INBOX").unwrap();
+    uids.sort();
+    assert_eq!(uids, [1, 3, 4, 5]);
+    assert!(s.message(account, "INBOX", 1).unwrap().unwrap().flags.seen);
 }
 
 #[tokio::test]
@@ -514,7 +571,7 @@ async fn wrong_password_is_reported_as_such() {
     let Some(mut cfg) = config("auth") else {
         return;
     };
-    cfg.password = "nope".into();
+    cfg.login = "nope".into();
     assert!(matches!(check_login(&cfg).await, Err(ImapError::Auth)));
 }
 
@@ -610,6 +667,154 @@ async fn sync_keeps_what_a_reply_needs() {
     );
     assert_eq!(rows[0].reply.reply_to, "team@example.org");
     assert_eq!(rows[1].reply.message_id, "");
+}
+
+const TO_MANY: &str = "From: Julia Reed <julia@example.org>
+Reply-To: desk@example.org, Bo <bo@example.org>
+Mail-Followup-To: dev@lists.example.org
+To: me@example.org, Carla <carla@example.org>
+Cc: Dan <dan@example.org>, me@example.org
+List-Id: Dev <dev.lists.example.org>
+List-Post: <mailto:dev@lists.example.org>
+Subject: Plan for Friday
+Message-ID: <plan@example.org>
+Date: Fri, 16 Oct 2026 09:00:00 +0200
+Content-Type: text/plain; charset=utf-8
+
+See you at 20:30.
+";
+
+#[tokio::test]
+async fn sync_keeps_every_recipient_for_reply_all() {
+    use piuma_core::envelope::{reply_recipients, Address, ReplyMode};
+    let Some(cfg) = config("envelope") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(TO_MANY, "16-Oct-2026 09:00:00 +0200").await;
+
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
+    let uid = rows[0].uid;
+    let e = store
+        .lock()
+        .unwrap()
+        .envelope(account, "INBOX", uid)
+        .unwrap()
+        .unwrap();
+    let emails = |l: &[Address]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    assert_eq!(emails(&e.reply_to), ["desk@example.org", "bo@example.org"]);
+    assert_eq!(emails(&e.to), ["me@example.org", "carla@example.org"]);
+    assert_eq!(emails(&e.cc), ["dan@example.org", "me@example.org"]);
+    assert_eq!(emails(&e.followup_to), ["dev@lists.example.org"]);
+    assert_eq!(e.list_post, "dev@lists.example.org");
+    assert!(e.list);
+    let own = store.lock().unwrap().own_addresses(account).unwrap();
+    let from = Address::new("Julia Reed", "julia@example.org");
+    let all = reply_recipients(&e, &from, &own, ReplyMode::All);
+    assert_eq!(emails(&all.to), ["dev@lists.example.org"]);
+
+    // The raw message, for View source and Redirect, as it was delivered.
+    let raw = conn.raw("INBOX", uid).await.unwrap();
+    let text = String::from_utf8_lossy(&raw);
+    assert!(text.contains("Mail-Followup-To: dev@lists.example.org"));
+    let lines = piuma_core::envelope::header_lines(&raw);
+    assert!(lines
+        .iter()
+        .any(|h| h.name == "Subject" && h.value == "Plan for Friday"));
+}
+
+#[tokio::test]
+async fn new_mail_in_a_muted_conversation_arrives_read_on_the_server_too() {
+    let Some(cfg) = config("muted") else { return };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(TO_MANY, "16-Oct-2026 09:00:00 +0200").await;
+    let (store, account) = store_with_account();
+    let mut conn = Connection::open(&cfg).await.unwrap();
+    conn.sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    let first = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap()[0]
+        .uid;
+    store
+        .lock()
+        .unwrap()
+        .set_thread_muted(account, "INBOX", first, true)
+        .unwrap();
+
+    let reply = "From: Carla <carla@example.org>
+To: julia@example.org
+Cc: me@example.org
+Subject: Re: Plan for Friday
+Message-ID: <plan-2@example.org>
+In-Reply-To: <plan@example.org>
+References: <plan@example.org>
+Date: Fri, 16 Oct 2026 10:00:00 +0200
+Content-Type: text/plain; charset=utf-8
+
+Count me in.
+";
+    outside.deliver(reply, "16-Oct-2026 10:00:00 +0200").await;
+    let report = conn
+        .sync_mailbox(&store, account, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(report.arrived.len(), 1);
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
+    let new = rows
+        .iter()
+        .find(|r| r.subject == "Re: Plan for Friday")
+        .unwrap();
+    assert!(new.flags.seen, "muted mail arrives read");
+    let uid = new.uid;
+    // It stays in the inbox, and the server is told it is read before the
+    // watcher looks at the flags again.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(watch(
+        cfg.clone(),
+        store.clone(),
+        account,
+        "INBOX".into(),
+        move |e| {
+            tx.send(e).ok();
+        },
+    ));
+    next_sync(&mut rx).await;
+    task.abort();
+    let rows = store
+        .lock()
+        .unwrap()
+        .unified(Folder::Inbox, None, 10)
+        .unwrap();
+    assert!(rows.iter().find(|r| r.uid == uid).unwrap().flags.seen);
+    let mut flags: Vec<_> = outside
+        .0
+        .uid_fetch(uid.to_string(), "FLAGS")
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let f = flags.pop().unwrap();
+    assert!(f
+        .flags()
+        .any(|f| matches!(f, async_imap::types::Flag::Seen)));
 }
 
 async fn folder_count(outside: &mut Outside, folder: &str) -> u32 {
@@ -1106,7 +1311,7 @@ async fn a_closed_port_counts_as_offline_and_a_bad_password_does_not() {
         return;
     };
     let mut wrong = cfg.clone();
-    wrong.password = "nope".into();
+    wrong.login = "nope".into();
     assert!(!Connection::open(&wrong).await.err().unwrap().is_offline());
     cfg.port = 1;
     assert!(Connection::open(&cfg).await.err().unwrap().is_offline());
@@ -1185,8 +1390,13 @@ async fn own_folders_are_listed_and_take_moved_mail() {
         .unwrap();
     let s = store.lock().unwrap();
     assert_eq!(s.count(Folder::Inbox).unwrap(), 1);
-    assert_eq!(s.mailbox_count(account, &acme).unwrap(), 1);
-    let page = s.mailbox_page(account, &acme, 0, 10).unwrap();
+    assert_eq!(
+        s.mailbox_count(account, &acme, Default::default()).unwrap(),
+        1
+    );
+    let page = s
+        .mailbox_page(account, &acme, Default::default(), 0, 10)
+        .unwrap();
     assert_eq!(page[0].latest.subject, "New website quote");
 }
 
@@ -1674,7 +1884,7 @@ async fn pec_receipts_leave_the_inbox_and_gather_per_message() {
         .deliver(PEC_DELIVERED, "19-Oct-2026 09:12:04 +0200")
         .await;
 
-    let (store, account) = store_with_account();
+    let (store, account) = store_with_pec_account();
     let mut conn = Connection::open(&cfg).await.unwrap();
     let report = conn
         .sync_mailbox(&store, account, "INBOX", |_, _| {})
@@ -1692,6 +1902,15 @@ async fn pec_receipts_leave_the_inbox_and_gather_per_message() {
     // The receipt is the provider's signed message, saved whole.
     let raw = conn.raw("INBOX", 3).await.unwrap();
     assert!(String::from_utf8_lossy(&raw).contains("X-Ricevuta: avvenuta-consegna"));
+
+    // On an ordinary mailbox anyone can write those headers: the same mail
+    // stays in the inbox and proves nothing.
+    let (plain, other) = store_with_account();
+    conn.sync_mailbox(&plain, other, "INBOX", |_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(subjects(&plain, Folder::Inbox).len(), 3);
+    assert!(plain.lock().unwrap().pec_sent(None).unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1787,4 +2006,45 @@ async fn labels_are_keywords_on_the_server() {
         .message_labels(account, "INBOX", 1)
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn server_search_finds_mail_not_here_yet() {
+    use piuma_core::remote::Remote;
+    use piuma_core::Query;
+    let Some(cfg) = config("serversearch") else {
+        return;
+    };
+    let mut outside = Outside::open(&cfg).await;
+    outside.deliver(PLAIN, "12-Oct-2026 09:41:00 +0200").await;
+    outside
+        .deliver(
+            &PLAIN.replace("New website quote", "Città e caffè"),
+            "13-Oct-2026 09:41:00 +0200",
+        )
+        .await;
+    let (store, id) = store_with_account();
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::Imap(Connection::open(&cfg).await.unwrap());
+    // Nothing is synced: only the server knows.
+    let found = remote
+        .search_server(&store, &account, &Query::parse("subject:caffè"), 100)
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    assert!(found.asked && !found.partial);
+    let found = remote
+        .search_server(
+            &store,
+            &account,
+            &Query::parse("updated -subject:città from:julia"),
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    remote.close().await;
+    let s = store.lock().unwrap();
+    assert_eq!(s.search(&Query::parse("caffè"), 10).unwrap().total, 1);
+    assert_eq!(s.search(&Query::parse("website"), 10).unwrap().total, 1);
 }

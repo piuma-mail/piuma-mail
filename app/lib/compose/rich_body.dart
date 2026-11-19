@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../design/theme.dart';
+import '../design/tokens.g.dart';
 import '../mail/mail_source.dart';
 
 /// A list or a quote, kept as the start of each of its lines
@@ -34,10 +35,47 @@ final _link = RegExp(r'^(https?://|mailto:)\S+$', caseSensitive: false);
 /// Every edit moves the marks with the words under them; typing at the
 /// end of a bold word goes on in bold.
 class RichBodyController extends TextEditingController {
-  RichBodyController({super.text, List<BodyMark> marks = const []})
-    : _marks = [...marks];
+  RichBodyController({
+    super.text,
+    List<BodyMark> marks = const [],
+    List<DraftImage> images = const [],
+  }) : _marks = [...marks],
+       _images = [...images] {
+    _dropStrayPlaceholders();
+  }
+
+  /// A body can hold more picture places than pictures (text quoted from
+  /// a mailer that leaves U+FFFC where a picture was): the places past
+  /// the pictures go, so every place has its picture.
+  void _dropStrayPlaceholders() {
+    final t = text;
+    final at = [
+      for (
+        var i = t.indexOf(imagePlaceholder);
+        i >= 0;
+        i = t.indexOf(imagePlaceholder, i + 1)
+      )
+        i,
+    ];
+    if (at.length <= _images.length) return;
+    var now = t;
+    for (final i in at.skip(_images.length).toList().reversed) {
+      _move(i, i + 1, 0);
+      now = now.replaceRange(i, i + 1, '');
+    }
+    _marks = _normal(_marks, now.length);
+    super.value = TextEditingValue(
+      text: now,
+      selection: TextSelection.collapsed(offset: now.length),
+    );
+  }
 
   List<BodyMark> _marks;
+
+  /// The pictures in the text, one for each [imagePlaceholder], in order.
+  List<DraftImage> _images;
+
+  List<DraftImage> get images => List.unmodifiable(_images);
 
   /// Bold or italic turned on or off at the caret, for what is typed next.
   final _pending = <BodyMarkKind, bool>{};
@@ -79,7 +117,7 @@ class RichBodyController extends TextEditingController {
       s++;
     }
     final removedEnd = a.length - s;
-    final inserted = b.substring(p, b.length - s);
+    var inserted = b.substring(p, b.length - s);
     final sel = old.selection;
     // An address pasted over words links them.
     if (sel.isValid &&
@@ -92,6 +130,28 @@ class RichBodyController extends TextEditingController {
       return old.copyWith(
         selection: TextSelection.collapsed(offset: sel.end),
         composing: TextRange.empty,
+      );
+    }
+    // A picture whose place was deleted goes with it; a place typed or
+    // pasted without its picture is left out.
+    if (a.substring(p, removedEnd).contains(imagePlaceholder)) {
+      final first = imagePlaceholder.allMatches(a.substring(0, p)).length;
+      final gone = imagePlaceholder
+          .allMatches(a.substring(p, removedEnd))
+          .length;
+      _images.removeRange(
+        first.clamp(0, _images.length),
+        (first + gone).clamp(0, _images.length),
+      );
+    }
+    if (inserted.contains(imagePlaceholder)) {
+      inserted = inserted.replaceAll(imagePlaceholder, '');
+      final text = a.replaceRange(p, removedEnd, inserted);
+      _move(p, removedEnd, inserted.length);
+      _marks = _normal(_marks, text.length);
+      return TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: p + inserted.length),
       );
     }
     final lineStart = _lineStart(a, p);
@@ -330,6 +390,67 @@ class RichBodyController extends TextEditingController {
     return out;
   }
 
+  /// Puts [pictures] in the text at the caret (in place of any selected
+  /// words), each on a line of its own.
+  void insertImages(List<DraftImage> pictures) {
+    if (pictures.isEmpty) return;
+    final t = text;
+    final sel = selection.isValid
+        ? selection
+        : TextSelection.collapsed(offset: t.length);
+    final start = sel.start.clamp(0, t.length);
+    final end = sel.end.clamp(start, t.length);
+    final before = start > 0 && t[start - 1] != '\n' ? '\n' : '';
+    final after = end < t.length && t[end] != '\n' ? '\n' : '';
+    final add =
+        '$before${List.filled(pictures.length, imagePlaceholder).join('\n')}$after';
+    final first = imagePlaceholder
+        .allMatches(t.substring(0, start))
+        .length
+        .clamp(0, _images.length);
+    final gone = imagePlaceholder
+        .allMatches(t.substring(start, end))
+        .length
+        .clamp(0, _images.length - first);
+    _images
+      ..removeRange(first, first + gone)
+      ..insertAll(first, pictures);
+    _move(start, end, add.length);
+    final now = t.replaceRange(start, end, add);
+    _marks = _normal(_marks, now.length);
+    _internal = true;
+    try {
+      value = TextEditingValue(
+        text: now,
+        selection: TextSelection.collapsed(
+          offset: start + add.length - after.length,
+        ),
+      );
+    } finally {
+      _internal = false;
+    }
+  }
+
+  /// Puts [body] in place of everything, with its [marks] and [images].
+  void replaceBody(
+    String body, {
+    List<BodyMark> marks = const [],
+    List<DraftImage> images = const [],
+  }) {
+    _marks = _normal([...marks], body.length);
+    _images = [...images];
+    _pending.clear();
+    _internal = true;
+    try {
+      value = TextEditingValue(
+        text: body,
+        selection: TextSelection.collapsed(offset: body.length),
+      );
+    } finally {
+      _internal = false;
+    }
+  }
+
   @override
   TextSpan buildTextSpan({
     required BuildContext context,
@@ -352,7 +473,18 @@ class RichBodyController extends TextEditingController {
       }
       at += line.length + 1;
     }
-    if (_marks.isEmpty && quoted.isEmpty && !composing.isValid) {
+    final pictures = <int>[
+      for (
+        var i = t.indexOf(imagePlaceholder);
+        i >= 0;
+        i = t.indexOf(imagePlaceholder, i + 1)
+      )
+        i,
+    ];
+    if (_marks.isEmpty &&
+        quoted.isEmpty &&
+        pictures.isEmpty &&
+        !composing.isValid) {
       return TextSpan(style: style, text: t);
     }
     final cuts = <int>{0, t.length};
@@ -376,11 +508,28 @@ class RichBodyController extends TextEditingController {
         ..add(composing.start)
         ..add(composing.end);
     }
+    for (final p in pictures) {
+      cuts
+        ..add(p)
+        ..add(p + 1);
+    }
     final sorted = cuts.toList()..sort();
-    final children = <TextSpan>[];
+    final children = <InlineSpan>[];
     for (var i = 0; i + 1 < sorted.length; i++) {
       final a = sorted[i], b = sorted[i + 1];
       if (a >= b) continue;
+      if (b == a + 1 && t[a] == imagePlaceholder) {
+        final n = pictures.indexOf(a);
+        children.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: n < _images.length
+                ? InlinePicture(image: _images[n])
+                : const SizedBox.shrink(),
+          ),
+        );
+        continue;
+      }
       bool on(BodyMarkKind kind) =>
           _marks.any((m) => m.kind == kind && m.start <= a && m.end >= b);
       final inQuote = quoted.any((q) => q.$1 <= a && q.$2 >= b);
@@ -456,4 +605,73 @@ List<BodyMark> _normal(List<BodyMark> marks, int length) {
     }
   }
   return out;
+}
+
+/// A picture inside the text being written, as compose draws it: a
+/// pill as tall as a line, with a thumbnail and the picture's name, where
+/// the picture will be in the email. A text field lays its pictures out
+/// as part of a line, so the pill keeps to a line's height.
+class InlinePicture extends StatelessWidget {
+  const InlinePicture({super.key, required this.image});
+
+  final DraftImage image;
+
+  /// The pill's height, under the body's line height.
+  static const height = 26.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = PiumaTheme.of(context);
+    return Semantics(
+      image: true,
+      label: image.name,
+      child: ExcludeSemantics(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240, maxHeight: height),
+          child: Container(
+            height: height,
+            padding: const EdgeInsets.fromLTRB(3, 3, 10, 3),
+            decoration: BoxDecoration(
+              color: c.soft,
+              border: Border.all(color: c.line),
+              borderRadius: BorderRadius.circular(PiumaRadius.pill),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(PiumaRadius.pill),
+                  child: SizedBox.square(
+                    dimension: height - 8,
+                    child: Image.memory(
+                      image.data,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      excludeFromSemantics: true,
+                      cacheWidth: 64,
+                      errorBuilder: (_, _, _) => ColoredBox(color: c.line),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    image.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: PiumaFonts.sans,
+                      fontSize: 13,
+                      height: 1.2,
+                      color: c.accentText,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

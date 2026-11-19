@@ -50,6 +50,22 @@ Future<void> setLabel({
 Future<List<InboxRow>> labelled({required String keyword}) =>
     RustLib.instance.api.crateApiLabelsLabelled(keyword: keyword);
 
+/// Rows `offset..offset+limit` of [`labelled`]. A copy in another
+/// account is combined with the row only on the same page.
+Future<List<InboxRow>> labelledPage({
+  required String keyword,
+  required int offset,
+  required int limit,
+}) => RustLib.instance.api.crateApiLabelsLabelledPage(
+  keyword: keyword,
+  offset: offset,
+  limit: limit,
+);
+
+/// How many emails carry a label, as [`labelled_page`] counts them.
+Future<int> labelledCount({required String keyword}) =>
+    RustLib.instance.api.crateApiLabelsLabelledCount(keyword: keyword);
+
 /// Whether the account's server keeps no keywords, so its labels stay on
 /// this device.
 bool labelsLocal({required PlatformInt64 accountId}) =>

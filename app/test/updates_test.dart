@@ -25,4 +25,14 @@ void main() {
     await u.restart();
     expect(u.state.value, same(ready));
   });
+  test('the choices start as automatic checks, no early releases', () {
+    final u = Updates.fake();
+    expect(u.prefs.value.automatic, isTrue);
+    expect(u.prefs.value.early, isFalse);
+    u.setEarly(true);
+    u.setAutomatic(false);
+    expect(u.prefs.value.early, isTrue);
+    expect(u.prefs.value.automatic, isFalse);
+    expect(u.notifyOnly, isFalse);
+  });
 }

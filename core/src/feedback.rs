@@ -2,12 +2,20 @@
 //! relay (`relay/` in the repository), which opens a GitHub issue. Nothing
 //! leaves the device unless the person sends it, and only what they chose:
 //! the screenshot and the log each have their own switch, and the log is
-//! cleaned of addresses, names, servers and subjects as it is written.
+//! scrubbed of addresses, names, servers, subjects, server replies and
+//! quoted text as it is written. Scrubbing is a best effort: "See what's
+//! sent" shows the log as it would go.
 //!
 //! Reports wait on disk (`<dir>/<id>/report.json`, `screenshot.png`,
 //! `log.txt` and the images and videos the person attached,
 //! `attachment-1.png`…) and go in the background, so they also work
 //! offline.
+//!
+//! A fork points its build elsewhere with environment variables read at
+//! build time (see CONTRIBUTING.md): `PIUMA_REPORT_RELAY`,
+//! `PIUMA_FEEDBACK_ADDRESS`, `PIUMA_PRIVACY_CONTROLLER`,
+//! `PIUMA_PRIVACY_CONTACT`, `PIUMA_PRIVACY_URL` and
+//! `PIUMA_REPORT_FILES_DAYS`.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -18,16 +26,75 @@ use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+// ---- Configuration -----------------------------------------------------
+
 /// Where reports go unless a build sets `PIUMA_REPORT_RELAY`. Empty: the
-/// relay is off and only "Send by email instead" is offered.
+/// relay is off and only "Send by email instead" is offered. Moving the
+/// relay to a project domain is a maintainer step (DNS and a Workers
+/// route), then a build with the new address.
 pub const DEFAULT_RELAY: &str = "https://piuma-report-relay.matte-maraffio.workers.dev";
 
-/// Where "Send by email instead" writes to.
-pub const FEEDBACK_ADDRESS: &str = "piuma@matteomaraffio.com";
+/// Where "Send by email instead" writes to unless a build sets
+/// `PIUMA_FEEDBACK_ADDRESS` (empty: no email option).
+pub const DEFAULT_FEEDBACK_ADDRESS: &str = "piuma@matteomaraffio.com";
+
+/// Who decides what happens to reports, as the privacy notice names them,
+/// unless a build sets `PIUMA_PRIVACY_CONTROLLER`.
+pub const DEFAULT_PRIVACY_CONTROLLER: &str = "Matteo Maraffio, maintainer of Piuma Mail";
+
+/// The full privacy notice, unless a build sets `PIUMA_PRIVACY_URL`.
+pub const DEFAULT_PRIVACY_URL: &str =
+    "https://github.com/piuma-mail/piuma-mail/blob/main/PRIVACY.md";
+
+/// Days the relay keeps attachments, as the notice says, unless a build
+/// sets `PIUMA_REPORT_FILES_DAYS` (it must match the relay's
+/// `RETENTION_DAYS` and its bucket's lifecycle rule).
+pub const DEFAULT_FILES_DAYS: u32 = 90;
 
 /// The relay this build sends to; empty when it has none.
 pub fn relay_url() -> &'static str {
     option_env!("PIUMA_REPORT_RELAY").unwrap_or(DEFAULT_RELAY)
+}
+
+/// Where "Send by email instead" writes to; empty when this build has none.
+pub fn feedback_address() -> &'static str {
+    option_env!("PIUMA_FEEDBACK_ADDRESS").unwrap_or(DEFAULT_FEEDBACK_ADDRESS)
+}
+
+/// What the privacy notice in the app says about who handles reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Privacy {
+    pub controller: String,
+    /// Where to ask what is kept, or to have it erased.
+    pub contact: String,
+    /// The full notice.
+    pub url: String,
+    /// The relay's host ("…workers.dev"), empty without a relay.
+    pub relay_host: String,
+    pub files_days: u32,
+}
+
+pub fn privacy() -> Privacy {
+    let set = |v: Option<&'static str>, default: &str| {
+        v.filter(|v| !v.trim().is_empty())
+            .unwrap_or(default)
+            .to_string()
+    };
+    Privacy {
+        controller: set(
+            option_env!("PIUMA_PRIVACY_CONTROLLER"),
+            DEFAULT_PRIVACY_CONTROLLER,
+        ),
+        contact: set(option_env!("PIUMA_PRIVACY_CONTACT"), feedback_address()),
+        url: set(option_env!("PIUMA_PRIVACY_URL"), DEFAULT_PRIVACY_URL),
+        relay_host: url::Url::parse(relay_url())
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_default(),
+        files_days: option_env!("PIUMA_REPORT_FILES_DAYS")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(DEFAULT_FILES_DAYS),
+    }
 }
 
 // ---- Log ---------------------------------------------------------------
@@ -114,6 +181,10 @@ pub fn log_excerpt(log: &str) -> String {
 /// The app sets them when it opens and when accounts change.
 static PERSONAL: RwLock<Vec<String>> = RwLock::new(Vec::new());
 
+/// The people in the local database (correspondents' names and addresses),
+/// as one pattern: there can be thousands, too many to try one by one.
+static PEOPLE: RwLock<Option<Regex>> = RwLock::new(None);
+
 /// Sets the words [`clean`] always hides.
 pub fn set_personal(words: Vec<String>) {
     let mut words: Vec<String> = words
@@ -127,6 +198,121 @@ pub fn set_personal(words: Vec<String>) {
     *PERSONAL.write().unwrap_or_else(|e| e.into_inner()) = words;
 }
 
+/// Name parts that are also ordinary words in a log: a sender called
+/// "Amazon Web Services" mustn't hide every "services".
+const COMMON_NAME_WORDS: &[&str] = &[
+    "account",
+    "accounts",
+    "admin",
+    "alert",
+    "alerts",
+    "amazon",
+    "apple",
+    "billing",
+    "calendar",
+    "contact",
+    "customer",
+    "daily",
+    "digest",
+    "error",
+    "github",
+    "google",
+    "group",
+    "hello",
+    "help",
+    "inbox",
+    "info",
+    "mail",
+    "mailer",
+    "microsoft",
+    "news",
+    "newsletter",
+    "noreply",
+    "no-reply",
+    "notification",
+    "notifications",
+    "office",
+    "order",
+    "orders",
+    "people",
+    "piuma",
+    "reply",
+    "sales",
+    "security",
+    "server",
+    "service",
+    "services",
+    "shop",
+    "store",
+    "support",
+    "sync",
+    "team",
+    "the",
+    "update",
+    "updates",
+    "user",
+    "weekly",
+    "with",
+    "from",
+    "your",
+];
+
+/// Sets the people [`clean`] hides as `<person>`: correspondents' display
+/// names (whole, and each part of four letters or more that isn't an
+/// ordinary word) and their addresses' local parts. Addresses themselves
+/// already go as `<email>`.
+pub fn set_known_people(names: &[String], addresses: &[String]) {
+    let mut words: Vec<String> = Vec::new();
+    for name in names {
+        let name = name.trim().trim_matches(|c| c == '"' || c == '\'');
+        if name.chars().count() >= 3 && !name.contains('@') {
+            words.push(name.to_string());
+        }
+        for part in name.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'') {
+            let lower = part.to_lowercase();
+            if part.chars().count() >= 4
+                && part.chars().next().is_some_and(char::is_uppercase)
+                && !COMMON_NAME_WORDS.contains(&lower.as_str())
+            {
+                words.push(part.to_string());
+            }
+        }
+    }
+    for address in addresses {
+        if let Some((local, _)) = address.trim().split_once('@') {
+            let lower = local.to_lowercase();
+            if local.chars().count() >= 4 && !COMMON_NAME_WORDS.contains(&lower.as_str()) {
+                words.push(local.to_string());
+            }
+        }
+    }
+    *PEOPLE.write().unwrap_or_else(|e| e.into_inner()) = people_pattern(words);
+}
+
+/// One case-insensitive pattern for `words`, each matched as a whole word.
+fn people_pattern(mut words: Vec<String>) -> Option<Regex> {
+    words.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    words.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    words.truncate(20_000);
+    if words.is_empty() {
+        return None;
+    }
+    let edge = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let alternatives: Vec<String> = words
+        .iter()
+        .map(|w| {
+            let start = if edge(w.chars().next()) { r"\b" } else { "" };
+            let end = if edge(w.chars().last()) { r"\b" } else { "" };
+            format!("{start}{}{end}", regex::escape(w))
+        })
+        .collect();
+    regex::RegexBuilder::new(&format!("(?i)(?:{})", alternatives.join("|")))
+        .size_limit(256 << 20)
+        .dfa_size_limit(64 << 20)
+        .build()
+        .ok()
+}
+
 struct Rules {
     login: Regex,
     secret: Regex,
@@ -137,7 +323,13 @@ struct Rules {
     mailbox_command: Regex,
     mailbox_move: Regex,
     mailbox_named: Regex,
+    imap_answer: Regex,
+    imap_error: Regex,
+    smtp_error: Regex,
+    smtp_answer: Regex,
     url: Regex,
+    app_url: Regex,
+    oauth: Regex,
     path: Regex,
     message_id: Regex,
     email: Regex,
@@ -146,6 +338,9 @@ struct Rules {
     ipv6: Regex,
     host: Regex,
     quoted: Regex,
+    single_quoted: Regex,
+    backticks: Regex,
+    typographic: Regex,
 }
 
 fn rules() -> &'static Rules {
@@ -170,7 +365,23 @@ fn rules() -> &'static Rules {
             mailbox_named: re(
                 r"(?i)\b(mailbox|folder)\s+\S[^:\n]*?\s+(not found|doesn't exist|does not exist|is missing)",
             ),
+            // A server's own words after NO, BAD or BYE ("[ALERT] Your
+            // mailbox Anna Rossi is full"): the status and its code stay.
+            imap_answer: re(r"\b(NO|BAD|BYE)(?:\s+\[([A-Z][A-Z0-9-]*)[^\]\n]*\])?[ \t]+[^\n<]+"),
+            // async-imap's errors: "No Response: …", "Bad Response: …".
+            imap_error: re(r"\b(No|Bad) Response:[^\n]*"),
+            // lettre's errors: "permanent error (550): 5.1.1 …".
+            smtp_error: re(r"(?i)\b(permanent|transient) error \((\d{3})\)[^\n]*"),
+            // An SMTP reply with its enhanced status code.
+            smtp_answer: re(r"\b([245]\d\d)[ -]([245]\.\d{1,3}\.\d{1,3})\s+[^\n]+"),
             url: re(r#"(?i)\b(?:https?|wss?|imaps?|smtps?)://[^\s"'<>]+"#),
+            // An app's own scheme, a reverse domain name, as sign-in pages
+            // come back to: `com.googleusercontent.apps.…:/oauth2redirect?code=…`.
+            app_url: re(r#"(?i)\b[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+:/{1,2}[^\s"'<>]*"#),
+            // What OAuth answers carry, wherever they show up.
+            oauth: re(
+                r#"(?i)\b(code|state|code_verifier|refresh_token|access_token|id_token|client_secret)=[^&\s"'<>]+"#,
+            ),
             // Absolute paths: they carry the person's user name and the
             // names of their files.
             path: re(
@@ -183,7 +394,12 @@ fn rules() -> &'static Rules {
             ipv4: re(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
             ipv6: re(r"(?i)\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b"),
             host: re(r"(?i)\b(?:[a-z0-9-]+\.)+([a-z]{2,})\b"),
-            quoted: re(r#""[^"\n]*""#),
+            quoted: re(r#""([^"\n]*)""#),
+            // 'text' only where a quote opens and closes, so "doesn't"
+            // and "can't … won't" stay as they are.
+            single_quoted: re(r"(^|[\s(\[=:,])'([^'\n]{1,300})'"),
+            backticks: re(r"`([^`\n]*)`"),
+            typographic: re(r"([“«‘‹„])([^“”«»‘’‹›„\n]{1,300})([”»’›“])"),
         }
     })
 }
@@ -194,11 +410,38 @@ const CODE_EXTENSIONS: &[&str] = &[
     "dylib", "html", "css", "js", "toml", "yaml", "md",
 ];
 
+/// Type names that error messages quote: kept, they say what went wrong.
+const CODE_WORDS: &[&str] = &[
+    "Null", "String", "int", "double", "num", "bool", "List", "Map", "Set", "Object", "dynamic",
+    "Iterable", "Future", "Stream", "None", "Some", "Ok", "Err", "Option", "Result", "Vec", "str",
+    "u8", "u16", "u32", "u64", "usize", "i32", "i64", "f64",
+];
+
+/// Whether quoted text reads as code (a type or a call) rather than words:
+/// no spaces, and a shape no name or subject has (`List<String>`,
+/// `MailRow`, `Option::unwrap()`).
+fn looks_like_code(text: &str) -> bool {
+    if text.is_empty() || text.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if CODE_WORDS.contains(&text) {
+        return true;
+    }
+    let first = text.chars().next().unwrap_or(' ');
+    if !(first.is_ascii_alphabetic() || first == '_') || !text.is_ascii() {
+        return false;
+    }
+    let camel = text.chars().any(|c| c.is_ascii_lowercase())
+        && text.chars().skip(1).any(|c| c.is_ascii_uppercase());
+    camel || text.contains(['<', '>', '?', '_', ':', '(', ')', '[', ']', '&'])
+}
+
 /// Removes from `text` what could tell who the person is or what their
 /// mail says: logins, secrets and tokens, subjects and addresses, links,
 /// file paths, message ids, servers and IP addresses, mailbox names and
-/// search terms (quoted or not) and the person's own names. What stays is what a
-/// developer needs: which step failed, and how.
+/// search terms, what servers wrote back, anything quoted (unless it reads
+/// as code), the person's own names and the people in their mail. What
+/// stays is what a developer needs: which step failed, and how.
 pub fn clean(text: &str) -> String {
     let r = rules();
     let mut s = text.to_string();
@@ -207,6 +450,8 @@ pub fn clean(text: &str) -> String {
     }
     s = r.login.replace_all(&s, "$1 <hidden>").into_owned();
     s = r.url.replace_all(&s, "<url>").into_owned();
+    s = r.app_url.replace_all(&s, "<url>").into_owned();
+    s = r.oauth.replace_all(&s, "$1=<secret>").into_owned();
     s = r.path.replace_all(&s, "<path>").into_owned();
     s = r.bearer.replace_all(&s, "$1 <token>").into_owned();
     s = r.secret.replace_all(&s, "$1$2<secret>").into_owned();
@@ -225,8 +470,27 @@ pub fn clean(text: &str) -> String {
         .mailbox_named
         .replace_all(&s, "$1 <mailbox> $2")
         .into_owned();
+    s = r
+        .imap_answer
+        .replace_all(&s, |c: &Captures| match c.get(2) {
+            Some(code) => format!("{} [{}] <reply>", &c[1], code.as_str()),
+            None => format!("{} <reply>", &c[1]),
+        })
+        .into_owned();
+    s = r
+        .imap_error
+        .replace_all(&s, "$1 Response: <reply>")
+        .into_owned();
+    s = r
+        .smtp_error
+        .replace_all(&s, "$1 error ($2): <reply>")
+        .into_owned();
+    s = r.smtp_answer.replace_all(&s, "$1 $2 <reply>").into_owned();
     s = r.message_id.replace_all(&s, "<message-id>").into_owned();
     s = r.email.replace_all(&s, "<email>").into_owned();
+    if let Some(people) = PEOPLE.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        s = people.replace_all(&s, "<person>").into_owned();
+    }
     s = r.token.replace_all(&s, "<token>").into_owned();
     s = r.ipv4.replace_all(&s, "<ip>").into_owned();
     s = r.ipv6.replace_all(&s, "<ip>").into_owned();
@@ -234,14 +498,43 @@ pub fn clean(text: &str) -> String {
         .host
         .replace_all(&s, |c: &Captures| {
             let ext = c[1].to_ascii_lowercase();
-            if CODE_EXTENSIONS.contains(&ext.as_str()) {
+            // A last part in mixed case is code ("MailRow.fromEngine",
+            // "java.lang.IllegalStateException"), never a domain.
+            let mixed = c[1].chars().any(|c| c.is_ascii_lowercase())
+                && c[1].chars().any(|c| c.is_ascii_uppercase());
+            if mixed || CODE_EXTENSIONS.contains(&ext.as_str()) {
                 c[0].to_string()
             } else {
                 "<host>".to_string()
             }
         })
         .into_owned();
-    r.quoted.replace_all(&s, "\"<text>\"").into_owned()
+    let keep_code = |inner: &str| -> String {
+        if looks_like_code(inner) {
+            inner.to_string()
+        } else {
+            "<text>".to_string()
+        }
+    };
+    s = r
+        .quoted
+        .replace_all(&s, |c: &Captures| format!("\"{}\"", keep_code(&c[1])))
+        .into_owned();
+    s = r
+        .backticks
+        .replace_all(&s, |c: &Captures| format!("`{}`", keep_code(&c[1])))
+        .into_owned();
+    s = r
+        .single_quoted
+        .replace_all(&s, |c: &Captures| {
+            format!("{}'{}'", &c[1], keep_code(&c[2]))
+        })
+        .into_owned();
+    r.typographic
+        .replace_all(&s, |c: &Captures| {
+            format!("{}{}{}", &c[1], keep_code(&c[2]), &c[3])
+        })
+        .into_owned()
 }
 
 fn replace_ignoring_case(text: &str, word: &str, with: &str) -> String {
@@ -249,6 +542,62 @@ fn replace_ignoring_case(text: &str, word: &str, with: &str) -> String {
         Ok(re) => re.replace_all(text, with).into_owned(),
         Err(_) => text.to_string(),
     }
+}
+
+/// A stack frame names code, not mail: only the person's own words, paths
+/// (which carry their user name) and addresses are taken out.
+fn clean_frame(line: &str) -> String {
+    let r = rules();
+    let mut s = line.to_string();
+    for word in PERSONAL.read().unwrap_or_else(|e| e.into_inner()).iter() {
+        s = replace_ignoring_case(&s, word, "<account>");
+    }
+    s = r.path.replace_all(&s, "<path>").into_owned();
+    r.email.replace_all(&s, "<email>").into_owned()
+}
+
+/// An error or panic message, scrubbed harder than a log line: only its
+/// first line (the lines after it are where parsers quote their input),
+/// cleaned, at most 300 characters.
+pub fn scrub_message(message: &str) -> String {
+    let first = message.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let mut out: String = clean(first.trim()).chars().take(300).collect();
+    let more = message.lines().filter(|l| !l.trim().is_empty()).count();
+    if more > 1 {
+        out.push_str(" (…)");
+    }
+    out
+}
+
+/// A crash as kept for the next launch: the message scrubbed with
+/// [`scrub_message`], then only the stack's frames (`#3  name
+/// (package:…:12:7)`, `at …`), cleaned. Lines of the message after the
+/// first, where a parser would quote what it read, are left out.
+pub fn scrub_crash(text: &str) -> String {
+    let frame = |l: &str| {
+        let t = l.trim_start();
+        (t.starts_with('#') && t[1..].starts_with(|c: char| c.is_ascii_digit()))
+            || t.starts_with("at ")
+            || t == "<asynchronous suspension>"
+            || t.starts_with("...")
+    };
+    let mut out = Vec::new();
+    let mut message: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if frame(line) {
+            out.push(clean_frame(line.trim_end()));
+        } else if out.is_empty() {
+            message.push(line);
+        }
+    }
+    let mut head = scrub_message(&message.join("\n"));
+    if head.is_empty() {
+        head = "(no message)".into();
+    }
+    std::iter::once(head)
+        .chain(out.into_iter().take(40))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ---- Servers -----------------------------------------------------------
@@ -506,6 +855,11 @@ pub struct Report {
     /// takes less): the report goes without them, and says so.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachments_dropped: bool,
+    /// When the person last asked to try again (Unix seconds): the report
+    /// keeps trying on its own for [`GIVE_UP_AFTER`] from then, or from
+    /// when it was made.
+    #[serde(default)]
+    pub retry_since: i64,
 }
 
 /// A draft cleaned and capped as it would be sent.
@@ -686,6 +1040,7 @@ impl Reports {
             ticket,
             attachments: saved,
             attachments_dropped: false,
+            retry_since: 0,
         };
         self.save(&report)?;
         Ok(report)
@@ -781,6 +1136,7 @@ impl Reports {
             report.waiting = Some(Waiting::Turn);
             report.next_try = 0;
             report.tries = 0;
+            report.retry_since = crate::pending::now();
             self.save(&report)?;
         }
         Ok(report)
@@ -854,16 +1210,69 @@ pub fn email(reports: &Reports, report: &Report) -> (String, String, Vec<PathBuf
     (subject, body.join("\n"), files)
 }
 
-// ---- Crash -------------------------------------------------------------
+/// An email asking the maintainers to erase a report already sent: what
+/// "Delete" in Your reports offers, since deleting on the device leaves the
+/// issue where it is. Subject and body, for the privacy contact.
+pub fn erasure_email(report: &Report) -> (String, String) {
+    let which = match report.issue {
+        Some(n) => format!("#{n}"),
+        None => report.id.clone(),
+    };
+    let subject = format!("Erase my Piuma report {which}");
+    let body = [
+        format!(
+            "Please erase the report I sent from the app, {which}: \"{}\", with its attachments.",
+            report.title
+        ),
+        String::new(),
+        format!("Report id on my device: {}", report.id),
+    ]
+    .join("\n");
+    (subject, body)
+}
+
+// ---- Crash ------------------------------------------------------------
 
 const CRASH_FILE: &str = "last-crash.txt";
+/// What a crash file keeps at most: the newest entries win.
+const CRASH_MAX: usize = 20_000;
 
-/// Keeps what the app knew when it crashed, cleaned, for the next launch to
-/// offer a report. Never sent on its own.
+/// The reports folder, for the panic hook, which has nowhere else to ask.
+static CRASH_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Where [`install_panic_hook`] keeps panics for the next launch.
+pub fn set_crash_dir(dir: &Path) {
+    let _ = CRASH_DIR.set(dir.to_path_buf());
+}
+
+/// Keeps what went wrong, scrubbed ([`scrub_crash`]), for the next launch
+/// to offer a report. Never sent on its own. Several can wait: each is
+/// added after the others, the same one only once, the newest kept when
+/// there is too much.
 pub fn record_crash(dir: &Path, text: &str) {
-    let text: String = clean(text).chars().take(20_000).collect();
+    record_entry(dir, &scrub_crash(text));
+}
+
+fn record_entry(dir: &Path, entry: &str) {
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join(CRASH_FILE), text);
+    let path = dir.join(CRASH_FILE);
+    let before = std::fs::read_to_string(&path).unwrap_or_default();
+    if before.split("\n\n").any(|e| e.trim() == entry.trim()) {
+        return;
+    }
+    let mut all = if before.trim().is_empty() {
+        entry.to_string()
+    } else {
+        format!("{}\n\n{entry}", before.trim_end())
+    };
+    if all.len() > CRASH_MAX {
+        let mut cut = all.len() - CRASH_MAX;
+        while !all.is_char_boundary(cut) {
+            cut += 1;
+        }
+        all = all[cut..].to_string();
+    }
+    let _ = std::fs::write(path, all);
 }
 
 /// The crash from a previous session, if one is waiting to be reported.
@@ -878,6 +1287,82 @@ pub fn dismiss_crash(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(CRASH_FILE));
 }
 
+/// Replaces the panic hook, flutter_rust_bridge's included, which prints
+/// the whole panic message: a slicing panic quotes the mail it was
+/// cutting. Each panic is logged as "Rust panic at file.rs:12" (the place
+/// only) and kept for the next launch as "Rust panic at file.rs:12:
+/// <scrubbed message>". With `quiet` (release builds)
+/// only "panic at file.rs:12" reaches stderr, so logcat and the system log
+/// never carry mail; otherwise the previous hook runs too, for developers.
+/// Call it after the bridge's own setup; a hook installed later (the
+/// engine's `guard`, which notes where a panic happened) runs this one
+/// after its own.
+pub fn install_panic_hook(quiet: bool) {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let place = info
+                .location()
+                .map(|l| {
+                    let file = l.file().rsplit(['/', '\\']).next().unwrap_or("unknown");
+                    format!("{file}:{}", l.line())
+                })
+                .unwrap_or_else(|| "an unknown place".into());
+            let payload = info.payload();
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            // The log only says where: a panic message can quote what was
+            // being read, and scrubbing catches quoted text, not a word
+            // that is simply there. The message, scrubbed, waits in the
+            // crash file, which the person sees before a report sends it.
+            log(Level::Error, "panic", &format!("Rust panic at {place}"));
+            if let Some(dir) = CRASH_DIR.get() {
+                record_entry(
+                    dir,
+                    &format!("Rust panic at {place}: {}", scrub_message(&message)),
+                );
+            }
+            if quiet {
+                eprintln!("panic at {place}");
+            } else {
+                previous(info);
+            }
+        }));
+    });
+}
+
+const RUNNING_FILE: &str = "running";
+
+/// The app started (desktop): if the last session never said it ended,
+/// the app stopped without closing (a crash outside Dart and Rust, the
+/// system killing it); that waits as a crash, to offer a report.
+pub fn session_started(dir: &Path) {
+    if dir.join(RUNNING_FILE).exists() {
+        record_entry(
+            dir,
+            "The app did not close normally last time (it crashed, froze, or was stopped).",
+        );
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(RUNNING_FILE), crate::pending::now().to_string());
+}
+
+/// The app is closing normally.
+pub fn session_ended(dir: &Path) {
+    let _ = std::fs::remove_file(session_marker(dir));
+}
+
+/// The file that says a session is running: the desktop shells remove it
+/// themselves on the ways out that never reach Dart in time (the tray's
+/// Quit on Linux, signing out or shutting down).
+pub fn session_marker(dir: &Path) -> std::path::PathBuf {
+    dir.join(RUNNING_FILE)
+}
+
 // ---- Relay -------------------------------------------------------------
 
 /// A relay ticket: proof that the report was prepared a moment ago, solved
@@ -887,7 +1372,8 @@ pub struct Ticket {
     pub ticket: String,
     pub seed: String,
     pub bits: u32,
-    /// Not before / expiry, Unix milliseconds.
+    /// Not before / expiry, Unix milliseconds on this device's clock (the
+    /// relay's times, moved by how far the two clocks differ).
     pub nbf: i64,
     pub exp: i64,
     pub nonce: Option<String>,
@@ -934,12 +1420,17 @@ pub enum Outcome {
     Created {
         number: u32,
     },
-    /// Try again in this many seconds.
+    /// Try again in this many seconds, with the same ticket (the relay said
+    /// when: a 403, 429 or 503 with `retry-after`).
     Later {
         secs: i64,
         why: Waiting,
     },
-    /// This ticket already opened an issue.
+    /// The ticket can't be used (expired, signed with a key the relay no
+    /// longer has, proof of work refused: a 401, or a 403 without
+    /// `retry-after`): a new ticket, after a backoff.
+    Stale,
+    /// This ticket was already used, or the same report is on its way.
     Duplicate,
     /// The relay refused the report itself; trying again won't help.
     Rejected {
@@ -1000,11 +1491,20 @@ impl Relay {
             bits: u32,
             nbf: i64,
             exp: i64,
+            /// The relay's clock (relays before this field: none).
+            #[serde(default)]
+            now: Option<i64>,
         }
         let c: Challenge = res
             .json()
             .await
             .map_err(|e| RelayError::Answer(e.to_string()))?;
+        // The ticket's times on this device's clock, so one that runs
+        // behind or ahead neither sends too early nor waits for nothing.
+        let offset = c
+            .now
+            .map(|relay| crate::pending::now() * 1000 - relay)
+            .unwrap_or(0);
         let seed = c.seed.clone();
         let bits = c.bits.min(28);
         let nonce = tokio::task::spawn_blocking(move || solve_pow(&seed, bits))
@@ -1014,8 +1514,8 @@ impl Relay {
             ticket: c.ticket,
             seed: c.seed,
             bits: c.bits,
-            nbf: c.nbf,
-            exp: c.exp,
+            nbf: c.nbf + offset,
+            exp: c.exp + offset,
             nonce: Some(nonce),
         })
     }
@@ -1041,6 +1541,9 @@ impl Relay {
         }
         let meta = serde_json::json!({
             "installId": install_id,
+            // The same id on every try: the relay answers a report it
+            // already filed with that issue rather than opening another.
+            "reportId": report.id,
             "ticket": ticket.ticket,
             "powNonce": ticket.nonce,
             "kind": report.kind,
@@ -1093,17 +1596,20 @@ impl Relay {
                     .map_err(|e| RelayError::Answer(e.to_string()))?;
                 Outcome::Created { number: c.number }
             }
-            403 => Outcome::Later {
-                secs: retry_after.unwrap_or(0),
+            // Too early for this ticket: only with the relay's word for
+            // when. Any other 403, and 401, means the ticket won't work.
+            403 if retry_after.is_some() => Outcome::Later {
+                secs: retry_after.unwrap_or(1).clamp(1, 24 * 3600),
                 why: Waiting::Turn,
             },
+            401 | 403 => Outcome::Stale,
             409 => Outcome::Duplicate,
             429 => Outcome::Later {
-                secs: retry_after.unwrap_or(60),
+                secs: retry_after.unwrap_or(60).clamp(1, 24 * 3600),
                 why: Waiting::Turn,
             },
             503 => Outcome::Later {
-                secs: retry_after.unwrap_or(6 * 3600),
+                secs: retry_after.unwrap_or(6 * 3600).clamp(1, 24 * 3600),
                 why: Waiting::Paused,
             },
             500..=599 => return Err(RelayError::Status(status)),
@@ -1112,17 +1618,21 @@ impl Relay {
     }
 }
 
-/// Tries after which a report stops retrying on its own.
-const MAX_TRIES: u32 = 6;
+/// How long a report keeps trying on its own, from when it was made or
+/// the person last asked to try again: then it is marked failed, to send
+/// again or by email.
+pub const GIVE_UP_AFTER: i64 = 7 * 24 * 3600;
 
-/// Waits between tries when the relay can't be reached: 1 min, 5 min,
-/// 30 min, then 2 h.
+/// Waits between tries when the relay can't be reached or refuses the
+/// ticket: 1 min, 5 min, 30 min, 2 h, then every 6 h. Tries happen while
+/// the app is open (the next start and the network coming back count).
 fn backoff(tries: u32) -> i64 {
     match tries {
         0 | 1 => 60,
         2 => 300,
         3 => 1800,
-        _ => 7200,
+        4 => 7200,
+        _ => 6 * 3600,
     }
 }
 
@@ -1150,14 +1660,16 @@ pub async fn send_queued(reports: &Reports, relay: &Relay) -> Result<usize, Rela
                 report.ticket = None;
                 sent += 1;
             }
-            Ok(Outcome::Duplicate) => {
-                // The ticket was used: the issue exists, or the ticket was
-                // taken by a try that died on the way. A fresh ticket next.
+            Ok(Outcome::Duplicate) | Ok(Outcome::Stale) => {
+                // The ticket was used (by a try whose answer was lost: the
+                // relay hands back that issue when the report comes again)
+                // or can't be used. A fresh ticket, after a backoff, so a
+                // relay that keeps refusing is never asked in a loop.
                 report.status = Status::Queued;
                 report.ticket = None;
                 report.waiting = Some(Waiting::Turn);
-                report.next_try = now;
                 report.tries += 1;
+                report.next_try = now + backoff(report.tries);
             }
             Ok(Outcome::Later { secs, why }) => {
                 report.status = Status::Queued;
@@ -1195,19 +1707,22 @@ pub async fn send_queued(reports: &Reports, relay: &Relay) -> Result<usize, Rela
                     );
                     report.attachments_dropped = true;
                 }
-                if report.tries >= MAX_TRIES {
-                    report.status = Status::Failed;
-                    report.waiting = None;
-                } else {
-                    report.status = Status::Queued;
-                    report.waiting = Some(Waiting::Offline);
-                    report.next_try = now + backoff(report.tries);
-                }
+                report.status = Status::Queued;
+                report.waiting = Some(Waiting::Offline);
+                report.next_try = now + backoff(report.tries);
             }
         }
-        if report.tries >= MAX_TRIES && report.status == Status::Queued {
+        if report.status == Status::Queued
+            && now - report.created_at.max(report.retry_since) >= GIVE_UP_AFTER
+        {
+            log(
+                Level::Warn,
+                "feedback",
+                "report not delivered after 7 days; marked failed",
+            );
             report.status = Status::Failed;
             report.waiting = None;
+            report.ticket = None;
         }
         reports.save(&report)?;
     }
@@ -1312,6 +1827,25 @@ mod tests {
     }
 
     #[test]
+    fn cleaning_hides_sign_in_answers() {
+        for (raw, gone) in [
+            (
+                "redirect com.googleusercontent.apps.1234-abcd:/oauth2redirect?code=4/0AdQt8qh&state=Xy9",
+                "4/0AdQt8qh",
+            ),
+            ("back to mail.piuma.app://oauth?code=M.C5_BAY.2.U&state=abc", "M.C5_BAY"),
+            ("GET /?code=0.AXkA-secret&state=s1 HTTP/1.1", "0.AXkA-secret"),
+            ("token request code=splx0bQ&code_verifier=dBjftJ", "splx0bQ"),
+        ] {
+            let cleaned = clean(raw);
+            assert!(!cleaned.contains(gone), "{raw} -> {cleaned}");
+            assert!(!cleaned.contains("googleusercontent"), "{cleaned}");
+        }
+        // Error codes stay: they say what failed.
+        assert!(clean("SMTP error code: 535").contains("535"));
+    }
+
+    #[test]
     fn cleaning_hides_people_servers_and_secrets() {
         let cases = [
             ("LOGIN matteo secret123", "LOGIN <hidden>"),
@@ -1338,7 +1872,7 @@ mod tests {
             ("sync took 12:30:45 ms", "sync took 12:30:45 ms"),
             (
                 "SELECT Bills 2026: NO Mailbox doesn't exist",
-                "SELECT <mailbox>: NO Mailbox doesn't exist",
+                "SELECT <mailbox>: NO <reply>",
             ),
             (
                 "UID MOVE 1:4 Work/Clients: NO",
@@ -1611,20 +2145,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(reports.dir());
     }
 
-    /// A relay on localhost that answers like an older one: 413 for a
-    /// report with attachments, an issue for one without.
-    async fn small_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+    /// What a scripted relay answers: the status line with any extra
+    /// header lines ("403 Forbidden\r\nretry-after: 5"), and the JSON body.
+    type Answer = (String, String);
+
+    /// A relay on localhost. `challenge` answers `POST /challenge`;
+    /// `answer` gets each report's body and says what to reply. Returns
+    /// its address and the report bodies it saw.
+    async fn scripted_relay(
+        challenge: String,
+        answer: impl Fn(&str) -> Answer + Send + Sync + 'static,
+    ) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
         let kept = seen.clone();
+        let answer = std::sync::Arc::new(answer);
         tokio::spawn(async move {
             loop {
                 let Ok((mut sock, _)) = listener.accept().await else {
                     return;
                 };
                 let seen = kept.clone();
+                let answer = answer.clone();
+                let challenge = challenge.clone();
                 tokio::spawn(async move {
                     let mut buf = Vec::new();
                     let mut chunk = [0u8; 64 * 1024];
@@ -1652,28 +2197,40 @@ mod tests {
                         buf.extend_from_slice(&chunk[..n]);
                     }
                     let body = String::from_utf8_lossy(&buf[body_at..]).into_owned();
-                    let (status, answer) = if head.starts_with("post /challenge") {
-                        (
-                            "200 OK",
-                            r#"{"ticket":"t","seed":"s","bits":0,"nbf":0,"exp":99999999999999}"#
-                                .to_string(),
-                        )
-                    } else if body.contains("name=\"attachment-1\"") {
-                        seen.lock().unwrap().push(body);
-                        ("413 Payload Too Large", r#"{"error":"too large"}"#.into())
+                    let (status, reply) = if head.starts_with("post /challenge") {
+                        ("200 OK".to_string(), challenge)
                     } else {
-                        seen.lock().unwrap().push(body);
-                        ("201 Created", r#"{"url":"u","number":7}"#.into())
+                        seen.lock().unwrap().push(body.clone());
+                        answer(&body)
                     };
                     let reply = format!(
-                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
-                        answer.len()
+                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                        reply.len()
                     );
                     let _ = sock.write_all(reply.as_bytes()).await;
                 });
             }
         });
         (base, seen)
+    }
+
+    /// A ticket that is good now and for a long while.
+    const OPEN_TICKET: &str = r#"{"ticket":"t","seed":"s","bits":0,"nbf":0,"exp":99999999999999}"#;
+
+    /// A relay on localhost that answers like an older one: 413 for a
+    /// report with attachments, an issue for one without.
+    async fn small_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        scripted_relay(OPEN_TICKET.into(), |body| {
+            if body.contains("name=\"attachment-1\"") {
+                (
+                    "413 Payload Too Large".into(),
+                    r#"{"error":"too large"}"#.into(),
+                )
+            } else {
+                ("201 Created".into(), r#"{"url":"u","number":7}"#.into())
+            }
+        })
+        .await
     }
 
     #[tokio::test]
@@ -1700,68 +2257,17 @@ mod tests {
     /// A relay on localhost that returns 500 when attachments are sent,
     /// simulating persistent network or upload failures.
     async fn failing_attachments_relay() -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
-        let kept = seen.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    return;
-                };
-                let seen = kept.clone();
-                tokio::spawn(async move {
-                    let mut buf = Vec::new();
-                    let mut chunk = [0u8; 64 * 1024];
-                    let (head, body_at) = loop {
-                        let n = sock.read(&mut chunk).await.unwrap_or(0);
-                        if n == 0 {
-                            return;
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                            break (String::from_utf8_lossy(&buf[..i]).to_lowercase(), i + 4);
-                        }
-                    };
-                    let length: usize = head
-                        .lines()
-                        .find_map(|l| l.strip_prefix("content-length:"))
-                        .and_then(|v| v.trim().parse().ok())
-                        .unwrap_or(0);
-                    while buf.len() < body_at + length {
-                        let n = sock.read(&mut chunk).await.unwrap_or(0);
-                        if n == 0 {
-                            break;
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
-                    let body = String::from_utf8_lossy(&buf[body_at..]).into_owned();
-                    let (status, answer) = if head.starts_with("post /challenge") {
-                        (
-                            "200 OK",
-                            r#"{"ticket":"t","seed":"s","bits":0,"nbf":0,"exp":99999999999999}"#
-                                .to_string(),
-                        )
-                    } else if body.contains("name=\"attachment-1\"") {
-                        seen.lock().unwrap().push(body);
-                        (
-                            "500 Internal Server Error",
-                            r#"{"error":"simulated failure"}"#.into(),
-                        )
-                    } else {
-                        seen.lock().unwrap().push(body);
-                        ("201 Created", r#"{"url":"u","number":8}"#.into())
-                    };
-                    let reply = format!(
-                        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
-                        answer.len()
-                    );
-                    let _ = sock.write_all(reply.as_bytes()).await;
-                });
+        scripted_relay(OPEN_TICKET.into(), |body| {
+            if body.contains("name=\"attachment-1\"") {
+                (
+                    "500 Internal Server Error".into(),
+                    r#"{"error":"simulated failure"}"#.into(),
+                )
+            } else {
+                ("201 Created".into(), r#"{"url":"u","number":8}"#.into())
             }
-        });
-        (base, seen)
+        })
+        .await
     }
 
     #[tokio::test]
@@ -1830,5 +2336,321 @@ mod tests {
         // The line goes through cleaning untouched.
         let line = servers_line(&[a, b]).unwrap();
         assert_eq!(clean(&line), line);
+    }
+    /// Log lines as the engine and the app write them when things go wrong,
+    /// with what must not survive.
+    #[test]
+    fn realistic_logs_keep_the_step_and_lose_the_person() {
+        set_known_people(
+            &[
+                "Giulia Bianchi".into(),
+                "Amazon Web Services".into(),
+                "Lia".into(),
+            ],
+            &[
+                "giulia.bianchi@example.org".into(),
+                "info@shop.example".into(),
+            ],
+        );
+        let cases = [
+            (
+                "imap: fetch body failed: NO [ALERT] Mailbox of Giulia Bianchi is over quota",
+                "imap: fetch body failed: NO [ALERT] <reply>",
+            ),
+            (
+                "imap: No Response: [NONEXISTENT] Unknown Mailbox: Giulia/Taxes 2026 (Failure)",
+                "imap: No Response: <reply>",
+            ),
+            (
+                "smtp: permanent error (550): 5.1.1 <giulia.bianchi@example.org>: Recipient address rejected",
+                "smtp: permanent error (550): <reply>",
+            ),
+            (
+                "smtp: 552 5.2.2 The mailbox of Giulia is full, try again later",
+                "smtp: 552 5.2.2 <reply>",
+            ),
+            (
+                "reader: render failed for message from Giulia Bianchi (giulia.bianchi)",
+                "reader: render failed for message from <person> (<person>)",
+            ),
+            (
+                "notify: shown for Bianchi, services restarted",
+                "notify: shown for <person>, services restarted",
+            ),
+            (
+                "Exception: Could not open “Contract for Via Roma 12”",
+                "Exception: Could not open “<text>”",
+            ),
+            (
+                "FormatException: Invalid date 'giovedì 12 marzo'",
+                "FormatException: Invalid date '<text>'",
+            ),
+            (
+                "type 'Null' is not a subtype of type 'String' in type cast",
+                "type 'Null' is not a subtype of type 'String' in type cast",
+            ),
+            (
+                "called `Option::unwrap()` on a `None` value",
+                "called `Option::unwrap()` on a `None` value",
+            ),
+            (
+                "byte index 5 is not a char boundary; it is inside 'é' (bytes 4..6) of `Caffè con Giulia`",
+                "byte index 5 is not a char boundary; it is inside '<text>' (bytes 4..6) of `<text>`",
+            ),
+            ("sync: can't reach server, won't retry", "sync: can't reach server, won't retry"),
+            ("status 503 from relay", "status 503 from relay"),
+            // A short name never hides part of another word.
+            ("Reliability check passed", "Reliability check passed"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(clean(input), want, "{input}");
+        }
+        set_known_people(&[], &[]);
+        assert_eq!(clean("Giulia Bianchi"), "Giulia Bianchi");
+    }
+
+    #[test]
+    fn crashes_keep_the_first_line_and_the_frames() {
+        let dart = "FormatException: Unexpected character (at character 7)\n\
+                    Dear Anna, the meeting is moved\n      ^\n\n\
+                    #0      _parse (package:piuma/mail/dates.dart:120:7)\n\
+                    #1      MailRow.fromEngine (package:piuma/mail/mail_source.dart:88:12)\n\
+                    <asynchronous suspension>";
+        let kept = scrub_crash(dart);
+        assert_eq!(
+            kept,
+            "FormatException: Unexpected character (at character 7) (…)\n\
+             #0      _parse (package:piuma/mail/dates.dart:120:7)\n\
+             #1      MailRow.fromEngine (package:piuma/mail/mail_source.dart:88:12)\n\
+             <asynchronous suspension>"
+        );
+        assert!(!kept.contains("Anna"));
+        // Kotlin and Java frames count as frames too.
+        let kotlin = "java.lang.IllegalStateException: bad 'Mario Rossi'\n    at mail.piuma.Files.open(Files.kt:40)";
+        assert_eq!(
+            scrub_crash(kotlin),
+            "java.lang.IllegalStateException: bad '<text>'\n    at mail.piuma.Files.open(Files.kt:40)"
+        );
+    }
+
+    #[test]
+    fn crashes_add_up_once_each_and_stay_small() {
+        let dir = temp_dir("crashes");
+        record_crash(&dir, "StateError: one");
+        record_crash(&dir, "StateError: two");
+        record_crash(&dir, "StateError: one");
+        assert_eq!(
+            pending_crash(&dir).unwrap(),
+            "StateError: one\n\nStateError: two"
+        );
+        for i in 0..2000 {
+            record_crash(
+                &dir,
+                &format!("StateError: number {i} {}", "x ".repeat(20).trim_end()),
+            );
+        }
+        let all = pending_crash(&dir).unwrap();
+        assert!(all.len() <= CRASH_MAX);
+        assert!(all.ends_with(&format!("number 1999 {}", "x ".repeat(20).trim_end())));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn panics_leave_the_place_and_never_the_mail() {
+        let dir = temp_dir("panic");
+        set_crash_dir(&dir);
+        // Not quiet in tests: the harness still shows failed assertions.
+        install_panic_hook(false);
+        let text = "Caffè con Giulia, venerdì";
+        // What a slicing panic says: it quotes the text it was cutting.
+        let _ = std::panic::catch_unwind(|| {
+            panic!("byte index 4 is not a char boundary; it is inside 'è' (bytes 3..5) of `{text}`")
+        });
+        let crash = pending_crash(CRASH_DIR.get().unwrap()).unwrap_or_default();
+        let entry = crash
+            .split("\n\n")
+            .find(|e| e.starts_with("Rust panic at feedback.rs:"))
+            .expect("the panic is kept");
+        assert!(
+            !entry.contains("Giulia") && !entry.contains("Caff"),
+            "{entry}"
+        );
+        assert!(recent_log().contains("Rust panic at feedback.rs:"));
+        assert!(!recent_log().contains("Giulia"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_session_that_never_ended_waits_as_a_crash() {
+        let dir = temp_dir("session");
+        session_started(&dir);
+        session_ended(&dir);
+        session_started(&dir);
+        assert!(pending_crash(&dir).is_none());
+        // Killed: no session_ended, then the next start.
+        session_started(&dir);
+        assert!(pending_crash(&dir)
+            .unwrap()
+            .contains("did not close normally"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_shell_removing_the_marker_ends_the_session_cleanly() {
+        // The tray's Quit on Linux, signing out on Windows: the shell
+        // deletes the marker itself, and the next start finds no crash.
+        let dir = temp_dir("session-marker");
+        session_started(&dir);
+        let marker = session_marker(&dir);
+        assert!(marker.exists());
+        assert!(marker.ends_with("running"));
+        std::fs::remove_file(&marker).unwrap();
+        session_started(&dir);
+        assert!(pending_crash(&dir).is_none());
+        // Ending twice (the shell, then Dart) is harmless.
+        session_ended(&dir);
+        session_ended(&dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_build_names_who_handles_reports() {
+        let p = privacy();
+        assert!(!p.controller.is_empty());
+        assert_eq!(p.contact, feedback_address());
+        assert!(p.url.starts_with("https://"));
+        assert_eq!(p.files_days, DEFAULT_FILES_DAYS);
+        if relay_url() == DEFAULT_RELAY {
+            assert_eq!(
+                p.relay_host,
+                "piuma-report-relay.matte-maraffio.workers.dev"
+            );
+        }
+    }
+
+    #[test]
+    fn erasure_names_the_issue() {
+        let reports = Reports::new(temp_dir("erase"));
+        let mut r = reports.submit(&draft(), None, &[], None).unwrap();
+        r.issue = Some(42);
+        let (subject, body) = erasure_email(&r);
+        assert_eq!(subject, "Erase my Piuma report #42");
+        assert!(body.contains("\"Inbox stops syncing\""));
+        assert!(body.contains(&r.id));
+        let _ = std::fs::remove_dir_all(reports.dir());
+    }
+
+    /// A report sent to `answer`, once; returns it as saved after the try
+    /// and how many uploads the relay saw.
+    async fn one_try(
+        challenge: &str,
+        answer: impl Fn(&str) -> Answer + Send + Sync + 'static,
+    ) -> (Report, usize, String) {
+        let (base, seen) = scripted_relay(challenge.into(), answer).await;
+        let reports = Reports::new(temp_dir("try"));
+        let r = reports.submit(&draft(), None, &[], None).unwrap();
+        let relay = Relay::new(&base).unwrap();
+        let _ = send_queued(&reports, &relay).await;
+        let after = reports.get(&r.id).unwrap();
+        let seen = seen.lock().unwrap();
+        let first = seen.first().cloned().unwrap_or_default();
+        let n = seen.len();
+        drop(seen);
+        let _ = std::fs::remove_dir_all(reports.dir());
+        (after, n, first)
+    }
+
+    #[tokio::test]
+    async fn a_ticket_that_cannot_work_is_dropped_never_retried_in_a_loop() {
+        for status in ["403 Forbidden", "401 Unauthorized"] {
+            let (after, uploads, _) = one_try(OPEN_TICKET, move |_| {
+                (status.into(), r#"{"error":"expired"}"#.into())
+            })
+            .await;
+            assert_eq!(uploads, 1, "{status}");
+            assert_eq!(after.status, Status::Queued);
+            assert_eq!(after.ticket, None, "{status}");
+            assert_eq!(after.tries, 1);
+            assert!(after.next_try >= crate::pending::now() + 59, "{status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn too_early_with_retry_after_keeps_the_ticket() {
+        let (after, uploads, _) = one_try(OPEN_TICKET, |_| {
+            (
+                "403 Forbidden\r\nretry-after: 40".into(),
+                r#"{"error":"early"}"#.into(),
+            )
+        })
+        .await;
+        assert_eq!(uploads, 1);
+        assert!(after.ticket.is_some());
+        assert_eq!(after.tries, 0);
+        assert!(after.next_try >= crate::pending::now() + 39);
+    }
+
+    #[tokio::test]
+    async fn every_try_carries_the_report_id() {
+        let (after, _, body) = one_try(OPEN_TICKET, |_| {
+            (
+                "201 Created".into(),
+                r#"{"url":"u","number":9,"existing":true}"#.into(),
+            )
+        })
+        .await;
+        assert_eq!(after.status, Status::Sent);
+        assert_eq!(after.issue, Some(9));
+        assert!(
+            body.contains(&format!("\"reportId\":\"{}\"", after.id)),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ticket_times_follow_the_relay_clock() {
+        // The relay's clock is an hour ahead of this device's.
+        let now = crate::pending::now() * 1000;
+        let ahead = now + 3_600_000;
+        let challenge = format!(
+            r#"{{"ticket":"t","seed":"s","bits":0,"nbf":{},"exp":{},"now":{ahead}}}"#,
+            ahead + 5_000,
+            ahead + 1_805_000
+        );
+        let (base, _) = scripted_relay(challenge, |_| ("201 Created".into(), "{}".into())).await;
+        let t = Relay::new(&base)
+            .unwrap()
+            .ticket("0123456789abcdef0123456789abcdef")
+            .await
+            .unwrap();
+        let wait = t.nbf - now;
+        assert!((4_000..=6_000).contains(&wait), "waits {wait} ms");
+        assert!(!t.expired(now));
+    }
+
+    #[tokio::test]
+    async fn a_report_stops_trying_after_a_week_and_again_after_retry() {
+        let (base, _) = scripted_relay(OPEN_TICKET.into(), |_| {
+            ("401 Unauthorized".into(), r#"{"error":"ticket"}"#.into())
+        })
+        .await;
+        let reports = Reports::new(temp_dir("week"));
+        let mut r = reports.submit(&draft(), None, &[], None).unwrap();
+        r.created_at -= GIVE_UP_AFTER - 3600;
+        reports.save(&r).unwrap();
+        let relay = Relay::new(&base).unwrap();
+        send_queued(&reports, &relay).await.unwrap();
+        assert_eq!(reports.get(&r.id).unwrap().status, Status::Queued);
+        let mut r = reports.get(&r.id).unwrap();
+        r.created_at -= 7200;
+        r.next_try = 0;
+        reports.save(&r).unwrap();
+        send_queued(&reports, &relay).await.unwrap();
+        assert_eq!(reports.get(&r.id).unwrap().status, Status::Failed);
+        // Try again: another week from now.
+        assert_eq!(reports.retry(&r.id).unwrap().status, Status::Queued);
+        send_queued(&reports, &relay).await.unwrap();
+        assert_eq!(reports.get(&r.id).unwrap().status, Status::Queued);
+        let _ = std::fs::remove_dir_all(reports.dir());
     }
 }

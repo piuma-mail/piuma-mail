@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
+import 'package:piuma_mail/inbox/mailbox_actions.dart';
 import 'package:piuma_mail/inbox/message_list.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
@@ -135,8 +136,15 @@ class _LongInbox extends DemoMailSource {
   }
 }
 
-Future<void> _pump(WidgetTester tester, DemoMailSource source) async {
-  tester.view.physicalSize = const Size(1440, 900);
+const _desktop = Size(1440, 900);
+const _phone = Size(390, 844);
+
+Future<void> _pump(
+  WidgetTester tester,
+  DemoMailSource source, {
+  Size size = _desktop,
+}) async {
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -155,90 +163,125 @@ List<String> _built(WidgetTester tester) => tester
     .map((t) => t.row.subject)
     .toList();
 
-void main() {
-  testWidgets('a list that can’t be read says so, and Try again reads it', (
-    tester,
-  ) async {
-    final source = _Failing()..failingReads = 1;
-    await _pump(tester, source);
-    expect(find.text('Couldn’t show these emails.'), findsOneWidget);
-    expect(find.byType(InboxRowTile), findsNothing);
-    await tester.tap(find.text('Try again'));
-    await tester.pumpAndSettle();
-    expect(find.text('Couldn’t show these emails.'), findsNothing);
-    expect(find.byType(InboxRowTile), findsWidgets);
-  });
-
-  testWidgets('a page that fails while scrolling keeps the rows on screen', (
-    tester,
-  ) async {
-    final source = _LongInbox();
-    await _pump(tester, source);
-    final list = find
-        .descendant(
-          of: find.byType(MessageList),
-          matching: find.byType(Scrollable),
-        )
-        .first;
-    await tester.scrollUntilVisible(
-      find.text('Couldn’t show these emails.'),
-      600,
-      scrollable: list,
+/// Opens one of Work's own folders, as the layout of [size] does it: the
+/// sidebar on the desktop, the accounts sheet on the phone.
+Future<void> _openWorkFolder(
+  WidgetTester tester,
+  Size size,
+  String name,
+) async {
+  if (size == _phone) {
+    await tester.tap(
+      find.bySemanticsLabel('3 accounts, accounts and Settings'),
     );
     await tester.pumpAndSettle();
-    // In place of page 2 only: the rows above stay, and so does the place.
-    expect(find.text('Couldn’t show these emails.'), findsOneWidget);
-    expect(_built(tester), contains('Row 99'));
-    expect(_built(tester), isNot(contains('Row 0')));
-    expect(source.asked.where((o) => o == 100), hasLength(1));
-    // Not asked again on every frame.
-    await tester.pump(const Duration(seconds: 1));
-    expect(source.asked.where((o) => o == 100), hasLength(1));
-    await tester.tap(find.text('Try again'));
+    await tester.tap(find.bySemanticsLabel('Work, matteo@studio.it'));
     await tester.pumpAndSettle();
-    expect(find.text('Couldn’t show these emails.'), findsNothing);
-    expect(_built(tester), containsAll(['Row 99', 'Row 100']));
-    expect(_built(tester), isNot(contains('Row 0')));
-  });
-
-  testWidgets('a folder the server didn’t refresh says so, with Try again', (
-    tester,
-  ) async {
-    final source = _Failing()..refreshFails = true;
-    await _pump(tester, source);
+    await tester.tap(find.bySemanticsLabel('Work only, accounts and Settings'));
+    await tester.pumpAndSettle();
     await tester.tap(find.bySemanticsLabel('Work folders'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Acme'));
-    await tester.pump();
-    // The toast slides in.
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(
-      find.text('Couldn’t refresh this folder from the server.'),
-      findsOneWidget,
-    );
-    expect(source.refreshes, 1);
-    source.refreshFails = false;
-    await tester.tap(find.text('Try again'));
-    await tester.pumpAndSettle();
-    expect(source.refreshes, 2);
-    await tester.pumpAndSettle(const Duration(seconds: 10));
-  });
-
-  testWidgets('changes the server gave up on are told', (tester) async {
-    final source = _Failing();
-    await _pump(tester, source);
-    source.dropped.add(2);
-    await tester.pump();
-    await tester.pump();
-    expect(
-      find.text(
-        'The server didn’t take 2 changes you made, so those emails are '
-        'back as they were.',
+    await tester.tap(
+      find.descendant(
+        of: find.byType(PhoneFolderTree),
+        matching: find.text(name),
       ),
-      findsOneWidget,
     );
-    await tester.pumpAndSettle(const Duration(seconds: 10));
-  });
+  } else {
+    await tester.tap(find.bySemanticsLabel('Work folders'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(name));
+  }
+}
+
+void main() {
+  // Phone and desktop at parity: the same states on both layouts.
+  for (final (layout, size) in [('desktop', _desktop), ('phone', _phone)]) {
+    group(layout, () {
+      testWidgets('a list that can’t be read says so, and Try again reads it', (
+        tester,
+      ) async {
+        final source = _Failing()..failingReads = 1;
+        await _pump(tester, source, size: size);
+        expect(find.text('Couldn’t show these emails.'), findsOneWidget);
+        expect(find.byType(InboxRowTile), findsNothing);
+        await tester.tap(find.text('Try again'));
+        await tester.pumpAndSettle();
+        expect(find.text('Couldn’t show these emails.'), findsNothing);
+        expect(find.byType(InboxRowTile), findsWidgets);
+      });
+
+      testWidgets('a page that fails while scrolling keeps the rows on screen', (
+        tester,
+      ) async {
+        final source = _LongInbox();
+        await _pump(tester, source, size: size);
+        final list = find
+            .descendant(
+              of: find.byType(MessageList),
+              matching: find.byType(Scrollable),
+            )
+            .first;
+        await tester.scrollUntilVisible(
+          find.text('Couldn’t show these emails.'),
+          600,
+          scrollable: list,
+        );
+        await tester.pumpAndSettle();
+        // In place of page 2 only: the rows above stay, and so does the place.
+        expect(find.text('Couldn’t show these emails.'), findsOneWidget);
+        expect(_built(tester), contains('Row 99'));
+        expect(_built(tester), isNot(contains('Row 0')));
+        expect(source.asked.where((o) => o == 100), hasLength(1));
+        // Not asked again on every frame.
+        await tester.pump(const Duration(seconds: 1));
+        expect(source.asked.where((o) => o == 100), hasLength(1));
+        await tester.tap(find.text('Try again'));
+        await tester.pumpAndSettle();
+        expect(find.text('Couldn’t show these emails.'), findsNothing);
+        expect(_built(tester), containsAll(['Row 99', 'Row 100']));
+        expect(_built(tester), isNot(contains('Row 0')));
+      });
+
+      testWidgets(
+        'a folder the server didn’t refresh says so, with Try again',
+        (tester) async {
+          final source = _Failing()..refreshFails = true;
+          await _pump(tester, source, size: size);
+          await _openWorkFolder(tester, size, 'Acme');
+          await tester.pump();
+          // The toast slides in.
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(
+            find.text('Couldn’t refresh this folder from the server.'),
+            findsOneWidget,
+          );
+          expect(source.refreshes, 1);
+          source.refreshFails = false;
+          await tester.tap(find.text('Try again'));
+          await tester.pumpAndSettle();
+          expect(source.refreshes, 2);
+          await tester.pumpAndSettle(const Duration(seconds: 10));
+        },
+      );
+
+      testWidgets('changes the server gave up on are told', (tester) async {
+        final source = _Failing();
+        await _pump(tester, source, size: size);
+        source.dropped.add(2);
+        await tester.pump();
+        await tester.pump();
+        expect(
+          find.text(
+            'The server didn’t take 2 changes you made, so those emails are '
+            'back as they were.',
+          ),
+          findsOneWidget,
+        );
+        await tester.pumpAndSettle(const Duration(seconds: 10));
+      });
+    });
+  }
 
   testWidgets('a sync stream that ends or fails is opened again', (
     tester,

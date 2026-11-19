@@ -6,8 +6,10 @@
 #
 # Users: any name with password "test" (e.g. alice / test). Mail lives in a
 # temporary folder that is deleted when the server stops (Ctrl+C).
-# Needs dovecot-imapd (apt install dovecot-imapd) or use Docker:
-#   docker run --rm -p 31143:31143 -v "$PWD/tools:/tools" dovecot/dovecot sh /tools/test-imap-server.sh
+# Needs Dovecot 2.3 or 2.4 (apt install dovecot-imapd), or Docker:
+#   docker run --rm --network host -v "$PWD/tools:/tools:ro" --entrypoint sh \
+#     dovecot/dovecot:2.3.21.1 /tools/test-imap-server.sh
+# (host network: it listens on 127.0.0.1 only).
 set -eu
 PORT="${PORT:-31143}"
 DIR="$(mktemp -d)"
@@ -22,7 +24,22 @@ else
 fi
 RUN_UID="$(id -u "$RUN_USER")"
 RUN_GID="$(id -g "$RUN_USER")"
-cat > "$DIR/dovecot.conf" <<CONF
+# Dovecot 2.4 renamed most of these settings and wants its configuration
+# version first; 2.3 (Debian 12, Ubuntu 24.04 and older, the 2.3 image)
+# refuses the new names. Both get the same server.
+VERSION="$(dovecot --version | cut -d' ' -f1)"
+case "$VERSION" in
+  2.[0-3].*) NEW=no ;;
+  *) NEW=yes ;;
+esac
+{
+  if [ "$NEW" = yes ]; then
+    cat <<CONF
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
+CONF
+  fi
+  cat <<CONF
 protocols = imap
 listen = 127.0.0.1
 base_dir = $DIR/run
@@ -32,9 +49,7 @@ default_login_user = $RUN_USER
 default_internal_user = $RUN_USER
 default_internal_group = $(id -gn "$RUN_USER")
 ssl = no
-disable_plaintext_auth = no
 auth_mechanisms = plain login
-mail_location = maildir:$DIR/mail/%u
 mail_uid = $RUN_UID
 mail_gid = $RUN_GID
 first_valid_uid = 0
@@ -48,17 +63,8 @@ namespace inbox {
     auto = subscribe
   }
 }
-passdb {
-  driver = static
-  args = password=test
-}
-userdb {
-  driver = static
-  args = uid=$RUN_UID gid=$RUN_GID home=$DIR/mail/%u
-}
 service imap-login {
   inet_listener imap {
-    address = 127.0.0.1
     port = $PORT
   }
   inet_listener imaps {
@@ -72,5 +78,37 @@ service imap-login {
   chroot =
 }
 CONF
-echo "Dovecot on 127.0.0.1:$PORT (log: $DIR/dovecot.log)"
+  if [ "$NEW" = yes ]; then
+    cat <<CONF
+auth_allow_cleartext = yes
+mail_driver = maildir
+mail_path = $DIR/mail/%{user}
+mail_home = $DIR/mail/%{user}
+passdb static {
+  password = test
+}
+userdb static {
+  fields {
+    uid = $RUN_UID
+    gid = $RUN_GID
+    home = $DIR/mail/%{user}
+  }
+}
+CONF
+  else
+    cat <<CONF
+disable_plaintext_auth = no
+mail_location = maildir:$DIR/mail/%u
+passdb {
+  driver = static
+  args = password=test
+}
+userdb {
+  driver = static
+  args = uid=$RUN_UID gid=$RUN_GID home=$DIR/mail/%u
+}
+CONF
+  fi
+} > "$DIR/dovecot.conf"
+echo "Dovecot $VERSION on 127.0.0.1:$PORT (log: $DIR/dovecot.log)"
 dovecot -F -c "$DIR/dovecot.conf"

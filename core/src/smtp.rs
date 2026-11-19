@@ -12,9 +12,18 @@ use lettre::message::header::{
     ContentTransferEncoding, ContentType, Header, HeaderName, HeaderValue,
 };
 use lettre::message::{Attachment, Body, Mailbox, MultiPart, SinglePart};
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::authentication::{Credentials, Mechanism as LettreMechanism};
+use lettre::transport::smtp::client::{AsyncSmtpConnection, AsyncTokioStream};
+use lettre::transport::smtp::extension::ClientId;
 use lettre::Message;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::net::TcpStream;
 
+use crate::auth::{sasl_abort, sasl_initial_base64, sasl_name, Credential, Login};
+use crate::oauth::{Mechanism, TokenError};
+
+use crate::compose_image::{self, InlineImage};
+use crate::mdn::{DispositionNotificationTo, Importance, XPriority};
 use crate::rich::{self, Mark};
 use crate::signature::{self, Signature, LOGO_CID};
 
@@ -27,7 +36,8 @@ pub struct SmtpConfig {
     pub port: u16,
     pub security: Security,
     pub username: String,
-    pub password: String,
+    /// The password or OAuth sign-in, and the certificates trusted.
+    pub login: Login,
 }
 
 impl fmt::Debug for SmtpConfig {
@@ -43,14 +53,14 @@ impl fmt::Debug for SmtpConfig {
 
 impl SmtpConfig {
     /// The SMTP settings of an account, or None for non-IMAP accounts.
-    pub fn for_account(account: &Account, password: &str) -> Option<Self> {
+    pub fn for_account(account: &Account, login: &Login) -> Option<Self> {
         match &account.kind {
             AccountKind::Imap { smtp, username, .. } => Some(SmtpConfig {
                 host: smtp.host.clone(),
                 port: smtp.port,
                 security: smtp.security,
                 username: username.clone(),
-                password: password.to_owned(),
+                login: login.clone(),
             }),
             AccountKind::Jmap { .. } => None,
         }
@@ -90,6 +100,16 @@ pub struct Draft {
     /// Bold, italic and links over [body]; with them, or with a list or a
     /// quote in it, the email also gets an HTML version.
     pub marks: Vec<Mark>,
+    /// Pictures inside the text, one for each
+    /// [`compose_image::PLACEHOLDER`] in [body], in order.
+    pub images: Vec<InlineImage>,
+    /// Goes as plain text only (`format=flowed`): no HTML version, the
+    /// formatting left out and any picture attached as a file.
+    pub plain_text: bool,
+    /// Asks for a read receipt (`Disposition-Notification-To`).
+    pub read_receipt: bool,
+    /// Marked important (`Importance: high`, `X-Priority: 1`).
+    pub high_priority: bool,
 }
 
 /// A file attached to a draft.
@@ -125,6 +145,10 @@ pub enum SendError {
     Connect { host: String, detail: String },
     #[error("the server rejected the user name or password")]
     Auth,
+    /// The server's certificate was refused; the person may trust it.
+    /// Kept in the outbox as an insecure connection ([insecure_reason]).
+    #[error("could not make a secure connection: {0}")]
+    Certificate(Box<crate::tls::Refused>),
     #[error("the server refused the message: {0}")]
     Rejected(String),
     /// The server did not take the message now (a 4xx: greylisting, an
@@ -162,6 +186,11 @@ impl SendError {
     pub fn is_offline(&self) -> bool {
         matches!(self, SendError::Connect { .. })
     }
+
+    /// Only the person can mend it: a refused sign-in or certificate.
+    pub fn needs_person(&self) -> bool {
+        matches!(self, SendError::Auth | SendError::Certificate(_))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, SendError>;
@@ -190,9 +219,13 @@ impl fmt::Debug for Ready {
 
 /// Builds a draft into the message that will go out.
 pub fn ready(draft: &Draft) -> Result<Ready> {
-    let message = build(draft)?;
+    Ok(ready_from(&build(draft)?, &draft.from_email))
+}
+
+/// A built message, ready to go; `from` when its envelope names nobody.
+pub(crate) fn ready_from(message: &Message, from: &str) -> Ready {
     let envelope = message.envelope();
-    Ok(Ready {
+    Ready {
         message_id: message
             .headers()
             .get_raw("Message-ID")
@@ -201,16 +234,25 @@ pub fn ready(draft: &Draft) -> Result<Ready> {
         from: envelope
             .from()
             .map(ToString::to_string)
-            .unwrap_or_else(|| draft.from_email.clone()),
+            .unwrap_or_else(|| from.to_owned()),
         recipients: envelope.to().iter().map(ToString::to_string).collect(),
         raw: message.formatted(),
-    })
+    }
 }
 
 /// The message with its Date header set to `at` (Unix seconds): mail
 /// sent later is dated when it actually goes. The rest stays byte for
-/// byte, Message-ID included.
+/// byte, Message-ID included. A redirected message (Resent-* headers on
+/// top) keeps its own Date: its Resent-Date is the one set.
 pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
+    let resent = raw
+        .get(..7)
+        .is_some_and(|h| h.eq_ignore_ascii_case(b"resent-"));
+    let (field, name): (&[u8], &str) = if resent {
+        (b"resent-date:", "Resent-Date")
+    } else {
+        (b"date:", "Date")
+    };
     let mut headers = lettre::message::header::Headers::new();
     headers.set(lettre::message::header::Date::new(
         std::time::UNIX_EPOCH + Duration::from_secs(at.max(0) as u64),
@@ -229,8 +271,8 @@ pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
             .position(|w| w == b"\r\n")
             .map_or(end, |i| start + i + 2);
         if raw[start..line_end]
-            .get(..5)
-            .is_some_and(|h| h.eq_ignore_ascii_case(b"date:"))
+            .get(..field.len())
+            .is_some_and(|h| h.eq_ignore_ascii_case(field))
         {
             // Folded lines belong to the header.
             let mut stop = line_end;
@@ -242,7 +284,7 @@ pub fn redate(raw: &[u8], at: i64) -> Vec<u8> {
             }
             let mut out = Vec::with_capacity(raw.len() + 8);
             out.extend_from_slice(&raw[..start]);
-            out.extend_from_slice(format!("Date: {date}\r\n").as_bytes());
+            out.extend_from_slice(format!("{name}: {date}\r\n").as_bytes());
             out.extend_from_slice(&raw[stop..]);
             return out;
         }
@@ -329,9 +371,45 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
     if !draft.references.is_empty() {
         b = b.references(draft.references.join(" "));
     }
+    if draft.read_receipt {
+        b = b.header(DispositionNotificationTo(from.to_string()));
+    }
+    if draft.high_priority {
+        b = b.header(Importance("high".into()));
+        b = b.header(XPriority("1 (Highest)".into()));
+    }
+    if unsent && draft.plain_text {
+        b = b.header(PiumaPlain("1".into()));
+    }
     let body = lf_line_endings(&draft.body);
     let sig = draft.signature.as_ref().filter(|s| !s.lines().is_empty());
-    let formatted = rich::is_formatted(signature::split_quote(&body).0, &draft.marks);
+    // Each picture with its Content-ID; those with no place in the text,
+    // and every one in plain text, go as files.
+    let placed = body.matches(compose_image::PLACEHOLDER).count();
+    let mut images: Vec<InlineImage> = Vec::new();
+    let mut files = draft.files.clone();
+    for (i, image) in draft.images.iter().enumerate() {
+        if draft.plain_text || i >= placed {
+            files.push(OutgoingFile {
+                name: image.name.clone(),
+                mime: image.mime.clone(),
+                data: image.data.clone(),
+            });
+        } else {
+            images.push(InlineImage {
+                cid: if image.cid.is_empty() {
+                    compose_image::new_cid(i)
+                } else {
+                    image.cid.clone()
+                },
+                ..image.clone()
+            });
+        }
+    }
+    let own = signature::split_quote(&body).0;
+    let formatted = !draft.plain_text
+        && (rich::is_formatted(own, &draft.marks)
+            || (!images.is_empty() && own.contains(compose_image::PLACEHOLDER)));
     if let Some(marks) =
         rich::encode(&draft.marks).filter(|m| unsent && formatted && m.len() <= rich::HEADER_MAX)
     {
@@ -356,36 +434,97 @@ fn assemble(draft: &Draft, unsent: bool) -> Result<Message> {
                         }),
                 ),
         ),
+        _ if draft.plain_text => {
+            let text = plain_text(&compose_image::without(&body), sig, &[], unsent);
+            if unsent {
+                Content::Plain(text)
+            } else {
+                Content::Flowed(crate::flowed::encode(&text))
+            }
+        }
         (None, None) if !formatted => Content::Plain(body),
-        (sig, None) => Content::Rich(rich_body(&body, sig, &draft.marks, unsent)),
+        (sig, None) => Content::Rich(rich_body(&body, sig, &draft.marks, &images, unsent)),
     };
-    let built = if draft.files.is_empty() {
+    let flowed = || {
+        ContentType::parse("text/plain; charset=utf-8; format=flowed")
+            .map_err(|e| SendError::Build(e.to_string()))
+    };
+    let built = if files.is_empty() {
         match content {
             Content::Plain(text) => b.header(ContentType::TEXT_PLAIN).body(text),
+            Content::Flowed(text) => b.header(flowed()?).body(text),
             Content::Rich(rich) => b.multipart(rich),
         }
     } else {
         let mixed = match content {
             Content::Plain(text) => MultiPart::mixed().singlepart(SinglePart::plain(text)),
+            Content::Flowed(text) => {
+                MultiPart::mixed().singlepart(SinglePart::builder().header(flowed()?).body(text))
+            }
             Content::Rich(rich) => MultiPart::mixed().multipart(rich),
         };
         let mut mixed = mixed;
-        for file in &draft.files {
+        for file in &files {
             let kind = ContentType::parse(&file.mime)
                 .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-            mixed = mixed.singlepart(
-                Attachment::new(crate::imap::file_name(&file.name)).body(file.data.clone(), kind),
-            );
+            let name = crate::imap::file_name(&file.name);
+            mixed = mixed.singlepart(if file.mime.eq_ignore_ascii_case("message/rfc822") {
+                Attachment::new(name).body(message_body(&file.data), kind)
+            } else {
+                Attachment::new(name).body(file.data.clone(), kind)
+            });
         }
         b.multipart(mixed)
     };
     built.map_err(|e| SendError::Build(e.to_string()))
 }
 
+/// A message attached whole (Forward as attachment). RFC 2046 wants it
+/// in 7bit or 8bit so mail apps open it as an email: 7bit when it is plain
+/// ASCII, as most mail is once encoded. One with 8-bit text goes as
+/// base64, which every server takes (8bit needs the server's 8BITMIME,
+/// and lettre refuses it without) and mail apps still open.
+fn message_body(data: &[u8]) -> Body {
+    let seven_bit = data.is_ascii()
+        && !data.contains(&0)
+        && data.split(|&b| b == b'\n').all(|l| l.len() <= 998);
+    if seven_bit {
+        Body::dangerous_pre_encoded(
+            crate::envelope::to_crlf(data),
+            ContentTransferEncoding::SevenBit,
+        )
+    } else {
+        Body::new(data.to_vec())
+    }
+}
+
 enum Content {
     Plain(String),
+    /// Plain text only, already in `format=flowed` lines.
+    Flowed(String),
     Rich(MultiPart),
 }
+
+/// A saved draft written as plain text only, so it opens again so.
+#[derive(Clone)]
+struct PiumaPlain(String);
+
+impl Header for PiumaPlain {
+    fn name() -> HeaderName {
+        HeaderName::new_from_ascii_str(PLAIN_HEADER)
+    }
+
+    fn parse(s: &str) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self(s.to_owned()))
+    }
+
+    fn display(&self) -> HeaderValue {
+        HeaderValue::new(Self::name(), self.0.clone())
+    }
+}
+
+/// The header a saved draft written as plain text only carries.
+pub const PLAIN_HEADER: &str = "X-Piuma-Plain";
 
 /// Where a saved draft keeps its bold, italic and links.
 #[derive(Clone)]
@@ -405,23 +544,38 @@ impl Header for PiumaFormat {
     }
 }
 
-/// The text with its formatting and the signature after it (above any
-/// quote), in both versions: plain text, and HTML with the logo inside
-/// the message. A draft kept [unsent] keeps its quote bars in the plain
-/// text, so it opens again as it was written.
-fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) -> MultiPart {
+/// The plain-text copy of `body`: the person's text (quote bars as "> ",
+/// pictures by name), the signature, then any quote. A draft kept
+/// [unsent] keeps its quote bars and pictures in place, so it opens again
+/// as it was written.
+fn plain_text(body: &str, sig: Option<&Signature>, images: &[InlineImage], unsent: bool) -> String {
     let (own, quote) = signature::split_quote(body);
     let own = own.trim_end();
     let gap = if quote.is_empty() { "" } else { "\n\n" };
     let own_text = if unsent {
         own.to_owned()
     } else {
-        rich::plain(own)
+        compose_image::plain(&rich::plain(own), images)
     };
-    let text = match sig {
+    match sig {
         Some(sig) => format!("{own_text}\n\n{}{gap}{quote}", sig.text()),
         None => format!("{own_text}{gap}{quote}"),
-    };
+    }
+}
+
+/// The text with its formatting and pictures and the signature after it
+/// (above any quote), in both versions: plain text, and HTML with the
+/// pictures and the logo inside the message.
+fn rich_body(
+    body: &str,
+    sig: Option<&Signature>,
+    marks: &[Mark],
+    images: &[InlineImage],
+    unsent: bool,
+) -> MultiPart {
+    let (own, quote) = signature::split_quote(body);
+    let own = own.trim_end();
+    let text = plain_text(body, sig, images, unsent);
     let own_html = if rich::is_formatted(own, marks) {
         rich::to_html(own, marks)
     } else {
@@ -429,7 +583,7 @@ fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) 
     };
     let html = format!(
         "<div style=\"font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55\">{}{}{}</div>",
-        own_html,
+        compose_image::html(&own_html, images),
         sig.map(Signature::html).unwrap_or_default(),
         if quote.is_empty() {
             String::new()
@@ -442,16 +596,28 @@ fn rich_body(body: &str, sig: Option<&Signature>, marks: &[Mark], unsent: bool) 
     );
     let html_part = SinglePart::html(html);
     let alternative = MultiPart::alternative().singlepart(SinglePart::plain(text));
-    match sig.map(|s| (&s.logo, s.template)) {
-        Some((Some(logo), signature::Template::Logo)) => {
-            let kind = ContentType::parse(&logo.mime)
-                .unwrap_or_else(|_| ContentType::parse("image/png").unwrap());
-            alternative.multipart(MultiPart::related().singlepart(html_part).singlepart(
-                Attachment::new_inline(LOGO_CID.to_string()).body(logo.data.clone(), kind),
-            ))
-        }
-        _ => alternative.singlepart(html_part),
+    // The pictures of the text, then the signature's logo.
+    let mut inside: Vec<(String, &str, &[u8])> = images
+        .iter()
+        .map(|i| (i.cid.clone(), i.mime.as_str(), i.data.as_slice()))
+        .collect();
+    if let Some((Some(logo), signature::Template::Logo)) = sig.map(|s| (&s.logo, s.template)) {
+        inside.push((
+            LOGO_CID.to_string(),
+            logo.mime.as_str(),
+            logo.data.as_slice(),
+        ));
     }
+    if inside.is_empty() {
+        return alternative.singlepart(html_part);
+    }
+    let mut related = MultiPart::related().singlepart(html_part);
+    for (cid, mime, data) in inside {
+        let kind =
+            ContentType::parse(mime).unwrap_or_else(|_| ContentType::parse("image/png").unwrap());
+        related = related.singlepart(Attachment::new_inline(cid).body(data.to_vec(), kind));
+    }
+    alternative.multipart(related)
 }
 
 fn mailbox(name: &str, email: &str) -> Result<Mailbox> {
@@ -608,11 +774,8 @@ impl Limits {
 /// [send], with its own limits (tests use short ones).
 #[doc(hidden)]
 pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Result<()> {
-    use lettre::transport::smtp::client::{AsyncSmtpConnection, TlsParameters};
     use lettre::transport::smtp::commands::{Data, Ehlo, Mail, Rcpt};
-    use lettre::transport::smtp::extension::{
-        ClientId, Extension, MailBodyParameter, MailParameter,
-    };
+    use lettre::transport::smtp::extension::{Extension, MailBodyParameter, MailParameter};
 
     let address = |a: &str| {
         a.parse::<lettre::Address>()
@@ -641,33 +804,12 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
             }
         }
     };
-    let tls = match cfg.security {
-        Security::None => None,
-        Security::Tls | Security::StartTls => Some(
-            TlsParameters::new(cfg.host.clone()).map_err(|e| classify(host, Step::Connect, e))?,
-        ),
-    };
+    // Our own TLS, as for IMAP: certificates the person trusted for this
+    // server count, a refused one says why, and STARTTLS is required.
+    let mut conn = tokio::time::timeout(limits.step, connect(cfg))
+        .await
+        .map_err(|_| stalled(Step::Connect))??;
     let hello = ClientId::default();
-    let wrapper = tls.clone().filter(|_| cfg.security == Security::Tls);
-    let mut conn = tokio::time::timeout(
-        limits.step,
-        AsyncSmtpConnection::connect_tokio1(
-            (host, cfg.port),
-            Some(limits.step),
-            &hello,
-            wrapper,
-            None,
-        ),
-    )
-    .await
-    .map_err(|_| stalled(Step::Connect))?
-    .map_err(|e| classify(host, Step::Connect, e))?;
-    if let (Security::StartTls, Some(tls)) = (cfg.security, tls) {
-        tokio::time::timeout(limits.step, conn.starttls(tls, &hello))
-            .await
-            .map_err(|_| stalled(Step::Connect))?
-            .map_err(|e| classify(host, Step::Connect, e))?;
-    }
     // What the server takes at most (RFC 1870), from its EHLO: lettre
     // keeps the extensions it uses, not this one.
     let ehlo = tokio::time::timeout(limits.step, conn.command(Ehlo::new(hello.clone())))
@@ -685,17 +827,15 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
             )));
         }
     }
-    let credentials = Credentials::new(cfg.username.clone(), cfg.password.clone());
-    tokio::time::timeout(
-        limits.step,
-        conn.auth(
-            lettre::transport::smtp::authentication::DEFAULT_MECHANISMS,
-            &credentials,
-        ),
-    )
-    .await
-    .map_err(|_| stalled(Step::Auth))?
-    .map_err(|e| classify(host, Step::Auth, e))?;
+    // The password, or an OAuth token renewed once if refused.
+    let signed = tokio::time::timeout(limits.step, sign_in(&mut conn, cfg))
+        .await
+        .map_err(|_| stalled(Step::Auth))
+        .and_then(|r| r);
+    if let Err(e) = signed {
+        abort(&mut conn, limits.step).await;
+        return Err(e);
+    }
     let mut options = Vec::new();
     let wide = !ready.from.is_ascii() || ready.recipients.iter().any(|r| !r.is_ascii());
     if wide && conn.server_info().supports_feature(Extension::SmtpUtfEight) {
@@ -753,6 +893,261 @@ pub async fn send_within(cfg: &SmtpConfig, ready: &Ready, limits: Limits) -> Res
         }
         Err(_) => Err(stalled(Step::Message)),
     }
+}
+
+/// A secure stream lettre can drive. The TLS is ours, as for IMAP, so a
+/// certificate the person trusted for this server works here too, and a
+/// refused one says why.
+#[derive(Debug)]
+struct Stream<S> {
+    inner: S,
+    /// Bytes to read before the stream's own: after STARTTLS the server
+    /// sends no new greeting, but lettre reads one first.
+    greeting: Vec<u8>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Stream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if !self.greeting.is_empty() {
+            let n = self.greeting.len().min(buf.remaining());
+            let rest = self.greeting.split_off(n);
+            buf.put_slice(&self.greeting);
+            self.greeting = rest;
+            return std::task::Poll::Ready(Ok(()));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Stream<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+impl<S> AsyncTokioStream for Stream<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + fmt::Debug,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+fn unreachable(host: &str, detail: impl fmt::Display) -> SendError {
+    SendError::Connect {
+        host: host.to_owned(),
+        detail: detail.to_string(),
+    }
+}
+
+/// Connects, greets and, but on local test servers, encrypts.
+async fn connect(cfg: &SmtpConfig) -> Result<AsyncSmtpConnection> {
+    let mut tcp = TcpStream::connect((cfg.host.as_str(), cfg.port))
+        .await
+        .map_err(|e| unreachable(&cfg.host, e))?;
+    tcp.set_nodelay(true).ok();
+    let hello = ClientId::default();
+    let wrap = |e: crate::tls::Failure| match e {
+        crate::tls::Failure::Certificate(r) => SendError::Certificate(r),
+        crate::tls::Failure::Stalled => unreachable(&cfg.host, crate::tls::Failure::Stalled),
+        // Waiting won't make the connection secure: shown, as lettre's were.
+        crate::tls::Failure::Other(detail) => SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        },
+    };
+    let stream: Box<dyn AsyncTokioStream> = match cfg.security {
+        Security::None => Box::new(Stream {
+            inner: tcp,
+            greeting: Vec::new(),
+        }),
+        Security::Tls => Box::new(Stream {
+            inner: crate::tls::connect(&cfg.host, &cfg.login.pins, tcp)
+                .await
+                .map_err(wrap)?,
+            greeting: Vec::new(),
+        }),
+        Security::StartTls => {
+            // The plain part by hand, then TLS of our own (RFC 3207).
+            expect(&mut tcp, &cfg.host, None, "220").await?;
+            let ehlo = expect(&mut tcp, &cfg.host, Some(&format!("EHLO {hello}")), "250").await?;
+            if !ehlo.lines().any(|l| {
+                l.get(4..)
+                    .is_some_and(|w| w.trim().eq_ignore_ascii_case("STARTTLS"))
+            }) {
+                // Never a password in the clear.
+                return Err(SendError::Tls {
+                    host: cfg.host.clone(),
+                    detail: "the server does not offer STARTTLS".into(),
+                });
+            }
+            expect(&mut tcp, &cfg.host, Some("STARTTLS"), "220").await?;
+            Box::new(Stream {
+                inner: crate::tls::connect(&cfg.host, &cfg.login.pins, tcp)
+                    .await
+                    .map_err(wrap)?,
+                greeting: b"220 encrypted\r\n".to_vec(),
+            })
+        }
+    };
+    AsyncSmtpConnection::connect_with_transport(stream, &hello)
+        .await
+        .map_err(|e| classify(&cfg.host, Step::Connect, e))
+}
+
+/// Sends `command` (if any) and reads the whole reply, which must start
+/// with `code`.
+async fn expect(
+    tcp: &mut TcpStream,
+    host: &str,
+    command: Option<&str>,
+    code: &str,
+) -> Result<String> {
+    if let Some(command) = command {
+        tcp.write_all(format!("{command}\r\n").as_bytes())
+            .await
+            .map_err(|e| unreachable(host, e))?;
+    }
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = tcp.read(&mut buf).await.map_err(|e| unreachable(host, e))?;
+        if n == 0 {
+            return Err(unreachable(host, "the server closed the connection"));
+        }
+        reply.extend_from_slice(&buf[..n]);
+        if reply.len() > 64 * 1024 {
+            return Err(unreachable(host, "the server's reply is too long"));
+        }
+        let text = String::from_utf8_lossy(&reply);
+        // A reply ends with a line whose code is followed by a space.
+        if text.ends_with("\r\n")
+            && text
+                .trim_end()
+                .lines()
+                .last()
+                .is_some_and(|l| l.as_bytes().get(3) != Some(&b'-'))
+        {
+            return if text.starts_with(code) {
+                Ok(text.into_owned())
+            } else {
+                Err(unreachable(host, text.trim()))
+            };
+        }
+    }
+}
+
+/// One SMTP command line, as lettre writes its own.
+struct Line<'a>(&'a str);
+
+impl fmt::Display for Line<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}\r\n", self.0)
+    }
+}
+
+/// Signs in with the password, or with an OAuth token: a refused token
+/// gets one new one and one more try, never more.
+async fn sign_in(conn: &mut AsyncSmtpConnection, cfg: &SmtpConfig) -> Result<()> {
+    cfg.login
+        .may_send_to(&cfg.host, cfg.security != Security::None)
+        .map_err(|detail| SendError::Tls {
+            host: cfg.host.clone(),
+            detail,
+        })?;
+    match cfg
+        .login
+        .credential()
+        .await
+        .map_err(|e| token_error(cfg, e))?
+    {
+        Credential::Password(password) => conn
+            .auth(
+                &[LettreMechanism::Plain, LettreMechanism::Login],
+                &Credentials::new(cfg.username.clone(), password.to_string()),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| classify(&cfg.host, Step::Auth, e)),
+        Credential::Token { mechanism, token } => {
+            match authenticate(conn, cfg, mechanism, &token).await {
+                Err(SendError::Auth) => {}
+                done => return done,
+            }
+            let Some(renewed) = cfg.login.renew().await else {
+                return Err(SendError::Auth);
+            };
+            match renewed.map_err(|e| token_error(cfg, e))? {
+                Credential::Token { mechanism, token } => {
+                    authenticate(conn, cfg, mechanism, &token).await
+                }
+                Credential::Password(_) => Err(SendError::Auth),
+            }
+        }
+    }
+}
+
+fn token_error(cfg: &SmtpConfig, e: TokenError) -> SendError {
+    match e {
+        TokenError::Rejected(_) => SendError::Auth,
+        TokenError::Offline(why) => unreachable(&cfg.host, why),
+    }
+}
+
+/// `AUTH XOAUTH2` or `AUTH OAUTHBEARER` with the initial response. A
+/// refused token gets an error challenge (334), answered so the server
+/// ends with its 535.
+async fn authenticate(
+    conn: &mut AsyncSmtpConnection,
+    cfg: &SmtpConfig,
+    mechanism: Mechanism,
+    token: &str,
+) -> Result<()> {
+    use base64::Engine;
+    let initial = sasl_initial_base64(mechanism, &cfg.username, token, &cfg.host, cfg.port);
+    let command = zeroize::Zeroizing::new(format!(
+        "AUTH {} {}",
+        sasl_name(mechanism),
+        initial.as_str()
+    ));
+    let reply = conn
+        .command(Line(&command))
+        .await
+        .map_err(|e| classify(&cfg.host, Step::Auth, e))?;
+    if reply.has_code(235) {
+        return Ok(());
+    }
+    if reply.has_code(334) {
+        let abort = base64::engine::general_purpose::STANDARD.encode(sasl_abort(mechanism));
+        return match conn.command(Line(&abort)).await {
+            Err(e) => Err(classify(&cfg.host, Step::Auth, e)),
+            Ok(_) => Err(SendError::Auth),
+        };
+    }
+    Err(SendError::Auth)
 }
 
 /// Ends a connection that went wrong, without waiting on a server that
@@ -1008,6 +1403,36 @@ mod tests {
     }
 
     #[test]
+    fn a_message_attached_whole_goes_as_7bit_when_it_can() {
+        let original = "From: Anna <anna@x.it>\r\nTo: me@x.it\r\nSubject: Plan\r\n\
+                        Content-Type: text/plain; charset=utf-8\r\n\
+                        Content-Transfer-Encoding: quoted-printable\r\n\r\nCaff=C3=A8 after.\r\n";
+        let mut d = draft();
+        d.files = vec![OutgoingFile {
+            name: "Plan.eml".into(),
+            mime: "message/rfc822".into(),
+            data: original.as_bytes().to_vec(),
+        }];
+        let raw = build(&d).unwrap().formatted();
+        let text = String::from_utf8_lossy(&raw);
+        assert!(text.contains("Content-Type: message/rfc822"), "{text}");
+        assert!(text.contains("Content-Transfer-Encoding: 7bit"), "{text}");
+        assert!(text.contains("Caff=C3=A8 after."), "{text}");
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Plan"));
+        assert_eq!(inner.body_text(0).unwrap().trim_end(), "Caffè after.");
+
+        // 8-bit text inside: base64, which needs nothing of the server.
+        d.files[0].data = "Subject: Caffè\r\n\r\nè pronto\r\n".as_bytes().to_vec();
+        let raw = build(&d).unwrap().formatted();
+        assert!(raw.is_ascii());
+        let m = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let inner = m.attachments().next().unwrap().nested().unwrap();
+        assert_eq!(inner.subject(), Some("Caffè"));
+    }
+
+    #[test]
     fn a_signature_adds_an_html_version() {
         let mut d = draft();
         d.body = "Thanks!\n\nOn Oct 12, Luca wrote:\n> Here they are\n>\n> Luca".into();
@@ -1124,6 +1549,18 @@ mod tests {
         d.date = Some(1_700_000_000);
         let built = ready(&d).unwrap();
         let later = redate(&built.raw, 1_800_000_000);
+        // A redirected message keeps its Date; its Resent-Date moves.
+        let resent =
+            crate::envelope::resend(&built.raw, "me@x.it", &["b@x.it".into()], 0, "<r@x.it>");
+        let moved = String::from_utf8(redate(&resent, 1_800_000_000)).unwrap();
+        assert!(!moved.contains("Resent-Date: Thu, 1 Jan 1970"), "{moved}");
+        assert!(moved.contains("Resent-Date: "), "{moved}");
+        let date = |t: &str| {
+            t.lines()
+                .find(|l| l.starts_with("Date: "))
+                .map(str::to_owned)
+        };
+        assert_eq!(date(&moved), date(&String::from_utf8_lossy(&built.raw)));
         let parsed = mail_parser::MessageParser::default().parse(&later).unwrap();
         assert_eq!(parsed.date().unwrap().to_timestamp(), 1_800_000_000);
         let text = String::from_utf8(later.clone()).unwrap();

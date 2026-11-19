@@ -23,6 +23,10 @@ A new Flutter FFI plugin project.
   s.platform = :ios, '11.0'
   # The Rust core reads the system proxy and network settings.
   s.frameworks = 'SystemConfiguration'
+  # The engine is a static library on iOS, so the native libraries rustc
+  # links into a dylib elsewhere must be named here: the C++ runtime, for
+  # the translation engine's C++ code (third_party/fxtranslate).
+  s.libraries = 'c++'
 
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }

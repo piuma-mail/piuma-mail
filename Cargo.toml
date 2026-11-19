@@ -13,3 +13,13 @@ rust-version = "1.98"
 # decoding (see third_party/fxtranslate/PIUMA.md).
 [patch.crates-io]
 fxtranslate = { path = "third_party/fxtranslate" }
+
+# Signatures and hashes at full speed in debug builds and tests too: a sync
+# space's membership log is read with thousands of signature checks, which
+# unoptimised take seconds instead of a fraction of one.
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.ed25519-dalek]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3

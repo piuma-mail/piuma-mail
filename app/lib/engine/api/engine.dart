@@ -8,13 +8,18 @@ import 'calendars.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `combine_rows`, `core_draft`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `in_conversation`, `inbox_row`, `invite_info`, `keep_following`, `keep_outcome`, `kept_outcome`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
+// These functions are ignored because they are not marked as `pub`: `add_checked_account`, `after_sent`, `answer_info`, `backoff`, `blocking`, `body_block`, `body_marks`, `bulk_reader`, `certificate_error`, `changes_dropped`, `checked_list`, `combine_rows`, `core_draft`, `core_images`, `core_marks`, `deliver_outbox`, `deliver`, `delivery_of`, `draft_signature_key`, `emit`, `engine`, `erase_draft`, `file_risk`, `filter`, `first_name`, `follow`, `full_body`, `image_data`, `in_conversation`, `inbox_row`, `invite_info`, `keep_account`, `keep_following`, `keep_outcome`, `kept_outcome`, `kick_maintenance`, `lock_store`, `log_moves`, `new`, `new`, `notices_for`, `now_secs`, `of`, `outbox_sender`, `person_info`, `pins_of`, `put_away`, `queue_draft`, `queue_message`, `reader`, `remind_sent`, `rule_from`, `rule_info`, `save_waiting_drafts`, `secrets_changed`, `send_outbox_at`, `send_outbox`, `set_waiting`, `settle_waiting`, `signed_in`, `start_maintenance`, `stop_watching`, `store`, `supervise`, `switch`, `take_outgoing`, `take_restored`, `to_core`, `to_core`, `translator`, `undo_seen`, `wait_for_credentials`, `waiting_id`, `waiting_row`, `waits_on`, `watch_account`, `with_files`, `within`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AbortOnDrop`, `Engine`, `Followed`, `Queued`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `drop`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `row`, `row`, `row`
 
-/// Opens (or creates) the local database. Call once at startup.
-void openEngine({required String dbPath}) =>
+/// Opens (or creates) the local database. Call once at startup, and wait
+/// for it: when the app was updated, the database is copied
+/// (`piuma.db.before-update`) and its schema brought up to date first,
+/// which on a big mailbox takes a while ("Updating your mail"). Work on
+/// many messages is then done in the background, a step at a time
+/// ([`Store::maintain`]).
+Future<void> openEngine({required String dbPath}) =>
     RustLib.instance.api.crateApiEngineOpenEngine(dbPath: dbPath);
 
 /// Whether `from`→`to` translates on this device with Firefox's models:
@@ -62,7 +67,8 @@ Future<FoundSettings?> discoverSettings({required String email}) =>
     RustLib.instance.api.crateApiEngineDiscoverSettings(email: email);
 
 /// Checks the settings against the server, saves the password in the
-/// system keychain and adds the account.
+/// system keychain and adds the account. `trusted` are certificates the
+/// person chose to trust for its servers, after a [ErrorKind::Certificate].
 Future<AccountInfo> addImapAccount({
   required String name,
   required String email,
@@ -74,6 +80,7 @@ Future<AccountInfo> addImapAccount({
   required String username,
   required String password,
   OutgoingServer? smtp,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiEngineAddImapAccount(
   name: name,
   email: email,
@@ -85,6 +92,7 @@ Future<AccountInfo> addImapAccount({
   username: username,
   password: password,
   smtp: smtp,
+  trusted: trusted,
 );
 
 /// Checks the login against a JMAP server, saves the password in the
@@ -97,6 +105,7 @@ Future<AccountInfo> addJmapAccount({
   required String sessionUrl,
   required String password,
   required bool apiToken,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiEngineAddJmapAccount(
   name: name,
   email: email,
@@ -105,6 +114,7 @@ Future<AccountInfo> addJmapAccount({
   sessionUrl: sessionUrl,
   password: password,
   apiToken: apiToken,
+  trusted: trusted,
 );
 
 /// How many conversations a unified folder lists; [account] keeps one
@@ -254,13 +264,18 @@ void rememberPassword({
 );
 
 /// Checks a new password for an account whose sign-in failed, saves it in
-/// the system keychain and follows the account again.
+/// the system keychain and follows the account again. `trusted` are
+/// certificates the person chose to trust for its servers, after a
+/// [ErrorKind::Certificate]: kept only once the check went through, and
+/// only for the account's own servers.
 Future<void> signInAgain({
   required PlatformInt64 accountId,
   required String password,
+  required List<TrustedCertificate> trusted,
 }) => RustLib.instance.api.crateApiEngineSignInAgain(
   accountId: accountId,
   password: password,
+  trusted: trusted,
 );
 
 /// The readable text of a message. Downloads it the first time.
@@ -433,12 +448,29 @@ Future<String> saveAttachment({
 Future<Uint8List> fetchImage({required String url}) =>
     RustLib.instance.api.crateApiEngineFetchImage(url: url);
 
-/// The picture of a company sender (`PicturesToApprove`): its verified
-/// logo, or its website's icon, as a square PNG; none for people at mail
+/// The picture of a company sender (`PicturesToApprove`): its brand logo,
+/// or its website's icon, as a square PNG; none for people at mail
 /// providers, while "Sender pictures" is off, or when there is nothing.
-/// Looked up once per domain and kept on the device.
-Future<Uint8List?> senderPicture({required String email}) =>
-    RustLib.instance.api.crateApiEngineSenderPicture(email: email);
+///
+/// A logo is only for the message [account_id], [mailbox], [uid], and only
+/// when that message's own DMARC check passed (`Store::logo_allowed`):
+/// never for a domain because some other message of it was verified. It
+/// is looked up only when [opened] (the person is reading that message),
+/// and kept per organization; a list shows it once it is kept. Icons are
+/// looked up once per domain, as before, when "Website icons" is on.
+Future<Uint8List?> senderPicture({
+  required String email,
+  PlatformInt64? accountId,
+  String? mailbox,
+  int? uid,
+  required bool opened,
+}) => RustLib.instance.api.crateApiEngineSenderPicture(
+  email: email,
+  accountId: accountId,
+  mailbox: mailbox,
+  uid: uid,
+  opened: opened,
+);
 
 /// Always load a sender's images, or stop.
 Future<void> setSenderTrusted({required String email, required bool trusted}) =>
@@ -539,7 +571,8 @@ Future<List<OutboxItem>> outbox({PlatformInt64? accountId}) =>
     RustLib.instance.api.crateApiEngineOutbox(accountId: accountId);
 
 /// Takes a message back out of the outbox to edit it: it no longer goes
-/// on its own. Not while it is being sent.
+/// on its own. Not while it is being sent, and never a Redirect, which has
+/// no body or files of its own to edit: it stays where it is.
 Future<OutgoingMessage> reopenOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineReopenOutgoing(id: id);
 
@@ -552,6 +585,13 @@ Future<void> sendOutboxNow() =>
 /// being sent.
 Future<void> deleteOutgoing({required PlatformInt64 id}) =>
     RustLib.instance.api.crateApiEngineDeleteOutgoing(id: id);
+
+/// Sends a message of the outbox again now: one that waits (for its
+/// time or the server), or that the server refused or may have taken,
+/// when the person says so. Then [deliver_outgoing] says what became of
+/// it. Not while it is being sent.
+Future<void> retryOutgoing({required PlatformInt64 id}) =>
+    RustLib.instance.api.crateApiEngineRetryOutgoing(id: id);
 
 /// Keeps what is being written in its account's Drafts folder, in place of
 /// its earlier copy (`message.draft`), even one in another account.
@@ -571,8 +611,9 @@ Future<OutgoingMessage> openDraft({required MessageRef draft}) =>
     RustLib.instance.api.crateApiEngineOpenDraft(draft: draft);
 
 /// Hides a message from the lists while its action can be undone, or
-/// shows it again after Undo.
-void setMessageHidden({
+/// shows it again after Undo. Not on the thread that draws: a sync writing
+/// a batch holds the database for a moment.
+Future<void> setMessageHidden({
   required PlatformInt64 accountId,
   required String mailbox,
   required int uid,
@@ -820,7 +861,8 @@ Future<Unsubscribe> unsubscribeInfo({
 );
 
 /// Leaves the list a message came from, with one request or a message
-/// to its address. A page to open is the app's to open.
+/// to its address (the one [unsubscribe_info] showed). A page to open is
+/// the app's to open.
 Future<void> unsubscribe({
   required PlatformInt64 accountId,
   required String mailbox,
@@ -1002,6 +1044,9 @@ class AccountFolderInfo {
   /// How many emails it holds on the server.
   final int total;
 
+  /// Subscribed: shown in the lists; the others show on demand.
+  final bool subscribed;
+
   const AccountFolderInfo({
     required this.mailbox,
     required this.name,
@@ -1009,6 +1054,7 @@ class AccountFolderInfo {
     required this.selectable,
     required this.unread,
     required this.total,
+    required this.subscribed,
   });
 
   @override
@@ -1018,7 +1064,8 @@ class AccountFolderInfo {
       depth.hashCode ^
       selectable.hashCode ^
       unread.hashCode ^
-      total.hashCode;
+      total.hashCode ^
+      subscribed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1030,7 +1077,8 @@ class AccountFolderInfo {
           depth == other.depth &&
           selectable == other.selectable &&
           unread == other.unread &&
-          total == other.total;
+          total == other.total &&
+          subscribed == other.subscribed;
 }
 
 class AccountInfo {
@@ -1456,6 +1504,28 @@ enum ErrorKind {
   insecureConnection,
   keychain,
 
+  /// Linux with no Secret Service running: nowhere safe for passwords.
+  noKeyring,
+
+  /// The server's certificate was refused; `detail` is the certificate
+  /// as JSON ([`certificate_error`]), for the person to decide.
+  certificate,
+
+  /// OAuth: this build has no client for the provider, and none was
+  /// given.
+  signInUnavailable,
+
+  /// OAuth: the person closed or cancelled the provider's page.
+  signInCancelled,
+
+  /// OAuth: the provider refused (the person said no, the answer was
+  /// forged, the client is wrong).
+  signInDenied,
+
+  /// OAuth: new servers for an account that signs in with a provider's
+  /// page that aren't that provider's, or not over TLS.
+  oAuthServers,
+
   /// A recipient is not an email address; `detail` is the address.
   badAddress,
   noRecipients,
@@ -1471,6 +1541,10 @@ enum ErrorKind {
 
   /// Sync: the recovery phrase doesn't open the space.
   wrongPhrase,
+
+  /// Sync: the recovery phrase was the space's, and was replaced since:
+  /// only the newest one opens it.
+  oldPhrase,
 
   /// Sync: the code typed on the other device wasn't the one shown.
   wrongCode,
@@ -1489,6 +1563,24 @@ enum ErrorKind {
 
   /// Sync: the mailbox to move the space to holds another one.
   taken,
+
+  /// Sync: only an older copy of the space was found, and left out.
+  rollback,
+
+  /// Sync: the space was written by a newer version of Piuma.
+  outdated,
+
+  /// Sync: two devices removed each other and nothing tells which came
+  /// first: the space can't be joined until the mailbox holds only one
+  /// side.
+  conflict,
+
+  /// An account still has mail written in it that hasn't gone (see
+  /// `account_unsent`): it isn't removed until that is sent or deleted.
+  unsent,
+
+  /// Not enough free room on the disk for what was asked.
+  diskFull,
   other,
 }
 
@@ -1569,6 +1661,10 @@ class FoundSettings {
   /// uses it in place of IMAP and SMTP.
   final String? jmapUrl;
 
+  /// The provider (`microsoft`, `google`) whose own sign-in page these
+  /// servers want, in place of a password.
+  final String? oauth;
+
   const FoundSettings({
     required this.imapHost,
     required this.imapPort,
@@ -1579,6 +1675,7 @@ class FoundSettings {
     required this.username,
     required this.source,
     this.jmapUrl,
+    this.oauth,
   });
 
   @override
@@ -1591,7 +1688,8 @@ class FoundSettings {
       smtpSecurity.hashCode ^
       username.hashCode ^
       source.hashCode ^
-      jmapUrl.hashCode;
+      jmapUrl.hashCode ^
+      oauth.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1606,7 +1704,8 @@ class FoundSettings {
           smtpSecurity == other.smtpSecurity &&
           username == other.username &&
           source == other.source &&
-          jmapUrl == other.jmapUrl;
+          jmapUrl == other.jmapUrl &&
+          oauth == other.oauth;
 }
 
 /// Someone who writes often, for "Frequent contacts".
@@ -1766,6 +1865,31 @@ class InboxRow {
 
 /// A half of the inbox, as its tabs show it; `All` for the whole list.
 enum InboxTab { all, people, notifications }
+
+/// A picture inside a message being written.
+class InlineImageData {
+  final String name;
+  final String mime;
+  final Uint8List data;
+
+  const InlineImageData({
+    required this.name,
+    required this.mime,
+    required this.data,
+  });
+
+  @override
+  int get hashCode => name.hashCode ^ mime.hashCode ^ data.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is InlineImageData &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          mime == other.mime &&
+          data == other.data;
+}
 
 enum InviteAnswer { accepted, tentative, declined }
 
@@ -2162,6 +2286,11 @@ class OutboxItem {
   /// Sent with Undo: [send_at] ends the Undo window.
   final bool undo;
 
+  /// A Redirect: the message as it came, with nothing of its own to
+  /// edit. It is never reopened ([reopen_outgoing] refuses it), only
+  /// deleted ([delete_outgoing]) or tried again ([retry_outgoing]).
+  final bool redirect;
+
   const OutboxItem({
     required this.id,
     required this.accountId,
@@ -2173,6 +2302,7 @@ class OutboxItem {
     this.sendAt,
     required this.state,
     required this.undo,
+    required this.redirect,
   });
 
   @override
@@ -2186,7 +2316,8 @@ class OutboxItem {
       error.hashCode ^
       sendAt.hashCode ^
       state.hashCode ^
-      undo.hashCode;
+      undo.hashCode ^
+      redirect.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2202,7 +2333,8 @@ class OutboxItem {
           error == other.error &&
           sendAt == other.sendAt &&
           state == other.state &&
-          undo == other.undo;
+          undo == other.undo &&
+          redirect == other.redirect;
 }
 
 enum OutboxState {
@@ -2272,6 +2404,18 @@ class OutgoingMessage {
   /// Bold, italic and links over [body].
   final List<BodyMark> marks;
 
+  /// Pictures inside the text, one for each U+FFFC in [body], in order.
+  final List<InlineImageData> images;
+
+  /// Goes as plain text only (`format=flowed`).
+  final bool plainText;
+
+  /// Asks for a read receipt.
+  final bool readReceipt;
+
+  /// Marked important.
+  final bool highPriority;
+
   const OutgoingMessage({
     required this.accountId,
     this.fromEmail,
@@ -2288,6 +2432,10 @@ class OutgoingMessage {
     this.draft,
     this.remindAt,
     required this.marks,
+    required this.images,
+    required this.plainText,
+    required this.readReceipt,
+    required this.highPriority,
   });
 
   @override
@@ -2306,7 +2454,11 @@ class OutgoingMessage {
       signaturePicked.hashCode ^
       draft.hashCode ^
       remindAt.hashCode ^
-      marks.hashCode;
+      marks.hashCode ^
+      images.hashCode ^
+      plainText.hashCode ^
+      readReceipt.hashCode ^
+      highPriority.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2327,7 +2479,11 @@ class OutgoingMessage {
           signaturePicked == other.signaturePicked &&
           draft == other.draft &&
           remindAt == other.remindAt &&
-          marks == other.marks;
+          marks == other.marks &&
+          images == other.images &&
+          plainText == other.plainText &&
+          readReceipt == other.readReceipt &&
+          highPriority == other.highPriority;
 }
 
 /// An outgoing server. Left out, the engine guesses `smtp.<domain>:465`.
@@ -2386,6 +2542,11 @@ class PecMessage {
   /// The folder the proofs are in.
   final String proofMailbox;
 
+  /// The receipts the stage rests on carry their provider's checked
+  /// signature. When false the stage is only what their headers claim,
+  /// and the Vault says so.
+  final bool verified;
+
   const PecMessage({
     required this.row,
     required this.subject,
@@ -2397,6 +2558,7 @@ class PecMessage {
     required this.failedTo,
     required this.proofs,
     required this.proofMailbox,
+    required this.verified,
   });
 
   @override
@@ -2410,7 +2572,8 @@ class PecMessage {
       reason.hashCode ^
       failedTo.hashCode ^
       proofs.hashCode ^
-      proofMailbox.hashCode;
+      proofMailbox.hashCode ^
+      verified.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -2426,7 +2589,8 @@ class PecMessage {
           reason == other.reason &&
           failedTo == other.failedTo &&
           proofs == other.proofs &&
-          proofMailbox == other.proofMailbox;
+          proofMailbox == other.proofMailbox &&
+          verified == other.verified;
 }
 
 /// How far a message sent from a PEC mailbox has got.
@@ -3249,6 +3413,10 @@ enum SyncEventKind {
   /// kept refusing were given up; `removed` says how many. Their
   /// messages are back as the server has them.
   changesDropped,
+
+  /// Android: the engine got a secret for the Keystore (a renewed
+  /// sign-in): `take_new_secrets` has it, to keep at once.
+  secretsChanged,
 }
 
 /// A run of text with one look.
@@ -3359,6 +3527,26 @@ class TranslatePair {
           bytes == other.bytes;
 }
 
+/// A server certificate the person chose to trust, by its SHA-256
+/// fingerprint (`AB:CD:…`), for the server `host`.
+class TrustedCertificate {
+  final String host;
+  final String fingerprint;
+
+  const TrustedCertificate({required this.host, required this.fingerprint});
+
+  @override
+  int get hashCode => host.hashCode ^ fingerprint.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TrustedCertificate &&
+          runtimeType == other.runtimeType &&
+          host == other.host &&
+          fingerprint == other.fingerprint;
+}
+
 class TrustedSenderInfo {
   final String email;
 
@@ -3415,10 +3603,22 @@ class Unsubscribe {
   /// The page, or the address the message goes to.
   final String address;
 
-  const Unsubscribe({required this.kind, required this.address});
+  /// For [UnsubscribeKind::Mail]: the subject and text of the message
+  /// the list's header asks for, shown before it is sent from the
+  /// person's account.
+  final String subject;
+  final String body;
+
+  const Unsubscribe({
+    required this.kind,
+    required this.address,
+    required this.subject,
+    required this.body,
+  });
 
   @override
-  int get hashCode => kind.hashCode ^ address.hashCode;
+  int get hashCode =>
+      kind.hashCode ^ address.hashCode ^ subject.hashCode ^ body.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -3426,7 +3626,9 @@ class Unsubscribe {
       other is Unsubscribe &&
           runtimeType == other.runtimeType &&
           kind == other.kind &&
-          address == other.address;
+          address == other.address &&
+          subject == other.subject &&
+          body == other.body;
 }
 
 /// How a newsletter can be left.

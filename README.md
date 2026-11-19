@@ -185,7 +185,7 @@ Use a test mailbox for development. Platform build instructions and the full val
 
 Start with a small, concrete improvement: a reproducible bug, a clearer setup guide, a provider compatibility finding, or an accessibility issue.
 
-- **Report a problem or an idea from the app:** **Settings → Help & feedback** shows exactly what will be sent before sending it (the screenshot is off by default). Reports go to a private tracker through the [report relay](relay/README.md); no GitHub account is needed.
+- **Report a problem or an idea from the app:** **Settings → Help & feedback** shows exactly what will be sent before sending it (the screenshot is off by default). Reports go to a private tracker through the [report relay](relay/README.md); no GitHub account is needed. If a report can't go, the app tries again in the background for 7 days, then shows it as failed with Try again and Send by email instead. What is sent, where, and for how long: [PRIVACY.md](PRIVACY.md).
 - **Open an issue here** for anything you are happy to discuss in public. Include the platform, build or commit, steps and expected behavior. Use invented messages and redact personal information from screenshots and logs.
 - **Security problems:** do not open a public issue; see [SECURITY.md](SECURITY.md).
 - **Code or documentation:** work on a branch, open a draft PR and sign off every commit with `git commit -s` for the [Developer Certificate of Origin](DCO.txt). Report the checks you actually ran. Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing the app; UI changes require mockup alignment and approval.

@@ -12,7 +12,6 @@ use piuma_core::remote::Remote;
 use piuma_core::{AccountId, Store};
 
 use crate::api::engine::{self, MailNotice};
-use crate::credentials;
 
 /// Whether the service shows the notices.
 static ON: AtomicBool = AtomicBool::new(false);
@@ -28,6 +27,8 @@ pub struct SignInNotice {
     pub account_id: i64,
     pub name: String,
     pub cancelled: bool,
+    /// The server's certificate was refused, not the password.
+    pub certificate: bool,
 }
 
 /// From now on notices wait for [`wait`] instead of going to the app.
@@ -51,13 +52,24 @@ pub(crate) fn push(notices: &[MailNotice]) {
     ARRIVED.notify_all();
 }
 
+/// Wakes [`wait`] up: the engine got a secret for the Keystore.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn wake() {
+    // Taken while wait() looks, so the wake-up isn't lost.
+    drop(QUEUE.lock().unwrap_or_else(|e| e.into_inner()));
+    ARRIVED.notify_all();
+}
+
 /// The notices that came since the last call, waiting at most `timeout`
-/// for one; empty when none came.
+/// for one; empty when none came. Also returns early when the engine got
+/// a secret for the Keystore (`MailService.kt` keeps it right after).
 pub fn wait(timeout: Duration) -> Vec<MailNotice> {
     let queue = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
     let (mut queue, _) = ARRIVED
         .wait_timeout_while(queue, timeout, |q| {
-            q.is_empty() && FAILED.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+            q.is_empty()
+                && FAILED.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+                && !crate::credentials::has_kept()
         })
         .unwrap_or_else(|e| e.into_inner());
     std::mem::take(&mut *queue)
@@ -72,17 +84,19 @@ fn told_key(account: AccountId) -> String {
 /// The account's server refused its password: keeps a notice for the
 /// service, unless the app shows its own, the person turned it off, or
 /// it was given already.
-pub(crate) fn sign_in_failed(account: AccountId) {
+/// `certificate`: it was the server's certificate, not the password.
+pub(crate) fn sign_in_failed(account: AccountId, certificate: bool) {
     if enabled() {
-        tell(account);
+        tell(account, certificate);
     }
 }
 
-fn tell(account: AccountId) {
+fn tell(account: AccountId, certificate: bool) {
     let Ok(engine) = engine::engine() else { return };
     let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
     let notice = told(&store, account);
-    let Some(notice) = notice else { return };
+    let Some(mut notice) = notice else { return };
+    notice.certificate = certificate;
     FAILED
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -114,6 +128,7 @@ fn told(store: &Store, account: AccountId) -> Option<SignInNotice> {
         account_id: account.0,
         name: a.name,
         cancelled: false,
+        certificate: false,
     })
 }
 
@@ -151,6 +166,7 @@ fn recover_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNo
         account_id: account.0,
         name: String::new(),
         cancelled: true,
+        certificate: false,
     });
     true
 }
@@ -179,6 +195,10 @@ fn forget_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNot
 /// details.
 pub fn sign_in_notices() -> String {
     let failed = std::mem::take(&mut *FAILED.lock().unwrap_or_else(|e| e.into_inner()));
+    sign_in_json(&failed)
+}
+
+fn sign_in_json(failed: &[SignInNotice]) -> String {
     let items: Vec<String> = failed
         .iter()
         .map(|n| {
@@ -186,10 +206,11 @@ pub fn sign_in_notices() -> String {
                 return format!(r#"{{"id":{},"cancel":true}}"#, sign_in_id(n.account_id));
             }
             format!(
-                r#"{{"id":{},"name":{},"payload":{}}}"#,
+                r#"{{"id":{},"name":{},"payload":{},"certificate":{}}}"#,
                 sign_in_id(n.account_id),
                 quote(&n.name),
                 quote(&format!("account\n{}", n.account_id)),
+                n.certificate,
             )
         })
         .collect();
@@ -245,7 +266,7 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains(&account.id.0);
-        let Ok(password) = credentials::load(account.id) else {
+        let Ok(password) = crate::login::load(account.id) else {
             continue;
         };
         if followed {
@@ -260,8 +281,8 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
             let mut conn = match Remote::open(&account, &password).await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    if e.is_auth() {
-                        tell(account.id);
+                    if e.is_auth() || e.is_certificate() {
+                        tell(account.id, e.is_certificate());
                     }
                     return None;
                 }
@@ -290,7 +311,7 @@ pub fn send_outbox_once() -> Result<(), engine::EngineError> {
         .unwrap_or_else(|e| e.into_inner())
         .accounts()?;
     for account in accounts {
-        let Ok(password) = credentials::load(account.id) else {
+        let Ok(password) = crate::login::load(account.id) else {
             continue;
         };
         engine
@@ -305,10 +326,16 @@ pub fn send_outbox_once() -> Result<(), engine::EngineError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoticeAction {
     Archive,
+    /// To the Trash, as Delete in the app.
+    Delete,
+    /// Only read: every action marks the message read first.
+    Read,
     /// Until this time, in Unix seconds.
     Snooze(i64),
     /// A short reply typed on the notice, sent from the message's account.
     Reply(String),
+    /// The same, to everyone the message went to (from the watch).
+    ReplyAll(String),
 }
 
 pub(crate) fn message_of(payload: &str) -> Option<engine::MessageRef> {
@@ -344,17 +371,23 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
         .runtime
         .block_on(engine::push_messages_seen(vec![message.clone()], true))
         .ok();
+    let all = matches!(action, NoticeAction::ReplyAll(_));
     match action {
+        NoticeAction::Read => Ok(()),
         NoticeAction::Archive => engine.runtime.block_on(engine::apply_message_action(
             vec![message],
             engine::MessageAction::Archive,
+        )),
+        NoticeAction::Delete => engine.runtime.block_on(engine::apply_message_action(
+            vec![message],
+            engine::MessageAction::Delete,
         )),
         NoticeAction::Snooze(until) => {
             engine
                 .runtime
                 .block_on(engine::snooze_messages(vec![message], until, false))
         }
-        NoticeAction::Reply(text) => {
+        NoticeAction::Reply(text) | NoticeAction::ReplyAll(text) => {
             let (row, signature) = {
                 let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
                 let account = AccountId(message.account_id);
@@ -368,10 +401,37 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .map(|s| s.id);
                 (row, signature)
             };
-            let to = if row.reply.reply_to.is_empty() {
+            let sender = if row.reply.reply_to.is_empty() {
                 row.from_email.clone()
             } else {
                 row.reply.reply_to.clone()
+            };
+            // Every Reply-To, and for Reply all everyone else: from the
+            // headers, read again when the message is older than them.
+            let envelope = engine
+                .runtime
+                .block_on(crate::api::reply::message_envelope(
+                    message.account_id,
+                    message.mailbox.clone(),
+                    message.uid,
+                ))
+                .ok();
+            // Reply all from a watch or a notice goes at once: never for a
+            // blind copy, nor to people only a Mail-Followup-To names.
+            if all
+                && envelope
+                    .as_ref()
+                    .is_none_or(|e| crate::api::reply::others(e) == 0)
+            {
+                return Err(engine::EngineError::new(
+                    engine::ErrorKind::Other,
+                    "Reply all needs the app for this email",
+                ));
+            }
+            let (to, cc) = match envelope {
+                Some(e) if all && !e.reply_all_to.is_empty() => (e.reply_all_to, e.reply_all_cc),
+                Some(e) if !e.reply_to.is_empty() => (e.reply_to, Vec::new()),
+                _ => (vec![sender], Vec::new()),
             };
             let mut references: Vec<String> = row
                 .reply
@@ -395,8 +455,8 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     .ok()
                     .flatten(),
                     files: Vec::new(),
-                    to: vec![to],
-                    cc: Vec::new(),
+                    to,
+                    cc,
                     bcc: Vec::new(),
                     subject: reply_subject(&row.subject),
                     body: text,
@@ -407,6 +467,10 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
                     draft: None,
                     remind_at: None,
                     marks: Vec::new(),
+                    images: Vec::new(),
+                    plain_text: false,
+                    read_receipt: false,
+                    high_priority: false,
                 }))
                 .map(|_| ())
         }
@@ -418,7 +482,7 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
 fn remember(passwords: &[(i64, String)]) {
     #[cfg(target_os = "android")]
     for (id, password) in passwords {
-        credentials::remember(AccountId(*id), password);
+        crate::credentials::remember(AccountId(*id), password);
     }
     #[cfg(not(target_os = "android"))]
     let _ = passwords;
@@ -454,8 +518,20 @@ pub fn to_json(notices: &[MailNotice]) -> String {
             let no_reply = n.no_reply.as_ref().map_or(String::new(), |r| {
                 format!(r#","noReply":{{"sentDaysAgo":{}}}"#, r.sent_days_ago)
             });
+            // How many more people Reply all reaches, for its button on a
+            // watch; left out when none (or the headers aren't known yet).
+            let others = if n.count == 1 && n.away.is_none() && n.reminder.is_none() {
+                crate::watch::others(n.account_id, &n.mailbox, n.uid)
+            } else {
+                0
+            };
+            let others = if others > 0 {
+                format!(r#","others":{others}"#)
+            } else {
+                String::new()
+            };
             format!(
-                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}}}"#,
+                r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}{}}}"#,
                 notice_id(n),
                 quote(&n.sender),
                 n.count,
@@ -470,7 +546,8 @@ pub fn to_json(notices: &[MailNotice]) -> String {
                 n.silent,
                 vault,
                 away,
-                no_reply
+                no_reply,
+                others
             )
         })
         .collect();
@@ -660,6 +737,7 @@ mod tests {
             account_id: id.0 + 1,
             name: "Other".into(),
             cancelled: false,
+            certificate: false,
         };
         let mut pending = vec![notice.clone(), other.clone()];
         assert!(recover_sign_in(&store, id, &mut pending));
@@ -683,26 +761,35 @@ mod tests {
             .unwrap();
         assert_eq!(told(&store, id), None);
 
-        FAILED.lock().unwrap().push(notice);
+        // Other tests' engines tell their own accounts' refusals into the
+        // same queue meanwhile: only this test's notices are taken.
+        let take = |ours: &[SignInNotice]| {
+            let mut failed = FAILED.lock().unwrap();
+            let (mine, rest): (Vec<_>, Vec<_>) = failed.drain(..).partition(|n| ours.contains(n));
+            *failed = rest;
+            sign_in_json(&mine)
+        };
+        FAILED.lock().unwrap().push(notice.clone());
         // Waiting wakes for it, with no mail.
         assert!(wait(Duration::from_secs(5)).is_empty());
-        let json = sign_in_notices();
+        let json = take(std::slice::from_ref(&notice));
         assert_eq!(
             json,
             format!(
-                r#"[{{"id":{},"name":"Work \"W\"","payload":"account\n{}"}}]"#,
+                r#"[{{"id":{},"name":"Work \"W\"","payload":"account\n{}","certificate":false}}]"#,
                 sign_in_id(id.0),
                 id.0
             )
         );
         assert_ne!(sign_in_id(id.0), sign_in_id(id.0 + 1));
-        assert_eq!(sign_in_notices(), "[]");
-        FAILED.lock().unwrap().extend(delivered);
+        assert_eq!(take(std::slice::from_ref(&notice)), "[]");
+        FAILED.lock().unwrap().extend(delivered.clone());
         assert_eq!(
-            sign_in_notices(),
+            take(&delivered),
             format!(r#"[{{"id":{},"cancel":true}}]"#, sign_in_id(id.0))
         );
-        assert_eq!(sign_in_notices(), "[]");
+        assert_eq!(take(&delivered), "[]");
+        assert_eq!(sign_in_json(&[]), "[]");
     }
 
     #[test]
@@ -725,6 +812,7 @@ mod tests {
             account_id: id.0 + 1,
             name: "Other".into(),
             cancelled: false,
+            certificate: false,
         };
         // Told, and still waiting for the service: it goes, and what may
         // have been shown already is withdrawn.
@@ -741,6 +829,7 @@ mod tests {
                 account_id: id.0,
                 name: "Work".into(),
                 cancelled: false,
+                certificate: false,
             },
             other.clone(),
         ];

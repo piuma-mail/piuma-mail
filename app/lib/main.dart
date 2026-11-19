@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io' show Directory, Platform, exit, stderr;
+import 'dart:ui' show AppExitResponse;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +16,7 @@ import 'dev_copy.dart';
 import 'engine/api/engine.dart' as engine;
 import 'engine/api/feedback.dart' as feedback;
 import 'engine/frb_generated.dart';
+import 'engine/api/updates.dart' as engine_updates;
 import 'feedback/report_context.dart';
 import 'feedback/report_sheet.dart';
 import 'home.dart';
@@ -23,14 +26,19 @@ import 'notify/android_background.dart';
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
+import 'outside/arrivals.dart';
+import 'outside/shell.dart';
 import 'reader_window.dart';
 import 'updates/updates.dart';
+import 'updating.dart';
+import 'widgets/links.dart';
 
 Future<void> main(List<String> args) async {
   // A message opened in a window of its own: [window id, its argument].
   if (args.firstOrNull == 'multi_window') {
     return _readerWindow(args.elementAtOrNull(2) ?? '');
   }
+  if (args.contains('--smoke-test')) return _smokeTest();
   // First, so whatever goes wrong from here on is kept for a report.
   _keepCrashes();
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +49,10 @@ Future<void> main(List<String> args) async {
   // First: the installer's hooks end here, and a downloaded update
   // restarts into itself before the engine opens.
   Updates.start(dir.path);
+  // What this launch was asked to open (a mailto: link, an email file,
+  // files to send): it waits for the inbox. Later launches come through
+  // the platform (Arrivals.start).
+  Arrivals.instance.addArgs(args);
   await _start(dir.path);
 }
 
@@ -50,7 +62,12 @@ Future<void> main(List<String> args) async {
 /// window or a crash at every start.
 Future<void> _start(String dir) async {
   try {
-    engine.openEngine(dbPath: '$dir/piuma.db');
+    // Off the thread that draws: after an update the database is brought
+    // up to date first, with "Updating your mail" on screen if it is slow.
+    await openEngineShowingUpdate(
+      '$dir/piuma.db',
+      show: (screen) => runApp(PiumaApp(home: (_, _) => screen)),
+    );
   } catch (e, stack) {
     // Kept for the report offered at the next start that works.
     try {
@@ -69,10 +86,14 @@ Future<void> _start(String dir) async {
     );
     return;
   }
+  _watchExits();
   // A password the system can no longer read leaves its account asking
   // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
   final source = EngineMailSource()..startSync();
+  // mailto: links in emails write here, in Piuma's own compose.
+  openMailtoLink = (uri) async => Arrivals.instance.mailto(uri);
+  Arrivals.instance.start().ignore();
   // The background service or the 15-minute look, as picked.
   AndroidBackground.apply().ignore();
   final replies = StreamController<MailRow>.broadcast();
@@ -93,9 +114,41 @@ Future<void> _start(String dir) async {
         source: source,
         onOpenWindow: canOpenWindows ? openReaderWindow : null,
         replies: replies.stream,
+        arrivals: Arrivals.instance,
       ),
     ),
   );
+  // This launch worked: the next one need not look for a fix first.
+  WidgetsBinding.instance.addPostFrameCallback((_) => Updates.launched());
+}
+
+/// `piuma_mail --smoke-test`, run by the "Release" workflow on the
+/// installed app: the start-up part of updates and the engine, on a
+/// throwaway folder, then exit 0 (1 on any error). Nothing is drawn and
+/// nothing reaches the network.
+Future<void> _smokeTest() async {
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    await RustLib.init();
+    final dir = await Directory.systemTemp.createTemp('piuma-smoke-');
+    // No feed: a smoke test never looks for updates.
+    final s = engine_updates.updatesStartup(
+      supportDir: dir.path,
+      feed: '',
+      channel: updateChannel,
+    );
+    if (s.previousLaunchFailed) throw StateError('a new folder has a marker');
+    engine.openEngine(dbPath: '${dir.path}/piuma.db');
+    // A first query through the open database.
+    engine.appearanceSettings();
+    engine_updates.updatesLaunched();
+    // The folder stays: the open database keeps it busy on Windows, and
+    // the runner is thrown away.
+    exit(0);
+  } catch (e, stack) {
+    stderr.writeln('Smoke test failed: $e\n$stack');
+    exit(1);
+  }
 }
 
 String _feedbackAddress() {
@@ -107,7 +160,10 @@ String _feedbackAddress() {
 }
 
 /// Keeps what went wrong for the next start, where the inbox offers to
-/// report it. Only the error and its stack: nothing from the screen.
+/// report it. Only the error and its stack: nothing from the screen. The
+/// engine keeps the message's first line, scrubbed, and the frames. In a
+/// release build nothing goes to the console either: an exception's text
+/// can quote mail, and on Android the console is the system log.
 void _keepCrashes() {
   void keep(Object error, StackTrace? stack) {
     try {
@@ -120,12 +176,50 @@ void _keepCrashes() {
   final flutter = FlutterError.onError;
   FlutterError.onError = (details) {
     if (!details.silent) keep(details.exception, details.stack);
-    flutter?.call(details);
+    if (!kReleaseMode) flutter?.call(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
     keep(error, stack);
-    return false;
+    // Handled in a release build, so the engine doesn't print it.
+    return kReleaseMode;
   };
+}
+
+/// What stopped the app without a Dart or Rust error, kept like a crash to
+/// offer a report at this start: on Android, what the system recorded
+/// (stopped responding, native crashes); on the desktop, a last session
+/// that never closed normally. Every way out ends the session: the window
+/// or Cmd-Q (asked to exit), the engine going away (detached), the tray's
+/// Quit (the shell asks first), and signing out or shutting down, where
+/// the shell removes the session's marker itself.
+void _watchExits() {
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    void end() {
+      try {
+        feedback.feedbackSessionEnd();
+      } catch (_) {}
+    }
+
+    try {
+      feedback.feedbackSessionStart();
+      Shell.watchSession(
+        marker: feedback.feedbackSessionMarker(),
+        onQuitting: end,
+      ).ignore();
+    } catch (_) {}
+    AppLifecycleListener(
+      onExitRequested: () async {
+        end();
+        return AppExitResponse.exit;
+      },
+      onDetach: end,
+    );
+  }
+  AndroidBackground.exitReasons().then((reasons) {
+    for (final r in reasons) {
+      feedback.feedbackRecordCrash(text: r);
+    }
+  }).ignore();
 }
 
 /// A reader window: the engine is already open in this process, and

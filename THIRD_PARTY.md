@@ -12,7 +12,7 @@ The font files stay next to the license text in `app/assets/fonts/`. The license
 
 ## Libraries
 
-The Rust crates compiled into the engine, with their licenses, are listed in [`THIRD_PARTY_RUST.md`](THIRD_PARTY_RUST.md) (regenerate it with `python3 tools/gen_rust_licenses.py` after changing `Cargo.lock`). Dart libraries are listed in `app/pubspec.lock` and their licenses are shown on the app's licenses screen; the Rust crates' license texts will be added to that screen before the first release.
+The Rust crates compiled into the engine, with their licenses, are listed in [`THIRD_PARTY_RUST.md`](THIRD_PARTY_RUST.md). Their license and notice files are collected in `app/assets/licenses/rust_crates.json`, which ships in every build and is shown on the app's licenses screen (Settings › About › Licenses); `python3 tools/gen_rust_licenses.py` regenerates both after a change to `Cargo.lock`, and CI fails when either is out of date. Dart libraries are listed in `app/pubspec.lock` and Flutter shows their licenses on the same screen.
 
 | Component | Author | License | Used for |
 |---|---|---|---|

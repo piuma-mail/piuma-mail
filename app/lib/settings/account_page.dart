@@ -11,11 +11,13 @@ import '../design/tokens.g.dart';
 import '../inbox/service_states.dart' show showSignInAgain;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../onboarding/account_errors.dart';
 import '../onboarding/add_account_screen.dart' show SecurityPicker;
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
+import 'quota_card.dart';
 
 /// An account's details, as on `FeaturesToApprove` (section 2): its name,
 /// color, From name and default signature, how its connection is going,
@@ -202,58 +204,31 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _remove() async {
     final l = AppLocalizations.of(context);
-    final c = PiumaTheme.of(context);
     final title = l.accountRemoveTitle(_account.name);
-    Widget panel(BuildContext context) => Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: widget.phone ? 20 : 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: PiumaType.body.copyWith(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: c.fg,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                l.accountRemoveNote,
-                style: PiumaType.body.copyWith(color: c.muted),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  PiumaButton(
-                    label: l.cancel,
-                    kind: PiumaButtonKind.tertiary,
-                    onPressed: () => Navigator.of(context).pop(false),
-                  ),
-                  const SizedBox(width: 8),
-                  PiumaButton(
-                    label: l.accountRemoveConfirm,
-                    kind: PiumaButtonKind.danger,
-                    onPressed: () => Navigator.of(context).pop(true),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
+    Widget panel(BuildContext context) => RemoveAccountPanel(
+      source: widget.source,
+      account: _account,
+      title: title,
+      phone: widget.phone,
     );
     final yes = widget.phone
         ? await showPiumaSheet<bool>(context, label: title, builder: panel)
-        : await showPiumaDialog<bool>(context, label: title, builder: panel);
+        : await showPiumaDialog<bool>(
+            context,
+            label: title,
+            width: 480,
+            builder: panel,
+          );
     if (yes != true || !mounted) return;
     _saveTimer?.cancel();
-    await widget.source.removeAccount(_account.id);
+    try {
+      await widget.source.removeAccount(_account.id);
+    } on UnsentMailLeft {
+      // Written meanwhile (another window, the background): asked again,
+      // with the list.
+      if (mounted) await _remove();
+      return;
+    }
     if (mounted) widget.onBack();
   }
 
@@ -397,7 +372,11 @@ class _AccountPageState extends State<AccountPage> {
               null => l.accountConnecting,
             },
       servers: failed ? null : serverLines,
-      note: failed ? l.accountPasswordRefused : null,
+      note: failed
+          ? (health.certificate
+                ? l.accountCertificateRefused
+                : l.accountPasswordRefused)
+          : null,
       action: failed
           ? PiumaButton(
               label: l.signInAgain,
@@ -409,7 +388,11 @@ class _AccountPageState extends State<AccountPage> {
                 phone: phone,
               ),
             )
-          : servers != null && servers.jmapUrl == null
+          // An account that signs in with a provider's page keeps the
+          // provider's servers: its sign-in goes nowhere else.
+          : servers != null &&
+                servers.jmapUrl == null &&
+                widget.source.accountOAuth(_account.id) == null
           ? _TextLink(label: l.accountEditServers, onTap: _editServers)
           : null,
     );
@@ -554,6 +537,7 @@ class _AccountPageState extends State<AccountPage> {
         details,
         const SizedBox(height: 14),
         connection,
+        QuotaCard(source: widget.source, accountId: _account.id),
         if (awayCard != null) ...[const SizedBox(height: 14), awayCard],
         const SizedBox(height: 14),
         alert,
@@ -840,6 +824,13 @@ class _ServersFormState extends State<_ServersForm> {
   bool _checking = false;
   String? _error;
 
+  /// The certificate a server showed, refused, for the person to trust.
+  CertificateProblem? _certificate;
+
+  /// Certificates the person trusted for the new servers: kept by the
+  /// engine only once they check out.
+  final _trusted = <TrustedCertificate>[];
+
   @override
   void dispose() {
     for (final t in [_imapHost, _imapPort, _smtpHost, _smtpPort, _username]) {
@@ -850,39 +841,57 @@ class _ServersFormState extends State<_ServersForm> {
 
   Future<void> _save() async {
     final l = AppLocalizations.of(context);
+    final imapPort = validPort(_imapPort.text);
+    final smtpPort = validPort(_smtpPort.text);
+    if (imapPort == null || smtpPort == null) {
+      setState(() {
+        _error = l.errorPort;
+        _certificate = null;
+      });
+      return;
+    }
     final servers = AccountServers(
-      imap: MailServer(
-        _imapHost.text.trim(),
-        int.tryParse(_imapPort.text.trim()) ?? 993,
-        _imapSecurity,
-      ),
-      smtp: MailServer(
-        _smtpHost.text.trim(),
-        int.tryParse(_smtpPort.text.trim()) ?? 465,
-        _smtpSecurity,
-      ),
+      imap: MailServer(_imapHost.text.trim(), imapPort, _imapSecurity),
+      smtp: MailServer(_smtpHost.text.trim(), smtpPort, _smtpSecurity),
       username: _username.text.trim(),
     );
     setState(() {
       _checking = true;
       _error = null;
+      _certificate = null;
     });
     try {
-      await widget.source.setAccountServers(widget.accountId, servers);
+      await widget.source.setAccountServers(
+        widget.accountId,
+        servers,
+        trusted: List.of(_trusted),
+      );
       if (mounted) Navigator.of(context).pop(servers);
     } on AddAccountException catch (e) {
       if (!mounted) return;
       setState(() {
         _checking = false;
-        _error = switch (e.error) {
-          AddAccountError.wrongPassword => l.errorWrongPassword,
-          AddAccountError.unreachable => l.errorUnreachable,
-          AddAccountError.insecure => l.errorInsecure,
-          AddAccountError.keychain => l.errorKeychain,
-          AddAccountError.other => l.errorOther,
-        };
+        _error = accountErrorText(l, e.error);
+        _certificate = e.certificate;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _error = l.errorOther;
       });
     }
+  }
+
+  /// Saves again trusting the refused certificate too. It is kept for
+  /// the account only if the new servers check out with it.
+  Future<void> _trust() async {
+    final cert = _certificate;
+    if (cert == null || !cert.canTrust || _checking) return;
+    _trusted
+      ..removeWhere((t) => t.host.toLowerCase() == cert.host.toLowerCase())
+      ..add(cert.trusted);
+    await _save();
   }
 
   @override
@@ -942,7 +951,8 @@ class _ServersFormState extends State<_ServersForm> {
     }
 
     final error = _error;
-    return Padding(
+    // Scrolls when a refused certificate makes it taller than the screen.
+    return SingleChildScrollView(
       padding: EdgeInsets.symmetric(horizontal: widget.phone ? 20 : 0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -984,6 +994,10 @@ class _ServersFormState extends State<_ServersForm> {
             const SizedBox(height: 12),
             Text(error, style: PiumaType.small.copyWith(color: c.danger)),
           ],
+          if (_certificate case final cert?) ...[
+            const SizedBox(height: 12),
+            CertificateCard(problem: cert, onTrust: _checking ? null : _trust),
+          ],
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
@@ -999,6 +1013,248 @@ class _ServersFormState extends State<_ServersForm> {
                     ? l.accountServersChecking
                     : l.accountServersSave,
                 onPressed: _checking ? null : _save,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The question before an account is removed, on the phone in a sheet and
+/// on the desktop in a dialog. While mail written in it hasn't gone (the
+/// outbox, drafts kept on this device) Remove stays off and each message
+/// is listed with Send now (Save now for a draft) and Delete: nothing
+/// unsent is ever removed with the account.
+class RemoveAccountPanel extends StatefulWidget {
+  const RemoveAccountPanel({
+    super.key,
+    required this.source,
+    required this.account,
+    required this.title,
+    this.phone = false,
+  });
+
+  final MailSource source;
+  final MailAccount account;
+  final String title;
+  final bool phone;
+
+  @override
+  State<RemoveAccountPanel> createState() => _RemoveAccountPanelState();
+}
+
+class _RemoveAccountPanelState extends State<RemoveAccountPanel> {
+  /// Null until read.
+  List<UnsentMessage>? _unsent;
+
+  /// The messages whose Send now or Delete is under way.
+  final _busy = <(int, bool)>{};
+
+  /// The last Send now or Delete failed.
+  bool _failed = false;
+  StreamSubscription<void>? _changes;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // A message that went (or a draft that was saved) leaves the list.
+    _changes = widget.source.changes.listen((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _changes?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final unsent = await widget.source.unsentMail(widget.account.id);
+      if (mounted) setState(() => _unsent = unsent);
+    } catch (_) {
+      // What was read last stays; Remove stays off until it is read.
+    }
+  }
+
+  Future<void> _act(
+    UnsentMessage m,
+    Future<void> Function(UnsentMessage) action,
+  ) async {
+    final key = (m.id, m.draft);
+    setState(() => _busy.add(key));
+    var failed = false;
+    try {
+      await action(m);
+    } catch (_) {
+      failed = true;
+    }
+    await _load();
+    if (mounted) {
+      setState(() {
+        _busy.remove(key);
+        _failed = failed;
+      });
+    }
+  }
+
+  static String _names(List<String> to) => to
+      .map((a) {
+        final named = RegExp(r'^\s*"?([^"<]*?)"?\s*<[^>]*>\s*$').firstMatch(a);
+        final name = named?.group(1)?.trim() ?? '';
+        return name.isEmpty ? a.replaceAll(RegExp('[<>]'), '').trim() : name;
+      })
+      .join(', ');
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final c = PiumaTheme.of(context);
+    final unsent = _unsent;
+    final blocked = unsent == null || unsent.isNotEmpty;
+    final hint = PiumaType.small.copyWith(color: c.muted);
+
+    Widget item(UnsentMessage m) {
+      final busy = _busy.contains((m.id, m.draft));
+      final state = m.draft
+          ? l.accountUnsentDraft
+          : m.sending
+          ? l.sending
+          : m.refused
+          ? l.outboxNotSent
+          : l.outboxWaiting;
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: PiumaSpace.s12,
+          vertical: PiumaSpace.s12,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              m.subject.isEmpty ? l.noSubject : m.subject,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: PiumaType.body.copyWith(
+                fontWeight: FontWeight.w600,
+                color: c.fg,
+              ),
+            ),
+            Text(
+              [
+                state,
+                if (m.to.isNotEmpty) l.outboxTo(_names(m.to)),
+              ].join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: hint.copyWith(color: m.refused ? c.danger : c.muted),
+            ),
+            const SizedBox(height: PiumaSpace.s8),
+            Wrap(
+              spacing: PiumaSpace.s8,
+              runSpacing: PiumaSpace.s8,
+              children: [
+                PiumaButton(
+                  label: m.draft
+                      ? l.accountUnsentSaveNow
+                      : l.accountUnsentSendNow,
+                  kind: PiumaButtonKind.secondary,
+                  size: PiumaButtonSize.compact,
+                  onPressed: busy || m.sending
+                      ? null
+                      : () => _act(m, widget.source.sendUnsent),
+                ),
+                PiumaButton(
+                  label: l.actionDelete,
+                  kind: PiumaButtonKind.tertiary,
+                  size: PiumaButtonSize.compact,
+                  onPressed: busy || m.sending
+                      ? null
+                      : () => _act(m, widget.source.deleteUnsent),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final list = unsent ?? const <UnsentMessage>[];
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: widget.phone ? PiumaSpace.s20 : 0,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.title,
+            style: PiumaType.subtitle.copyWith(
+              fontWeight: FontWeight.w600,
+              color: c.fg,
+            ),
+          ),
+          const SizedBox(height: PiumaSpace.s8),
+          Text(
+            l.accountRemoveNote,
+            style: PiumaType.body.copyWith(color: c.muted),
+          ),
+          if (list.isNotEmpty) ...[
+            const SizedBox(height: PiumaSpace.s12),
+            Text(
+              l.accountRemoveBlocked(list.length),
+              style: PiumaType.body.copyWith(color: c.danger),
+            ),
+            const SizedBox(height: PiumaSpace.s12),
+            Flexible(
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: c.line),
+                  borderRadius: BorderRadius.circular(PiumaRadius.card),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final (i, m) in list.indexed)
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: i == 0
+                                ? null
+                                : Border(top: BorderSide(color: c.line)),
+                          ),
+                          child: item(m),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (_failed) ...[
+            const SizedBox(height: PiumaSpace.s8),
+            Text(l.accountUnsentFailed, style: hint.copyWith(color: c.danger)),
+          ],
+          const SizedBox(height: PiumaSpace.s20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              PiumaButton(
+                label: l.cancel,
+                kind: PiumaButtonKind.tertiary,
+                onPressed: () => Navigator.of(context).pop(false),
+              ),
+              const SizedBox(width: PiumaSpace.s8),
+              PiumaButton(
+                label: l.accountRemoveConfirm,
+                kind: PiumaButtonKind.danger,
+                onPressed: blocked
+                    ? null
+                    : () => Navigator.of(context).pop(true),
               ),
             ],
           ),

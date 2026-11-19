@@ -20,6 +20,8 @@ class MainFlutterWindow: NSWindow {
     OnDeviceModel.listen(flutterViewController.engine.binaryMessenger)
     Translate.listen(flutterViewController.engine.binaryMessenger)
     DeviceName.listen(flutterViewController.engine.binaryMessenger)
+    Shell.listen(flutterViewController.engine.binaryMessenger)
+    UnreadBadge.listen(flutterViewController.engine.binaryMessenger)
 
     // A message opened in a window of its own gets the plugins too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
@@ -29,6 +31,117 @@ class MainFlutterWindow: NSWindow {
     }
 
     super.awakeFromNib()
+  }
+}
+
+/// The app and the rest of macOS (lib/outside/ in Dart, over the
+/// "piuma/shell" channel): links and files the system opens with Piuma,
+/// and the default mail app. Links and files that come before Dart
+/// listens wait here.
+enum Shell {
+  private static var channel: FlutterMethodChannel?
+  private static var ready = false
+  private static var waiting: [[String]] = []
+  /// The running session's marker (core/src/feedback.rs, session_marker).
+  private static var sessionMarker: URL?
+
+  static func listen(_ messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "piuma/shell", binaryMessenger: messenger)
+    Shell.channel = channel
+    // Every way out of a Mac app ends here (Cmd-Q and the Dock's Quit go
+    // through applicationShouldTerminate, which asks Dart first; signing
+    // out and shutting down too): a normal end, not a crash.
+    NotificationCenter.default.addObserver(
+      forName: NSApplication.willTerminateNotification, object: nil, queue: nil
+    ) { _ in endSession() }
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "ready":
+        ready = true
+        let all = waiting
+        waiting.removeAll()
+        for words in all { send(words) }
+        result(nil)
+      case "defaultMail":
+        result(defaultMail())
+      case "makeDefault":
+        // macOS asks the person to confirm, then answers.
+        NSWorkspace.shared.setDefaultApplication(
+          at: Bundle.main.bundleURL, toOpenURLsWithScheme: "mailto"
+        ) { _ in
+          DispatchQueue.main.async { result(defaultMail()) }
+        }
+      case "session":
+        // Only ever the marker the engine names (an absolute path to a
+        // file called "running"), never another file to remove.
+        if let path = (call.arguments as? [String: Any])?["marker"] as? String,
+          path.hasPrefix("/"), (path as NSString).lastPathComponent == "running"
+        {
+          sessionMarker = URL(fileURLWithPath: path)
+        }
+        result(nil)
+      case "quit":
+        result(nil)
+        NSApp.terminate(nil)
+      default:
+        // Keeping running and starting at sign-in are the Dock's and
+        // System Settings' on a Mac.
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  /// The app is ending normally (Cmd-Q, the Dock, signing out or shutting
+  /// down): the next start offers no crash report. Dart ends the session
+  /// too when it hears the exit request; this covers the times it can't.
+  static func endSession() {
+    if let marker = sessionMarker {
+      try? FileManager.default.removeItem(at: marker)
+    }
+  }
+
+  /// "piuma", "other" or "none": who opens mailto: links.
+  static func defaultMail() -> String {
+    guard let link = URL(string: "mailto:"),
+      let app = NSWorkspace.shared.urlForApplication(toOpen: link)
+    else { return "none" }
+    let ours = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
+    return app.standardizedFileURL.resolvingSymlinksInPath() == ours ? "piuma" : "other"
+  }
+
+  static func open(_ urls: [URL]) {
+    let words: [String] = urls.prefix(64).compactMap { url in
+      if url.isFileURL { return url.path }
+      if url.scheme?.lowercased() == "mailto" { return url.absoluteString }
+      return nil
+    }
+    if words.isEmpty { return }
+    if ready {
+      send(words)
+    } else if waiting.count < 16 {
+      waiting.append(words)
+    }
+  }
+
+  private static func send(_ words: [String]) {
+    channel?.invokeMethod("open", arguments: words)
+  }
+}
+
+/// How many emails are unread, on the app's icon in the Dock; nothing
+/// while none is.
+enum UnreadBadge {
+  static func listen(_ messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(name: "piuma/badge", binaryMessenger: messenger)
+    channel.setMethodCallHandler { call, result in
+      guard call.method == "set" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let count = (call.arguments as? [String: Any])?["count"] as? Int ?? 0
+      NSApp.dockTile.badgeLabel = count > 0 ? (count > 99 ? "99+" : String(count)) : nil
+      result(nil)
+    }
   }
 }
 

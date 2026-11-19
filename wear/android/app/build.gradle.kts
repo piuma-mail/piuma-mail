@@ -1,6 +1,9 @@
-// Signed like the phone app (tools/android-beta.sh): Wear OS links a watch
+// Signed like the phone app (the "Release" workflow): Wear OS links a watch
 // app with its phone app only when both have the same application id and
 // key. Without the variables a release build uses the local debug key.
+// On CI (CI=true) a release build without a key is an error, never a
+// quiet debug signature: pull requests use a throwaway key
+// (.github/actions/android-throwaway-key), releases the real one.
 val releaseKeystore: String? = System.getenv("PIUMA_KEYSTORE_FILE")
 
 plugins {
@@ -65,4 +68,20 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
     // The system's voice, keyboard and handwriting input, for Reply.
     implementation("androidx.wear:wear-input:1.2.0")
+}
+
+// Checked once the tasks are known, so debug builds and `flutter test`
+// keep working without a key.
+gradle.taskGraph.whenReady {
+    val signsRelease = allTasks.any {
+        it.project == project && (it.name == "packageRelease" || it.name == "signReleaseBundle")
+    }
+    if (signsRelease && releaseKeystore == null) {
+        if (System.getenv("CI") != null) {
+            throw GradleException(
+                "PIUMA_KEYSTORE_FILE is not set: CI never signs a release build with the debug key.",
+            )
+        }
+        logger.warn("PIUMA_KEYSTORE_FILE is not set: this release build is signed with the local debug key.")
+    }
 }

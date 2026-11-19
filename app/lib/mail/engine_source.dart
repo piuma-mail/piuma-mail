@@ -3,6 +3,7 @@ import 'dart:async';
 import '../notify/android_background.dart';
 import 'android_passwords.dart';
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show AppLifecycleState;
 
@@ -12,6 +13,7 @@ import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart' show Int64List;
 
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../engine/api/calendars.dart' as cal;
 import '../engine/api/engine.dart' as engine;
@@ -21,9 +23,16 @@ import '../engine/api/accounts.dart' as acc;
 import '../engine/api/away.dart' as away;
 import '../engine/api/groups.dart' as grp;
 import '../engine/api/labels.dart' as lbl;
+import '../engine/api/search.dart' as srch;
+import '../engine/api/mailbox.dart' as mbx;
+import '../engine/api/oauth.dart' as oauth;
+import '../engine/api/outside.dart' as outside;
+import '../engine/api/reply.dart' as rep;
+import '../engine/api/storage.dart' as store;
 import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
+import 'engine_compose.dart';
 import 'mail_source.dart';
 import 'recipient_suggestions.dart';
 import 'resubscribe.dart';
@@ -40,7 +49,7 @@ void refreshAndroidNotices(engine.SyncEvent e) {
 }
 
 /// The real thing: mail from the Rust engine.
-class EngineMailSource extends MailSource {
+class EngineMailSource extends MailSource with EngineCompose {
   EngineMailSource() {
     _reloadAccounts();
     _readFeatures();
@@ -104,6 +113,9 @@ class EngineMailSource extends MailSource {
   /// password is refused.
   final _checkedAt = <int, DateTime>{};
   final _failedSince = <int, DateTime>{};
+
+  /// Of [_failed], the accounts whose server's certificate was refused.
+  final _certificateFailed = <int>{};
 
   @override
   List<MailAccount> get accounts => _accounts;
@@ -309,6 +321,16 @@ class EngineMailSource extends MailSource {
     _round().ignore();
   }
 
+  /// What the last round had to say on Devices & sync.
+  (String, bool, bool, bool, bool, bool) _syncNotice = (
+    '',
+    false,
+    false,
+    false,
+    false,
+    false,
+  );
+
   Future<void> _round() async {
     if (_rounding) return;
     _rounding = true;
@@ -324,7 +346,19 @@ class EngineMailSource extends MailSource {
         _forgetStatus(id);
       }
       if (r.removed.isNotEmpty) _updateStatus();
-      if (r.took || r.unlinked) {
+      // Removals waiting for the person, an old copy refused, a newer
+      // version's space: Devices & sync says so.
+      final notice = (
+        [for (final h in r.held) h.accountId.toInt()].join(','),
+        r.rollback,
+        r.outdated,
+        r.unverified,
+        r.conflict,
+        r.unlinked,
+      );
+      final changed = notice != _syncNotice;
+      _syncNotice = notice;
+      if (r.took || r.unlinked || changed) {
         _reloadAccounts();
         _changes.add(null);
       }
@@ -350,11 +384,15 @@ class EngineMailSource extends MailSource {
   static SyncFailure _syncError(Object e) => SyncFailure(switch (e) {
     engine.EngineError(:final kind) => switch (kind) {
       engine.ErrorKind.wrongPhrase => SyncProblem.wrongPhrase,
+      engine.ErrorKind.oldPhrase => SyncProblem.oldPhrase,
       engine.ErrorKind.wrongCode => SyncProblem.wrongCode,
       engine.ErrorKind.expired => SyncProblem.expired,
       engine.ErrorKind.refused => SyncProblem.refused,
       engine.ErrorKind.noSpace => SyncProblem.noSpace,
       engine.ErrorKind.taken => SyncProblem.taken,
+      engine.ErrorKind.rollback => SyncProblem.rollback,
+      engine.ErrorKind.outdated => SyncProblem.outdated,
+      engine.ErrorKind.conflict => SyncProblem.conflict,
       engine.ErrorKind.unreachable => SyncProblem.offline,
       _ => SyncProblem.other,
     },
@@ -373,6 +411,25 @@ class EngineMailSource extends MailSource {
   SyncState syncState() {
     final s = sync.syncInfo();
     return SyncState(
+      rollback: s.rollback,
+      outdated: s.outdated,
+      recoveryChanged: s.recoveryChanged,
+      unverified: s.unverified,
+      conflict: s.conflict,
+      unlinked: s.unlinked,
+      exposed: s.exposed,
+      exposedDevice: s.exposedDevice,
+      held: [
+        for (final h in s.held)
+          HeldRemoval(
+            accountId: h.accountId.toInt(),
+            email: h.email,
+            outbox: h.outbox,
+            drafts: h.drafts,
+            pending: h.pending,
+            home: h.home,
+          ),
+      ],
       home: s.home,
       syncedAt: switch (s.syncedAt) {
         final t? => _at(t),
@@ -406,8 +463,33 @@ class EngineMailSource extends MailSource {
   Future<String> recoveryPhrase() => _syncing(sync.syncPhrase);
 
   @override
-  Future<String> unlinkDevice(String id) =>
-      _syncing(() => sync.syncUnlink(deviceId: id));
+  Future<Unlinked> unlinkDevice(String id) async {
+    final r = await _syncing(() => sync.syncUnlink(deviceId: id));
+    return Unlinked(phrase: r.phrase, exposed: r.exposed);
+  }
+
+  @override
+  Future<void> exposedChanged() async {
+    await _syncing(sync.syncExposedDone);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> confirmRemoval(int accountId) async {
+    await _syncing(() => sync.syncConfirmRemoval(accountId: accountId));
+    await AndroidPasswords.forget(accountId);
+    _forgetStatus(accountId);
+    _updateStatus();
+    _reloadAccounts();
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> keepAccount(int accountId) async {
+    await _syncing(() => sync.syncKeepAccount(accountId: accountId));
+    _changes.add(null);
+    _round().ignore();
+  }
 
   @override
   Future<void> turnOffSync() => _syncing(sync.syncTurnOff);
@@ -569,6 +651,16 @@ class EngineMailSource extends MailSource {
   }
 
   @override
+  Future<InviteServer?> inviteServer(ScannedPair code) async {
+    try {
+      final s = await sync.syncInviteServer(link: code.link);
+      return InviteServer(host: s.host, fromCode: s.fromInvite);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
   Future<MailAccount> addInviteAccount(
     ScannedPair code,
     String password,
@@ -624,16 +716,34 @@ class EngineMailSource extends MailSource {
         _changes.add(null);
         _dropped.add(e.removed);
       case engine.SyncEventKind.signInFailed:
+        // An account a removal gave back, because mail written in it
+        // hadn't gone: listed again, to sign in to it.
+        if (!_accounts.any((a) => a.id == id)) {
+          _reloadAccounts();
+          _changes.add(null);
+        }
         _progress.remove(id);
         _offline.remove(id);
         _failed.add(id);
         _failedSince.putIfAbsent(id, DateTime.now);
+        if (e.reason == 'certificate') {
+          _certificateFailed.add(id);
+        } else {
+          _certificateFailed.remove(id);
+        }
+      case engine.SyncEventKind.secretsChanged:
+        // A refresh token the provider replaced: into the Keystore now.
+        _keepNewSecrets().ignore();
+        return;
     }
+    // Anything missed (the app started after the change).
+    if (e.kind == engine.SyncEventKind.synced) _keepNewSecrets().ignore();
     if (e.kind == engine.SyncEventKind.progress ||
         e.kind == engine.SyncEventKind.synced) {
       _offline.remove(id);
       _failed.remove(id);
       _failedSince.remove(id);
+      _certificateFailed.remove(id);
       _checkedAt[id] = DateTime.now();
     }
     _updateStatus();
@@ -750,7 +860,22 @@ class EngineMailSource extends MailSource {
     GroupScope? group,
   }) async {
     if (folder == MailFolder.label) {
-      return (await labelled(mailbox ?? '')).skip(offset).take(limit).toList();
+      return [
+        for (final r in await lbl.labelledPage(
+          keyword: mailbox ?? '',
+          offset: offset,
+          limit: limit,
+        ))
+          _row(r),
+      ];
+    }
+    if (folder == MailFolder.starred) {
+      return [
+        for (final r in (await mbx.starred(
+          account: account,
+        )).skip(offset).take(limit))
+          _row(r),
+      ];
     }
     if (account != null && mailbox != null) {
       final rows = await engine.mailboxPage(
@@ -815,6 +940,7 @@ class EngineMailSource extends MailSource {
         selectable: f.selectable,
         unread: f.unread,
         total: f.total,
+        subscribed: f.subscribed,
       ),
   ];
 
@@ -955,6 +1081,7 @@ class EngineMailSource extends MailSource {
     pictures: r.pictures,
     invite: r.invite,
     labels: r.labels,
+    starred: r.flagged,
   );
 
   @override
@@ -1012,6 +1139,73 @@ class EngineMailSource extends MailSource {
   ];
 
   @override
+  Future<int> labelledCount(String keyword) =>
+      lbl.labelledCount(keyword: keyword);
+
+  @override
+  Future<List<UnsentMessage>> unsentMail(int accountId) async => [
+    for (final u in await acc.accountUnsent(accountId: accountId))
+      UnsentMessage(
+        id: u.id.toInt(),
+        accountId: accountId,
+        subject: u.subject,
+        to: u.to,
+        draft: u.draft,
+        refused: u.refused,
+        sending: u.sending,
+      ),
+  ];
+
+  @override
+  Future<void> sendUnsent(UnsentMessage message) async {
+    if (message.draft) {
+      await acc.saveWaitingDraftsNow(accountId: message.accountId);
+    } else {
+      await retryOutgoing(message.id);
+    }
+  }
+
+  @override
+  Future<void> deleteUnsent(UnsentMessage message) async {
+    if (message.draft) {
+      await acc.deleteWaitingDraft(id: message.id);
+      _changes.add(null);
+    } else {
+      await cancelOutgoing(message.id);
+    }
+  }
+
+  @override
+  Future<StorageUse> storage() async => _storage(await store.storageInfo());
+
+  @override
+  Future<void> setKeepDays(int? days) => store.setKeepDays(days: days);
+
+  @override
+  Future<StorageUse> clearCachedMail(int accountId) async {
+    try {
+      return _storage(await store.clearCachedMail(accountId: accountId));
+    } on engine.EngineError catch (e) {
+      if (e.kind != engine.ErrorKind.diskFull) rethrow;
+      throw NoRoomToShrink(await storage());
+    }
+  }
+
+  static StorageUse _storage(store.StorageInfo s) => StorageUse(
+    totalBytes: s.totalBytes,
+    backupBytes: s.backupBytes,
+    keepDays: s.keepDays,
+    accounts: [
+      for (final a in s.accounts)
+        AccountStorage(
+          accountId: a.accountId,
+          messages: a.messages,
+          cachedBytes: a.cachedBytes,
+        ),
+    ],
+  );
+
+  @override
   bool labelsLocal(int accountId) => lbl.labelsLocal(accountId: accountId);
 
   @override
@@ -1022,6 +1216,184 @@ class EngineMailSource extends MailSource {
       return null;
     }
   }
+
+  @override
+  String? trashMailbox(int accountId) {
+    try {
+      return mbx.trashMailbox(accountId: accountId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> deleteForever(List<MailRow> rows) async {
+    if (rows.isEmpty) return;
+    try {
+      await mbx.deleteForever(messages: _refs(rows));
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> setStarred(List<MailRow> rows, bool starred) async {
+    if (rows.isEmpty) return;
+    final sent = mbx.setMessagesFlagged(
+      messages: _refs(rows),
+      flagged: starred,
+    );
+    // Here at once; the servers hear of it after.
+    _changes.add(null);
+    await sent;
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> copyTo(List<MailRow> rows, String mailbox) async {
+    if (rows.isEmpty) return;
+    await mbx.copyMessagesTo(messages: _refs(rows), target: mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<int> folderTotal(int accountId, String mailbox) =>
+      mbx.folderTotal(accountId: accountId, mailbox: mailbox);
+
+  @override
+  Future<int> emptyFolder(int accountId, String mailbox) async {
+    try {
+      return await mbx.emptyFolder(accountId: accountId, mailbox: mailbox);
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> renameFolder(int accountId, String mailbox, String name) async {
+    await mbx.renameFolder(accountId: accountId, mailbox: mailbox, name: name);
+    _changes.add(null);
+  }
+
+  @override
+  ({int emails, int subfolders, String? protected}) folderContents(
+    int accountId,
+    String mailbox,
+  ) {
+    final c = mbx.folderContents(accountId: accountId, mailbox: mailbox);
+    return (emails: c.emails, subfolders: c.subfolders, protected: c.protected);
+  }
+
+  @override
+  Future<void> deleteFolder(int accountId, String mailbox) async {
+    await mbx.deleteFolder(accountId: accountId, mailbox: mailbox);
+    _changes.add(null);
+  }
+
+  @override
+  Future<void> setFolderSubscribed(
+    int accountId,
+    String mailbox,
+    bool subscribed,
+  ) async {
+    await mbx.setFolderSubscribed(
+      accountId: accountId,
+      mailbox: mailbox,
+      subscribed: subscribed,
+    );
+    _changes.add(null);
+  }
+
+  @override
+  List<SpecialFolder> specialFolders(int accountId) => [
+    for (final f in mbx.specialFolders(accountId: accountId))
+      SpecialFolder(
+        SpecialRole.values.byName(f.role.name),
+        f.mailbox,
+        chosen: f.chosen,
+      ),
+  ];
+
+  @override
+  List<({String mailbox, String name})> serverFolders(int accountId) => [
+    for (final f in mbx.serverFolders(accountId: accountId))
+      (mailbox: f.mailbox, name: f.name),
+  ];
+
+  @override
+  List<({String mailbox, String name})> specialFolderOptions(
+    int accountId,
+    SpecialRole role,
+  ) => [
+    for (final f in mbx.specialFolderOptions(
+      accountId: accountId,
+      role: mbx.SpecialFolder.values.byName(role.name),
+    ))
+      (mailbox: f.mailbox, name: f.name),
+  ];
+
+  @override
+  Future<void> setSpecialFolder(
+    int accountId,
+    SpecialRole role,
+    String? mailbox,
+  ) async {
+    await mbx.setSpecialFolder(
+      accountId: accountId,
+      role: mbx.SpecialFolder.values.byName(role.name),
+      mailbox: mailbox,
+    );
+    _changes.add(null);
+  }
+
+  late final _listPrefs = ValueNotifier(_readListPrefs());
+
+  static ListPrefs _readListPrefs() {
+    try {
+      final s = mbx.listSettings();
+      return ListPrefs(
+        order: ListOrder.values.byName(s.order.name),
+        threads: s.threads,
+        swipeRight: SwipeChoice.values.byName(s.swipeRight.name),
+        swipeLeft: SwipeChoice.values.byName(s.swipeLeft.name),
+      );
+    } catch (_) {
+      return const ListPrefs();
+    }
+  }
+
+  @override
+  ValueListenable<ListPrefs> get listPrefs => _listPrefs;
+
+  @override
+  Future<void> setListPrefs(ListPrefs prefs) async {
+    mbx.setListSettings(
+      settings: mbx.ListSettings(
+        order: mbx.ListOrder.values.byName(prefs.order.name),
+        threads: prefs.threads,
+        swipeRight: mbx.SwipeAction.values.byName(prefs.swipeRight.name),
+        swipeLeft: mbx.SwipeAction.values.byName(prefs.swipeLeft.name),
+      ),
+    );
+    _listPrefs.value = prefs;
+    _changes.add(null);
+  }
+
+  static MailQuota? _quota(mbx.QuotaInfo? q) =>
+      q == null ? null : MailQuota(q.used.toInt(), q.limit.toInt());
+
+  @override
+  MailQuota? quota(int accountId) {
+    try {
+      return _quota(mbx.accountQuota(accountId: accountId));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<MailQuota?> refreshQuota(int accountId) async =>
+      _quota(await mbx.refreshQuota(accountId: accountId));
 
   @override
   Future<List<MailRow>> conversation(MailRow row) async {
@@ -1143,6 +1515,7 @@ class EngineMailSource extends MailSource {
         reason: m.reason,
         failedTo: m.failedTo,
         proofs: m.proofs,
+        verified: m.verified,
       ),
   ];
 
@@ -1230,6 +1603,8 @@ class EngineMailSource extends MailSource {
     return UnsubscribeInfo(
       UnsubscribeKind.values.byName(u.kind.name),
       u.address,
+      u.subject,
+      u.body,
     );
   }
 
@@ -1284,6 +1659,51 @@ class EngineMailSource extends MailSource {
       limit: limit,
       frequent: (await searchStart()).frequent,
     );
+  }
+
+  @override
+  Future<ServerResults> searchServer(String query, {int limit = 50}) async {
+    final r = await srch.searchServer(query: query, limit: limit);
+    return ServerResults(
+      hits: [
+        for (final h in r.hits)
+          SearchHit(_row(h.row), snippet: h.snippet, files: h.files),
+      ],
+      asked: r.asked,
+      failed: r.failed,
+      partial: r.partial,
+      partialAccounts: r.partialAccounts,
+      textRefused: r.textRefused,
+    );
+  }
+
+  @override
+  void cancelServerSearch() => srch.cancelServerSearch();
+
+  @override
+  Future<List<SavedSearch>> savedSearches() async => [
+    for (final s in await srch.savedSearches())
+      SavedSearch(id: s.id, name: s.name, query: s.query),
+  ];
+
+  @override
+  Future<int> saveSearch(String name, String query) async {
+    final id = await srch.saveSearch(name: name, query: query);
+    _changes.add(null);
+    return id;
+  }
+
+  @override
+  Future<bool> renameSavedSearch(int id, String name) async {
+    final done = await srch.renameSavedSearch(id: id, name: name);
+    if (done) _changes.add(null);
+    return done;
+  }
+
+  @override
+  Future<void> deleteSavedSearch(int id) async {
+    await srch.deleteSavedSearch(id: id);
+    _changes.add(null);
   }
 
   @override
@@ -1371,84 +1791,163 @@ class EngineMailSource extends MailSource {
       OnDeviceModel.instance.rewrite(brief);
 
   @override
-  Future<Readable> readable(MailRow row) async {
-    final r = await engine.messageReadable(
+  Future<Readable> readable(MailRow row) async => _readableOf(
+    await engine.messageReadable(
       accountId: row.accountId,
       mailbox: row.mailbox,
       uid: row.uid,
       utcOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
-    );
-    return Readable(
-      blocks: [
-        for (final b in r.blocks)
-          BodyBlock(
-            kind: BlockKind.values.byName(b.kind.name),
-            level: b.level,
-            quote: b.quote,
-            marker: b.marker,
-            spans: [
-              for (final s in b.spans)
-                BodySpan(
-                  s.text,
-                  bold: s.bold,
-                  italic: s.italic,
-                  code: s.code,
-                  link: s.link,
-                  suspicious: s.suspicious,
+    ),
+  );
+
+  /// The engine's safe reading of a message, for the reader: a synced
+  /// one's, or an email file's.
+  Readable _readableOf(engine.ReadableMessage r) => Readable(
+    blocks: [
+      for (final b in r.blocks)
+        BodyBlock(
+          kind: BlockKind.values.byName(b.kind.name),
+          level: b.level,
+          quote: b.quote,
+          marker: b.marker,
+          spans: [
+            for (final s in b.spans)
+              BodySpan(
+                s.text,
+                bold: s.bold,
+                italic: s.italic,
+                code: s.code,
+                link: s.link,
+                suspicious: s.suspicious,
+              ),
+          ],
+          image: b.image == null
+              ? null
+              : BodyImage(
+                  url: b.image!.url,
+                  data: b.image!.data,
+                  alt: b.image!.alt,
+                  width: b.image!.width,
+                  height: b.image!.height,
+                  link: b.image!.link,
                 ),
-            ],
-            image: b.image == null
-                ? null
-                : BodyImage(
-                    url: b.image!.url,
-                    data: b.image!.data,
-                    alt: b.image!.alt,
-                    width: b.image!.width,
-                    height: b.image!.height,
-                    link: b.image!.link,
-                  ),
+        ),
+    ],
+    remoteImages: r.remoteImages,
+    trackers: [
+      for (final t in r.trackers)
+        StoppedTracker(
+          TrackerKind.values.byName(t.kind.name),
+          t.host,
+          count: t.count,
+        ),
+    ],
+    linksCleaned: r.linksCleaned,
+    trusted: r.trusted,
+    blockImages: r.blockImages,
+    attachments: [
+      for (final a in r.attachments)
+        MailAttachment(
+          part: a.partId,
+          name: a.name,
+          mime: a.mime,
+          size: a.size.toInt(),
+          risk: _risk(a.risk),
+        ),
+    ],
+    layout: r.layout,
+    language: r.language,
+    invite: switch (r.invite) {
+      final i? => _invite(i),
+      null => null,
+    },
+    dates: [
+      for (final d in r.dates)
+        FoundDate(
+          block: d.block,
+          start: d.start,
+          end: d.end,
+          at: _wallClock(d.at.toInt()),
+          uid: d.uid,
+          addedTo: d.addedTo,
+        ),
+    ],
+  );
+
+  @override
+  DesktopSettings get desktopSettings {
+    try {
+      final d = outside.desktopSettings();
+      return DesktopSettings(
+        keepRunning: d.keepRunning,
+        startAtLogin: d.startAtLogin,
+      );
+    } catch (_) {
+      return const DesktopSettings();
+    }
+  }
+
+  @override
+  set desktopSettings(DesktopSettings settings) {
+    outside
+        .setDesktopSettings(
+          settings: outside.DesktopSettings(
+            keepRunning: settings.keepRunning,
+            startAtLogin: settings.startAtLogin,
           ),
-      ],
-      remoteImages: r.remoteImages,
-      trackers: [
-        for (final t in r.trackers)
-          StoppedTracker(
-            TrackerKind.values.byName(t.kind.name),
-            t.host,
-            count: t.count,
-          ),
-      ],
-      linksCleaned: r.linksCleaned,
-      trusted: r.trusted,
-      blockImages: r.blockImages,
-      attachments: [
-        for (final a in r.attachments)
-          MailAttachment(
-            part: a.partId,
-            name: a.name,
-            mime: a.mime,
-            size: a.size.toInt(),
-            risk: _risk(a.risk),
-          ),
-      ],
-      layout: r.layout,
-      language: r.language,
-      invite: switch (r.invite) {
-        final i? => _invite(i),
-        null => null,
-      },
-      dates: [
-        for (final d in r.dates)
-          FoundDate(
-            block: d.block,
-            start: d.start,
-            end: d.end,
-            at: _wallClock(d.at.toInt()),
-            uid: d.uid,
-            addedTo: d.addedTo,
-          ),
-      ],
+        )
+        .ignore();
+  }
+
+  @override
+  Future<EmlMessage> openEml(String path) async {
+    try {
+      final f = await outside.openEml(path: path);
+      return EmlMessage(
+        path: path,
+        fromName: f.fromName,
+        fromEmail: f.fromEmail,
+        to: f.to,
+        cc: f.cc,
+        subject: f.subject,
+        date: switch (f.date) {
+          final d? => DateTime.fromMillisecondsSinceEpoch(d.toInt() * 1000),
+          null => null,
+        },
+        readable: _readableOf(f.readable),
+      );
+    } on engine.EngineError catch (e) {
+      throw EmlException(
+        e.kind == engine.ErrorKind.tooBig
+            ? EmlProblem.tooLarge
+            : EmlProblem.notMail,
+      );
+    }
+  }
+
+  @override
+  Future<String> saveEmlAttachment(EmlMessage m, MailAttachment a) async {
+    Future<String> saveIn(Directory folder) => outside.saveEmlAttachment(
+      path: m.path,
+      partId: a.part,
+      folder: folder.path,
     );
+    if (!PhoneFiles.android) return saveIn(await _downloads());
+    final staged = await saveIn(await _staging());
+    if (await PhoneFiles.toDownloads(staged) case final moved?) return moved;
+    await File(staged).delete();
+    return saveIn(await _downloads());
+  }
+
+  @override
+  Future<void> importEml(EmlMessage m, int accountId, String mailbox) async {
+    await outside.importEml(
+      accountId: accountId,
+      mailbox: mailbox,
+      path: m.path,
+    );
+    // The folder shows it once its next round brings it in.
+    refreshFolder(accountId, mailbox).ignore();
   }
 
   /// A wall-clock time the engine writes as if it were UTC.
@@ -1688,7 +2187,11 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  Future<String> saveText(String name, String text) async {
+  Future<String> saveText(String name, String text) =>
+      saveFile(name, Uint8List.fromList(utf8.encode(text)));
+
+  @override
+  Future<String> saveFile(String name, Uint8List data) async {
     Future<String> saveIn(Directory folder) async {
       final dot = name.lastIndexOf('.');
       final stem = dot < 0 ? name : name.substring(0, dot);
@@ -1697,7 +2200,7 @@ class EngineMailSource extends MailSource {
       for (var n = 2; await file.exists(); n++) {
         file = File('${folder.path}/$stem ($n)$ext');
       }
-      await file.writeAsString(text, flush: true);
+      await file.writeAsBytes(data, flush: true);
       return file.path;
     }
 
@@ -1755,6 +2258,77 @@ class EngineMailSource extends MailSource {
   @override
   Future<void> setMuted(String email, bool muted) =>
       engine.setSenderMuted(email: email, muted: muted);
+
+  @override
+  Future<MailEnvelope?> envelope(MailRow row) async {
+    try {
+      final e = await rep.messageEnvelope(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+      );
+      return envelopeOf(e);
+    } catch (_) {
+      // Mail kept before its headers were read, with the server out of
+      // reach: Reply goes to the sender, as before.
+      return null;
+    }
+  }
+
+  /// The engine's envelope as the app keeps it.
+  @visibleForTesting
+  static MailEnvelope envelopeOf(rep.MessageEnvelope e) => MailEnvelope(
+    to: [for (final a in e.to) MailPerson(a.name, a.email, you: a.you)],
+    cc: [for (final a in e.cc) MailPerson(a.name, a.email, you: a.you)],
+    bccYou: e.bccYou,
+    replyTo: e.replyTo,
+    replyAllTo: e.replyAllTo,
+    replyAllCc: e.replyAllCc,
+    listPost: e.listPost,
+    muted: e.muted,
+    replyAllReview: e.replyAllReview,
+  );
+
+  @override
+  Future<Uint8List> rawMessage(MailRow row) => rep.messageSource(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+  );
+
+  @override
+  List<MailHeader> headersOf(Uint8List raw) => [
+    for (final h in rep.messageHeaders(raw: raw)) MailHeader(h.name, h.value),
+  ];
+
+  @override
+  Future<int> redirect(MailRow row, List<String> to, Duration window) async {
+    try {
+      final id = await rep.redirectMessage(
+        accountId: row.accountId,
+        mailbox: row.mailbox,
+        uid: row.uid,
+        fromEmail: replyFrom(row),
+        to: to,
+        undoSeconds: window.inSeconds,
+      );
+      // As Send with Undo: should the app be swiped away in the window,
+      // Android sends it.
+      AndroidBackground.outboxAt(id, DateTime.now().add(window)).ignore();
+      _changes.add(null);
+      return id;
+    } on engine.EngineError catch (e) {
+      throw _sendException(e);
+    }
+  }
+
+  @override
+  Future<void> setThreadMuted(MailRow row, bool muted) => rep.setThreadMuted(
+    accountId: row.accountId,
+    mailbox: row.mailbox,
+    uid: row.uid,
+    muted: muted,
+  );
 
   @override
   Future<bool> isBlocked(String email) async =>
@@ -1949,13 +2523,23 @@ class EngineMailSource extends MailSource {
   bool? _picturesOn;
 
   @override
-  Future<Uint8List?> senderPicture(String email) async {
+  Future<Uint8List?> senderPicture(
+    String email, {
+    MailRow? row,
+    bool opened = false,
+  }) async {
     if (ContactPhotos.supported &&
         (_picturesOn ??= (await engine.privacySettings()).senderPictures)) {
       final photo = await _contactPhotos.of(email);
       if (photo != null) return photo;
     }
-    return engine.senderPicture(email: email);
+    return engine.senderPicture(
+      email: email,
+      accountId: row?.accountId,
+      mailbox: row?.mailbox,
+      uid: row?.uid,
+      opened: opened,
+    );
   }
 
   @override
@@ -2041,6 +2625,7 @@ class EngineMailSource extends MailSource {
     required String username,
     required String password,
     MailServer? smtp,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     try {
       final a = await engine.addImapAccount(
@@ -2060,6 +2645,10 @@ class EngineMailSource extends MailSource {
                 port: smtp.port,
                 security: _security(smtp.security),
               ),
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
       return await _added(a, password);
     } on engine.EngineError catch (e) {
@@ -2076,6 +2665,7 @@ class EngineMailSource extends MailSource {
     required String sessionUrl,
     required String password,
     bool apiToken = false,
+    List<TrustedCertificate> trusted = const [],
   }) async {
     try {
       final a = await engine.addJmapAccount(
@@ -2086,6 +2676,10 @@ class EngineMailSource extends MailSource {
         sessionUrl: sessionUrl,
         password: password,
         apiToken: apiToken,
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
       return await _added(a, password);
     } on engine.EngineError catch (e) {
@@ -2142,7 +2736,11 @@ class EngineMailSource extends MailSource {
   }
 
   @override
-  Future<void> setAccountServers(int accountId, AccountServers servers) async {
+  Future<void> setAccountServers(
+    int accountId,
+    AccountServers servers, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     engine.OutgoingServer server(MailServer m) => engine.OutgoingServer(
       host: m.host,
       port: m.port,
@@ -2156,18 +2754,30 @@ class EngineMailSource extends MailSource {
           smtp: server(servers.smtp),
           username: servers.username,
         ),
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
       );
     } on engine.EngineError catch (e) {
       throw _signInError(e);
     }
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _updateStatus();
   }
 
   @override
   Future<void> removeAccount(int accountId) async {
-    acc.removeAccount(accountId: accountId);
+    // Leaves the lists at once; its mail goes in the background. Never
+    // with mail written in it that hasn't gone.
+    try {
+      await acc.removeAccount(accountId: accountId);
+    } on engine.EngineError catch (e) {
+      if (e.kind == engine.ErrorKind.unsent) throw const UnsentMailLeft();
+      rethrow;
+    }
     await AndroidPasswords.forget(accountId);
     _forgetStatus(accountId);
     _reloadAccounts();
@@ -2180,6 +2790,7 @@ class EngineMailSource extends MailSource {
     _offline.remove(accountId);
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _checkedAt.remove(accountId);
   }
 
@@ -2266,29 +2877,192 @@ class EngineMailSource extends MailSource {
   AccountHealth accountHealth(int accountId) => AccountHealth(
     checkedAt: _checkedAt[accountId],
     failedSince: _failedSince[accountId],
+    certificate: _certificateFailed.contains(accountId),
   );
 
   @override
-  Future<void> signInAgain(int accountId, String password) async {
+  Future<void> signInAgain(
+    int accountId,
+    String password, {
+    List<TrustedCertificate> trusted = const [],
+  }) async {
     try {
-      await engine.signInAgain(accountId: accountId, password: password);
+      await engine.signInAgain(
+        accountId: accountId,
+        password: password,
+        trusted: [
+          for (final t in trusted)
+            engine.TrustedCertificate(host: t.host, fingerprint: t.fingerprint),
+        ],
+      );
     } on engine.EngineError catch (e) {
       throw _signInError(e);
     }
     await AndroidPasswords.save(accountId, password);
     _failed.remove(accountId);
     _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
     _updateStatus();
   }
 
   static AddAccountException _signInError(engine.EngineError e) =>
-      AddAccountException(switch (e.kind) {
-        engine.ErrorKind.wrongPassword => AddAccountError.wrongPassword,
-        engine.ErrorKind.unreachable => AddAccountError.unreachable,
-        engine.ErrorKind.insecureConnection => AddAccountError.insecure,
-        engine.ErrorKind.keychain => AddAccountError.keychain,
-        _ => AddAccountError.other,
-      }, e.detail);
+      AddAccountException(
+        switch (e.kind) {
+          engine.ErrorKind.wrongPassword => AddAccountError.wrongPassword,
+          engine.ErrorKind.unreachable => AddAccountError.unreachable,
+          engine.ErrorKind.insecureConnection => AddAccountError.insecure,
+          engine.ErrorKind.keychain => AddAccountError.keychain,
+          engine.ErrorKind.noKeyring => AddAccountError.noKeyring,
+          engine.ErrorKind.certificate => AddAccountError.certificate,
+          engine.ErrorKind.signInUnavailable =>
+            AddAccountError.signInUnavailable,
+          engine.ErrorKind.signInCancelled => AddAccountError.signInCancelled,
+          engine.ErrorKind.signInDenied => AddAccountError.signInDenied,
+          engine.ErrorKind.oAuthServers => AddAccountError.oauthServers,
+          _ => AddAccountError.other,
+        },
+        e.detail,
+        e.kind == engine.ErrorKind.certificate
+            ? CertificateProblem.fromJson(e.detail)
+            : null,
+      );
+
+  @override
+  List<OAuthProviderInfo> get oauthProviders => [
+    for (final p in oauth.oauthProviders())
+      OAuthProviderInfo(
+        id: p.id,
+        name: p.name,
+        builtIn: p.builtIn,
+        appPasswords: p.appPasswords,
+        hasTenant: p.hasTenant,
+        ownClient: p.ownClient,
+      ),
+  ];
+
+  @override
+  String? accountOAuth(int accountId) {
+    try {
+      return oauth.accountOauth(accountId: accountId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static oauth.OAuthClient? _client(OAuthClientConfig? c) => c == null
+      ? null
+      : oauth.OAuthClient(
+          clientId: c.clientId,
+          clientSecret: c.clientSecret,
+          tenant: c.tenant,
+        );
+
+  /// The provider's page in the system browser: Custom Tabs on Android,
+  /// the default browser elsewhere; never a web view of the app's own.
+  static Future<void> _openSignInPage(String url) async {
+    final opened = await launchUrl(
+      Uri.parse(url),
+      mode: Platform.isAndroid
+          ? LaunchMode.inAppBrowserView
+          : LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      oauth.cancelOauth();
+      throw const AddAccountException(AddAccountError.signInCancelled);
+    }
+  }
+
+  /// Secrets the engine got itself, for the Android Keystore. The engine
+  /// hands them to one writer at a time (this or the background service)
+  /// and drops each only once it is written, so a failed write is tried
+  /// again and the newest secret of an account always lands last.
+  Future<void> _keepNewSecrets() async {
+    final claim = oauth.claimNewSecrets();
+    if (claim == null) return;
+    final written = <oauth.NewSecret>[];
+    try {
+      for (final k in claim.secrets) {
+        try {
+          await AndroidPasswords.saveKey(k.key, k.value);
+          written.add(k);
+        } catch (_) {
+          // Stays in the engine for the next try.
+        }
+      }
+    } finally {
+      oauth.newSecretsWritten(claim: claim.claim, written: written);
+    }
+  }
+
+  @override
+  Future<MailAccount> addOAuthAccount({
+    required String provider,
+    required String name,
+    required String email,
+    String senderName = '',
+    required Color color,
+    OAuthClientConfig? client,
+  }) async {
+    try {
+      final url = await oauth.beginOauth(
+        provider: provider,
+        email: email,
+        client: _client(client),
+      );
+      await _openSignInPage(url);
+      final a = await oauth.addOauthAccount(
+        provider: provider,
+        name: name,
+        email: email,
+        senderName: senderName,
+        color: _hex(color),
+      );
+      await _keepNewSecrets();
+      _reloadAccounts();
+      startSync();
+      return MailAccount(
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        color: _parseColor(a.color),
+        senderName: a.senderName,
+      );
+    } on engine.EngineError catch (e) {
+      throw _signInError(e);
+    }
+  }
+
+  @override
+  Future<void> signInAgainOAuth(
+    int accountId, {
+    OAuthClientConfig? client,
+  }) async {
+    final provider = accountOAuth(accountId);
+    final account = accounts.where((a) => a.id == accountId).firstOrNull;
+    if (provider == null || account == null) {
+      throw const AddAccountException(AddAccountError.other);
+    }
+    try {
+      final servers = acc.accountServers(accountId: accountId);
+      final url = await oauth.beginOauth(
+        provider: provider,
+        email: servers.username.isEmpty ? account.email : servers.username,
+        client: _client(client),
+      );
+      await _openSignInPage(url);
+      await oauth.signInAgainOauth(accountId: accountId);
+      await _keepNewSecrets();
+    } on engine.EngineError catch (e) {
+      throw _signInError(e);
+    }
+    _failed.remove(accountId);
+    _failedSince.remove(accountId);
+    _certificateFailed.remove(accountId);
+    _updateStatus();
+  }
+
+  @override
+  void cancelOAuth() => oauth.cancelOauth();
 
   @override
   Future<FoundSettings?> discoverSettings(String email) async {
@@ -2304,21 +3078,36 @@ class EngineMailSource extends MailSource {
         engine.SettingsSource.guessed => SettingsSource.guessed,
       },
       jmapUrl: s.jmapUrl,
+      oauth: s.oauth,
     );
   }
 
   @override
   void setHidden(MailRow row, bool hidden) {
-    for (final c in row.actionCopies) {
-      engine.setMessageHidden(
-        accountId: c.accountId,
-        mailbox: c.mailbox,
-        uid: c.uid,
-        hidden: hidden,
-      );
-    }
-    _changes.add(null);
+    // Off the thread that draws: a sync writing a batch holds the
+    // database for a moment. The lists read again once it is written.
+    // One after the other, in the order asked: each call runs on a thread
+    // of its own, so a hide and its Undo sent together could otherwise
+    // land the other way round and leave the message hidden.
+    _hiding = _hiding
+        .then(
+          (_) => Future.wait([
+            for (final c in row.actionCopies)
+              engine.setMessageHidden(
+                accountId: c.accountId,
+                mailbox: c.mailbox,
+                uid: c.uid,
+                hidden: hidden,
+              ),
+          ]),
+        )
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _changes.add(null));
   }
+
+  /// The last hide or show asked for ([setHidden]); the next one waits
+  /// for it.
+  Future<void> _hiding = Future.value();
 
   @override
   Future<void> apply(List<MailRow> rows, MessageAction action) async {
@@ -2582,7 +3371,18 @@ class EngineMailSource extends MailSource {
           null => null,
         },
         marks: _engineMarks(draft.body, draft.marks),
+        images: [
+          for (final i in draft.images)
+            engine.InlineImageData(name: i.name, mime: i.mime, data: i.data),
+        ],
+        plainText: draft.plainText,
+        readReceipt: draft.readReceipt,
+        highPriority: draft.highPriority,
       );
+
+  static List<DraftImage> _draftImages(List<engine.InlineImageData> images) => [
+    for (final i in images) DraftImage(i.name, i.mime, i.data),
+  ];
 
   @override
   Future<int> draftCount() =>
@@ -2622,6 +3422,10 @@ class EngineMailSource extends MailSource {
       signaturePicked: m.signaturePicked,
       copy: DraftCopy(row.accountId, row.mailbox, row.uid),
       marks: _dartMarks(m.body.replaceAll('\r\n', '\n'), m.marks),
+      images: _draftImages(m.images),
+      plainText: m.plainText,
+      readReceipt: m.readReceipt,
+      highPriority: m.highPriority,
     );
   }
 
@@ -2788,8 +3592,29 @@ class EngineMailSource extends MailSource {
           engine.OutboxState.maybeSent => OutboxState.maybeSent,
         },
         undo: o.undo,
+        redirect: o.redirect,
       ),
   ];
+
+  @override
+  Future<void> cancelOutgoing(int id) async {
+    try {
+      await engine.deleteOutgoing(id: id);
+      // Out of the outbox: Android's job for it has nothing to send.
+      AndroidBackground.cancelOutbox(id).ignore();
+    } finally {
+      _changes.add(null);
+    }
+  }
+
+  @override
+  Future<void> retryOutgoing(int id) async {
+    try {
+      await engine.retryOutgoing(id: id);
+    } finally {
+      _changes.add(null);
+    }
+  }
 
   @override
   Future<Draft> reopenOutgoing(int id) async {
@@ -2815,6 +3640,10 @@ class EngineMailSource extends MailSource {
             ? null
             : DraftCopy(copy.accountId, copy.mailbox, copy.uid),
         marks: _dartMarks(m.body, m.marks),
+        images: _draftImages(m.images),
+        plainText: m.plainText,
+        readReceipt: m.readReceipt,
+        highPriority: m.highPriority,
       );
     } finally {
       _changes.add(null);
@@ -2933,6 +3762,24 @@ class EngineMailSource extends MailSource {
 
   @override
   Future<void> reportEmailed(String id) async => fb.feedbackMarkEmailed(id: id);
+
+  @override
+  late final ReportPrivacy reportPrivacy = () {
+    final p = fb.feedbackPrivacy();
+    return ReportPrivacy(
+      controller: p.controller,
+      contact: p.contact,
+      url: p.url,
+      relayHost: p.relayHost,
+      filesDays: p.filesDays,
+    );
+  }();
+
+  @override
+  Future<ReportEmail> erasureEmail(String id) async {
+    final e = fb.feedbackErasureEmail(id: id);
+    return ReportEmail(to: e.to, subject: e.subject, body: e.body);
+  }
 
   @override
   bool get crashWaiting => fb.feedbackCrashWaiting();
