@@ -518,14 +518,20 @@ pub fn clean(text: &str) -> String {
             "<text>".to_string()
         }
     };
+    let text = s.clone();
     s = r
         .quoted
-        .replace_all(&s, |c: &Captures| {
+        .replace_all(&text, |c: &Captures| {
             let before = c.get(1).map_or("", |m| m.as_str());
             let colon = c.get(3).map_or("", |m| m.as_str());
+            // What follows the colon: a JSON value, not prose
+            // ("folder, \"lawyer\": permission denied").
+            let value = text[c.get(0).map_or(0, |m| m.end())..]
+                .trim_start()
+                .starts_with(|ch: char| "\"{[-0123456789tfn".contains(ch));
             // A key of JSON ({"subject": …) names a field, never what it
             // holds: kept, so the line still reads; its value is not.
-            let inner = if !before.is_empty() && !colon.is_empty() && is_key(&c[2]) {
+            let inner = if !before.is_empty() && !colon.is_empty() && value && is_key(&c[2]) {
                 c[2].to_string()
             } else {
                 keep_code(&c[2])
@@ -550,11 +556,13 @@ pub fn clean(text: &str) -> String {
         .into_owned()
 }
 
-/// A field's name as JSON writes it: one short word of letters, digits,
-/// `_` or `-`, starting with a letter.
+/// A field's name as code writes it: one short word of letters, digits,
+/// `_` or `-`, starting with a lowercase letter ("notAfter", "host_name").
+/// A capital first letter reads as a name ("Giulia", "Lawyer"), a folder
+/// or a person's, and stays hidden.
 fn is_key(text: &str) -> bool {
     let mut chars = text.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && text.len() <= 32
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
@@ -1890,6 +1898,14 @@ mod tests {
                 "Certificate: {\"host\":\"<text>\",\"notAfter\":\"<text>\"}",
             ),
             ("open \"Invoices\": failed", "open \"<text>\": failed"),
+            (
+                "counts: {\"Medical\": 4, \"Giulia\":\"x\"}",
+                "counts: {\"<text>\": 4, \"<text>\":\"<text>\"}",
+            ),
+            (
+                "open folder, \"lawyer\": permission denied",
+                "open folder, \"<text>\": permission denied",
+            ),
             ("Subject: Your payslip", "Subject: <text>"),
             ("see https://host.example/x?token=1", "see <url>"),
             (
