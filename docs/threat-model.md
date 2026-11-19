@@ -87,8 +87,10 @@ From a commit on `main` to code running on users' devices:
    checks advisories, licenses, banned crates and registries on every pull request and every push to
    `main`, with no path filter (the release gate needs its result on the exact commit); OSV checks the
    Dart packages; `npm audit` the relay's; Dependabot proposes updates after a 14-day cooldown and security
-   fixes at once; the vendored fxtranslate is watched by a weekly job. Every GitHub Action is pinned by
-   commit.
+   fixes at once; the vendored fxtranslate is watched by a weekly job. Every GitHub Action in our
+   workflow files is pinned by commit. The repository setting that would enforce it ("Require actions to
+   be pinned to a full-length commit SHA") stays off: it also covers the actions those actions call, and
+   `subosito/flutter-action` calls `actions/cache` by tag (see CONTRIBUTING.md › Actions policy).
 3. **Build**: the "Release" workflow runs from `main` only, after CI passed on that commit. Jobs that
    compile anything (build scripts, cargokit, Gradle, native hooks) get a read-only token and no
    signing secret.

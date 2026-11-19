@@ -382,7 +382,7 @@ void main() {
       ],
     ];
     final before = pickReportFiles;
-    pickReportFiles = () async => picked.removeAt(0);
+    pickReportFiles = (_) async => picked.removeAt(0);
     addTearDown(() => pickReportFiles = before);
     final source = await _help(tester);
     await _openSheet(tester, 'Report a problem');

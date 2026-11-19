@@ -525,7 +525,7 @@ void main() {
     tester,
   ) async {
     final before = pickPictures;
-    pickPictures = () async => [
+    pickPictures = (_) async => [
       _HugePicture(),
       XFile.fromData(_png, path: '/photos/terrace.png', name: 'terrace.png'),
     ];
@@ -563,7 +563,7 @@ void main() {
     tester,
   ) async {
     final before = pickPictures;
-    pickPictures = () async => [
+    pickPictures = (_) async => [
       XFile.fromData(_png, path: '/photos/terrace.png', name: 'terrace.png'),
     ];
     addTearDown(() => pickPictures = before);
@@ -702,7 +702,7 @@ void main() {
     tester,
   ) async {
     final before = pickPictures;
-    pickPictures = () async => [
+    pickPictures = (_) async => [
       XFile.fromData(
         Uint8List.fromList(List.filled(40, 7)),
         path: '/photos/scan.webp',

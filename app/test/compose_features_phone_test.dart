@@ -150,7 +150,7 @@ void main() {
     tester,
   ) async {
     final before = pickPictures;
-    pickPictures = () async => [
+    pickPictures = (_) async => [
       XFile.fromData(_png, path: '/photos/terrace.png', name: 'terrace.png'),
     ];
     addTearDown(() => pickPictures = before);

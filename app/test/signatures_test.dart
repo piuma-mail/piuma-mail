@@ -189,9 +189,9 @@ void main() {
 
   testWidgets('a logo is shrunk, or refused with the reason', (tester) async {
     final source = await _pump(tester);
-    pickLogo = () async =>
+    pickLogo = (_) async =>
         XFile.fromData(Uint8List.fromList(_pixel), name: 'logo.png');
-    addTearDown(() => pickLogo = () async => null);
+    addTearDown(() => pickLogo = (_) async => null);
     await tester.tap(find.bySemanticsLabel('With logo'));
     await tester.pumpAndSettle();
     expect(find.text('NO LOGO'), findsOneWidget);

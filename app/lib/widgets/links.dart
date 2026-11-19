@@ -20,12 +20,19 @@ const mailLinkSchemes = {'http', 'https', 'mailto'};
 /// A web address with a user name or password before its host
 /// (`https://bank.example@evil.example/`) is refused: browsers go to the
 /// host after the `@`, and the text before it is there to be read as the
-/// destination.
+/// destination. So is one whose host hides an `@` in percent-encoding
+/// (`https://bank.example%40evil.example/`): it reads the same way, and
+/// no browser goes to such a host. An IPv6 address (`http://[::1]:8080/`)
+/// is a host like any other.
 bool isMailLinkAllowed(Uri uri) {
   final scheme = uri.scheme.toLowerCase();
   if (!mailLinkSchemes.contains(scheme)) return false;
   if (scheme == 'mailto') return uri.path.trim().isNotEmpty;
-  return uri.host.isNotEmpty && uri.userInfo.isEmpty;
+  if (uri.host.isEmpty || uri.userInfo.isNotEmpty) return false;
+  // Browsers decode a host's percent-encoding once and refuse what is
+  // left with an `@` or a `%` in it.
+  final decoded = _decodeHost(uri.host);
+  return !decoded.contains('@') && !decoded.contains('%');
 }
 
 /// Where a `mailto:` link from an email goes. For now the system's mail
@@ -59,20 +66,28 @@ Future<void> Function(String path) openLocalFile = (path) async {
 /// it compare equal once both go through here.
 ///
 /// A host with letters outside ASCII is compared in its ASCII form, as
-/// browsers hand it back (`bücher.de` is `xn--bcher-kva.de`).
+/// browsers hand it back (`bücher.de` and `BÜCHER.de` are both
+/// `xn--bcher-kva.de`). A link whose host doesn't make a host once decoded
+/// (an `@` in percent-encoding) stays as it was written.
 String normalizeLink(String link) {
   final uri = Uri.tryParse(link.trim());
   if (uri == null || !uri.hasScheme) return link.trim();
   var host = uri.host.toLowerCase();
   if (host.contains('%')) {
-    final decoded = _decodeHost(host);
+    // Lowercase after decoding: [Uri] lowercases only ASCII letters, so
+    // `Ü` arrives as `%C3%9C`.
+    final decoded = _decodeHost(host).toLowerCase();
     host = punycodeHost(decoded) ?? decoded;
   }
-  var out = uri.replace(scheme: uri.scheme.toLowerCase(), host: host);
-  if ((out.scheme == 'http' || out.scheme == 'https') && out.path.isEmpty) {
-    out = out.replace(path: '/');
+  try {
+    var out = uri.replace(scheme: uri.scheme.toLowerCase(), host: host);
+    if ((out.scheme == 'http' || out.scheme == 'https') && out.path.isEmpty) {
+      out = out.replace(path: '/');
+    }
+    return out.normalizePath().toString();
+  } on FormatException {
+    return link.trim();
   }
-  return out.normalizePath().toString();
 }
 
 /// What a link's target is shown as, so its text can't hide where it goes.
@@ -107,7 +122,7 @@ LinkParts? describeLink(String url) {
   final uri = Uri.tryParse(url.trim());
   if (uri == null) return null;
   if (uri.scheme.toLowerCase() == 'mailto') {
-    final to = Uri.decodeComponent(uri.path);
+    final to = _decodeHost(uri.path);
     final at = to.lastIndexOf('@');
     final (host, ascii) = _readableHost(
       at < 0 ? to : to.substring(at + 1).toLowerCase(),
@@ -120,26 +135,52 @@ LinkParts? describeLink(String url) {
     );
   }
   if (uri.host.isEmpty) return null;
+  // An IPv6 address is shown in its brackets, so its port reads apart
+  // from it (`[::1]:8080`, not `::1:8080`).
+  if (uri.host.contains(':')) {
+    final host = '[${_decodeHost(uri.host).toLowerCase()}]';
+    return LinkParts(
+      host: host,
+      registrable: host,
+      ascii: null,
+      rest: _rest(uri),
+    );
+  }
   final (host, ascii) = _readableHost(_decodeHost(uri.host).toLowerCase());
+  // A host hiding an `@` (`bank.example%40evil.example`): what follows the
+  // `@` is the part to read, as with a user name before the host.
+  final at = host.lastIndexOf('@');
+  final named = at < 0 ? host : host.substring(at + 1);
+  return LinkParts(
+    host: host,
+    registrable: _ipv4.hasMatch(named) ? named : registrableDomain(named),
+    ascii: ascii,
+    rest: _rest(uri),
+  );
+}
+
+/// An IPv4 address, which has no registrable part to pick out.
+final _ipv4 = RegExp(r'^\d{1,3}(\.\d{1,3}){3}$');
+
+/// Everything of [uri] after its host: port, path, query, fragment.
+String _rest(Uri uri) {
   final rest = StringBuffer()
     ..write(uri.hasPort ? ':${uri.port}' : '')
     ..write(uri.path)
     ..write(uri.hasQuery ? '?${uri.query}' : '')
     ..write(uri.hasFragment ? '#${uri.fragment}' : '');
-  return LinkParts(
-    host: host,
-    registrable: registrableDomain(host),
-    ascii: ascii,
-    rest: rest.toString(),
-  );
+  return rest.toString();
 }
 
 /// A host's percent-encoding undone, or the host as it is when that
-/// doesn't read.
+/// doesn't read (a bad escape, or bytes that aren't UTF-8: `a%ff.example`).
+/// A host left with its `%` never opens ([isMailLinkAllowed]).
 String _decodeHost(String host) {
   try {
     return Uri.decodeComponent(host);
   } on ArgumentError {
+    return host;
+  } on FormatException {
     return host;
   }
 }
@@ -217,8 +258,13 @@ String? _unpunycodeLabel(String label) {
 }
 
 /// The registrable domain of [host]: its last two labels, or three under a
-/// country's second level (`bank.co.uk`), as the engine reckons it.
+/// country's second level (`bank.co.uk`), as the engine reckons it. A
+/// trailing dot (`bank.example.`, the same host to a browser) is kept, not
+/// counted as a label.
 String registrableDomain(String host) {
+  if (host.length > 1 && host.endsWith('.')) {
+    return '${registrableDomain(host.substring(0, host.length - 1))}.';
+  }
   final labels = host.split('.');
   final n = labels.length;
   if (n < 3) return host;

@@ -7651,4 +7651,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get specialRefused =>
       'That folder can’t do this job: it’s the inbox, or already does another job that would delete mail.';
+
+  @override
+  String get fileTypeImages => 'Images';
+
+  @override
+  String get fileTypeEmail => 'Email message';
 }
