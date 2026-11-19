@@ -9154,7 +9154,8 @@ pub const KEEP_SERVER_FOUND_DAYS: u32 = 7;
 /// outside what the sync covers (`server_found`, still hidden as
 /// [`OUTSIDE_SYNC`]), found before `before` (of one account, or all): the
 /// whole row goes, with its body, pictures, file previews and search
-/// entry. Kept: what the person starred, labelled or snoozed, what has a
+/// entry. Kept: what the person starred, labelled or snoozed (here, by its
+/// keyword, or on another device: what sits in Snoozed), what has a
 /// change waiting to reach the server (a move, a star, an action to undo),
 /// and drafts. Returns how many went.
 fn let_go_of_server_found(
@@ -9169,7 +9170,7 @@ fn let_go_of_server_found(
                  JOIN message m USING (account, mailbox, uid)
                  WHERE (?1 IS NULL OR f.account = ?1) AND f.found_at < ?2
                    AND m.hidden = {OUTSIDE_SYNC} AND (m.flags & 2) = 0
-                   AND m.snooze_until IS NULL AND m.folder <> 'drafts'
+                   AND m.snooze_until IS NULL AND m.folder NOT IN ('drafts', 'snoozed')
                    AND NOT EXISTS (SELECT 1 FROM message_labels l
                         WHERE l.account = m.account AND l.mailbox = m.mailbox
                           AND l.uid = m.uid AND l.labels <> '')
@@ -16013,6 +16014,19 @@ From: <help@bank.example>\r\n\r\nHi";
                 [a.0],
             )
             .unwrap();
+        store.set_thumb(a, "INBOX", 2, "photo.jpg", b"jpg").unwrap();
+        // Snoozed on another device: in Snoozed, with no keyword here.
+        store
+            .upsert_messages(&[msg(a, 8, now - 900 * day, true)])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[8], 7).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE message SET folder = 'snoozed' WHERE account = ?1 AND uid = 8",
+                [a.0],
+            )
+            .unwrap();
         // Kept by the person: 3 starred, 4 labelled, 5 being moved.
         store
             .set_flags(
@@ -16069,10 +16083,11 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!(!there(&store, b, 7));
         assert_eq!(store.body(a, "INBOX", 2).unwrap(), None);
         assert!(store.inline_image(a, "INBOX", 2, "logo").unwrap().is_none());
+        assert!(store.thumb(a, "INBOX", 2, "photo.jpg").unwrap().is_none());
         assert!(subjects(&store, "\"Message 2\"").is_empty());
         assert_eq!(
             store.server_found_uids(a, "INBOX").unwrap(),
-            [3, 4, 5].into()
+            [3, 4, 5, 8].into()
         );
         // Kept ones stay in the lists of found mail; their bodies follow
         // the days kept, like synced mail (these are years old).
