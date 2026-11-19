@@ -36,13 +36,13 @@ async fn fetch(
     let id = AccountId(account_id);
     let file = store()?
         .attachment(id, &mailbox, uid, part_id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown attachment"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown attachment"))?;
     if file.size > PREVIEW_MAX_BYTES {
         return Err(EngineError::new(ErrorKind::Other, "too big to preview"));
     }
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store_ref = engine.store.clone();
     let data = engine

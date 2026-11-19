@@ -944,6 +944,23 @@ class EngineMailSource extends MailSource with EngineCompose {
       ),
   ];
 
+  /// When each account's folders were last asked for: at most every 30 s,
+  /// since a move after a move would ask again for nothing new.
+  final _foldersAsked = <int, DateTime>{};
+
+  @override
+  Future<void> refreshFolders(int accountId) async {
+    final now = DateTime.now();
+    final last = _foldersAsked[accountId];
+    if (last != null && now.difference(last) < const Duration(seconds: 30)) {
+      return;
+    }
+    _foldersAsked[accountId] = now;
+    await engine.refreshAccountFolders(accountId: accountId);
+    // The sidebar's folders too.
+    _changes.add(null);
+  }
+
   @override
   Future<void> setFolderOrder(int accountId, List<String> mailboxes) =>
       engine.setFolderOrder(accountId: accountId, mailboxes: mailboxes);

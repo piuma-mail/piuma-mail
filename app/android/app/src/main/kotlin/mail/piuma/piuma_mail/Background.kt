@@ -116,12 +116,24 @@ object NetworkWatch {
     private fun follow(manager: ConnectivityManager) {
         manager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             private var current: Network? = null
+            private var blocked = false
 
             override fun onAvailable(network: Network) {
                 // The first call names the network we already have.
                 val moved = current != null && current != network
                 current = network
                 if (moved) MailNative.networkChanged()
+            }
+
+            // Android cuts an app in the background off the network (Doze,
+            // app standby, data saver) and lets it back when it comes to
+            // the front: the watchers try again at once, instead of after
+            // the waits their failures meanwhile grew to, with "You're
+            // offline" shown all along (Android 10 and later).
+            override fun onBlockedStatusChanged(network: Network, blocked: Boolean) {
+                val unblocked = this.blocked && !blocked
+                this.blocked = blocked
+                if (unblocked) MailNative.networkChanged()
             }
         })
     }

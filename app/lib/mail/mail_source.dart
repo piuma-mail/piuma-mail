@@ -2722,6 +2722,11 @@ abstract class MailSource with ComposeExtras {
   /// spam), in the server's tree order, siblings as the person ordered them.
   Future<List<AccountFolder>> folders(int accountId);
 
+  /// Asks the account's server for its folders now (no messages), so
+  /// [folders] has one made elsewhere a moment ago; "Move to…" calls it as
+  /// it opens. Throws when the server can't be reached.
+  Future<void> refreshFolders(int accountId) async {}
+
   /// Keeps the order the person dragged some sibling folders into, first
   /// to last; [folders] lists them so from then on.
   Future<void> setFolderOrder(int accountId, List<String> mailboxes);

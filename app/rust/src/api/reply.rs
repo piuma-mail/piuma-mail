@@ -132,7 +132,7 @@ async fn raw_message(id: AccountId, mailbox: String, uid: u32) -> Result<Vec<u8>
     let engine = engine()?;
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let shared = engine.store.clone();
     engine

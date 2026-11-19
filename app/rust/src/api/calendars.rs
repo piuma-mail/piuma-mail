@@ -289,7 +289,7 @@ fn source_info(id: i64) -> Result<CalendarSourceInfo, EngineError> {
     calendar_sources()?
         .into_iter()
         .find(|s| s.id == id)
-        .ok_or(EngineError::new(ErrorKind::Other, "no such calendar"))
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such calendar"))
 }
 
 /// Disconnects a source: its calendars and events are forgotten here,
@@ -384,7 +384,7 @@ async fn refresh_source(id: i64) -> Result<(), EngineError> {
         .calendar_sources()?
         .into_iter()
         .find(|s| s.id == id)
-        .ok_or(EngineError::new(ErrorKind::Other, "no such calendar"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such calendar"))?;
     let now = now_secs();
     if source.kind == "ics" {
         let feed = calendar::feed(&source.url).await?;
@@ -532,23 +532,18 @@ pub async fn add_found_date(
 ) -> Result<String, EngineError> {
     let (source, calendar) = {
         let store = store()?;
-        let id = default_calendar(&store)?.ok_or(EngineError::new(
-            ErrorKind::Other,
-            "no calendar takes events",
-        ))?;
+        let id = default_calendar(&store)?
+            .ok_or_else(|| EngineError::new(ErrorKind::Other, "no calendar takes events"))?;
         let calendar = store
             .calendars()?
             .into_iter()
             .find(|c| c.id == id)
-            .ok_or(EngineError::new(ErrorKind::Other, "no such calendar"))?;
+            .ok_or_else(|| EngineError::new(ErrorKind::Other, "no such calendar"))?;
         let source = store
             .calendar_sources()?
             .into_iter()
             .find(|s| s.id == calendar.source && s.kind == "caldav")
-            .ok_or(EngineError::new(
-                ErrorKind::Other,
-                "the calendar is read-only",
-            ))?;
+            .ok_or_else(|| EngineError::new(ErrorKind::Other, "the calendar is read-only"))?;
         (source, calendar)
     };
     let ics = dates::event(&uid, &summary, start, start + FOUND_LENGTH, now_secs());

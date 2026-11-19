@@ -202,7 +202,7 @@ pub async fn answer_read_receipt(
     };
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let Some((original, written_to)) = reader()?.receipt_original(id, &mailbox, uid)? else {
         return Err(EngineError::new(ErrorKind::Other, "message gone"));
     };

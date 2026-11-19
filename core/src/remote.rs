@@ -412,6 +412,20 @@ impl Remote {
         Ok(())
     }
 
+    /// The account's folders as the server lists them now, without
+    /// downloading messages (see `imap::Connection::refresh_folder_list`).
+    pub async fn refresh_folder_list(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+    ) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.refresh_folder_list(store, account).await?,
+            Remote::Jmap(c) => c.refresh_folder_list(store, account).await?,
+        }
+        Ok(())
+    }
+
     pub async fn full_body(
         &mut self,
         store: &Mutex<Store>,

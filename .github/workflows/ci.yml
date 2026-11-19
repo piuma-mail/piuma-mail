@@ -271,6 +271,19 @@ jobs:
         shell: bash
         # shellcheck disable=SC2086 # FLAGS is empty or one flag
         run: flutter build "$TARGET" --release $FLAGS
+      # Every ABI folder in the APK must hold the app's own libraries, or a
+      # phone that picks it crashes at launch (tools/check-apk-abis.sh).
+      - if: matrix.target == 'apk'
+        name: APK native libraries
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          if [ "$PLATFORM" = android ]; then
+            sh ../tools/check-apk-abis.sh build/app/outputs/flutter-apk/app-release.apk libpiuma_bridge.so
+          else
+            sh ../tools/check-apk-abis.sh build/app/outputs/flutter-apk/app-release.apk
+          fi
 
   # One fixed name for branch protection: the builds' names depend on the
   # matrix, and a pull request may run none of them.

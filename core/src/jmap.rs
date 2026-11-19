@@ -944,6 +944,26 @@ impl Client {
     /// Finds Sent, Archive and Drafts, remembers them, and brings them up
     /// to date.
     pub async fn sync_folders(&mut self, store: &Mutex<Store>, account: AccountId) -> Result<()> {
+        self.folders(store, account, true).await
+    }
+
+    /// The account's folders as the server lists them now, no message
+    /// downloaded: for "Move to…" to offer a folder made elsewhere.
+    pub async fn refresh_folder_list(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+    ) -> Result<()> {
+        self.folders(store, account, false).await
+    }
+
+    /// [`Self::sync_folders`]; only the list without `messages`.
+    async fn folders(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        messages: bool,
+    ) -> Result<()> {
         self.learn_roles(store, account)?;
         self.refresh_mailboxes().await?;
         for (role, folder) in [
@@ -956,7 +976,9 @@ impl Client {
                 continue;
             };
             lock(store).set_folder_role(account, folder, &name)?;
-            self.sync_mailbox(store, account, &name, |_, _| {}).await?;
+            if messages {
+                self.sync_mailbox(store, account, &name, |_, _| {}).await?;
+            }
         }
         // Report spam moves mail to the junk role; offered only when found.
         // Delete there, and in Trash, deletes for good.
@@ -2162,8 +2184,11 @@ pub async fn watch_timed(
     // after a whole round.
     let mut backoff = crate::backoff::Backoff::new(retry_first);
     let mut answered;
+    // Whether this connection synced before it failed (see below).
+    let mut synced;
     loop {
         answered = false;
+        synced = false;
         let result: Result<()> = async {
             let mut client = Client::open(&cfg).await?;
             answered = true;
@@ -2192,6 +2217,7 @@ pub async fn watch_timed(
                     dropped(crate::pending::send(&mut client, &store, account).await?);
                 }
                 events(WatchEvent::Synced { account, report });
+                synced = true;
                 backoff.reset();
                 // Snoozed mail comes back, mail sent later goes, and a
                 // refused change is tried again, on time.
@@ -2211,13 +2237,19 @@ pub async fn watch_timed(
             Err(e) if answered && !e.is_offline() => crate::backoff::ANSWERED_MOST,
             _ => crate::backoff::OFFLINE_MOST,
         };
-        if let Err(e) = result {
-            events(WatchEvent::Offline {
-                account,
-                reason: e.to_string(),
-            });
+        // A connection that synced and then dropped (the app back from
+        // the background) says nothing yet: only the next try, failing
+        // too, means offline.
+        if let Err(e) = result.as_ref().map_err(|e| e.to_string()) {
+            if !synced {
+                events(WatchEvent::Offline { account, reason: e });
+            }
         }
-        tokio::time::sleep(backoff.fail(most)).await;
+        // A new network: start over on it right away.
+        tokio::select! {
+            () = tokio::time::sleep(backoff.fail(most)) => {}
+            () = crate::network::wait() => backoff.reset(),
+        }
     }
 }
 

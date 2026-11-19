@@ -1177,6 +1177,27 @@ impl Connection {
         account: AccountId,
         round: Round,
     ) -> Result<usize> {
+        self.folders_round(store, account, Some(round)).await
+    }
+
+    /// The account's folders as the server lists them now, with their
+    /// counts, and no message downloaded: quick, for "Move to…" to offer a
+    /// folder made elsewhere a moment ago.
+    pub async fn refresh_folder_list(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+    ) -> Result<()> {
+        self.folders_round(store, account, None).await.map(|_| ())
+    }
+
+    /// [`Self::sync_folders_round`], or only the list without `round`.
+    async fn folders_round(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        round: Option<Round>,
+    ) -> Result<usize> {
         self.learn_roles(store, account)?;
         let names = self.list().await?;
         // Subscribed folders show; the others on demand. A server where
@@ -1227,10 +1248,12 @@ impl Connection {
             };
             skip.insert(name.clone());
             lock(store).set_folder_role(account, folder, &name)?;
-            more += self
-                .sync_round(store, account, &name, round, |_, _| {})
-                .await?
-                .more;
+            if let Some(round) = round {
+                more += self
+                    .sync_round(store, account, &name, round, |_, _| {})
+                    .await?
+                    .more;
+            }
         }
         let listed: Vec<Listed> = names
             .iter()
@@ -2303,8 +2326,11 @@ pub async fn watch_timed(
     // Whether the server answered this time: then the waits may grow past
     // the minute meant for a server that can't be reached.
     let mut answered;
+    // Whether this connection synced before it failed: see the pause below.
+    let mut synced;
     loop {
         answered = false;
+        synced = false;
         let session = async {
             let mut conn = Connection::open_timed(&cfg, timing).await?;
             answered = true;
@@ -2358,6 +2384,7 @@ pub async fn watch_timed(
                     0
                 };
                 events(WatchEvent::Synced { account, report });
+                synced = true;
                 if inbox_more > 0 {
                     events(WatchEvent::Progress {
                         account,
@@ -2416,6 +2443,14 @@ pub async fn watch_timed(
             // A certificate other than the one trusted is never retried
             // quietly: the person has to look at it.
             Err(e @ ImapError::Certificate(_)) => return Err(e),
+            // A connection that worked and then dropped (the app back from
+            // the background, a router that forgot it) says nothing yet:
+            // only the next try, failing too, means offline. Otherwise
+            // "You're offline" shows for the seconds it takes to reconnect.
+            // The waits still grow as for any failure: a server that fails
+            // the same way after every inbox sync (a folder it refuses) is
+            // not logged into every minute.
+            Err(e) if synced => backoff.fail(retry_cap(answered, &e)),
             Err(e) => {
                 events(WatchEvent::Offline {
                     account,

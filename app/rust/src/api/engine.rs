@@ -58,6 +58,14 @@ pub(crate) fn engine() -> Result<&'static Engine, EngineError> {
         .ok_or_else(|| EngineError::new(ErrorKind::NotOpen, "engine not open"))
 }
 
+/// Whether [`open_engine`] has finished, asked without an error: every
+/// [`EngineError`] lands in the recent log, and code that may run before
+/// the engine opens (the reports folder, set first) must not leave a
+/// "NotOpen" warning there for nothing.
+pub(crate) fn is_open() -> bool {
+    ENGINE.get().is_some()
+}
+
 pub(crate) fn store() -> Result<StoreGuard<'static>, EngineError> {
     hold(&engine()?.store)
 }
@@ -2539,7 +2547,7 @@ async fn full_body(id: AccountId, mailbox: String, uid: u32) -> Result<Body, Eng
     }
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store = engine.store.clone();
     engine
@@ -3369,7 +3377,7 @@ pub async fn save_attachment(
     let id = AccountId(account_id);
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store = engine.store.clone();
     let data = engine
@@ -3952,7 +3960,7 @@ fn queue_message(
     let id = AccountId(message.account_id);
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let saved = message.draft.clone();
     let remind_at = message.remind_at;
     let draft = core_draft(&account, message)?;
@@ -4111,7 +4119,7 @@ pub async fn deliver_outgoing(id: i64) -> Result<Delivery, EngineError> {
 async fn deliver(id: i64) -> Result<Delivery, EngineError> {
     let engine = engine()?;
     let Some(out) = store()?.outgoing(id)? else {
-        return Ok(kept_outcome(id).unwrap_or(Delivery::of(DeliveryKind::Gone)));
+        return Ok(kept_outcome(id).unwrap_or_else(|| Delivery::of(DeliveryKind::Gone)));
     };
     if let Some(at) = out.send_at {
         let wait = (at - now_secs()).max(0) as u64;
@@ -4472,7 +4480,7 @@ fn core_draft(account: &Account, message: OutgoingMessage) -> Result<Draft, Engi
 pub(crate) fn signed_in(id: AccountId) -> Result<(Account, Login), EngineError> {
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     Ok((account, password))
 }
@@ -5103,7 +5111,7 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
     }
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store = engine.store.clone();
     engine
@@ -5113,6 +5121,31 @@ pub async fn create_folder(account_id: i64, name: String) -> Result<String, Engi
             let made = conn.create_folder(&store, id, &name).await;
             conn.close().await;
             made
+        })
+        .await
+        .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
+        .map_err(EngineError::from)
+}
+
+/// Asks the server for the account's folders now, without downloading
+/// messages, and keeps them for [`account_folders`]: "Move to…" calls it
+/// when it opens, so a folder made elsewhere a moment ago is there
+/// without waiting for the next look (every few minutes).
+pub async fn refresh_account_folders(account_id: i64) -> Result<(), EngineError> {
+    let engine = engine()?;
+    let id = AccountId(account_id);
+    let account = store()?
+        .account(id)?
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
+    let password = crate::login::load(id)?;
+    let store = engine.store.clone();
+    engine
+        .runtime
+        .spawn(async move {
+            let mut conn = Remote::open(&account, &password).await?;
+            let listed = conn.refresh_folder_list(&store, id).await;
+            conn.close().await;
+            listed
         })
         .await
         .map_err(|e| EngineError::new(ErrorKind::Other, e.to_string()))?
@@ -6146,7 +6179,7 @@ pub async fn save_pec_receipts(
     let id = AccountId(account_id);
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store = engine.store.clone();
     let files = engine
@@ -6299,7 +6332,7 @@ pub async fn attachment_thumb(
     }
     let account = store()?
         .account(id)?
-        .ok_or(EngineError::new(ErrorKind::Other, "unknown account"))?;
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "unknown account"))?;
     let password = crate::login::load(id)?;
     let store_ref = engine.store.clone();
     let mbox = mailbox.clone();
@@ -6667,18 +6700,15 @@ pub async fn answer_invite(
 ) -> Result<InviteSent, EngineError> {
     let id = AccountId(account_id);
     let body = full_body(id, mailbox.clone(), uid).await?;
-    let ics = body.calendar.ok_or(EngineError::new(
-        ErrorKind::Other,
-        "no invite in this message",
-    ))?;
-    let event = invite::parse(&ics).ok_or(EngineError::new(
-        ErrorKind::Other,
-        "the invite can't be read",
-    ))?;
-    let organizer = event.organizer.clone().ok_or(EngineError::new(
-        ErrorKind::Other,
-        "the invite has no organizer",
-    ))?;
+    let ics = body
+        .calendar
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "no invite in this message"))?;
+    let event = invite::parse(&ics)
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "the invite can't be read"))?;
+    let organizer = event
+        .organizer
+        .clone()
+        .ok_or_else(|| EngineError::new(ErrorKind::Other, "the invite has no organizer"))?;
     let (account, _) = signed_in(id)?;
     let answer = match answer {
         InviteAnswer::Accepted => invite::Answer::Accepted,
@@ -6692,10 +6722,7 @@ pub async fn answer_invite(
         answer,
         now_secs(),
     )
-    .ok_or(EngineError::new(
-        ErrorKind::Other,
-        "the invite can't be answered",
-    ))?;
+    .ok_or_else(|| EngineError::new(ErrorKind::Other, "the invite can't be answered"))?;
     let replying_to = store()?.message(id, &mailbox, uid)?.map(|m| m.reply);
     let to = if organizer.name.trim().is_empty() {
         organizer.email.clone()

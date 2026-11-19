@@ -121,7 +121,7 @@ pub async fn away_message(
     };
     let store = store()?;
     let stored = store.away_message(a.id)?;
-    let mut s = stored.clone().unwrap_or(Stored {
+    let mut s = stored.clone().unwrap_or_else(|| Stored {
         zone,
         ..Stored::default()
     });
