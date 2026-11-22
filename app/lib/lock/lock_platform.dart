@@ -20,6 +20,9 @@ class FileLockStore implements LockStore {
 
   bool get _android => Platform.isAndroid;
 
+  /// Null only when there is no file. A file that is there but empty or
+  /// damaged still turns the lock on, and one that can't be read throws
+  /// ([AppLock.load] counts that as on too).
   @override
   Future<LockSettings?> loadSettings() async {
     if (!await _file.exists()) return null;
@@ -122,10 +125,41 @@ class SystemDeviceUnlock implements DeviceUnlock {
   }
 }
 
+/// The device's boot clock, which counts through sleep and can't be set:
+/// Android's `elapsedRealtime` with the boot count (`MainActivity.kt`),
+/// Linux's `CLOCK_BOOTTIME` (`/proc/uptime`) with the kernel's boot id.
+/// Null elsewhere: the wrong-PIN wait then starts over at each launch.
+Future<BootTime?> systemBootClock() async {
+  if (Platform.isAndroid) {
+    final r = await LockPlatform._channel.invokeListMethod<Object?>('clock');
+    if (r case [final num count, final num ms]) {
+      return BootTime(
+        'android:${count.toInt()}',
+        Duration(milliseconds: ms.toInt()),
+      );
+    }
+    return null;
+  }
+  if (Platform.isLinux) {
+    final id = (await File(
+      '/proc/sys/kernel/random/boot_id',
+    ).readAsString()).trim();
+    final up = (await File('/proc/uptime').readAsString()).split(' ').first;
+    final seconds = double.parse(up);
+    if (id.isEmpty) return null;
+    return BootTime(
+      'linux:$id',
+      Duration(milliseconds: (seconds * 1000).round()),
+    );
+  }
+  return null;
+}
+
 /// What the platform does while the lock is on: Android keeps Piuma out
-/// of the recent apps' thumbnails and screenshots (FLAG_SECURE) and tells
-/// the watch (`MainActivity.kt`); iOS covers its app switcher snapshot
-/// itself (`AppDelegate.swift`), reading the same file.
+/// of the recent apps' thumbnails and screenshots (FLAG_SECURE), blanks
+/// the notices already shown and tells the watch (`MainActivity.kt`); iOS
+/// covers its app switcher snapshot itself (`SceneDelegate.swift`),
+/// reading the same file.
 abstract final class LockPlatform {
   static const _channel = MethodChannel('mail.piuma/lock');
 
@@ -135,6 +169,17 @@ abstract final class LockPlatform {
       await _channel.invokeMethod<void>('changed', {'on': on});
     } on Object {
       // An older activity: the flag follows at the next start.
+    }
+  }
+
+  /// The lock closed: Android's notices already shown lose their sender,
+  /// subject and buttons, as new ones are while the lock is on.
+  static Future<void> engaged() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('locked');
+    } on Object {
+      // Blanked when the lock was turned on.
     }
   }
 }

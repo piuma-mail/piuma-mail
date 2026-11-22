@@ -2525,5 +2525,7 @@
   "@lockWait": {"placeholders": {"time": {"type": "String"}}},
   "lockForgot": "Forgot your PIN? Only removing Piuma’s data from this device opens it again; your accounts are then added anew.",
   "lockForgotDevice": "Forgot your PIN? Unlock with this device instead. Without it, only removing Piuma’s data from the device opens it again.",
-  "lockPinUnreadable": "The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open."
+  "lockPinUnreadable": "The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open.",
+  "lockPinMissing": "Piuma’s lock is on, but the system keychain has no PIN for it. Unlock with this device; without it, only removing Piuma’s data from the device opens it again.",
+  "lockTriesNotKept": "Piuma couldn’t record this try in the system keychain, so it can’t check the PIN now. Try again in a moment."
 }

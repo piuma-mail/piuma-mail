@@ -166,6 +166,42 @@ void main() {
     expect(Summary.parse(_summary())!.locked, isFalse);
   });
 
+  testWidgets('an email open when the phone locks closes, and its words go', (
+    tester,
+  ) async {
+    final asked = <MethodCall>[];
+    final link = await _pump(tester, asked);
+    await tester.tap(find.text('Giulia Romano'));
+    await tester.pumpAndSettle();
+    await _fromPhone(
+      'text',
+      jsonEncode({'payload': '1\nINBOX\n41', 'text': 'Bring the board game'}),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Bring the board game'), findsOneWidget);
+    await _fromPhone(
+      'summary',
+      jsonEncode({
+        'at': _at(10, 9),
+        'locked': true,
+        'accounts': [],
+        'rows': [],
+        'templates': [],
+      }),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Bring the board game'), findsNothing);
+    expect(find.text('Dinner on Friday?'), findsNothing);
+    expect(find.textContaining('Piuma is locked on your phone'), findsOne);
+    expect(link.text('1\nINBOX\n41'), isNull);
+    // A late answer to the open is not kept either.
+    await _fromPhone(
+      'text',
+      jsonEncode({'payload': '1\nINBOX\n41', 'text': 'Bring the board game'}),
+    );
+    expect(link.text('1\nINBOX\n41'), isNull);
+  });
+
   testWidgets('inbox, reading and archive with Undo', (tester) async {
     final asked = <MethodCall>[];
     await _pump(tester, asked);

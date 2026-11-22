@@ -26,6 +26,7 @@ class _Lock {
     hasher: FakeHasher(),
     device: device,
     now: clock.call,
+    elapsed: clock.elapsed,
   );
 
   /// A lock turned on with 2468, as at a cold start: locked.
@@ -203,6 +204,68 @@ void main() {
     expect(find.text('Secret mail'), findsOneWidget);
     await away(const Duration(minutes: 6));
     expect(find.text('Secret mail'), findsNothing);
+    expect(find.text('Piuma is locked'), findsOneWidget);
+  });
+
+  testWidgets('a try the keychain cannot count is refused, and says so', (
+    tester,
+  ) async {
+    final l = _Lock(device: false);
+    final lock = await l.locked();
+    addTearDown(lock.dispose);
+    await _pumpApp(tester, lock);
+    l.store.keychainFull = true;
+    final pin = find.byKey(const ValueKey('lock-pin'));
+    await _type(tester, pin, '2468');
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('couldn’t record this try'), findsOneWidget);
+    expect(find.text('Secret mail'), findsNothing);
+    l.store.keychainFull = false;
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+    expect(find.text('Secret mail'), findsOneWidget);
+  });
+
+  testWidgets('a damaged settings file without a PIN says why it is shut', (
+    tester,
+  ) async {
+    final l = _Lock(device: false);
+    l.store.fileUnreadable = true;
+    final lock = l.make();
+    await lock.load();
+    addTearDown(lock.dispose);
+    await _pumpApp(tester, lock);
+    expect(find.text('Secret mail'), findsNothing);
+    expect(find.textContaining('has no PIN for it'), findsOneWidget);
+    expect(find.byKey(const ValueKey('lock-pin')), findsNothing);
+  });
+
+  testWidgets('away for the time with the window still up, it locks', (
+    tester,
+  ) async {
+    final l = _Lock(device: false);
+    l.store.settings = const LockSettings(after: LockAfter.oneMinute);
+    l.store.secret = const LockSecret(pin: 'hash:2468').encode();
+    final lock = l.make();
+    await lock.load();
+    addTearDown(lock.dispose);
+    await _pumpApp(tester, lock);
+    await _type(tester, find.byKey(const ValueKey('lock-pin')), '2468');
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+    expect(find.text('Secret mail'), findsOneWidget);
+    // Minimized, never brought back.
+    for (final s in [AppLifecycleState.inactive, AppLifecycleState.hidden]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+    }
+    l.clock.advance(const Duration(minutes: 1));
+    await tester.pump(const Duration(minutes: 1));
+    expect(lock.locked, isTrue);
+    for (final s in [AppLifecycleState.inactive, AppLifecycleState.resumed]) {
+      tester.binding.handleAppLifecycleStateChanged(s);
+    }
+    await tester.pumpAndSettle();
     expect(find.text('Piuma is locked'), findsOneWidget);
   });
 

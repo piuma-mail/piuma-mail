@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -28,6 +29,28 @@ const _channel = MethodChannel('piuma/original');
 final _papers = <int, _LinuxPaperState>{};
 var _nextId = 0;
 var _listening = false;
+
+/// Set while the app lock covers the window ([coverLinuxPapers]).
+var _covered = false;
+
+/// The app lock closed ([covered]) or opened. A web view the runner lays
+/// over the window would stay above the lock screen, so every paper is
+/// hidden in the runner at once, and kept hidden whatever is placed,
+/// until the lock opens; then each is placed again.
+Future<void> coverLinuxPapers(bool covered) async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.linux) return;
+  if (covered == _covered) return;
+  _covered = covered;
+  for (final p in _papers.values) {
+    p._placed = null;
+  }
+  try {
+    await _channel.invokeMethod<void>('cover', {'covered': covered});
+  } catch (_) {
+    // No runner to tell (tests): the papers are placed hidden anyway.
+  }
+  if (!covered) SchedulerBinding.instance.scheduleFrame();
+}
 
 void _listen() {
   if (_listening) return;
@@ -108,7 +131,11 @@ class _LinuxPaperState extends State<LinuxPaper> {
 
   Map<String, Object> _place() {
     final box = _box.currentContext?.findRenderObject();
-    if (box is! RenderBox || !box.attached || !box.hasSize || !_current) {
+    if (_covered ||
+        box is! RenderBox ||
+        !box.attached ||
+        !box.hasSize ||
+        !_current) {
       return const {'visible': false};
     }
     final paper = MatrixUtils.transformRect(
@@ -153,7 +180,11 @@ class _LinuxPaperState extends State<LinuxPaper> {
   // The web view covers this box; until it shows, the paper is white.
   @override
   Widget build(BuildContext context) {
-    _current = ModalRoute.isCurrentOf(context) ?? true;
+    // Not current under another page, nor while the app lock keeps the
+    // app offstage (its tickers are off then).
+    _current =
+        (ModalRoute.isCurrentOf(context) ?? true) &&
+        TickerMode.valuesOf(context).enabled;
     _window = MediaQuery.sizeOf(context);
     _scrolls = [
       for (

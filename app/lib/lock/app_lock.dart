@@ -55,8 +55,9 @@ class LockSettings {
     'notice': notice,
   };
 
-  static LockSettings? parse(String? text) {
-    if (text == null || text.isEmpty) return null;
+  /// The file's [text]. The file being there is what turns the lock on,
+  /// so an empty or damaged one still means on, with the defaults.
+  static LockSettings parse(String text) {
     try {
       final m = jsonDecode(text) as Map<String, dynamic>;
       return LockSettings(
@@ -65,7 +66,6 @@ class LockSettings {
         notice: m['notice'] as String? ?? 'New message',
       );
     } on Object {
-      // A damaged file still means the lock is on.
       return const LockSettings();
     }
   }
@@ -83,37 +83,84 @@ class LockSettings {
 
 /// What the keychain keeps: the PIN's slow hash (never the PIN) and the
 /// wrong tries so far, so closing the app doesn't reset the wait.
+///
+/// The wait is kept as what was left of it ([wait]), never as a time of
+/// day: moving the device's clock doesn't shorten it. Where the system
+/// has a clock that counts from boot and can't be set ([BootTime]), the
+/// end of the wait on that clock is kept too ([boot], [bootUntil]), so
+/// the time the app was closed still counts within the same boot.
 @immutable
 class LockSecret {
-  const LockSecret({required this.pin, this.failures = 0, this.waitUntil});
+  const LockSecret({
+    required this.pin,
+    this.failures = 0,
+    this.wait = Duration.zero,
+    this.boot,
+    this.bootUntil,
+  });
 
   /// The Argon2id hash the engine made (`core/src/app_lock.rs`).
   final String pin;
   final int failures;
-  final DateTime? waitUntil;
+
+  /// The wait left when this was kept.
+  final Duration wait;
+
+  /// The boot [bootUntil] belongs to ([BootTime.id]).
+  final String? boot;
+
+  /// When the wait ends, on that boot's clock ([BootTime.since]).
+  final Duration? bootUntil;
 
   String encode() => jsonEncode({
     'pin': pin,
     'failures': failures,
-    if (waitUntil case final w?) 'wait_until': w.millisecondsSinceEpoch,
+    if (wait > Duration.zero) 'wait_ms': wait.inMilliseconds,
+    'boot': ?boot,
+    if (bootUntil case final u?) 'boot_until_ms': u.inMilliseconds,
   });
 
   static LockSecret? parse(String? text) {
     if (text == null || text.isEmpty) return null;
     try {
       final m = jsonDecode(text) as Map<String, dynamic>;
-      final until = (m['wait_until'] as num?)?.toInt();
+      final wait = (m['wait_ms'] as num?)?.toInt() ?? 0;
+      final until = (m['boot_until_ms'] as num?)?.toInt();
       return LockSecret(
         pin: m['pin'] as String,
         failures: (m['failures'] as num?)?.toInt() ?? 0,
-        waitUntil: until == null
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(until),
+        wait: Duration(milliseconds: wait < 0 ? 0 : wait),
+        boot: m['boot'] as String?,
+        bootUntil: until == null ? null : Duration(milliseconds: until),
       );
     } on Object {
       return null;
     }
   }
+
+  /// The wait left at [now] on the boot clock: by that clock within the
+  /// same boot, never more than [wait]; all of [wait] after a restart of
+  /// the device, or where there is no such clock.
+  Duration waitAt(BootTime? now) {
+    final until = bootUntil;
+    if (now == null || until == null || boot == null || now.id != boot) {
+      return wait;
+    }
+    final left = until - now.since;
+    if (left.isNegative) return Duration.zero;
+    return left > wait ? wait : left;
+  }
+}
+
+/// A clock that counts from the device's boot, through sleep, and that
+/// nobody can set: Android's `elapsedRealtime`, Linux's `CLOCK_BOOTTIME`.
+@immutable
+class BootTime {
+  const BootTime(this.id, this.since);
+
+  /// Different after every boot.
+  final String id;
+  final Duration since;
 }
 
 /// How long the next try waits after [failures] wrong PINs in a row: the
@@ -181,24 +228,52 @@ class PinWaiting extends PinResult {
   final Duration wait;
 }
 
-/// The app lock: on or off, locked or open, and the clock that decides.
-/// Off by default. When on, a cold start is locked, and so is a return
-/// from the background after [LockSettings.after].
+/// Not tried: the try couldn't be counted in the keychain, and a try that
+/// isn't counted could be repeated without waiting.
+class PinNotKept extends PinResult {
+  const PinNotKept();
+}
+
+/// A clock that never jumps: how long this process has run. It stops
+/// while the device sleeps, which only makes a wait longer.
+final Stopwatch _running = Stopwatch()..start();
+Duration _monotonic() => _running.elapsed;
+
+/// The app lock: on or off, locked or open, and the clocks that decide.
+/// Off by default. When on, a cold start is locked, and so is the app
+/// once it has been away for [LockSettings.after], whether or not it
+/// comes back: every window locks at once.
 class AppLock extends ChangeNotifier {
   AppLock({
     required this.store,
     required this.hasher,
     required this.device,
     this.now = DateTime.now,
-  });
+    Duration Function()? elapsed,
+    this.bootClock,
+    Timer Function(Duration, void Function())? timer,
+  }) : elapsed = elapsed ?? _monotonic,
+       _timer = timer ?? Timer.new;
 
   final LockStore store;
   final PinHasher hasher;
   final DeviceUnlock device;
+
+  /// The time of day: only for how long the app was away, together with
+  /// [elapsed], so moving it forward can lock sooner, never later.
   final DateTime Function() now;
 
+  /// A clock that never jumps ([Stopwatch]); the wrong-PIN wait runs on it.
+  final Duration Function() elapsed;
+
+  /// The device's boot clock, where there is one (`lock_platform.dart`).
+  final Future<BootTime?> Function()? bootClock;
+
+  final Timer Function(Duration, void Function()) _timer;
+
   /// While one is locked, every [AppLock] says so: the keyboard handlers
-  /// that act outside the widget tree (print, mark read) stay quiet.
+  /// that act outside the widget tree (print, mark read) stay quiet, and
+  /// so do notices' buttons.
   static bool get lockedNow => _lockedCount > 0;
   static int _lockedCount = 0;
 
@@ -207,23 +282,38 @@ class AppLock extends ChangeNotifier {
   bool _locked = false;
   bool _deviceReady = false;
   bool _unreadable = false;
+  bool _missing = false;
+  bool _notKept = false;
+
+  /// When the wrong-PIN wait ends, on [elapsed].
+  Duration? _waitEnds;
+
+  /// Away: the main window hidden and no other window of the app in front.
+  bool _mainAway = false;
+  final _inFront = <Object>{};
   DateTime? _leftAt;
+  Duration? _leftElapsed;
+  Timer? _away;
 
   /// Set while the system's own unlock sheet is up: Android pauses the
   /// app for the screen lock, which must not lock it again.
   bool _prompting = false;
-  DateTime? _promptEnded;
+  Duration? _promptEnded;
 
   /// The system's unlock sheet closed a moment ago: the app coming back
   /// in front is its doing, not the person's.
   bool get justPrompted {
     final at = _promptEnded;
     return _prompting ||
-        (at != null && now().difference(at) < const Duration(seconds: 2));
+        (at != null && elapsed() - at < const Duration(seconds: 2));
   }
 
-  /// Told when the lock closes, e.g. to hide the reader windows.
+  /// Told when the lock closes, e.g. to hide the reader windows and blank
+  /// the notices already shown.
   VoidCallback? onLocked;
+
+  /// Told when the lock opens, e.g. to bring the reader windows back.
+  VoidCallback? onUnlocked;
 
   /// Told when the lock is turned on or off or changed, for what the
   /// platform does about it (Android's FLAG_SECURE, the watch).
@@ -239,65 +329,174 @@ class AppLock extends ChangeNotifier {
   /// Whether the device has an unlock at all, for Settings.
   bool get deviceAvailable => _deviceReady;
 
-  /// The lock is on but the keychain didn't give its PIN back: only the
-  /// device's unlock opens it.
+  /// The lock is on but there is no PIN to check: the keychain didn't
+  /// answer, or has none ([pinMissing]). Only the device's unlock opens it.
   bool get pinUnreadable => _unreadable;
+
+  /// The keychain answered without a PIN while the settings file says
+  /// the lock is on (a damaged file, a keychain emptied by hand).
+  bool get pinMissing => _missing;
+
+  /// The last try couldn't be counted in the keychain: no PIN is tried
+  /// until one can be.
+  bool get triesNotKept => _notKept;
 
   /// How long until a PIN may be tried again; zero when it may now.
   Duration get waitLeft {
-    final until = _secret?.waitUntil;
-    if (until == null) return Duration.zero;
-    final left = until.difference(now());
+    final ends = _waitEnds;
+    if (ends == null) return Duration.zero;
+    final left = ends - elapsed();
     return left.isNegative ? Duration.zero : left;
   }
 
   int get failures => _secret?.failures ?? 0;
 
   /// At start, before anything is drawn: a lock that is on starts locked.
+  /// Never throws. A settings file that can't be read counts as on.
   Future<void> load() async {
-    _settings = await store.loadSettings();
+    try {
+      _settings = await store.loadSettings();
+    } on Object {
+      _settings = const LockSettings();
+    }
     _deviceReady = await device.available().catchError((Object _) => false);
     if (_settings == null) return;
     try {
       _secret = LockSecret.parse(await store.loadSecret());
+      _missing = _secret == null;
     } on Object {
       _secret = null;
     }
     _unreadable = _secret == null;
+    if (_secret case final s?) {
+      _startWait(s.waitAt(await _boot()));
+    }
     _setLocked(true);
+  }
+
+  Future<BootTime?> _boot() async {
+    try {
+      return await bootClock?.call();
+    } on Object {
+      return null;
+    }
+  }
+
+  void _startWait(Duration wait) {
+    _waitEnds = wait > Duration.zero ? elapsed() + wait : null;
   }
 
   void _setLocked(bool value) {
     if (value == _locked) return;
     _locked = value;
     _lockedCount += value ? 1 : -1;
-    if (value) onLocked?.call();
+    if (value) {
+      _cancelAway();
+      onLocked?.call();
+    } else {
+      onUnlocked?.call();
+    }
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _cancelAway();
     if (_locked) _lockedCount--;
+    _locked = false;
     super.dispose();
   }
 
-  /// The app went to the background (hidden, paused, the window
-  /// minimized or closed to the tray).
+  /// The main window went to the background (hidden, paused, minimized
+  /// or closed to the tray).
   void left() {
-    if (!enabled || _locked || _prompting) return;
-    if (_settings!.after == LockAfter.immediately) {
+    _mainAway = true;
+    _followAway();
+  }
+
+  /// The main window is back in front.
+  void back() {
+    _mainAway = false;
+    _followAway();
+    if (_locked && _waitEnds != null) refreshWait().ignore();
+  }
+
+  /// Catches the wait up with the boot clock, which counts the time the
+  /// device slept ([elapsed] doesn't). Never lengthens it.
+  Future<void> refreshWait() async {
+    final s = _secret;
+    if (s == null || _waitEnds == null) return;
+    final boot = await _boot();
+    if (boot == null || s.boot == null) return;
+    final left = s.waitAt(boot);
+    if (left < waitLeft) {
+      _startWait(left);
+      notifyListeners();
+    }
+  }
+
+  /// Another window of the app ([id]: a desktop reader window) came in
+  /// front, or went out of it. While one is in front the app is in use,
+  /// even with the main window hidden.
+  void windowInFront(Object id, bool front) {
+    if (front) {
+      _inFront.add(id);
+    } else {
+      _inFront.remove(id);
+    }
+    _followAway();
+  }
+
+  bool get _isAway => _mainAway && _inFront.isEmpty;
+
+  void _followAway() {
+    if (_isAway) {
+      _goAway();
+    } else {
+      _comeBack();
+    }
+  }
+
+  void _goAway() {
+    if (!enabled || _locked || _prompting || _leftAt != null) return;
+    final after = _settings!.after.duration;
+    if (after == Duration.zero) {
       _setLocked(true);
       return;
     }
-    _leftAt ??= now();
+    _leftAt = now();
+    _leftElapsed = elapsed();
+    // Locks when the time is up, away or not: the windows still on screen
+    // hide then, not when the main one comes back.
+    _away = _timer(after, () {
+      _away = null;
+      if (_isAway && _awayLongEnough()) _setLocked(true);
+    });
   }
 
-  /// The app is back in front: locked when it was away long enough.
-  void back() {
+  void _comeBack() {
+    final long = _awayLongEnough();
+    _cancelAway();
+    if (!enabled || _locked || _prompting || !long) return;
+    _setLocked(true);
+  }
+
+  /// Away for [LockSettings.after] by either clock: the time of day counts
+  /// a device's sleep, the other can't be moved back.
+  bool _awayLongEnough() {
     final at = _leftAt;
+    final from = _leftElapsed;
+    final s = _settings;
+    if (at == null || from == null || s == null) return false;
+    final after = s.after.duration;
+    return now().difference(at) >= after || elapsed() - from >= after;
+  }
+
+  void _cancelAway() {
+    _away?.cancel();
+    _away = null;
     _leftAt = null;
-    if (!enabled || _locked || _prompting || at == null) return;
-    if (now().difference(at) >= _settings!.after.duration) _setLocked(true);
+    _leftElapsed = null;
   }
 
   /// Locks now (from the keyboard or the menu).
@@ -305,28 +504,38 @@ class AppLock extends ChangeNotifier {
     if (enabled) _setLocked(true);
   }
 
+  /// Checks [pin]. The try is counted in the keychain, with the wait that
+  /// follows if it is wrong, before the PIN is checked: closing the app
+  /// while it checks doesn't make a free try. When it can't be counted,
+  /// nothing is tried ([PinNotKept]).
   Future<PinResult> tryPin(String pin) async {
     final secret = _secret;
     final wait = waitLeft;
     if (wait > Duration.zero) return PinWaiting(wait);
     if (secret == null) return const PinWrong(Duration.zero);
+    final failures = secret.failures + 1;
+    final next = lockWait(failures);
+    final boot = next > Duration.zero ? await _boot() : null;
+    final counted = LockSecret(
+      pin: secret.pin,
+      failures: failures,
+      wait: next,
+      boot: boot?.id,
+      bootUntil: boot == null ? null : boot.since + next,
+    );
+    if (!await _keep(counted)) return const PinNotKept();
     final right = await hasher
         .verify(pin, secret.pin)
         .catchError((Object _) => false);
     if (right) {
+      // Should this fail, the next start counts one more wrong try.
       await _keep(LockSecret(pin: secret.pin));
+      _notKept = false;
+      _waitEnds = null;
       _setLocked(false);
       return const PinRight();
     }
-    final failures = secret.failures + 1;
-    final next = lockWait(failures);
-    await _keep(
-      LockSecret(
-        pin: secret.pin,
-        failures: failures,
-        waitUntil: next == Duration.zero ? null : now().add(next),
-      ),
-    );
+    _startWait(next);
     notifyListeners();
     return PinWrong(next);
   }
@@ -342,24 +551,37 @@ class AppLock extends ChangeNotifier {
       ok = false;
     } finally {
       _prompting = false;
-      _promptEnded = now();
-      _leftAt = null;
+      _promptEnded = elapsed();
+      _cancelAway();
     }
     if (!ok) return false;
     if (_secret case final s? when s.failures > 0) {
       await _keep(LockSecret(pin: s.pin));
     }
+    _notKept = false;
+    _waitEnds = null;
     if (_locked) _setLocked(false);
     return true;
   }
 
-  Future<void> _keep(LockSecret secret) async {
-    _secret = secret;
+  /// Keeps [secret] in the keychain; false, and [triesNotKept], when it
+  /// can't.
+  Future<bool> _keep(LockSecret secret) async {
     try {
       await store.saveSecret(secret.encode());
     } on Object {
-      // Kept for this run; the wait still holds until the app closes.
+      if (!_notKept) {
+        _notKept = true;
+        notifyListeners();
+      }
+      return false;
     }
+    _secret = secret;
+    if (_notKept) {
+      _notKept = false;
+      notifyListeners();
+    }
+    return true;
   }
 
   /// Turns the lock on with [pin]. Throws when the keychain can't keep it.
@@ -371,7 +593,10 @@ class AppLock extends ChangeNotifier {
     _secret = secret;
     _settings = settings;
     _unreadable = false;
-    _leftAt = null;
+    _missing = false;
+    _notKept = false;
+    _waitEnds = null;
+    _cancelAway();
     onSettings?.call();
     notifyListeners();
   }
@@ -383,6 +608,9 @@ class AppLock extends ChangeNotifier {
     await store.saveSecret(secret.encode());
     _secret = secret;
     _unreadable = false;
+    _missing = false;
+    _notKept = false;
+    _waitEnds = null;
     notifyListeners();
   }
 
@@ -405,7 +633,10 @@ class AppLock extends ChangeNotifier {
     _settings = null;
     _secret = null;
     _unreadable = false;
-    _leftAt = null;
+    _missing = false;
+    _notKept = false;
+    _waitEnds = null;
+    _cancelAway();
     _setLocked(false);
     onSettings?.call();
     notifyListeners();

@@ -26,7 +26,7 @@ import 'lock/app_lock.dart';
 import 'lock/lock_platform.dart';
 import 'lock/lock_screen.dart';
 import 'notify/android_background.dart';
-import 'notify/notifier.dart' show lockedNoticeTitle;
+import 'notify/notifier.dart' show lockedNoticeTitle, notifier;
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
@@ -109,6 +109,7 @@ Future<void> _start(String dir) async {
       onReply: (m) async {
         if (await m.find(source) case final row?) replies.add(row);
       },
+      windows: _readerWindows,
     ).ignore();
   }
   runApp(
@@ -129,37 +130,55 @@ Future<void> _start(String dir) async {
   WidgetsBinding.instance.addPostFrameCallback((_) => Updates.launched());
 }
 
+/// The reader windows, for the app lock (`reader_window.dart`).
+ReaderWindows? _readerWindows;
+
 /// The app lock, as left: settings next to the database, its PIN in the
-/// keychain (`lock/`). Notices go blank while it is on; reader windows
-/// hide when it locks.
+/// keychain (`lock/`). Notices go blank while it is on, and those already
+/// shown go when it is turned on or closes; reader windows hide when it
+/// locks and come back when it opens.
 Future<AppLock> _loadLock(String dir) async {
   final lock = AppLock(
     store: FileLockStore(dir),
     hasher: const EnginePinHasher(),
     device: SystemDeviceUnlock(),
+    bootClock: systemBootClock,
   );
-  try {
-    await lock.load();
-  } catch (_) {
-    // The file can't be read: as if the lock were off.
-  }
+  // Never throws: a settings file that is there but can't be read starts
+  // locked (`AppLock.load`).
+  await lock.load();
+  var wasOn = lock.enabled;
   void follow() {
     lockedNoticeTitle = lock.settings?.notice;
     LockPlatform.changed(on: lock.enabled).ignore();
+    // Just turned on: what was shown before names senders.
+    if (lock.enabled && !wasOn) notifier.hideShown().ignore();
+    wasOn = lock.enabled;
   }
 
   follow();
   lock.onSettings = follow;
-  if (canOpenWindows) {
-    lock.onLocked = () async {
-      try {
-        final self = await WindowController.fromCurrentEngine();
-        for (final w in await WindowController.getAll()) {
-          if (w.windowId != self.windowId) await w.hide();
-        }
-      } catch (_) {}
-    };
-  }
+  final windows = canOpenWindows
+      ? _readerWindows = ReaderWindows(
+          isLocked: () => lock.locked,
+          show: (id) => WindowController.fromWindowId(id).show(),
+          hide: (id) => WindowController.fromWindowId(id).hide(),
+          all: () async {
+            final self = await WindowController.fromCurrentEngine();
+            return [
+              for (final w in await WindowController.getAll())
+                if (w.windowId != self.windowId) w.windowId,
+            ];
+          },
+          onFront: lock.windowInFront,
+        )
+      : null;
+  lock.onLocked = () {
+    windows?.locked().ignore();
+    LockPlatform.engaged().ignore();
+    notifier.hideShown().ignore();
+  };
+  lock.onUnlocked = () => windows?.unlocked().ignore();
   return lock;
 }
 
@@ -294,6 +313,14 @@ Future<void> _readerWindow(String argument) async {
   final source = EngineMailSource();
   final row = await WindowMessage.decode(argument)?.find(source);
   final self = await WindowController.fromCurrentEngine();
+  final id = self.windowId;
+  // In front or not: with the inbox's window hidden, this one in front
+  // keeps the app lock from counting the app as away.
+  AppLifecycleListener(
+    onResume: () => InboxWindow.front(id, true).ignore(),
+    onInactive: () => InboxWindow.front(id, false).ignore(),
+    onHide: () => InboxWindow.front(id, false).ignore(),
+  );
   runApp(
     PiumaApp(
       reportSource: source,
@@ -303,12 +330,18 @@ Future<void> _readerWindow(String argument) async {
         row: row,
         onChanged: InboxWindow.changed,
         onReply: InboxWindow.reply,
-        onDone: () => self.hide(),
+        onDone: () {
+          InboxWindow.done(id).ignore();
+          self.hide().ignore();
+        },
       ),
     ),
   );
-  // Shown once drawn, so it never flashes empty.
-  WidgetsBinding.instance.addPostFrameCallback((_) => self.show());
+  // Shown once drawn, so it never flashes empty, and only by the inbox's
+  // window, which keeps it hidden while the app is locked.
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => InboxWindow.show(id).ignore(),
+  );
 }
 
 Appearance _loadAppearance() {

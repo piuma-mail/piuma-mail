@@ -20,6 +20,15 @@ class FakeNotifier implements Notifier {
   @override
   Future<void> show(SystemNotice notice) async => shown.add(notice);
 
+  /// What [hideShown] took away.
+  final hidden = <SystemNotice>[];
+
+  @override
+  Future<void> hideShown() async {
+    hidden.addAll(shown);
+    shown.clear();
+  }
+
   void click(SystemNotice notice) => _onOpen?.call(notice.payload);
 
   /// Presses one of the notice's buttons, with [text] typed for Reply.

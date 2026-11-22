@@ -7871,4 +7871,12 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get lockPinUnreadable =>
       'Le trousseau du système n’a pas rendu son code PIN à Piuma. Déverrouillez avec cet appareil, ou réessayez une fois le trousseau ouvert.';
+
+  @override
+  String get lockPinMissing =>
+      'Le verrouillage de Piuma est activé, mais le trousseau du système n’a pas son code PIN. Déverrouillez avec cet appareil ; sans lui, seule la suppression des données de Piuma sur l’appareil le rouvre.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma n’a pas pu noter cet essai dans le trousseau du système, il ne peut donc pas vérifier le code PIN pour l’instant. Réessayez dans un instant.';
 }

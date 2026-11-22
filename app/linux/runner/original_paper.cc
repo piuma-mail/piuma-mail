@@ -9,6 +9,8 @@ struct Papers {
   FlView* view;
   // Paper id from Dart -> Paper*.
   GHashTable* papers;
+  // The app lock covers the window: every paper stays hidden.
+  bool covered;
 };
 
 // One original: a clip the size of what shows, holding the web view at
@@ -276,8 +278,8 @@ static void place_paper(Paper* paper, FlValue* args) {
   FlValue* visible = fl_value_lookup_string(args, "visible");
   int cw = static_cast<int>(number(args, "clipWidth"));
   int ch = static_cast<int>(number(args, "clipHeight"));
-  if (visible == nullptr || !fl_value_get_bool(visible) || cw <= 0 ||
-      ch <= 0) {
+  if (paper->owner->covered || visible == nullptr ||
+      !fl_value_get_bool(visible) || cw <= 0 || ch <= 0) {
     // Keys go back to the app, or a dialog over the paper can't hear Esc.
     if (gtk_widget_has_focus(paper->web)) {
       gtk_widget_grab_focus(GTK_WIDGET(paper->owner->view));
@@ -299,6 +301,28 @@ static void place_paper(Paper* paper, FlValue* args) {
   gtk_widget_queue_resize(paper->clip);
 }
 
+// cover {covered}: the app lock closed or opened. Every paper hides now
+// and stays hidden, whatever is placed, until it opens; the app then
+// places each again.
+static void cover_papers(Papers* papers, FlValue* args) {
+  FlValue* covered = fl_value_lookup_string(args, "covered");
+  papers->covered = covered != nullptr &&
+                    fl_value_get_type(covered) == FL_VALUE_TYPE_BOOL &&
+                    fl_value_get_bool(covered);
+  if (!papers->covered) return;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, papers->papers);
+  while (g_hash_table_iter_next(&iter, nullptr, &value)) {
+    Paper* paper = static_cast<Paper*>(value);
+    if (paper->clip == nullptr) continue;
+    if (paper->web != nullptr && gtk_widget_has_focus(paper->web)) {
+      gtk_widget_grab_focus(GTK_WIDGET(papers->view));
+    }
+    gtk_widget_hide(paper->clip);
+  }
+}
+
 static void on_method_call(FlMethodChannel* channel, FlMethodCall* call,
                            gpointer data) {
   Papers* papers = static_cast<Papers*>(data);
@@ -309,7 +333,9 @@ static void on_method_call(FlMethodChannel* channel, FlMethodCall* call,
                                  nullptr);
     return;
   }
-  if (g_strcmp0(method, "open") == 0) {
+  if (g_strcmp0(method, "cover") == 0) {
+    cover_papers(papers, args);
+  } else if (g_strcmp0(method, "open") == 0) {
     open_paper(papers, args);
   } else if (Paper* paper = lookup(papers, args)) {
     if (g_strcmp0(method, "place") == 0) {

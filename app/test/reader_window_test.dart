@@ -223,4 +223,67 @@ void main() {
     );
     debugDefaultTargetPlatformOverride = null;
   }, tags: ['golden']);
+
+  group('with the app lock', () {
+    late bool locked;
+    late List<String> calls;
+    late Map<String, bool> front;
+    late ReaderWindows windows;
+
+    setUp(() {
+      locked = false;
+      calls = [];
+      front = {};
+      windows = ReaderWindows(
+        isLocked: () => locked,
+        show: (id) async => calls.add('show $id'),
+        hide: (id) async => calls.add('hide $id'),
+        // One still starting, never shown yet.
+        all: () async => ['a', 'b', 'starting'],
+        onFront: (id, f) => front[id] = f,
+      );
+    });
+
+    test('a window shows only while unlocked, and comes back after', () async {
+      expect(await windows.mayShow('a'), isTrue);
+      locked = true;
+      // Drawn after the lock closed: kept hidden.
+      expect(await windows.mayShow('b'), isFalse);
+      expect(calls, ['show a']);
+      locked = false;
+      await windows.unlocked();
+      expect(calls, ['show a', 'show b']);
+    });
+
+    test('locking hides every window at once, the shown ones first', () async {
+      await windows.mayShow('a');
+      await windows.mayShow('b');
+      windows.inFront('a', true);
+      expect(front['a'], isTrue);
+      calls.clear();
+      locked = true;
+      await windows.locked();
+      expect(calls.take(2).toSet(), {'hide a', 'hide b'});
+      expect(calls, contains('hide starting'));
+      expect(front['a'], isFalse);
+      // In front while locked doesn't count as the app in use.
+      windows.inFront('a', true);
+      expect(front['a'], isFalse);
+      calls.clear();
+      locked = false;
+      await windows.unlocked();
+      expect(calls.toSet(), {'show a', 'show b'});
+    });
+
+    test('a window closed with Done stays closed after unlocking', () async {
+      await windows.mayShow('a');
+      windows.done('a');
+      locked = true;
+      await windows.locked();
+      calls.clear();
+      locked = false;
+      await windows.unlocked();
+      expect(calls, isEmpty);
+    });
+  });
 }

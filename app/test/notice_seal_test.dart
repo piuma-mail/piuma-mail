@@ -84,4 +84,35 @@ void main() {
     );
     expect(acted, [('1\nINBOX\n42', 'archive')]);
   });
+
+  test(
+    'while the app is locked, a button opens the app instead of acting',
+    () async {
+      final opened = <String>[];
+      final acted = <(String, String)>[];
+      final buttons = NoticeButtons(
+        reply: 'Reply',
+        archive: 'Archive',
+        snooze: 'Snooze',
+        delete: 'Delete',
+        markRead: 'Mark read',
+        send: 'Send',
+        replyHint: 'Reply',
+        onAction: (payload, action, _) => acted.add((payload, action)),
+      );
+      const seal = _Seal();
+      final sealed = await seal.seal('1\nINBOX\n42');
+      for (final action in noticeActions) {
+        await handleNoticeResponse(
+          tap(sealed, action: action),
+          onOpen: opened.add,
+          buttons: buttons,
+          seal: seal,
+          locked: () => true,
+        );
+      }
+      expect(acted, isEmpty);
+      expect(opened, List.filled(noticeActions.length, '1\nINBOX\n42'));
+    },
+  );
 }

@@ -7863,4 +7863,12 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get lockPinUnreadable =>
       'Der Schlüsselbund des Systems hat Piuma seine PIN nicht zurückgegeben. Entsperre mit diesem Gerät oder versuch es wieder, wenn der Schlüsselbund offen ist.';
+
+  @override
+  String get lockPinMissing =>
+      'Die Sperre von Piuma ist an, aber im Schlüsselbund des Systems ist keine PIN dafür. Entsperre mit diesem Gerät; ohne es öffnet nur das Entfernen der Daten von Piuma auf dem Gerät es wieder.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma konnte diesen Versuch nicht im Schlüsselbund des Systems festhalten und kann die PIN deshalb gerade nicht prüfen. Versuch es gleich noch einmal.';
 }

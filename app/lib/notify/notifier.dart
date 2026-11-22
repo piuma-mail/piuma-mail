@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
+import '../lock/app_lock.dart';
 import 'notice_seal.dart';
 import 'unread_badge.dart';
 
@@ -91,19 +92,24 @@ const noticeActions = ['reply', 'archive', 'snooze', 'delete', 'read'];
 
 /// Acts on a clicked notice or one of its buttons, once its payload's
 /// seal checks ([NoticeSeal]): a payload made up by another app opens
-/// nothing.
+/// nothing. While the app is locked ([locked], [AppLock.lockedNow]) a
+/// button does nothing to the mail: the notice opens the app instead, at
+/// its lock screen. A notice shown before the lock was turned on can
+/// still have buttons.
 Future<void> handleNoticeResponse(
   NotificationResponse r, {
   required void Function(String payload) onOpen,
   NoticeButtons? buttons,
   NoticeSeal? seal,
+  bool Function()? locked,
 }) async {
   final read = readNoticeResponse(r);
   if (read == null) return;
   final payload = await (seal ?? noticeSeal).open(read.payload);
   if (payload == null) return;
   final action = read.action;
-  if (action != null && buttons != null) {
+  final isLocked = (locked ?? () => AppLock.lockedNow)();
+  if (action != null && buttons != null && !isLocked) {
     buttons.onAction(payload, action, read.text);
   } else {
     onOpen(payload);
@@ -143,6 +149,11 @@ abstract class Notifier {
     NoticeButtons? buttons,
   });
   Future<void> show(SystemNotice notice);
+
+  /// The lock was turned on or closed: the notices already shown, which
+  /// may name a sender and have buttons, go. Android's own are blanked in
+  /// place instead (`LockPlatform.engaged`, `Background.blankNotices`).
+  Future<void> hideShown();
 }
 
 Notifier notifier = SystemNotifier();
@@ -173,6 +184,9 @@ String? _windowsIcon() {
 class SystemNotifier implements Notifier {
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
+
+  /// The ids shown by this run, for [hideShown].
+  final _shown = <int>{};
   String _channel = '';
   NoticeButtons? _buttons;
 
@@ -252,9 +266,32 @@ class SystemNotifier implements Notifier {
   }
 
   @override
+  Future<void> hideShown() async {
+    // Android blanks its notices natively, the plugin's among them.
+    if (!_ready || Platform.isAndroid) return;
+    final ids = {..._shown};
+    _shown.clear();
+    try {
+      // Also what an earlier run left in the notification centre, where
+      // the system can list it.
+      for (final a in await _plugin.getActiveNotifications()) {
+        if (a.id case final id?) ids.add(id);
+      }
+    } catch (_) {
+      // Not listed here: this run's own go.
+    }
+    for (final id in ids) {
+      try {
+        await _plugin.cancel(id: id);
+      } catch (_) {}
+    }
+  }
+
+  @override
   Future<void> show(SystemNotice notice) async {
     if (!_ready) return;
     final n = privateNotice(notice);
+    _shown.add(n.id);
     // Where there is no subtitle line, the subject leads the body. Windows
     // puts its extra line under the body, so there the subject is the body
     // and the preview goes under it.

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -28,6 +29,12 @@ class MainActivity : FlutterFragmentActivity() {
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
+
+    /**
+     * Links, shares and email files, until [Shared] is there: the engine
+     * attaches after `onCreate` returns in a FlutterFragmentActivity.
+     */
+    private val arrivals = Handoff<Intent>()
     override fun onCreate(savedInstanceState: Bundle?) {
         // The engine reads system settings, such as the DNS servers, through
         // the app context, so it needs it before Flutter starts.
@@ -40,8 +47,9 @@ class MainActivity : FlutterFragmentActivity() {
         // the recent apps' thumbnails and screenshots.
         secure(AppLockFile.on(applicationContext))
         // A link or a share that started the app; not again when Android
-        // brings the activity back after it was gone.
-        if (savedInstanceState == null) shared?.handle(intent)
+        // brings the activity back after it was gone. Held until the engine
+        // is configured, which may be after this returns.
+        if (savedInstanceState == null) arrivals.offer(intent)
     }
 
     private fun secure(on: Boolean) {
@@ -56,7 +64,7 @@ class MainActivity : FlutterFragmentActivity() {
         super.onNewIntent(intent)
         Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
         oauthRedirect(intent)
-        shared?.handle(intent)
+        arrivals.offer(intent)
     }
 
     /**
@@ -109,7 +117,9 @@ class MainActivity : FlutterFragmentActivity() {
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
         clipboard = Clipboard(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
-        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
+        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger).also { s ->
+            arrivals.attach { s.handle(it) }
+        }
         val context = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/background")
             .setMethodCallHandler { call, result ->
@@ -168,11 +178,28 @@ class MainActivity : FlutterFragmentActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "changed" -> {
-                        secure(call.argument<Boolean>("on") == true)
+                        val on = call.argument<Boolean>("on") == true
+                        secure(on)
+                        // Turned on: the notices already shown lose their
+                        // sender, subject and buttons.
+                        if (on) Background.blankNotices(context)
                         // The watch shows the mail again, or stops.
                         WatchLink.publish(context)
                         result.success(null)
                     }
+                    // The lock closed: the same, for notices shown since.
+                    "locked" -> {
+                        Background.blankNotices(context)
+                        result.success(null)
+                    }
+                    // The boot count and the time since boot, sleep
+                    // included: a clock the wrong-PIN wait can trust.
+                    "clock" -> result.success(
+                        listOf(
+                            Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1),
+                            SystemClock.elapsedRealtime(),
+                        )
+                    )
                     else -> result.notImplemented()
                 }
             }
@@ -199,6 +226,7 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        arrivals.detach()
         shake?.stop()
         shake = null
         shared?.stop()

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,12 +11,16 @@ void main() {
   late MemoryLockStore store;
   late FakeDevice device;
   late FakeClock clock;
+  late FakeTimers timers;
 
-  AppLock make() => AppLock(
+  AppLock make({FakeBoot? boot}) => AppLock(
     store: store,
     hasher: FakeHasher(),
     device: device,
     now: clock.call,
+    elapsed: clock.elapsed,
+    bootClock: boot?.call,
+    timer: timers.call,
   );
 
   Future<AppLock> on({LockAfter after = LockAfter.oneMinute}) async {
@@ -29,6 +34,7 @@ void main() {
     store = MemoryLockStore();
     device = FakeDevice();
     clock = FakeClock(DateTime(2026, 11, 22, 9));
+    timers = FakeTimers();
   });
 
   test('off by default: nothing kept, never locked', () async {
@@ -248,7 +254,7 @@ void main() {
     );
     expect(LockSettings.parse(jsonEncode(s.toJson())), s);
     expect(LockSettings.parse('not json'), const LockSettings());
-    expect(LockSettings.parse(''), isNull);
+    expect(LockSettings.parse(''), const LockSettings());
     expect(LockAfter.fromSeconds(300), LockAfter.fiveMinutes);
     expect(LockAfter.fromSeconds(7), LockAfter.oneMinute);
   });
@@ -284,4 +290,215 @@ void main() {
     expect(changes, 1);
     lock.dispose();
   });
+
+  group('away', () {
+    test('locks when the time is up, without coming back', () async {
+      final lock = await on();
+      var told = 0;
+      lock.onLocked = () => told++;
+      lock.left();
+      expect(timers.pending, hasLength(1));
+      clock.advance(const Duration(minutes: 1));
+      timers.fireUpTo(const Duration(minutes: 1));
+      expect(lock.locked, isTrue);
+      expect(told, 1);
+      lock.dispose();
+    });
+
+    test('coming back in time stops the timer', () async {
+      final lock = await on();
+      lock.left();
+      clock.advance(const Duration(seconds: 20));
+      lock.back();
+      expect(timers.pending, isEmpty);
+      expect(lock.locked, isFalse);
+      lock.dispose();
+    });
+
+    test('a reader window in front keeps the app in use; once none is, '
+        'the time runs and every window locks', () async {
+      final lock = await on();
+      lock.windowInFront('reader-1', true);
+      // The main window minimized while reading in another one.
+      lock.left();
+      expect(timers.pending, isEmpty);
+      clock.advance(const Duration(minutes: 3));
+      expect(lock.locked, isFalse);
+      // Another app in front: the reader window stays on screen, unused.
+      lock.windowInFront('reader-1', false);
+      expect(timers.pending, hasLength(1));
+      clock.advance(const Duration(minutes: 1));
+      timers.fireUpTo(const Duration(minutes: 1));
+      expect(lock.locked, isTrue);
+      lock.dispose();
+    });
+
+    test('"At once" locks when the last window in front goes', () async {
+      final lock = await on(after: LockAfter.immediately);
+      lock.windowInFront('reader-1', true);
+      lock.left();
+      expect(lock.locked, isFalse);
+      lock.windowInFront('reader-1', false);
+      expect(lock.locked, isTrue);
+      lock.dispose();
+    });
+
+    test('setting the clock back does not keep it open', () async {
+      final lock = await on();
+      lock.left();
+      clock.advance(const Duration(minutes: 2));
+      clock.jump(const Duration(hours: -3));
+      lock.back();
+      expect(lock.locked, isTrue);
+      lock.dispose();
+    });
+  });
+
+  group('the wrong-PIN wait', () {
+    Future<AppLock> fiveWrong({FakeBoot? boot}) async {
+      await on();
+      final lock = make(boot: boot);
+      await lock.load();
+      for (var i = 0; i < 5; i++) {
+        await lock.tryPin('0000');
+      }
+      expect(lock.waitLeft, const Duration(seconds: 30));
+      return lock;
+    }
+
+    test('moving the clock forward does not end it', () async {
+      final lock = await fiveWrong();
+      clock.jump(const Duration(days: 1));
+      expect(lock.waitLeft, const Duration(seconds: 30));
+      expect(await lock.tryPin('2468'), isA<PinWaiting>());
+      clock.advance(const Duration(seconds: 30));
+      expect(await lock.tryPin('2468'), isA<PinRight>());
+      lock.dispose();
+    });
+
+    test(
+      'after a restart it starts over where there is no boot clock',
+      () async {
+        final lock = await fiveWrong();
+        clock.advance(const Duration(seconds: 20));
+        lock.dispose();
+        clock.jump(const Duration(days: 1));
+        final again = make();
+        await again.load();
+        expect(again.waitLeft, const Duration(seconds: 30));
+        again.dispose();
+      },
+    );
+
+    test(
+      'within the same boot, the time closed counts by the boot clock',
+      () async {
+        final boot = FakeBoot();
+        final lock = await fiveWrong(boot: boot);
+        lock.dispose();
+        boot.since += const Duration(seconds: 20);
+        clock.jump(const Duration(days: 1));
+        final again = make(boot: boot);
+        await again.load();
+        expect(again.waitLeft, const Duration(seconds: 10));
+        again.dispose();
+        // After the device restarts, all of it.
+        boot.id = 'boot-2';
+        boot.since = const Duration(minutes: 1);
+        final rebooted = make(boot: boot);
+        await rebooted.load();
+        expect(rebooted.waitLeft, const Duration(seconds: 30));
+        rebooted.dispose();
+      },
+    );
+
+    test('the boot clock catches up the time the device slept', () async {
+      final boot = FakeBoot();
+      final lock = await fiveWrong(boot: boot);
+      // Asleep: the process clock stood still, the boot clock didn't.
+      boot.since += const Duration(seconds: 25);
+      lock.back();
+      await pumpEventQueue();
+      expect(lock.waitLeft, const Duration(seconds: 5));
+      // Never longer by it.
+      boot.since -= const Duration(minutes: 5);
+      await lock.refreshWait();
+      expect(lock.waitLeft, const Duration(seconds: 5));
+      lock.dispose();
+    });
+
+    test('a try that cannot be counted is not tried', () async {
+      final lock = await on();
+      lock.lockNow();
+      store.keychainFull = true;
+      for (var i = 0; i < 20; i++) {
+        expect(await lock.tryPin('0000'), isA<PinNotKept>());
+      }
+      expect(lock.triesNotKept, isTrue);
+      expect(await lock.tryPin('2468'), isA<PinNotKept>());
+      expect(lock.locked, isTrue);
+      expect(LockSecret.parse(store.secret)!.failures, 0);
+      store.keychainFull = false;
+      expect(await lock.tryPin('0000'), isA<PinWrong>());
+      expect(lock.triesNotKept, isFalse);
+      expect(LockSecret.parse(store.secret)!.failures, 1);
+      lock.dispose();
+    });
+
+    test('a try is counted before the PIN is checked', () async {
+      await on();
+      final hasher = _SlowHasher();
+      final slow = AppLock(
+        store: store,
+        hasher: hasher,
+        device: device,
+        now: clock.call,
+        elapsed: clock.elapsed,
+        timer: timers.call,
+      );
+      await slow.load();
+      final trying = slow.tryPin('0000');
+      await pumpEventQueue();
+      // Closing the app while Argon2 runs doesn't make a free try.
+      expect(LockSecret.parse(store.secret)!.failures, 1);
+      hasher.done.complete();
+      expect(await trying, isA<PinWrong>());
+      slow.dispose();
+    });
+  });
+
+  group('a damaged settings file', () {
+    test('empty or unreadable, it starts locked', () async {
+      store.secret = const LockSecret(pin: 'hash:2468').encode();
+      store.fileUnreadable = true;
+      final lock = make();
+      await lock.load();
+      expect(lock.enabled, isTrue);
+      expect(lock.locked, isTrue);
+      expect(lock.pinUnreadable, isFalse);
+      expect(await lock.tryPin('2468'), isA<PinRight>());
+      lock.dispose();
+    });
+
+    test('without a PIN in the keychain either, it says so', () async {
+      store.fileUnreadable = true;
+      device.has = false;
+      final lock = make();
+      await lock.load();
+      expect(lock.locked, isTrue);
+      expect(lock.pinMissing, isTrue);
+      expect(lock.pinUnreadable, isTrue);
+      lock.dispose();
+    });
+  });
+}
+
+class _SlowHasher extends FakeHasher {
+  final done = Completer<void>();
+
+  @override
+  Future<bool> verify(String pin, String hash) async {
+    await done.future;
+    return super.verify(pin, hash);
+  }
 }

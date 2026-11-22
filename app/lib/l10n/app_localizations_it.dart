@@ -7871,4 +7871,12 @@ class AppLocalizationsIt extends AppLocalizations {
   @override
   String get lockPinUnreadable =>
       'Il portachiavi di sistema non ha restituito il PIN a Piuma. Sblocca con questo dispositivo, o riprova quando il portachiavi è aperto.';
+
+  @override
+  String get lockPinMissing =>
+      'Il blocco di Piuma è attivo, ma il portachiavi di sistema non ha il suo PIN. Sblocca con questo dispositivo; senza, solo eliminare i dati di Piuma dal dispositivo lo riapre.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma non è riuscito a registrare questo tentativo nel portachiavi di sistema, quindi ora non può controllare il PIN. Riprova tra un momento.';
 }

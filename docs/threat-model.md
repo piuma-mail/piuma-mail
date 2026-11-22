@@ -133,23 +133,50 @@ Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`,
   salt) in the system keychain, or the Android Keystore through the app, never in the database or a
   file. A kept hash weaker than these parameters is refused, so editing it down doesn't speed up
   guessing. Wrong PINs wait longer and longer (free for 5, then 30 s, 1, 5, 15 minutes, then an hour
-  each); the count is kept with the hash, so restarting the app doesn't reset it. Device unlock
-  (BiometricPrompt with the screen lock as fallback, Windows Hello, Touch ID/Face ID with the device
-  password) clears it. There is no reset: forgetting the PIN means the device unlock or removing
-  Piuma's data.
+  each); the count is kept with the hash, so restarting the app doesn't reset it. Each try is counted
+  in the keychain before the PIN is checked, so closing the app mid-check doesn't give a free try,
+  and when the keychain can't record it the PIN isn't checked at all until it can (the lock screen
+  says so). Device unlock (BiometricPrompt with the screen lock as fallback, Windows Hello, Touch
+  ID/Face ID with the device password) clears it. There is no reset: forgetting the PIN means the
+  device unlock or removing Piuma's data.
+- **The wait's clock:** never the time of day. While the app runs, the wait counts on a monotonic
+  clock, so setting the device's clock forward doesn't end it. What is left is kept with the count;
+  on Android (`elapsedRealtime` with the boot count) and Linux (`CLOCK_BOOTTIME` with the kernel's
+  boot id) the end on the boot clock is kept too, so time spent closed or asleep counts within the
+  same boot. After a reboot, and on Windows, macOS and iOS after a restart of the app, the wait left
+  starts over: it is never shortened.
+- **Locking while away:** the app counts as away when its main window is hidden or paused and no
+  reader window is in front. A timer locks it once away for the chosen time, whether or not a window
+  comes back, and the time of day and the monotonic clock both count, so setting the clock back
+  doesn't keep it open. Locking hides every desktop reader window at once; a reader window that
+  finishes starting while locked asks the main window to show it and stays hidden until unlocked;
+  the windows the lock hid come back when it opens. On Linux the original-layout web view is a GTK
+  view the runner lays over the Flutter view, so it is hidden in the runner itself the moment the
+  lock closes and kept hidden until it opens. Elsewhere the web views are drawn by Flutter (Windows'
+  WebView2 as a texture, the platform views of macOS, iOS and Android only where Flutter paints
+  them), so the lock screen covering the app hides them.
 - **Settings file:** `app-lock.json` next to the database says the lock is on, how long after leaving
   it locks and the notice text. It is not secret; deleting it turns the lock off, which needs the same
-  access to the device's files that would read the database anyway. If the keychain can't give the
-  hash back, the app stays locked and only the device unlock opens it.
+  access to the device's files that would read the database anyway. A file that is there but empty,
+  damaged or unreadable still means on: the app starts locked with the default settings. If the
+  keychain can't give the hash back, the app stays locked and only the device unlock opens it; if
+  the keychain answers without one, the lock screen says so (the device unlock, or removing Piuma's
+  data, is the way back in).
 - **Notifications and the watch:** while the lock is on, every notice (the app's and Android's
   background service's) says only "New message", without sender, subject, preview or buttons (the
-  buttons would act on mail without unlocking). Wear OS mirrors those notices, so they are blank
-  there too, and the phone sends the watch app an empty, locked summary and refuses its requests to
-  open or act on a message until the lock is turned off. Sign-in problem notices from Android's
-  background service still name the account, not any mail.
-- **Not covered:** desktop reader windows are hidden when the lock closes but their window
-  thumbnails depend on the system; Windows and macOS window previews are not blanked; the lock
-  guards the app's screens only while it runs, not the data at rest.
+  buttons would act on mail without unlocking). Notices shown before the lock was turned on are
+  blanked in place on Android (silently, still opening the app) and removed elsewhere, when it is
+  turned on and again each time it closes. A button pressed on an older notice does nothing while
+  locked: on Android while the lock is on at all, the receiver refuses and blanks the notice; in the
+  app the click opens the app at the lock screen instead. Wear OS mirrors those notices, so they are
+  blank there too, and the phone sends the watch app an empty, locked summary and refuses its
+  requests to open or act on a message until the lock is turned off; when that summary arrives the
+  watch closes an email open on it and forgets the words of those it showed. Sign-in problem notices
+  from Android's background service still name the account, not any mail.
+- **Not covered:** window thumbnails of the desktop systems depend on the system (Windows and
+  macOS window previews are not blanked); notices an earlier run left on a desktop system that
+  can't list them stay until dismissed (their buttons don't act while locked); the lock guards the
+  app's screens only while it runs, not the data at rest.
 
 ### Self-hosted companion (planned)
 

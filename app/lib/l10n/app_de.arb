@@ -1889,5 +1889,7 @@
   "lockWait": "Zu viele falsche Versuche. Versuch es in {time} wieder.",
   "lockForgot": "PIN vergessen? Nur das Löschen der Daten von Piuma auf diesem Gerät öffnet es wieder; danach fügst du deine Konten neu hinzu.",
   "lockForgotDevice": "PIN vergessen? Entsperre stattdessen mit diesem Gerät. Sonst öffnet es nur das Löschen der Daten von Piuma auf dem Gerät wieder.",
-  "lockPinUnreadable": "Der Schlüsselbund des Systems hat Piuma seine PIN nicht zurückgegeben. Entsperre mit diesem Gerät oder versuch es wieder, wenn der Schlüsselbund offen ist."
+  "lockPinUnreadable": "Der Schlüsselbund des Systems hat Piuma seine PIN nicht zurückgegeben. Entsperre mit diesem Gerät oder versuch es wieder, wenn der Schlüsselbund offen ist.",
+  "lockPinMissing": "Die Sperre von Piuma ist an, aber im Schlüsselbund des Systems ist keine PIN dafür. Entsperre mit diesem Gerät; ohne es öffnet nur das Entfernen der Daten von Piuma auf dem Gerät es wieder.",
+  "lockTriesNotKept": "Piuma konnte diesen Versuch nicht im Schlüsselbund des Systems festhalten und kann die PIN deshalb gerade nicht prüfen. Versuch es gleich noch einmal."
 }

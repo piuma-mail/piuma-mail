@@ -7801,4 +7801,12 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get lockPinUnreadable =>
       'The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open.';
+
+  @override
+  String get lockPinMissing =>
+      'Piuma’s lock is on, but the system keychain has no PIN for it. Unlock with this device; without it, only removing Piuma’s data from the device opens it again.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma couldn’t record this try in the system keychain, so it can’t check the PIN now. Try again in a moment.';
 }

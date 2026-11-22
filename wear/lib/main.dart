@@ -25,10 +25,21 @@ class WatchApp extends StatefulWidget {
 }
 
 class _WatchAppState extends State<WatchApp> with WidgetsBindingObserver {
+  final _navigator = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.link.addListener(_follow);
+  }
+
+  /// The phone locked: an email open here, or a reply or snooze on its
+  /// way, closes, back to the inbox, which says it is locked.
+  void _follow() {
+    if (widget.link.summary?.locked ?? false) {
+      _navigator.currentState?.popUntil((route) => route.isFirst);
+    }
   }
 
   @override
@@ -39,6 +50,7 @@ class _WatchAppState extends State<WatchApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    widget.link.removeListener(_follow);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -49,6 +61,7 @@ class _WatchAppState extends State<WatchApp> with WidgetsBindingObserver {
     return LinkScope(
       link: widget.link,
       child: MaterialApp(
+        navigatorKey: _navigator,
         debugShowCheckedModeBanner: false,
         onGenerateTitle: (context) => AppLocalizations.of(context).appName,
         localizationsDelegates: AppLocalizations.localizationsDelegates,

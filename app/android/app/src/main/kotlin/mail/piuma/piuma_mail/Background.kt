@@ -13,6 +13,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Bundle
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -156,6 +157,9 @@ object Background {
     // Quiet hours: shown in the shade, without a sound.
     private const val QUIET_CHANNEL = "mail_quiet"
     private const val PAYLOAD = "mail.piuma.payload"
+
+    /** Set on a notice shown blank for the app lock. */
+    private const val BLANK = "mail.piuma.blank"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("background", Context.MODE_PRIVATE)
@@ -350,6 +354,7 @@ object Background {
                 .setOnlyAlertOnce(false)
             // "Piuma Mail · Vault", as on the board.
             if (vault != null && locked == null) builder.setSubText(context.getString(R.string.vault_notice_label))
+            if (locked != null) builder.addExtras(Bundle().apply { putBoolean(BLANK, true) })
             try {
                 manager.notify(id, builder.build())
             } catch (e: SecurityException) {
@@ -429,6 +434,55 @@ object Background {
                 // Notifications not allowed: the app says it when opened.
             }
         }
+    }
+
+    /**
+     * The app lock was turned on or closed: every mail notice already shown
+     * (this service's and the Flutter plugin's, on the same channels) is
+     * shown again in place with only "New message", no sender, subject,
+     * preview or buttons, silently. Tapping it still opens the app, at its
+     * lock screen. Sign-in problem notices name an account, not mail, and
+     * stay as they are.
+     */
+    @Synchronized
+    fun blankNotices(context: Context) {
+        if (!AppLockFile.on(context)) return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val text = AppLockFile.notice(context)
+        val active = try {
+            manager.activeNotifications
+        } catch (e: Exception) {
+            return
+        }
+        for (shown in active) {
+            val n = shown.notification
+            if (!isMail(n)) continue
+            val builder = Notification.Builder(context, n.channelId)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setColor(context.getColor(R.color.ic_launcher_background))
+                .setContentTitle(text)
+                .setCategory(n.category)
+                .setContentIntent(n.contentIntent)
+                .setWhen(n.`when`)
+                .setShowWhen(true)
+                .setAutoCancel(true)
+                // Already announced once: no sound or buzz for this.
+                .setOnlyAlertOnce(true)
+                .addExtras(Bundle().apply { putBoolean(BLANK, true) })
+            if (n.number > 0) builder.setNumber(n.number)
+            try {
+                manager.notify(shown.tag, shown.id, builder.build())
+            } catch (e: SecurityException) {
+                // Notifications not allowed any more: nothing is shown.
+            }
+        }
+    }
+
+    /** A notice about mail ([blankNotices]) that isn't blank yet. */
+    private fun isMail(n: Notification): Boolean {
+        if (n.channelId != MAIL_CHANNEL && n.channelId != QUIET_CHANNEL) return false
+        if (n.extras?.getBoolean(BLANK, false) == true) return false
+        return n.category == Notification.CATEGORY_EMAIL || n.category == Notification.CATEGORY_REMINDER
     }
 
     /** The two mail channels, made the first time. */

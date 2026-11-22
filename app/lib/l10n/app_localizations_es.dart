@@ -7848,4 +7848,12 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get lockPinUnreadable =>
       'El llavero del sistema no devolvió el PIN a Piuma. Desbloquea con este dispositivo, o vuelve a probar cuando el llavero esté abierto.';
+
+  @override
+  String get lockPinMissing =>
+      'El bloqueo de Piuma está activado, pero el llavero del sistema no tiene su PIN. Desbloquea con este dispositivo; sin él, solo borrar los datos de Piuma del dispositivo lo vuelve a abrir.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma no pudo anotar este intento en el llavero del sistema, así que ahora no puede comprobar el PIN. Vuelve a probar en un momento.';
 }

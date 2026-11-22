@@ -1889,5 +1889,7 @@
   "lockWait": "Demasiadas tentativas erradas. Tente de novo dentro de {time}.",
   "lockForgot": "Esqueceu o PIN? Só apagar os dados do Piuma deste dispositivo o volta a abrir; depois as contas são adicionadas de novo.",
   "lockForgotDevice": "Esqueceu o PIN? Desbloqueie com este dispositivo. Caso contrário, só apagar os dados do Piuma do dispositivo o volta a abrir.",
-  "lockPinUnreadable": "O porta-chaves do sistema não devolveu o PIN ao Piuma. Desbloqueie com este dispositivo, ou tente de novo quando o porta-chaves estiver aberto."
+  "lockPinUnreadable": "O porta-chaves do sistema não devolveu o PIN ao Piuma. Desbloqueie com este dispositivo, ou tente de novo quando o porta-chaves estiver aberto.",
+  "lockPinMissing": "O bloqueio do Piuma está ativado, mas o porta-chaves do sistema não tem o PIN dele. Desbloqueie com este dispositivo; sem ele, só apagar os dados do Piuma do dispositivo o abre de novo.",
+  "lockTriesNotKept": "O Piuma não conseguiu registar esta tentativa no porta-chaves do sistema, por isso agora não pode verificar o PIN. Tente de novo daqui a pouco."
 }

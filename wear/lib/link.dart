@@ -97,9 +97,14 @@ class PhoneLink extends ChangeNotifier {
         final s = Summary.parse(call.arguments as String?);
         if (s != null) {
           _summary = s;
+          // The app lock on the phone: the words of emails already read
+          // here go too.
+          if (s.locked) _texts.clear();
           notifyListeners();
         }
       case 'text':
+        // Nothing is kept while the phone is locked.
+        if (_summary?.locked ?? false) return;
         try {
           final m =
               jsonDecode(call.arguments as String) as Map<String, dynamic>;

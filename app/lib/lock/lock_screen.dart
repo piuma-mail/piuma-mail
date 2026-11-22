@@ -6,6 +6,7 @@ import '../design/icons.dart';
 import '../design/motion.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
+import '../inbox/original_linux.dart' show coverLinuxPapers;
 import '../l10n/app_localizations.dart';
 import '../widgets/brand.dart';
 import '../widgets/button.dart';
@@ -59,6 +60,7 @@ class _AppLockGateState extends State<AppLockGate> {
       onResume: _back,
     );
     widget.lock.addListener(_changed);
+    _cover();
     if (widget.lock.locked && widget.autoPrompt) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _askDevice());
     }
@@ -81,7 +83,21 @@ class _AppLockGateState extends State<AppLockGate> {
     setState(() => _prompt++);
   }
 
-  void _changed() => setState(() {});
+  bool _wasLocked = false;
+
+  void _changed() {
+    _cover();
+    setState(() {});
+  }
+
+  /// Web views the runner lays over the window (Linux) aren't Flutter's
+  /// to hide: told directly, before the next frame.
+  void _cover() {
+    final locked = widget.lock.locked;
+    if (locked == _wasLocked) return;
+    _wasLocked = locked;
+    coverLinuxPapers(locked).ignore();
+  }
 
   @override
   void didChangeDependencies() {
@@ -199,7 +215,8 @@ class _LockScreenState extends State<LockScreen> {
     setState(() => _busy = true);
     final result = await widget.lock.tryPin(pin);
     if (!mounted) return;
-    _pin.clear();
+    // Not counted, so not tried: the PIN stays typed for another go.
+    if (result is! PinNotKept) _pin.clear();
     setState(() {
       _busy = false;
       _wrong = result is PinWrong;
@@ -217,10 +234,14 @@ class _LockScreenState extends State<LockScreen> {
     final wait = lock.waitLeft;
     final usePin = (_usePin || !lock.deviceUnlock) && !lock.pinUnreadable;
 
-    final String? problem = lock.pinUnreadable
+    final String? problem = lock.pinMissing
+        ? l.lockPinMissing
+        : lock.pinUnreadable
         ? l.lockPinUnreadable
         : wait > Duration.zero
         ? l.lockWait(_clock(wait))
+        : lock.triesNotKept
+        ? l.lockTriesNotKept
         : _wrong
         ? l.lockWrongPin
         : null;
@@ -278,7 +299,9 @@ class _LockScreenState extends State<LockScreen> {
                       problem,
                       textAlign: TextAlign.center,
                       style: PiumaType.small.copyWith(
-                        color: lock.pinUnreadable ? c.muted : c.danger,
+                        color: lock.pinUnreadable && !lock.pinMissing
+                            ? c.muted
+                            : c.danger,
                       ),
                     ),
                   ),

@@ -1889,5 +1889,7 @@
   "lockWait": "Trop d’essais incorrects. Réessayez dans {time}.",
   "lockForgot": "Code PIN oublié ? Seule la suppression des données de Piuma sur cet appareil le rouvre ; vos comptes sont alors ajoutés à nouveau.",
   "lockForgotDevice": "Code PIN oublié ? Déverrouillez plutôt avec cet appareil. Sinon, seule la suppression des données de Piuma sur l’appareil le rouvre.",
-  "lockPinUnreadable": "Le trousseau du système n’a pas rendu son code PIN à Piuma. Déverrouillez avec cet appareil, ou réessayez une fois le trousseau ouvert."
+  "lockPinUnreadable": "Le trousseau du système n’a pas rendu son code PIN à Piuma. Déverrouillez avec cet appareil, ou réessayez une fois le trousseau ouvert.",
+  "lockPinMissing": "Le verrouillage de Piuma est activé, mais le trousseau du système n’a pas son code PIN. Déverrouillez avec cet appareil ; sans lui, seule la suppression des données de Piuma sur l’appareil le rouvre.",
+  "lockTriesNotKept": "Piuma n’a pas pu noter cet essai dans le trousseau du système, il ne peut donc pas vérifier le code PIN pour l’instant. Réessayez dans un instant."
 }

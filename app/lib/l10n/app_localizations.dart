@@ -11439,6 +11439,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open.'**
   String get lockPinUnreadable;
+
+  /// No description provided for @lockPinMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma’s lock is on, but the system keychain has no PIN for it. Unlock with this device; without it, only removing Piuma’s data from the device opens it again.'**
+  String get lockPinMissing;
+
+  /// No description provided for @lockTriesNotKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma couldn’t record this try in the system keychain, so it can’t check the PIN now. Try again in a moment.'**
+  String get lockTriesNotKept;
 }
 
 class _AppLocalizationsDelegate
