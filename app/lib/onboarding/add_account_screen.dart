@@ -76,6 +76,11 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   bool _jmap = false;
   final _jmapServer = TextEditingController();
   FoundSettings? _found;
+
+  /// The address [_found] was looked up for, and the one the servers in
+  /// the manual form were filled for: another address fills them again.
+  String? _foundFor;
+  String? _filledFor;
   MailProvider? _provider;
   bool _notFound = false;
   bool _showPassword = false;
@@ -257,6 +262,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     setState(() {
       _busy = false;
       _found = found;
+      _foundFor = _email.text.trim();
       _notFound = found == null;
       _fillServers(found);
       _oauth = useOAuth ? oauth : null;
@@ -271,6 +277,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   }
 
   void _fillServers(FoundSettings? s) {
+    _filledFor = _email.text.trim();
     _username.text = s?.username ?? _email.text.trim();
     _imapHost.text = s?.imap.host ?? 'imap.$_domain';
     _imapPort.text = '${s?.imap.port ?? 993}';
@@ -319,8 +326,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _step == _Step.provider && _provider!.isPec ? _Step.pec : _Step.email,
   );
 
+  /// The manual form keeps what was typed in it for this address; for
+  /// another one (back, a new address) it starts again from that one.
   void _manual() {
-    if (_imapHost.text.isEmpty) _fillServers(_found);
+    final address = _email.text.trim();
+    if (_foundFor != address) _found = null;
+    if (_imapHost.text.isEmpty || _filledFor != address) _fillServers(_found);
     _go(_Step.manual);
   }
 
@@ -328,6 +339,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   /// an app password or an organization that still takes passwords. The
   /// provider's servers when the lookup found them, else Microsoft's.
   void _manualWithPassword() {
+    if (_foundFor != _email.text.trim()) _found = null;
     _fillServers(_found);
     if (_found == null && _oauth == 'microsoft') {
       _imapHost.text = 'outlook.office365.com';

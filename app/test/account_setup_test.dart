@@ -412,6 +412,51 @@ void main() {
     expect(source.host, 'outlook.office365.com');
   });
 
+  testWidgets('another address after going back fills the manual form '
+      'for it, not Outlook (#107)', (tester) async {
+    await _pump(tester, _Scripted());
+    await tester.tap(find.text('Outlook'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_field('Email address'), 'anna@outlook.com');
+    await tester.pump();
+    await _tap(tester, 'Use an app password instead');
+    expect(
+      find.widgetWithText(TextField, 'outlook.office365.com'),
+      findsOneWidget,
+    );
+
+    await _tap(tester, 'Back');
+    await tester.enterText(_field('Email address'), 'demo@test.local');
+    await tester.pump();
+    await _tap(tester, 'Set up manually');
+    expect(find.widgetWithText(TextField, 'imap.test.local'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'smtp.test.local'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'demo@test.local'), findsWidgets);
+    expect(
+      find.widgetWithText(TextField, 'outlook.office365.com'),
+      findsNothing,
+    );
+    expect(find.widgetWithText(TextField, 'smtp.office365.com'), findsNothing);
+    expect(find.widgetWithText(TextField, 'anna@outlook.com'), findsNothing);
+  });
+
+  testWidgets('the manual form keeps what was typed for the same address', (
+    tester,
+  ) async {
+    await _pump(tester, _Scripted());
+    await tester.enterText(_field('Email address'), 'demo@test.local');
+    await tester.pump();
+    await _tap(tester, 'Set up manually');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'imap.test.local'),
+      'mail.test.local',
+    );
+    await tester.pump();
+    await _tap(tester, 'Back');
+    await _tap(tester, 'Set up manually');
+    expect(find.widgetWithText(TextField, 'mail.test.local'), findsOneWidget);
+  });
+
   for (final size in [_desktop, _phone]) {
     testWidgets('a failed verify scrolls its error into view, '
         '${size == _phone ? 'phone' : 'desktop'}', (tester) async {

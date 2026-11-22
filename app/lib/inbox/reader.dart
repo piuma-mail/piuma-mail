@@ -1712,10 +1712,17 @@ class _MessageViewState extends State<MessageView> {
             if (r.hasPrivacyNews || offer || layout)
               Padding(
                 padding: EdgeInsets.only(left: widget.chipIndent, top: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Wrap(
+                // The view switch sits at the end of the chips' row while
+                // they all fit, else on a line of its own: a phone held
+                // upright never cuts the chip's label short.
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: [
@@ -1739,15 +1746,15 @@ class _MessageViewState extends State<MessageView> {
                             ),
                         ],
                       ),
-                    ),
-                    if (layout)
-                      ViewSwitch(
-                        original: _original != null,
-                        phone: phone,
-                        onChanged: (original) =>
-                            original ? _showOriginal() : _showClean(),
-                      ),
-                  ],
+                      if (layout)
+                        ViewSwitch(
+                          original: _original != null,
+                          phone: phone,
+                          onChanged: (original) =>
+                              original ? _showOriginal() : _showClean(),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             AnimatedSize(

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/design/look.dart';
@@ -354,6 +355,35 @@ void main() {
         expect(source.originals, [false]);
         expect(source.fetched, isEmpty);
         expect(find.byType(ImagesBar), findsOneWidget);
+      });
+    }
+
+    // #109: on a phone held upright "Original layout" cut the chip short.
+    for (final (name, size, ownLine) in [
+      ('small phone', const Size(360, 780), true),
+      ('phone', const Size(390, 844), true),
+      ('desktop', const Size(1440, 900), false),
+    ]) {
+      testWidgets('the privacy chip reads in full: $name', (tester) async {
+        await _pump(tester, size: size);
+        final label = find.descendant(
+          of: find.byType(PrivacyChip),
+          matching: find.byType(Text),
+        );
+        expect(tester.widget<Text>(label).data, contains('trackers stopped'));
+        final paragraph = tester.renderObject<RenderParagraph>(label);
+        expect(paragraph.didExceedMaxLines, isFalse);
+        final chip = tester.getRect(find.byType(PrivacyChip));
+        final view = tester.getRect(find.byType(ViewSwitch));
+        if (ownLine) {
+          // The link goes under the chip, never over it.
+          expect(view.top, greaterThanOrEqualTo(chip.bottom));
+        } else {
+          // Room enough: on the chip's row, at its end.
+          expect(view.center.dy, closeTo(chip.center.dy, 1));
+          expect(view.left, greaterThan(chip.right));
+        }
+        expect(tester.takeException(), isNull);
       });
     }
 
