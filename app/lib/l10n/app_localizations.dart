@@ -9121,7 +9121,7 @@ abstract class AppLocalizations {
   /// No description provided for @unreadableLinkBody.
   ///
   /// In en, this message translates to:
-  /// **'This link\'s address isn\'t one a browser reads for sure: {real}.'**
+  /// **'Piuma can’t tell for sure where this link goes: {real}.'**
   String unreadableLinkBody(String real);
 
   /// No description provided for @updates.

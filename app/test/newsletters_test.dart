@@ -8,6 +8,7 @@ import 'package:piuma_mail/inbox/reader.dart';
 import 'package:piuma_mail/mail/demo_source.dart';
 import 'package:piuma_mail/mail/mail_source.dart';
 import 'package:piuma_mail/main.dart';
+import 'package:piuma_mail/widgets/links.dart';
 
 /// Thursday, October 15, 2026, 10:30: the day of the mockup.
 final _now = DateTime(2026, 10, 15, 10, 30);
@@ -129,6 +130,48 @@ void main() {
     await tester.tap(find.text('Unsubscribe').last);
     await tester.pumpAndSettle();
     expect(source.unsubscribed.single.subject, _forma);
+  });
+
+  testWidgets('an unsubscribe page whose host UTS #46 refuses asks first', (
+    tester,
+  ) async {
+    final opened = <Uri>[];
+    final before = openExternalLink;
+    openExternalLink = (uri) async => opened.add(uri);
+    addTearDown(() => openExternalLink = before);
+    final beforeHost = linkHostAscii;
+    // As the engine reads it: a punycode label that doesn't decode.
+    linkHostAscii = (host) => host == 'xn--zz.com' ? null : beforeHost(host);
+    addTearDown(() => linkHostAscii = beforeHost);
+    final source = await _pump(tester);
+    source.leaveBy = const UnsubscribeInfo(
+      UnsubscribeKind.page,
+      'https://xn--zz.com/leave',
+    );
+    await tester.tap(find.text('Newsletters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(_forma));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unsubscribe'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open page'));
+    await tester.pumpAndSettle();
+    // The List-Unsubscribe header's page asks like a link in the text.
+    expect(find.text('Check this link'), findsOneWidget);
+    expect(
+      find.text('Piuma can’t tell for sure where this link goes: xn--zz.com.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Don’t open'));
+    await tester.pumpAndSettle();
+    expect(opened, isEmpty);
+    await tester.tap(find.text('Unsubscribe'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open page'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open anyway'));
+    await tester.pumpAndSettle();
+    expect(opened.single, Uri.parse('https://xn--zz.com/leave'));
   });
 
   testWidgets('a sender can always go to the Inbox instead', (tester) async {

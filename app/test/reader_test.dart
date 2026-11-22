@@ -968,14 +968,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Check this link'), findsOneWidget);
     expect(
-      find.text(
-        "This link's address isn't one a browser reads for sure: xn--zz.com.",
-      ),
+      find.text('Piuma can’t tell for sure where this link goes: xn--zz.com.'),
       findsOneWidget,
     );
     await tester.tap(find.text('Don’t open'));
     await tester.pumpAndSettle();
     expect(opened, isEmpty);
+  });
+
+  testWidgets('a doubtful sender and an unreadable host: both are said', (
+    tester,
+  ) async {
+    final opened = <Uri>[];
+    final before = openExternalLink;
+    openExternalLink = (uri) async => opened.add(uri);
+    addTearDown(() => openExternalLink = before);
+    final beforeHost = linkHostAscii;
+    linkHostAscii = (host) => host == 'xn--zz.com' ? null : beforeHost(host);
+    addTearDown(() => linkHostAscii = beforeHost);
+    final source = DemoMailSource(now: _now);
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) => Scaffold(
+          body: LinksAskFirst(
+            ask: true,
+            child: MessageBody(
+              readable: const Readable(
+                blocks: [
+                  BodyBlock.text([
+                    BodySpan('Your parcel', link: 'https://xn--zz.com/track'),
+                  ]),
+                ],
+              ),
+              images: RemoteImages(source),
+              showRemote: false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tapOnText(find.textRange.ofSubstring('parcel'));
+    await tester.pumpAndSettle();
+    final sender = find.text(
+      'This email may not be from who it says. The link goes to xn--zz.com.',
+    );
+    final host = find.text(
+      'Piuma can’t tell for sure where this link goes: xn--zz.com.',
+    );
+    expect(sender, findsOneWidget);
+    expect(host, findsOneWidget);
+    // Who sent it first.
+    expect(tester.getTopLeft(sender).dy, lessThan(tester.getTopLeft(host).dy));
+    await tester.tap(find.text('Open anyway'));
+    await tester.pumpAndSettle();
+    expect(opened.single, Uri.parse('https://xn--zz.com/track'));
   });
 
   testWidgets('quotes, lists and headings', (tester) async {

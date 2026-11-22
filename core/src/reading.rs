@@ -481,19 +481,57 @@ fn shown_host(text: &str) -> Option<String> {
     (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())).then(|| host.to_owned())
 }
 
+/// Endings that make the name before an `@` read as a domain rather than
+/// a person ("paypal.com@…", not "john.smith@…").
+const USER_HOST_TLDS: [&str; 19] = [
+    "com", "net", "org", "info", "io", "co", "app", "biz", "it", "de", "fr", "es", "pt", "uk",
+    "eu", "ch", "at", "br", "us",
+];
+
 /// The name before an `@` in a link text's address, when it reads as an
 /// address itself: "www.paypal.com" in "www.paypal.com@evil.com", which a
 /// browser takes as a user name and doesn't go to. An email address's own
-/// name ("anna") isn't one.
+/// name ("anna", "john.smith") isn't one: the name counts only when the
+/// text has a scheme ("https://…"), or the name starts with "www.", or it
+/// ends in a common top-level domain.
 fn shown_user_host(text: &str) -> Option<String> {
     let t = text.trim();
-    let t = t.split_once("://").map_or(t, |(_, rest)| rest);
+    let (has_scheme, t) = t
+        .split_once("://")
+        .map_or((false, t), |(_, rest)| (true, rest));
     let authority = t.split(['/', '?', '#']).next()?;
     let (name, _) = authority.rsplit_once('@')?;
+    let lower = name.to_ascii_lowercase();
+    let last = lower.trim_end_matches('.').rsplit('.').next()?;
+    if !(has_scheme || lower.starts_with("www.") || USER_HOST_TLDS.contains(&last)) {
+        return None;
+    }
     shown_host(name)
 }
 
+/// `text` with every `%40` written back as the `@` it encodes, so
+/// "www.paypal.com%40evil.com" shows its user name like the plain form.
+/// Only that escape: the rest of the text is read as written.
+fn decode_at(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('%') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        if after.get(..2).is_some_and(|hex| hex == "40") {
+            out.push('@');
+            rest = &after[2..];
+        } else {
+            out.push('%');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(crate) fn suspicious(text: &str, link: &str) -> bool {
+    let text = &decode_at(text);
     let Some(shown) = shown_host(text) else {
         return false;
     };
@@ -1589,5 +1627,51 @@ mod tests {
         ));
         assert!(!suspicious("anna@example.org", "https://example.org/"));
         assert!(suspicious("anna@example.org", "https://evil.com/"));
+    }
+
+    #[test]
+    fn a_person_s_address_is_not_a_domain_before_an_at() {
+        // A person's name with a dot, as the text of their company's site.
+        assert!(!suspicious(
+            "john.smith@company.com",
+            "https://company.com/"
+        ));
+        assert!(!suspicious(
+            "mario.rossi@azienda.it",
+            "https://www.azienda.it/"
+        ));
+        assert!(!suspicious(
+            "john.smith@company.com",
+            "mailto:john.smith@company.com"
+        ));
+        assert!(!suspicious(
+            "mario.rossi@azienda.it",
+            "mailto:mario.rossi@azienda.it"
+        ));
+        // Still a domain: a scheme, "www.", or a common ending.
+        assert!(suspicious(
+            "https://john.smith@company.com/",
+            "https://company.com/"
+        ));
+        assert!(suspicious(
+            "www.company.example@evil.com",
+            "https://evil.com/"
+        ));
+        assert!(suspicious("paypal.IT@evil.com", "https://evil.com/"));
+    }
+
+    #[test]
+    fn an_encoded_at_in_a_link_text_is_read_as_an_at() {
+        assert!(suspicious("www.paypal.com%40evil.com", "https://evil.com/"));
+        assert!(suspicious(
+            "paypal.com%40evil.com",
+            "https://evil.com/login"
+        ));
+        assert!(!suspicious(
+            "john.smith%40company.com",
+            "https://company.com/"
+        ));
+        // Other escapes stay as written.
+        assert_eq!(decode_at("a%41b%40c%4"), "a%41b@c%4");
     }
 }

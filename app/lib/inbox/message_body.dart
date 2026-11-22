@@ -310,8 +310,11 @@ class LinksAskFirst extends InheritedWidget {
   bool updateShouldNotify(LinksAskFirst old) => ask != old.ask;
 }
 
-/// Opens [link]; with [shown], the address its text showed instead, or in
-/// an email under [LinksAskFirst], it asks first.
+/// Opens [link], from an email (its text, its list headers, a card the
+/// Vault read from it): the one way such a link opens, so every one of
+/// them asks first when it should. It asks with [shown], the address its
+/// text showed instead; in an email under [LinksAskFirst]; and when its
+/// host isn't one a browser reads for sure ([LinkParts.unreadable]).
 Future<void> openLink(
   BuildContext context,
   String link, {
@@ -322,27 +325,36 @@ Future<void> openLink(
   // app on the device.
   if (uri == null || !isMailLinkAllowed(uri)) return;
   final unreadable = describeLink(link)?.unreadable ?? false;
-  if (shown != null || unreadable || LinksAskFirst.of(context)) {
+  final impostor = LinksAskFirst.of(context);
+  if (shown != null || unreadable || impostor) {
     final open = await showPiumaDialog<bool>(
       context,
       label: AppLocalizations.of(context).suspiciousLinkTitle,
-      builder: (context) =>
-          _SuspiciousLink(shown: shown, unreadable: unreadable, uri: uri),
+      builder: (context) => _SuspiciousLink(
+        shown: shown,
+        impostor: impostor,
+        unreadable: unreadable,
+        uri: uri,
+      ),
     );
     if (open != true) return;
   }
-  await openMailLink(uri);
+  await launchMailLink(uri);
 }
 
 class _SuspiciousLink extends StatelessWidget {
   const _SuspiciousLink({
     required this.shown,
+    required this.impostor,
     required this.unreadable,
     required this.uri,
   });
 
-  /// Null when the link asks because of its host or of who sent the email.
+  /// The address the link's text showed, when it isn't where it goes.
   final String? shown;
+
+  /// The email may not be from who it says ([LinksAskFirst]).
+  final bool impostor;
 
   /// The host isn't one a browser reads for sure ([LinkParts.unreadable]).
   final bool unreadable;
@@ -360,6 +372,12 @@ class _SuspiciousLink extends StatelessWidget {
       LinkParts(:final host, ascii: final ascii?) => '$host ($ascii)',
       LinkParts(:final host) => host,
     };
+    // Every reason it asks, who sent it first.
+    final reasons = [
+      if (impostor) l.impostorLinkBody(host),
+      if (shown case final shown?) l.suspiciousLinkBody(shown, host),
+      if (unreadable) l.unreadableLinkBody(host),
+    ];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,12 +392,10 @@ class _SuspiciousLink extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: PiumaSpace.s16),
-        Text(switch (shown) {
-          final shown? => l.suspiciousLinkBody(shown, host),
-          null when unreadable => l.unreadableLinkBody(host),
-          null => l.impostorLinkBody(host),
-        }, style: PiumaType.body.copyWith(color: c.fg)),
+        for (final (i, reason) in reasons.indexed) ...[
+          SizedBox(height: i == 0 ? PiumaSpace.s16 : PiumaSpace.s8),
+          Text(reason, style: PiumaType.body.copyWith(color: c.fg)),
+        ],
         const SizedBox(height: PiumaSpace.s8),
         Text(
           uri.toString(),

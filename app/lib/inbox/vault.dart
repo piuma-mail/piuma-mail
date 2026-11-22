@@ -12,6 +12,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/links.dart';
+import 'message_body.dart' show openLink;
 import 'vault_view.dart';
 import 'risky_file.dart';
 
@@ -3237,7 +3238,7 @@ class _TrackButton extends StatelessWidget {
           ),
         );
     }
-    await openMailLink(uri);
+    if (context.mounted) await openLink(context, card.trackUrl);
   }
 
   @override

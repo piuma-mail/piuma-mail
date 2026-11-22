@@ -6198,7 +6198,7 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String unreadableLinkBody(String real) {
-    return 'O endereço deste link não é um que um navegador leia com certeza: $real.';
+    return 'Não é possível saber com certeza para onde este link leva: $real.';
   }
 
   @override

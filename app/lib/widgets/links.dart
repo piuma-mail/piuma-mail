@@ -50,10 +50,12 @@ bool isMailLinkAllowed(Uri uri) {
 /// app; this is the one place to route it to Piuma's own compose.
 Future<void> Function(Uri uri) openMailtoLink = (uri) => openExternalLink(uri);
 
-/// Opens a link that came with an email (its text, its layout, its list
-/// headers, a card the Vault read from it). Only [mailLinkSchemes] open;
-/// false when [uri] didn't.
-Future<bool> openMailLink(Uri uri) async {
+/// Hands a link that came with an email to the browser or the mail app,
+/// without asking: the app opens such links with `openLink`
+/// (inbox/message_body.dart), which asks first when the link is
+/// suspicious, and then calls this. Only [mailLinkSchemes] open; false when
+/// [uri] didn't.
+Future<bool> launchMailLink(Uri uri) async {
   if (!isMailLinkAllowed(uri)) return false;
   if (uri.scheme.toLowerCase() == 'mailto') {
     await openMailtoLink(uri);

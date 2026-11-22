@@ -6219,7 +6219,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String unreadableLinkBody(String real) {
-    return 'L\'adresse de ce lien n\'est pas une adresse qu\'un navigateur lit à coup sûr : $real.';
+    return 'Impossible de savoir avec certitude où mène ce lien : $real.';
   }
 
   @override

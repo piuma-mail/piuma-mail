@@ -50,15 +50,18 @@ void main() {
         'https:///no-host',
         'mailto:',
       ]) {
-        expect(await openMailLink(Uri.parse(no)), isFalse, reason: no);
+        expect(await launchMailLink(Uri.parse(no)), isFalse, reason: no);
       }
       expect(external, isEmpty);
       expect(mailto, isEmpty);
     });
 
     test('mailto goes through its own door, pages to the browser', () async {
-      expect(await openMailLink(Uri.parse('https://shop.example/a')), isTrue);
-      expect(await openMailLink(Uri.parse('mailto:help@shop.example')), isTrue);
+      expect(await launchMailLink(Uri.parse('https://shop.example/a')), isTrue);
+      expect(
+        await launchMailLink(Uri.parse('mailto:help@shop.example')),
+        isTrue,
+      );
       expect(external, [Uri.parse('https://shop.example/a')]);
       expect(mailto, [Uri.parse('mailto:help@shop.example')]);
     });

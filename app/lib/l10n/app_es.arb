@@ -1502,7 +1502,7 @@
   "senderNameSays": "El nombre dice",
   "senderDetailsNote": "Calculado en este dispositivo a partir de lo que escribió tu servidor de correo. Los enlaces de este correo preguntan antes de abrirse.",
   "impostorLinkBody": "Puede que este correo no sea de quien dice. El enlace lleva a {real}.",
-  "unreadableLinkBody": "La dirección de este enlace no es una que un navegador lea con seguridad: {real}.",
+  "unreadableLinkBody": "No se puede saber con certeza adónde lleva este enlace: {real}.",
   "updates": "Actualizaciones",
   "updatesVersion": "Versión",
   "upToDate": "Al día",

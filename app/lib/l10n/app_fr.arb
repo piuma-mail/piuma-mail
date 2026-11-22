@@ -1502,7 +1502,7 @@
   "senderNameSays": "Le nom dit",
   "senderDetailsNote": "Déduit sur cet appareil de ce qu’a écrit votre serveur de messagerie. Les liens de cet e-mail demandent avant de s’ouvrir.",
   "impostorLinkBody": "Cet e-mail ne vient peut-être pas de qui il prétend. Le lien mène à {real}.",
-  "unreadableLinkBody": "L'adresse de ce lien n'est pas une adresse qu'un navigateur lit à coup sûr : {real}.",
+  "unreadableLinkBody": "Impossible de savoir avec certitude où mène ce lien : {real}.",
   "updates": "Mises à jour",
   "updatesVersion": "Version",
   "upToDate": "À jour",
