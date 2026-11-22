@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/design/look.dart';
@@ -29,10 +30,16 @@ Future<DemoMailSource> _pump(
   Size size = const Size(1440, 900),
   Appearance appearance = const Appearance(),
   double scale = 1,
+  double textScale = 1,
+  TextDirection? direction,
 }) async {
   tester.view.physicalSize = size * scale;
   tester.view.devicePixelRatio = scale;
   addTearDown(tester.view.reset);
+  if (textScale != 1) {
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  }
   RemoteImages.clear();
   final source = DemoMailSource(now: _now, newsletter: true);
   final first = (await source.page(0, 1)).first;
@@ -40,12 +47,17 @@ Future<DemoMailSource> _pump(
     PiumaApp(
       initialDark: dark,
       appearance: appearance,
-      home: (_, _) => InboxScreen(
-        source: source,
-        onAddAccount: () {},
-        now: () => _now,
-        initialSelection: first,
-      ),
+      home: (_, _) {
+        final inbox = InboxScreen(
+          source: source,
+          onAddAccount: () {},
+          now: () => _now,
+          initialSelection: first,
+        );
+        return direction == null
+            ? inbox
+            : Directionality(textDirection: direction, child: inbox);
+      },
     ),
   );
   await tester.pump(const Duration(seconds: 2));
@@ -355,6 +367,71 @@ void main() {
         expect(source.fetched, isEmpty);
         expect(find.byType(ImagesBar), findsOneWidget);
       });
+    }
+
+    // #109: on a phone held upright "Original layout" cut the chip short.
+    for (final (name, size, ownLine) in [
+      ('small phone', const Size(360, 780), true),
+      ('phone', const Size(390, 844), true),
+      ('desktop', const Size(1440, 900), false),
+    ]) {
+      testWidgets('the privacy chip reads in full: $name', (tester) async {
+        await _pump(tester, size: size);
+        final label = find.descendant(
+          of: find.byType(PrivacyChip),
+          matching: find.byType(Text),
+        );
+        expect(tester.widget<Text>(label).data, contains('trackers stopped'));
+        final paragraph = tester.renderObject<RenderParagraph>(label);
+        expect(paragraph.didExceedMaxLines, isFalse);
+        final chip = tester.getRect(find.byType(PrivacyChip));
+        final view = tester.getRect(find.byType(ViewSwitch));
+        if (ownLine) {
+          // The link goes under the chip, never over it.
+          expect(view.top, greaterThanOrEqualTo(chip.bottom));
+        } else {
+          // Room enough: on the chip's row, at its end.
+          expect(view.center.dy, closeTo(chip.center.dy, 1));
+          expect(view.left, greaterThan(chip.right));
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    // #109: on narrow phones and with large text the chip grows onto more
+    // lines instead of cutting "N trackers stopped" short.
+    for (final width in [320.0, 360.0, 390.0]) {
+      for (final textScale in [1.0, 2.0]) {
+        for (final direction in TextDirection.values) {
+          testWidgets('the privacy chip is never cut short: ${width.round()} '
+              'px, text ×$textScale, ${direction.name}', (tester) async {
+            await _pump(
+              tester,
+              size: Size(width, 844),
+              textScale: textScale,
+              direction: direction,
+            );
+            final label = find.descendant(
+              of: find.byType(PrivacyChip),
+              matching: find.byType(Text),
+            );
+            expect(
+              tester.widget<Text>(label).data,
+              'Images blocked · 3 trackers stopped',
+            );
+            final paragraph = tester.renderObject<RenderParagraph>(label);
+            expect(paragraph.didExceedMaxLines, isFalse);
+            final chip = tester.getRect(find.byType(PrivacyChip));
+            expect(chip.left, greaterThanOrEqualTo(0));
+            expect(chip.right, lessThanOrEqualTo(width));
+            // The text stays inside the chip's border.
+            final text = tester.getRect(label);
+            expect(text.top, greaterThanOrEqualTo(chip.top));
+            expect(text.bottom, lessThanOrEqualTo(chip.bottom));
+            expect(tester.takeException(), isNull);
+          });
+        }
+      }
     }
 
     testWidgets('the privacy panel still shows it after the clean view', (

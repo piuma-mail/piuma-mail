@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
@@ -565,6 +566,56 @@ void main() {
       expect(_inPanel(find.text('On the server')), findsOneWidget);
       await tester.pump(const Duration(seconds: 1));
     });
+  });
+
+  group('Search on server is its own button (#108)', () {
+    for (final (name, size, query) in [
+      ('phone, nothing here', const Size(390, 844), 'spring catalog'),
+      ('phone, few here', const Size(390, 844), 'quote'),
+      ('desktop, nothing here', const Size(1440, 900), 'spring catalog'),
+    ]) {
+      testWidgets(name, (tester) async {
+        final semantics = tester.ensureSemantics();
+        final source = await _pump(tester, _CountingServer(), size: size);
+        if (size.width < 600) {
+          await tester.tap(find.text('Search 3 accounts'));
+          await tester.pumpAndSettle();
+        } else {
+          await _open(tester);
+        }
+        await _type(tester, query);
+        final button = _inPanel(
+          find.widgetWithText(PiumaButton, 'Search on server'),
+        );
+        await tester.scrollUntilVisible(
+          button,
+          200,
+          scrollable: _inPanel(find.byType(Scrollable)).last,
+        );
+        await tester.pumpAndSettle();
+        final node = tester.getSemantics(button);
+        // Its own node: only its label, not the note beside it.
+        expect(node.label, 'Search on server');
+        expect(node.flagsCollection.isButton, isTrue);
+        expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+        // The note above it is a node of its own too.
+        expect(
+          tester
+              .getSemantics(
+                _inPanel(find.textContaining('may still be on the server')),
+              )
+              .label,
+          isNot(contains('Search on server')),
+        );
+        // Its tap asks the server.
+        node.owner!.performAction(node.id, SemanticsAction.tap);
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(source.asked, 1);
+        await tester.pump(const Duration(seconds: 1));
+        semantics.dispose();
+      });
+    }
   });
 
   group('desktop, as on the phone', () {

@@ -2010,6 +2010,56 @@ async fn searches_on_the_server_and_keeps_what_it_finds() {
     assert_eq!(server.lock().unwrap().searches.len(), asked);
 }
 
+#[tokio::test]
+async fn found_again_by_a_search_its_days_kept_start_over() {
+    use piuma_core::Query;
+    let keep = i64::from(piuma_core::store::KEEP_SERVER_FOUND_DAYS);
+    let (server, cfg) = start().await;
+    let (store, id) = store_with_account(&cfg);
+    {
+        let mut s = server.lock().unwrap();
+        s.add("mb-misc", "Shop <orders@shop.it>", "Invoice March", 1, true);
+        s.add("mb-misc", "Shop <orders@shop.it>", "Receipt April", 2, true);
+    }
+    let account = store.lock().unwrap().account(id).unwrap().unwrap();
+    let mut remote = Remote::open(&account, &PASSWORD.into()).await.unwrap();
+    let days_ago = |days: i64| {
+        store
+            .lock()
+            .unwrap()
+            .execute_for_tests(&format!(
+                "UPDATE server_found SET found_at = found_at - {}",
+                days * 86_400
+            ))
+            .unwrap();
+    };
+    let found = remote
+        .search_server(&store, &account, &Query::parse("invoice OR receipt"), 100)
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 2);
+    days_ago(keep - 1);
+    // Searched again: the invoice is found again, already here.
+    let found = remote
+        .search_server(&store, &account, &Query::parse("invoice"), 100)
+        .await
+        .unwrap();
+    assert_eq!(found.at.len(), 1);
+    let (mailbox, invoice) = found.at[0].clone();
+    remote.close().await;
+    // Two days later: the receipt's days are over, the invoice's started
+    // again.
+    days_ago(2);
+    let mut s = store.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    s.queue_body_clean_up(now).unwrap();
+    s.maintain_all().unwrap();
+    assert_eq!(s.uids(id, &mailbox).unwrap(), [invoice]);
+}
+
 /// Managing the mailbox over JMAP: stars, copies, deleting for good in
 /// Trash, Empty Trash, folders renamed, hidden and deleted, a folder of
 /// the person's choice for a job, and quota.
