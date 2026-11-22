@@ -6,21 +6,38 @@ import 'package:piuma_mail/inbox/original_view.dart';
 
 /// A web view stand-in that scrolls like WebView2 under webview_windows:
 /// it receives every pan and wheel event over it, stops at its ends, and
-/// reports where it got to only later ([report]), as the page's script
-/// does.
+/// reports where it got to only later ([report]), with the last scroll
+/// command it had applied, as the page's script does.
 class _Inner {
   _Inner(this.extent);
 
   final double extent;
   double offset = 0;
   double reported = 0;
+  int ack = 0;
+  // The last command that reached it.
+  int seq = 0;
   final keys = <InnerScrollKey>[];
+  final steps = <int>[];
 
-  double room(double dy) => innerScrollRoom(reported, extent, dy);
+  InnerScrollPosition position() => InnerScrollPosition(reported, extent, ack);
 
   void scroll(double dy) => offset = (offset + dy).clamp(0, extent);
 
-  void report() => reported = offset;
+  void key(InnerScrollKey key, int seq) {
+    keys.add(key);
+    this.seq = seq;
+  }
+
+  void step(int seq) {
+    steps.add(seq);
+    this.seq = seq;
+  }
+
+  void report() {
+    reported = offset;
+    ack = seq;
+  }
 }
 
 const _paper = ValueKey('paper');
@@ -56,8 +73,9 @@ Widget _reader(ScrollController outer, _Inner inner, FocusNode? readerFocus) =>
         SizedBox(
           height: 400,
           child: InnerScrollFirst(
-            room: inner.room,
-            onKey: inner.keys.add,
+            position: inner.position,
+            onKey: inner.key,
+            onPanStep: inner.step,
             child: Listener(
               key: _paper,
               behavior: HitTestBehavior.opaque,
@@ -85,6 +103,70 @@ void main() {
     expect(innerScrollRoom(1000, 1200, -40), 1000);
     expect(innerScrollRoom(1200, 1200, 40), 0);
     expect(innerScrollRoom(600, 1200, 0), 0);
+  });
+
+  group('pan tracker', () {
+    test('adds the steps the report has not acknowledged', () {
+      final t = InnerPanTracker();
+      expect(t.offset(const InnerScrollPosition(0, 100)), 0);
+      t
+        ..sent(1, 60, 100)
+        ..sent(2, 60, 100)
+        ..sent(3, 60, 100);
+      // Nothing reported yet: every step, stopping at the end.
+      expect(t.offset(const InnerScrollPosition(0, 100)), 100);
+      // Step 1 applied, the page on its way to 100.
+      expect(t.offset(const InnerScrollPosition(80, 100, 1)), 100);
+      expect(t.pending, 2);
+      t.sent(4, -90, 100);
+      expect(t.offset(const InnerScrollPosition(80, 100, 1)), 10);
+      // All of them.
+      expect(t.offset(const InnerScrollPosition(10, 100, 4)), 10);
+      expect(t.pending, 0);
+    });
+
+    test('a late report out of order changes nothing', () {
+      final t = InnerPanTracker()
+        ..offset(const InnerScrollPosition(0, 100))
+        ..sent(1, 60, 100)
+        ..sent(2, 60, 100);
+      expect(t.offset(const InnerScrollPosition(100, 100, 2)), 100);
+      expect(t.offset(const InnerScrollPosition(60, 100, 1)), 100);
+      t.sent(3, -30, 100);
+      expect(t.offset(const InnerScrollPosition(60, 100, 1)), 70);
+    });
+
+    test('the same report twice counts once', () {
+      final t = InnerPanTracker()
+        ..offset(const InnerScrollPosition(0, 100))
+        ..sent(1, 40, 100)
+        ..sent(2, 40, 100);
+      expect(t.offset(const InnerScrollPosition(40, 100, 1)), 80);
+      expect(t.offset(const InnerScrollPosition(40, 100, 1)), 80);
+      expect(t.pending, 1);
+    });
+
+    test('a page that moved on its own is taken as it says', () {
+      final t = InnerPanTracker()
+        ..offset(const InnerScrollPosition(0, 1000))
+        ..sent(1, 40, 1000);
+      // Step 1 applied, and a link inside the page jumped further.
+      expect(t.offset(const InnerScrollPosition(500, 1000, 1)), 500);
+    });
+
+    test('a long pan with no reports stays bounded', () {
+      final t = InnerPanTracker()..offset(const InnerScrollPosition(0, 1000));
+      for (var i = 1; i <= 1000; i++) {
+        t.sent(i, i <= 600 ? 3 : -1, 1000);
+        expect(t.pending, lessThanOrEqualTo(InnerPanTracker.maxPending));
+      }
+      // 600 × 3 stops at 1000, then 400 back up.
+      expect(t.offset(const InnerScrollPosition(0, 1000)), 600);
+      // A report older than what was folded away is ignored.
+      expect(t.offset(const InnerScrollPosition(0, 1000, 5)), 600);
+      expect(t.offset(const InnerScrollPosition(620, 1000, 1000)), 620);
+      expect(t.pending, 0);
+    });
   });
 
   group('touchpad pan', () {
@@ -204,6 +286,38 @@ void main() {
       await tester.pump();
       expect(inner.offset, 0);
       expect(outer.offset, 70);
+      await tester.sendEventToBinding(pad.panZoomEnd());
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('a report from the middle of a step does not move the reader', (
+      tester,
+    ) async {
+      final inner = _Inner(100);
+      final outer = await _pump(tester, inner);
+      final pad = TestPointer(1, PointerDeviceKind.trackpad);
+      final at = _onPaper(tester);
+      await tester.sendEventToBinding(pad.panZoomStart(at));
+      for (final y in [-60.0, -120.0, -180.0]) {
+        await tester.sendEventToBinding(
+          pad.panZoomUpdate(at, pan: Offset(0, y)),
+        );
+      }
+      await tester.pump();
+      expect(inner.offset, 100);
+      expect(outer.offset, 80);
+      expect(inner.steps, [1, 2, 3]);
+      // The page reports 80 on its way to 100, with only step 1 applied.
+      inner
+        ..reported = 80
+        ..ack = 1;
+      // Back up 90: the page is at 100, so it takes it all.
+      await tester.sendEventToBinding(
+        pad.panZoomUpdate(at, pan: const Offset(0, -90)),
+      );
+      await tester.pump();
+      expect(inner.offset, 10);
+      expect(outer.offset, 80);
       await tester.sendEventToBinding(pad.panZoomEnd());
       await tester.pumpAndSettle();
     });
@@ -428,6 +542,35 @@ void main() {
       expect(inner.keys, [InnerScrollKey.pageDown]);
       expect(outer.offset, 0);
     }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+    testWidgets(
+      'with the focus on nothing that scrolls, at the page end the reader '
+      'takes them',
+      (tester) async {
+        final inner = _Inner(1000)
+          ..offset = 1000
+          ..report();
+        final buttonFocus = FocusNode();
+        addTearDown(buttonFocus.dispose);
+        final outer = await _pump(
+          tester,
+          inner,
+          side: SizedBox(
+            width: 200,
+            child: Focus(focusNode: buttonFocus, child: const Text('Archive')),
+          ),
+        );
+        buttonFocus.requestFocus();
+        final mouse = TestPointer(1, PointerDeviceKind.mouse);
+        await tester.sendEventToBinding(mouse.hover(_onPaper(tester)));
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.pageDown);
+        await tester.pumpAndSettle();
+        expect(inner.keys, isEmpty);
+        expect(outer.offset, greaterThan(0));
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.windows),
+    );
 
     testWidgets('away from the page the keys stay with the reader', (
       tester,

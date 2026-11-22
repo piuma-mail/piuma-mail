@@ -44,14 +44,26 @@ function _reportHeight() {
   if (h > 0) window.chrome.webview.postMessage('#height:' + h);
   _reportScroll();
 }
-// Where the page is scrolled, and how far it can go, once it is longer
-// than its paper (paperMaxHeight): wheel turns go to it first.
+// Where the page is scrolled, how far it can go, once it is longer than
+// its paper (paperMaxHeight): wheel turns go to it first, and the last
+// scroll command of the app it had applied by then (_piumaScrolled).
+var _scrollAck = 0;
 function _reportScroll() {
   var e = document.scrollingElement || document.documentElement;
   if (!e) return;
   var max = Math.max(0, e.scrollHeight - window.innerHeight);
-  window.chrome.webview.postMessage(
-    '#scroll:' + Math.round(window.scrollY) + ',' + Math.round(max));
+  window.chrome.webview.postMessage('#scroll:' + Math.round(window.scrollY) +
+    ',' + Math.round(max) + ',' + _scrollAck);
+}
+// The app's scroll command n reached the page: a key's scroll, run just
+// before, or a touchpad pan's step, which came as input just before. The
+// page reports once the frame has handled that input, even when it
+// couldn't move (at its end), so every step gets acknowledged.
+function _piumaScrolled(n) {
+  window.requestAnimationFrame(function () {
+    if (n > _scrollAck) _scrollAck = n;
+    _reportScroll();
+  });
 }
 window.addEventListener('scroll', _reportScroll, {passive: true});
 window.addEventListener('resize', _reportScroll);
@@ -110,8 +122,7 @@ class _WindowsPaperState extends State<WindowsPaper> {
   final _controller = WebviewController();
   final _subs = <StreamSubscription<Object?>>[];
   bool _shown = false;
-  double _scrollY = 0;
-  double _scrollMax = 0;
+  var _scroll = const InnerScrollPosition(0, 0);
 
   @override
   void initState() {
@@ -139,9 +150,12 @@ class _WindowsPaperState extends State<WindowsPaper> {
             }
             if (m.startsWith('#scroll:')) {
               final parts = m.substring('#scroll:'.length).split(',');
-              if (parts.length != 2) return;
-              _scrollY = double.tryParse(parts[0]) ?? 0;
-              _scrollMax = double.tryParse(parts[1]) ?? 0;
+              if (parts.length != 3) return;
+              _scroll = InnerScrollPosition(
+                double.tryParse(parts[0]) ?? 0,
+                double.tryParse(parts[1]) ?? 0,
+                int.tryParse(parts[2]) ?? 0,
+              );
               return;
             }
             if (m.startsWith('#hover:')) {
@@ -194,10 +208,11 @@ class _WindowsPaperState extends State<WindowsPaper> {
   }
 
   /// Page Down and the other paging keys inside the page, once it is
-  /// longer than its paper ([InnerScrollFirst]): the page's own scroll
-  /// reports where it got to.
-  void _scrollKey(InnerScrollKey key) {
-    final script = switch (key) {
+  /// longer than its paper ([InnerScrollFirst]), as command [seq]: the
+  /// page's own scroll reports where it got to. Only numbers go into the
+  /// script.
+  void _scrollKey(InnerScrollKey key, int seq) {
+    final scroll = switch (key) {
       InnerScrollKey.pageDown =>
         'window.scrollBy(0, Math.round(window.innerHeight * 0.8))',
       InnerScrollKey.pageUp =>
@@ -207,8 +222,16 @@ class _WindowsPaperState extends State<WindowsPaper> {
         'window.scrollTo(0, (document.scrollingElement || '
             'document.documentElement).scrollHeight)',
     };
-    unawaited(_controller.executeScript(script).catchError((_) => null));
+    _run('$scroll; _piumaScrolled($seq)');
   }
+
+  /// A touchpad pan's step went to WebView2 through the plugin's own
+  /// `setScrollDelta`, on this same channel just before: the page
+  /// acknowledges [seq] once it handled it.
+  void _panStep(int seq) => _run('_piumaScrolled($seq)');
+
+  void _run(String script) =>
+      unawaited(_controller.executeScript(script).catchError((_) => null));
 
   @override
   void didUpdateWidget(WindowsPaper old) {
@@ -230,8 +253,9 @@ class _WindowsPaperState extends State<WindowsPaper> {
   @override
   Widget build(BuildContext context) => _shown
       ? InnerScrollFirst(
-          room: (dy) => innerScrollRoom(_scrollY, _scrollMax, dy),
+          position: () => _scroll,
           onKey: _scrollKey,
+          onPanStep: _panStep,
           child: Webview(_controller),
         )
       : const SizedBox.expand();

@@ -103,6 +103,82 @@ double innerScrollRoom(double offset, double extent, double dy) {
 bool innerScrollTakes(double offset, double extent, double dy) =>
     innerScrollRoom(offset, extent, dy) > 0;
 
+/// Where a web view last said it was scrolled ([offset] of the [extent]
+/// it can scroll, in points) and the last scroll command of
+/// [InnerScrollFirst] it had applied by then ([ack]: the command's
+/// sequence number, 0 before any).
+@immutable
+class InnerScrollPosition {
+  const InnerScrollPosition(this.offset, this.extent, [this.ack = 0]);
+
+  final double offset;
+  final double extent;
+  final int ack;
+
+  /// How far it can still go in the direction of [dy] ([innerScrollRoom]).
+  double room(double dy) => innerScrollRoom(offset, extent, dy);
+}
+
+/// Where a web view is during a touchpad pan, as far as the app knows:
+/// its position comes back a little after each step of the pan, so the
+/// steps it hasn't acknowledged yet ([InnerScrollPosition.ack]) are
+/// added to the last position it reported.
+class InnerPanTracker {
+  /// The most steps kept waiting for an acknowledgement; past that the
+  /// oldest half is folded into the predicted position, so a gesture
+  /// with no reports at all stays cheap.
+  static const maxPending = 64;
+
+  double? _base;
+  int _baseSeq = 0;
+  final _pending = <(int, double)>[];
+
+  /// Steps sent and not acknowledged yet.
+  int get pending => _pending.length;
+
+  /// A new gesture: nothing predicted until the next report.
+  void reset() {
+    _base = null;
+    _baseSeq = 0;
+    _pending.clear();
+  }
+
+  /// Where the web view is now: its [report], or what came before it when
+  /// the report is older than what this already knows (out of order),
+  /// moved by every step it hasn't acknowledged, each stopping at the
+  /// page's ends as the page does.
+  double offset(InnerScrollPosition report) {
+    if (_base == null || report.ack >= _baseSeq) {
+      _base = report.offset;
+      _baseSeq = report.ack;
+      _pending.removeWhere((step) => step.$1 <= report.ack);
+    }
+    return _fold(_base!, _pending, report.extent);
+  }
+
+  /// Step [seq] of [dy] points (positive: down) went to the web view.
+  void sent(int seq, double dy, double extent) {
+    _pending.add((seq, dy));
+    if (_pending.length <= maxPending) return;
+    final old = _pending.sublist(0, maxPending ~/ 2);
+    _base = _fold(_base ?? 0, old, extent);
+    _baseSeq = old.last.$1;
+    _pending.removeRange(0, old.length);
+  }
+
+  static double _fold(
+    double from,
+    Iterable<(int, double)> steps,
+    double extent,
+  ) {
+    final max = math.max(0.0, extent);
+    return steps.fold(
+      from.clamp(0.0, max),
+      (o, s) => (o + s.$2).clamp(0.0, max),
+    );
+  }
+}
+
 /// A key that scrolls a page: Page Down and Space, Page Up and
 /// Shift+Space, Home and End.
 enum InnerScrollKey {
@@ -130,24 +206,33 @@ enum InnerScrollKey {
 ///   pointer is over the web view or it has the focus, go to [onKey] while
 ///   the web view can move that way, and to the reader after.
 ///
+/// Every scroll command for the web view carries a sequence number, and
+/// the web view's [position] says the last one it had applied, so a pan
+/// knows which of its steps the reported position already covers
+/// ([InnerPanTracker]).
+///
 /// Without this a page longer than its paper scrolled together with the
 /// reader, twice as fast (feedback #22, #116). A page that fits its paper
-/// ([room] always 0) leaves everything to the reader, as before.
+/// (no room either way) leaves everything to the reader, as before.
 class InnerScrollFirst extends StatefulWidget {
   const InnerScrollFirst({
     super.key,
-    required this.room,
+    required this.position,
     this.onKey,
+    this.onPanStep,
     required this.child,
   });
 
-  /// How far the web view can still scroll in the direction of `dy`
-  /// points (positive: down), as it last reported ([innerScrollRoom]).
-  final double Function(double dy) room;
+  /// Where the web view last said it was ([InnerScrollPosition]).
+  final InnerScrollPosition Function() position;
 
-  /// Scrolls the web view for a key; it is called only while the web view
-  /// can move that way.
-  final ValueChanged<InnerScrollKey>? onKey;
+  /// Scrolls the web view for a key, as command `seq`; it is called only
+  /// while the web view can move that way.
+  final void Function(InnerScrollKey key, int seq)? onKey;
+
+  /// A step of a touchpad pan went to the web view (its own pan handling
+  /// moves it): the web view acknowledges `seq` once it applied it.
+  final ValueChanged<int>? onPanStep;
   final Widget child;
 
   @override
@@ -162,11 +247,9 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   Drag? _drag;
   VelocityTracker? _velocity;
   bool _lastToReader = false;
-  // Where the web view last said it was, and every step of this pan sent
-  // to it since: it gets them all, and its scroll position comes back a
-  // little later than the pan, often for only some of those steps.
-  double? _confirmed;
-  final _sent = <double>[];
+  final _tracker = InnerPanTracker();
+  // The last scroll command's number; the web view echoes it back.
+  int _seq = 0;
 
   @override
   void initState() {
@@ -183,7 +266,9 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     super.dispose();
   }
 
-  bool get _scrolls => widget.room(1) > 0 || widget.room(-1) > 0;
+  double _room(double dy) => widget.position().room(dy);
+
+  bool get _scrolls => _room(1) > 0 || _room(-1) > 0;
 
   void _panStart(PointerPanZoomStartEvent event) {
     _drag?.cancel();
@@ -191,39 +276,7 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     _velocity = VelocityTracker.withKind(PointerDeviceKind.trackpad)
       ..addPosition(event.timeStamp, Offset.zero);
     _lastToReader = false;
-    _confirmed = null;
-    _sent.clear();
-  }
-
-  /// Where the web view is now, as far as this pan knows: where it last
-  /// said it was, moved by the steps sent that its report doesn't cover
-  /// yet.
-  double _innerOffset() {
-    final reported = widget.room(-1);
-    final extent = reported + widget.room(1);
-    double after(double from, Iterable<double> steps) =>
-        steps.fold(from, (o, d) => (o + d).clamp(0.0, extent));
-    final confirmed = _confirmed;
-    if (confirmed == null) {
-      _confirmed = reported;
-      _sent.clear();
-    } else if (reported != confirmed) {
-      // A new report: it covers the steps up to the first point the page
-      // passed that matches it; when none does (the page moved on its
-      // own), it covers them all.
-      var at = confirmed;
-      var covered = _sent.length;
-      for (var i = 0; i < _sent.length; i++) {
-        at = after(at, [_sent[i]]);
-        if ((at - reported).abs() <= 1) {
-          covered = i + 1;
-          break;
-        }
-      }
-      _sent.removeRange(0, covered);
-      _confirmed = reported;
-    }
-    return after(reported, _sent);
+    _tracker.reset();
   }
 
   void _panUpdate(PointerPanZoomUpdateEvent event) {
@@ -231,12 +284,15 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     // The fingers move the page: up is a scroll down.
     final dy = -event.panDelta.dy;
     if (dy == 0) return;
-    final offset = _innerOffset();
-    final extent = widget.room(-1) + widget.room(1);
+    final position = widget.position();
+    final offset = _tracker.offset(position);
+    final extent = position.extent;
     final left = dy > 0 ? extent - offset : offset;
     final room = left > 1 ? left : 0.0;
     final inner = math.min(dy.abs(), room);
-    _sent.add(dy);
+    final seq = ++_seq;
+    _tracker.sent(seq, dy, extent);
+    widget.onPanStep?.call(seq);
     final rest = dy.abs() - inner;
     _lastToReader = rest > 0;
     if (rest <= 0) return;
@@ -277,8 +333,10 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     );
   }
 
-  /// The key's scroll for the web view, when it can move that way.
-  InnerScrollKey? _scrollKey(KeyEvent event) {
+  /// The page key [event] is, when it may scroll the web view or, at the
+  /// web view's end that way, the reader: not a key a text field or a
+  /// focused button keeps, and not with a dialog over the reader.
+  InnerScrollKey? _pageKey(KeyEvent event) {
     if (event is KeyUpEvent || widget.onKey == null || !mounted) return null;
     final keys = HardwareKeyboard.instance;
     if (keys.isControlPressed || keys.isAltPressed || keys.isMetaPressed) {
@@ -311,11 +369,19 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
       }
     }
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return null;
-    return widget.room(key.dy) > 0 ? key : null;
+    return key;
+  }
+
+  /// Sends [key] to the web view when it can still move that way.
+  bool _toPage(InnerScrollKey key) {
+    if (_room(key.dy) <= 0) return false;
+    widget.onKey!(key, ++_seq);
+    return true;
   }
 
   /// With the focus on the web view (it was clicked): before the reader's
-  /// own page keys, which sit further up.
+  /// own page keys, which sit further up and take the key at the web
+  /// view's end.
   ///
   /// Not verified on Windows yet: webview_windows 0.4.0 forwards a click
   /// to WebView2 (`SendMouseInput`) and never forwards keys, and typing in
@@ -327,9 +393,8 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   /// MoveFocusRequested). This path stays right for when Flutter does get
   /// the keys; the PR's Windows checklist covers the rest.
   KeyEventResult _focusedKey(FocusNode node, KeyEvent event) {
-    final key = _scrollKey(event);
-    if (key == null) return KeyEventResult.ignored;
-    widget.onKey!(key);
+    final key = _pageKey(event);
+    if (key == null || !_toPage(key)) return KeyEventResult.ignored;
     return KeyEventResult.handled;
   }
 
@@ -338,7 +403,8 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   /// nothing the key would scroll: not inside the reader or any other
   /// list (the message list, search results, a long menu), and not in an
   /// open menu. Otherwise the focus keeps it, as before, and only one
-  /// thing scrolls.
+  /// thing scrolls. At the web view's end that way the reader takes the
+  /// key, as it does from the focused web view.
   bool _key(KeyEvent event) {
     if (!_over || _focus.hasFocus) return false;
     final focus = FocusManager.instance.primaryFocus?.context;
@@ -347,9 +413,31 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
             (MenuController.maybeOf(focus)?.isOpen ?? false))) {
       return false;
     }
-    final key = _scrollKey(event);
+    final key = _pageKey(event);
     if (key == null) return false;
-    widget.onKey!(key);
+    return _toPage(key) || _scrollReader(key);
+  }
+
+  /// Scrolls the reader around the web view for [key], as its own page
+  /// keys do (a page is 80% of what it shows); false when it can't move
+  /// that way.
+  bool _scrollReader(InnerScrollKey key) {
+    final reader = Scrollable.maybeOf(context, axis: Axis.vertical)?.position;
+    if (reader == null || !reader.hasContentDimensions) return false;
+    final to = switch (key) {
+      InnerScrollKey.pageDown => reader.pixels + reader.viewportDimension * .8,
+      InnerScrollKey.pageUp => reader.pixels - reader.viewportDimension * .8,
+      InnerScrollKey.top => reader.minScrollExtent,
+      InnerScrollKey.bottom => reader.maxScrollExtent,
+    }.clamp(reader.minScrollExtent, reader.maxScrollExtent);
+    if ((to - reader.pixels).abs() < 1) return false;
+    unawaited(
+      reader.moveTo(
+        to,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeInOut,
+      ),
+    );
     return true;
   }
 
@@ -374,7 +462,7 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
         onPointerDown: (_) => _focus.requestFocus(),
         onPointerSignal: (event) {
           if (event is! PointerScrollEvent) return;
-          if (widget.room(event.scrollDelta.dy) <= 0) return;
+          if (_room(event.scrollDelta.dy) <= 0) return;
           // The first to register wins: the reader's Scrollable, further
           // up, lets this one go.
           GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
