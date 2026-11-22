@@ -1502,6 +1502,7 @@
   "senderNameSays": "Name sagt",
   "senderDetailsNote": "Auf diesem Gerät aus dem ermittelt, was dein Mailserver geschrieben hat. Links in dieser E-Mail fragen, bevor sie sich öffnen.",
   "impostorLinkBody": "Diese E-Mail ist vielleicht nicht von dem, der sie zu sein vorgibt. Der Link führt zu {real}.",
+  "unreadableLinkBody": "Die Adresse dieses Links ist keine, die ein Browser sicher liest: {real}.",
   "updates": "Updates",
   "updatesVersion": "Version",
   "upToDate": "Aktuell",

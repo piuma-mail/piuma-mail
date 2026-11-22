@@ -106,6 +106,7 @@ class LinkParts {
     required this.registrable,
     required this.ascii,
     required this.rest,
+    this.unreadable = false,
   });
 
   /// The host as people read it (Unicode, also when the link wrote it in
@@ -124,6 +125,11 @@ class LinkParts {
   /// Everything after the host: path, query, fragment (or a mailto's
   /// address).
   final String rest;
+
+  /// The host isn't one UTS #46 reads ([linkHostAscii] refuses it: a
+  /// broken punycode label such as `xn--zz.com`), so where the browser
+  /// goes can't be shown for sure: the link asks before it opens.
+  final bool unreadable;
 }
 
 /// [url] split for showing ([LinkParts]); null when it isn't a link.
@@ -153,7 +159,8 @@ LinkParts? describeLink(String url) {
       rest: _rest(uri),
     );
   }
-  final (host, ascii) = _readableHost(_decodeHost(uri.host));
+  final decoded = _decodeHost(uri.host);
+  final (host, ascii) = _readableHost(decoded);
   // A host hiding an `@` (`bank.example%40evil.example`): what follows the
   // `@` is the part to read, as with a user name before the host.
   final at = host.lastIndexOf('@');
@@ -163,6 +170,11 @@ LinkParts? describeLink(String url) {
     registrable: _ipv4.hasMatch(named) ? named : registrableDomain(named),
     ascii: ascii,
     rest: _rest(uri),
+    // An `@` or a `%` left already keeps the link from opening.
+    unreadable:
+        !decoded.contains('@') &&
+        !decoded.contains('%') &&
+        linkHostAscii(decoded) == null,
   );
 }
 

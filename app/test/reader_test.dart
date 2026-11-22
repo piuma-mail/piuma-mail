@@ -858,6 +858,49 @@ void main() {
     expect(opened.last, Uri.parse('https://login.bank-secure.example/x'));
   });
 
+  testWidgets('a link to a host UTS #46 refuses asks before opening', (
+    tester,
+  ) async {
+    final opened = <Uri>[];
+    final before = openExternalLink;
+    openExternalLink = (uri) async => opened.add(uri);
+    addTearDown(() => openExternalLink = before);
+    final beforeHost = linkHostAscii;
+    // As the engine reads it: a punycode label that doesn't decode.
+    linkHostAscii = (host) => host == 'xn--zz.com' ? null : beforeHost(host);
+    addTearDown(() => linkHostAscii = beforeHost);
+    final source = DemoMailSource(now: _now);
+    await tester.pumpWidget(
+      PiumaApp(
+        home: (_, _) => Scaffold(
+          body: MessageBody(
+            readable: const Readable(
+              blocks: [
+                BodyBlock.text([
+                  BodySpan('Your parcel', link: 'https://xn--zz.com/track'),
+                ]),
+              ],
+            ),
+            images: RemoteImages(source),
+            showRemote: false,
+          ),
+        ),
+      ),
+    );
+    await tester.tapOnText(find.textRange.ofSubstring('parcel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Check this link'), findsOneWidget);
+    expect(
+      find.text(
+        "This link's address isn't one a browser reads for sure: xn--zz.com.",
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Don’t open'));
+    await tester.pumpAndSettle();
+    expect(opened, isEmpty);
+  });
+
   testWidgets('quotes, lists and headings', (tester) async {
     final source = DemoMailSource(now: _now);
     await tester.pumpWidget(

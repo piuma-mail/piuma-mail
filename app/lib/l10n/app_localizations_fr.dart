@@ -6218,6 +6218,11 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'L\'adresse de ce lien n\'est pas une adresse qu\'un navigateur lit à coup sûr : $real.';
+  }
+
+  @override
   String get updates => 'Mises à jour';
 
   @override

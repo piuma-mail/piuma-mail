@@ -284,8 +284,10 @@ void main() {
     expect(parts.ascii, isNull);
     // Decoded, as written: the mapping folds case itself.
     expect(asked, everyElement('example。com'));
-    // Refused by UTS #46: read as before.
+    // Refused by UTS #46: read as before, but the link asks first.
     expect(normalizeLink('https://BÜCHER.de/x'), 'https://xn--bcher-kva.de/x');
+    expect(describeLink('https://BÜCHER.de/x')!.unreadable, isTrue);
+    expect(describeLink('https://example。com/x')!.unreadable, isFalse);
   });
 
   group('with the engine\'s UTS #46', () {
@@ -393,6 +395,20 @@ void main() {
       expect(parts.host, 'bank%2eexample');
       expect(parts.registrable, isNot('bank.example'));
       expect(isMailLinkAllowed(Uri.parse(url)), isFalse);
+    }, skip: skip);
+
+    test('a host UTS #46 refuses asks before it opens', () {
+      for (final url in ['https://xn--zz.com/', 'https://a.xn--zz.example/x']) {
+        expect(describeLink(url)!.unreadable, isTrue, reason: url);
+      }
+      for (final url in [
+        'https://shop.example/',
+        'https://xn--l-7sba6dbr.com/',
+        'https://ｅｘａｍｐｌｅ.com/',
+        'http://192.168.1.10/',
+      ]) {
+        expect(describeLink(url)!.unreadable, isFalse, reason: url);
+      }
     }, skip: skip);
   });
 }

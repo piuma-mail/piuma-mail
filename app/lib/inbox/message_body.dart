@@ -321,11 +321,13 @@ Future<void> openLink(
   // Only web pages and addresses: nothing an email names opens another
   // app on the device.
   if (uri == null || !isMailLinkAllowed(uri)) return;
-  if (shown != null || LinksAskFirst.of(context)) {
+  final unreadable = describeLink(link)?.unreadable ?? false;
+  if (shown != null || unreadable || LinksAskFirst.of(context)) {
     final open = await showPiumaDialog<bool>(
       context,
       label: AppLocalizations.of(context).suspiciousLinkTitle,
-      builder: (context) => _SuspiciousLink(shown: shown, uri: uri),
+      builder: (context) =>
+          _SuspiciousLink(shown: shown, unreadable: unreadable, uri: uri),
     );
     if (open != true) return;
   }
@@ -333,10 +335,17 @@ Future<void> openLink(
 }
 
 class _SuspiciousLink extends StatelessWidget {
-  const _SuspiciousLink({required this.shown, required this.uri});
+  const _SuspiciousLink({
+    required this.shown,
+    required this.unreadable,
+    required this.uri,
+  });
 
-  /// Null when the link asks because of who sent the email.
+  /// Null when the link asks because of its host or of who sent the email.
   final String? shown;
+
+  /// The host isn't one a browser reads for sure ([LinkParts.unreadable]).
+  final bool unreadable;
   final Uri uri;
 
   @override
@@ -368,6 +377,7 @@ class _SuspiciousLink extends StatelessWidget {
         const SizedBox(height: PiumaSpace.s16),
         Text(switch (shown) {
           final shown? => l.suspiciousLinkBody(shown, host),
+          null when unreadable => l.unreadableLinkBody(host),
           null => l.impostorLinkBody(host),
         }, style: PiumaType.body.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s8),

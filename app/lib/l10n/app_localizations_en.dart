@@ -6170,6 +6170,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'This link\'s address isn\'t one a browser reads for sure: $real.';
+  }
+
+  @override
   String get updates => 'Updates';
 
   @override

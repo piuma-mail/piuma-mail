@@ -6229,6 +6229,11 @@ class AppLocalizationsIt extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'L\'indirizzo di questo link non è uno che il browser legge con certezza: $real.';
+  }
+
+  @override
   String get updates => 'Aggiornamenti';
 
   @override
