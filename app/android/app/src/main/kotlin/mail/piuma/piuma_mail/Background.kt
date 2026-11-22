@@ -287,6 +287,9 @@ object Background {
         }
         if (notices.length() == 0) return
         val manager = channels(context)
+        // The app lock: no sender, subject or preview, and no buttons, here
+        // or on a watch the notice reaches.
+        val locked = if (AppLockFile.on(context)) AppLockFile.notice(context) else null
         for (i in 0 until notices.length()) {
             val n = notices.getJSONObject(i)
             val id = n.getInt("id")
@@ -296,6 +299,7 @@ object Background {
             val away = n.optJSONObject("away")
             val noReply = n.optJSONObject("noReply")
             val title = when {
+                locked != null -> locked
                 away != null -> context.getString(R.string.notice_away_title)
                 noReply != null -> noReplyTitle(context, sender, noReply)
                 vault != null -> vaultTitle(context, vault)
@@ -303,11 +307,12 @@ object Background {
                 else -> sender
             }
             val subject = when {
+                locked != null -> ""
                 away != null -> awayDetail(context, away)
                 vault != null -> vaultDetail(context, vault)
                 else -> n.getString("subject")
             }
-            val preview = n.getString("preview")
+            val preview = if (locked != null) "" else n.getString("preview")
             val body = listOf(subject, preview).filter { it.isNotEmpty() }.joinToString("\n")
             val open = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -330,7 +335,7 @@ object Background {
             // One email: Reply, Archive and Snooze, as on `Notifications`.
             // A notice for several leaves them out, since each would only
             // touch the newest. A Vault notice is about a card, so it has none.
-            if (count == 1 && vault == null && away == null && noReply == null) {
+            if (locked == null && count == 1 && vault == null && away == null && noReply == null) {
                 NoticeActions.add(context, builder, id, n.getString("payload"), sender, n.optInt("others", 0))
             }
             builder
@@ -344,7 +349,7 @@ object Background {
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(false)
             // "Piuma Mail · Vault", as on the board.
-            if (vault != null) builder.setSubText(context.getString(R.string.vault_notice_label))
+            if (vault != null && locked == null) builder.setSubText(context.getString(R.string.vault_notice_label))
             try {
                 manager.notify(id, builder.build())
             } catch (e: SecurityException) {

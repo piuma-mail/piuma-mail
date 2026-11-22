@@ -337,6 +337,12 @@ pub fn load_key(key: &str) -> Result<String, EngineError> {
     })
 }
 
+/// As [`load_key`], telling a missing secret from a keychain that can't
+/// answer now (the app lock needs both).
+pub fn read_secret(key: &str) -> Result<String, Unreadable> {
+    read_key(key)
+}
+
 fn read_key(key: &str) -> Result<String, Unreadable> {
     #[cfg(debug_assertions)]
     if let Some(memory) = test_memory() {

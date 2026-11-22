@@ -23,5 +23,6 @@
   "sent": "Gesendet",
   "undo": "Rückgängig",
   "replyAll": "Allen antworten",
-  "replyToAll": "Antworten an {name} und {count, plural, =1{1 weitere Person} other{{count} weitere Personen}}"
+  "replyToAll": "Antworten an {name} und {count, plural, =1{1 weitere Person} other{{count} weitere Personen}}",
+  "lockedOnPhone": "Piuma ist auf deinem Telefon gesperrt. Entsperre es dort, um deine Mails hier zu sehen."
 }

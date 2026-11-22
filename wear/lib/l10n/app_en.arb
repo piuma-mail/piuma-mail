@@ -38,5 +38,6 @@
   "undo": "Undo",
   "replyAll": "Reply all",
   "replyToAll": "Reply to {name} and {count, plural, =1{1 other} other{{count} others}}",
-  "@replyToAll": {"placeholders": {"name": {"type": "String"}, "count": {"type": "int"}}}
+  "@replyToAll": {"placeholders": {"name": {"type": "String"}, "count": {"type": "int"}}},
+  "lockedOnPhone": "Piuma is locked on your phone. Unlock it there to see your mail here."
 }

@@ -7754,4 +7754,121 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Message e-mail';
+
+  @override
+  String get lockSetting => 'Verrouiller Piuma';
+
+  @override
+  String get lockSettingHint =>
+      'Demander votre code PIN, ou le déverrouillage de cet appareil, pour ouvrir Piuma.';
+
+  @override
+  String get lockAfter => 'Verrouiller après';
+
+  @override
+  String get lockAfterNow => 'Aussitôt';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Déverrouiller avec cet appareil';
+
+  @override
+  String get lockDeviceHint =>
+      'Empreinte, visage ou verrouillage de l’écran. Le code PIN marche toujours aussi.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello : visage, empreinte ou son code PIN. Le code PIN de Piuma marche toujours aussi.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID ou le mot de passe de l’appareil. Le code PIN marche toujours aussi.';
+
+  @override
+  String get lockPinLabel => 'Code PIN';
+
+  @override
+  String get lockPinHint =>
+      'Conservé uniquement sous forme de hachage lent dans le trousseau du système.';
+
+  @override
+  String get lockChangePin => 'Changer le code PIN';
+
+  @override
+  String get lockChoosePin => 'Choisir un code PIN';
+
+  @override
+  String get lockPinWarning =>
+      '4 à 12 chiffres. Si vous l’oubliez, seul le déverrouillage de cet appareil ouvre Piuma, ou la suppression des données de Piuma sur l’appareil. Il n’y a pas d’autre moyen de revenir.';
+
+  @override
+  String get lockNewPin => 'Nouveau code PIN';
+
+  @override
+  String get lockPinAgain => 'Saisissez-le à nouveau';
+
+  @override
+  String get lockSavePin => 'Enregistrer';
+
+  @override
+  String get lockPinRule => 'Un code PIN compte 4 à 12 chiffres.';
+
+  @override
+  String get lockPinMismatch => 'Les deux codes PIN ne correspondent pas.';
+
+  @override
+  String get lockNoKeychain =>
+      'Le trousseau du système n’a pas pu garder le code PIN : le verrouillage est désactivé. Sous Linux, Piuma a besoin de GNOME Keyring, KWallet ou d’un autre Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'Tant que le verrouillage est actif, les notifications disent seulement « Nouveau message », ici et sur une montre associée, et la montre n’affiche aucun e-mail. Piuma est aussi masqué dans les applis récentes. Le verrouillage tient les autres hors de l’appli ; il ne chiffre pas les e-mails gardés sur cet appareil.';
+
+  @override
+  String get noticeLocked => 'Nouveau message';
+
+  @override
+  String get lockTitle => 'Piuma est verrouillé';
+
+  @override
+  String get lockDevicePrompt => 'Déverrouillez pour voir vos e-mails.';
+
+  @override
+  String get lockPinPrompt => 'Saisissez votre code PIN pour voir vos e-mails.';
+
+  @override
+  String get lockReason => 'Déverrouiller Piuma Mail';
+
+  @override
+  String get lockUnlock => 'Déverrouiller';
+
+  @override
+  String get lockUsePin => 'Utiliser le code PIN';
+
+  @override
+  String get lockUseDevice => 'Utiliser le déverrouillage de l’appareil';
+
+  @override
+  String get lockWrongPin => 'Code PIN incorrect.';
+
+  @override
+  String lockWait(String time) {
+    return 'Trop d’essais incorrects. Réessayez dans $time.';
+  }
+
+  @override
+  String get lockForgot =>
+      'Code PIN oublié ? Seule la suppression des données de Piuma sur cet appareil le rouvre ; vos comptes sont alors ajoutés à nouveau.';
+
+  @override
+  String get lockForgotDevice =>
+      'Code PIN oublié ? Déverrouillez plutôt avec cet appareil. Sinon, seule la suppression des données de Piuma sur l’appareil le rouvre.';
+
+  @override
+  String get lockPinUnreadable =>
+      'Le trousseau du système n’a pas rendu son code PIN à Piuma. Déverrouillez avec cet appareil, ou réessayez une fois le trousseau ouvert.';
 }

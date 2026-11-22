@@ -9,7 +9,8 @@ import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import io.flutter.embedding.android.FlutterActivity
+import android.view.WindowManager
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.security.KeyStore
@@ -18,7 +19,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class MainActivity : FlutterActivity() {
+// A FragmentActivity: the app lock's BiometricPrompt (local_auth) needs one.
+class MainActivity : FlutterFragmentActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
     private var shared: Shared? = null
@@ -34,9 +36,20 @@ class MainActivity : FlutterActivity() {
         launchPayload = Background.payload(applicationContext, intent)
         oauthRedirect(intent)
         super.onCreate(savedInstanceState)
+        // Before the first frame: with the app lock on, Piuma stays out of
+        // the recent apps' thumbnails and screenshots.
+        secure(AppLockFile.on(applicationContext))
         // A link or a share that started the app; not again when Android
         // brings the activity back after it was gone.
         if (savedInstanceState == null) shared?.handle(intent)
+    }
+
+    private fun secure(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -147,6 +160,19 @@ class MainActivity : FlutterActivity() {
                             "Android ${android.os.Build.VERSION.RELEASE} (${android.os.Build.ID})",
                         )
                     )
+                    else -> result.notImplemented()
+                }
+            }
+        // The app lock turned on or off (`lock_platform.dart`).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/lock")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "changed" -> {
+                        secure(call.argument<Boolean>("on") == true)
+                        // The watch shows the mail again, or stops.
+                        WatchLink.publish(context)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

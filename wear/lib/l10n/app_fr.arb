@@ -23,5 +23,6 @@
   "sent": "Envoyé",
   "undo": "Annuler",
   "replyAll": "Répondre à tous",
-  "replyToAll": "Répondre à {name} et {count, plural, =1{1 autre personne} other{{count} autres personnes}}"
+  "replyToAll": "Répondre à {name} et {count, plural, =1{1 autre personne} other{{count} autres personnes}}",
+  "lockedOnPhone": "Piuma est verrouillé sur votre téléphone. Déverrouillez-le là pour voir vos e-mails ici."
 }

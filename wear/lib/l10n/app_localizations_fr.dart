@@ -93,4 +93,8 @@ class AppLocalizationsFr extends AppLocalizations {
     );
     return 'Répondre à $name et $_temp0';
   }
+
+  @override
+  String get lockedOnPhone =>
+      'Piuma est verrouillé sur votre téléphone. Déverrouillez-le là pour voir vos e-mails ici.';
 }

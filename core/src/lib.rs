@@ -3,6 +3,7 @@
 //! All the hard work lives here: protocols (IMAP, SMTP, JMAP), offline-first
 //! sync, local database and search. The Flutter app only draws.
 
+pub mod app_lock;
 pub mod auth;
 pub mod autoconfig;
 pub mod automation;

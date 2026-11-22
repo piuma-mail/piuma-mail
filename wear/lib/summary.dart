@@ -9,7 +9,12 @@ class Summary {
     required this.accounts,
     required this.rows,
     required this.templates,
+    this.locked = false,
   });
+
+  /// The app lock is on on the phone: no mail comes to the watch until
+  /// it is unlocked there (`WatchLink.kt`).
+  final bool locked;
 
   /// When the phone made it, in Unix seconds.
   final int at;
@@ -34,6 +39,7 @@ class Summary {
       final m = jsonDecode(json) as Map<String, dynamic>;
       return Summary(
         at: (m['at'] as num).toInt(),
+        locked: m['locked'] == true,
         accounts: [
           for (final a in m['accounts'] as List<dynamic>)
             WatchAccount.fromJson(a as Map<String, dynamic>),
@@ -56,6 +62,7 @@ class Summary {
   /// once it archived or snoozed it, before the phone says so.
   Summary without(String payload) => Summary(
     at: at,
+    locked: locked,
     accounts: accounts,
     rows: [
       for (final r in rows)

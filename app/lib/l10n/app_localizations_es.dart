@@ -7731,4 +7731,121 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Mensaje de correo';
+
+  @override
+  String get lockSetting => 'Bloquear Piuma';
+
+  @override
+  String get lockSettingHint =>
+      'Pedir tu PIN, o el desbloqueo de este dispositivo, para abrir Piuma.';
+
+  @override
+  String get lockAfter => 'Bloquear tras';
+
+  @override
+  String get lockAfterNow => 'Al momento';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Desbloquear con este dispositivo';
+
+  @override
+  String get lockDeviceHint =>
+      'Huella, cara o bloqueo de pantalla. El PIN también funciona siempre.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello: cara, huella o su PIN. El PIN de Piuma también funciona siempre.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID o la contraseña del dispositivo. El PIN también funciona siempre.';
+
+  @override
+  String get lockPinLabel => 'PIN';
+
+  @override
+  String get lockPinHint =>
+      'Se guarda solo como hash lento en el llavero del sistema.';
+
+  @override
+  String get lockChangePin => 'Cambiar PIN';
+
+  @override
+  String get lockChoosePin => 'Elige un PIN';
+
+  @override
+  String get lockPinWarning =>
+      'De 4 a 12 cifras. Si lo olvidas, solo el desbloqueo de este dispositivo abre Piuma, o borrar los datos de Piuma del dispositivo. No hay otra forma de volver a entrar.';
+
+  @override
+  String get lockNewPin => 'PIN nuevo';
+
+  @override
+  String get lockPinAgain => 'Escríbelo otra vez';
+
+  @override
+  String get lockSavePin => 'Guardar PIN';
+
+  @override
+  String get lockPinRule => 'Un PIN tiene de 4 a 12 cifras.';
+
+  @override
+  String get lockPinMismatch => 'Los dos PIN no coinciden.';
+
+  @override
+  String get lockNoKeychain =>
+      'El llavero del sistema no pudo guardar el PIN, así que el bloqueo está desactivado. En Linux, Piuma necesita GNOME Keyring, KWallet u otro Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'Con el bloqueo activado, las notificaciones dicen solo «Mensaje nuevo», aquí y en un reloj vinculado, y el reloj no muestra correo. Piuma también se oculta en las apps recientes. El bloqueo deja a los demás fuera de la app; no cifra el correo guardado en este dispositivo.';
+
+  @override
+  String get noticeLocked => 'Mensaje nuevo';
+
+  @override
+  String get lockTitle => 'Piuma está bloqueado';
+
+  @override
+  String get lockDevicePrompt => 'Desbloquea para ver tu correo.';
+
+  @override
+  String get lockPinPrompt => 'Escribe tu PIN para ver tu correo.';
+
+  @override
+  String get lockReason => 'Desbloquear Piuma Mail';
+
+  @override
+  String get lockUnlock => 'Desbloquear';
+
+  @override
+  String get lockUsePin => 'Usar el PIN';
+
+  @override
+  String get lockUseDevice => 'Usar el desbloqueo del dispositivo';
+
+  @override
+  String get lockWrongPin => 'PIN incorrecto.';
+
+  @override
+  String lockWait(String time) {
+    return 'Demasiados intentos fallidos. Vuelve a probar en $time.';
+  }
+
+  @override
+  String get lockForgot =>
+      '¿Olvidaste el PIN? Solo borrar los datos de Piuma de este dispositivo lo vuelve a abrir; luego se añaden de nuevo las cuentas.';
+
+  @override
+  String get lockForgotDevice =>
+      '¿Olvidaste el PIN? Desbloquea con este dispositivo. Si no, solo borrar los datos de Piuma del dispositivo lo vuelve a abrir.';
+
+  @override
+  String get lockPinUnreadable =>
+      'El llavero del sistema no devolvió el PIN a Piuma. Desbloquea con este dispositivo, o vuelve a probar cuando el llavero esté abierto.';
 }

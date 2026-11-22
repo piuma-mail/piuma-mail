@@ -33,7 +33,9 @@ that moves a trust boundary or adds a network service updates this file. Reporti
 6. **An abuser of the relay**: floods it, uses it to post content to the feedback repository, or tries
    to reach other repositories.
 7. **Someone with the unlocked device** or a copy of its disk. Out of scope beyond what the operating
-   system provides: the database is not encrypted separately, the keychain is the OS's.
+   system provides: the database is not encrypted separately, the keychain is the OS's. The optional
+   app lock (see "App lock" below) keeps a person holding the unlocked device out of the app's
+   screens; it is not encryption and doesn't stand against a copy of the disk.
 8. **A malicious contributor**: a pull request that hides harmful code or changes a workflow.
 
 ## Trust boundaries
@@ -119,6 +121,35 @@ un-draft: the job checks every file again once the release is published (release
 locks them) and fails loudly, to be handled as a bad release ([incident runbook](incident-runbook.md)); until a Windows certificate exists, Windows packages are unsigned; GitHub itself, its
 runners and the Actions pinned by commit are trusted; a compromised maintainer account defeats the
 environment's review (use a hardware security key and keep admin rights to as few accounts as possible).
+
+### App lock
+
+Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`, `core/src/app_lock.rs`).
+
+- **What it stops:** someone picking up the unlocked phone or computer and reading mail in Piuma,
+  or seeing it in the recent apps (Android `FLAG_SECURE`, iOS app switcher cover), in notifications
+  or on a paired Wear OS watch.
+- **The PIN** (4 to 12 digits) is kept only as an Argon2id hash (19 MiB, 2 passes, random 16-byte
+  salt) in the system keychain, or the Android Keystore through the app, never in the database or a
+  file. A kept hash weaker than these parameters is refused, so editing it down doesn't speed up
+  guessing. Wrong PINs wait longer and longer (free for 5, then 30 s, 1, 5, 15 minutes, then an hour
+  each); the count is kept with the hash, so restarting the app doesn't reset it. Device unlock
+  (BiometricPrompt with the screen lock as fallback, Windows Hello, Touch ID/Face ID with the device
+  password) clears it. There is no reset: forgetting the PIN means the device unlock or removing
+  Piuma's data.
+- **Settings file:** `app-lock.json` next to the database says the lock is on, how long after leaving
+  it locks and the notice text. It is not secret; deleting it turns the lock off, which needs the same
+  access to the device's files that would read the database anyway. If the keychain can't give the
+  hash back, the app stays locked and only the device unlock opens it.
+- **Notifications and the watch:** while the lock is on, every notice (the app's and Android's
+  background service's) says only "New message", without sender, subject, preview or buttons (the
+  buttons would act on mail without unlocking). Wear OS mirrors those notices, so they are blank
+  there too, and the phone sends the watch app an empty, locked summary and refuses its requests to
+  open or act on a message until the lock is turned off. Sign-in problem notices from Android's
+  background service still name the account, not any mail.
+- **Not covered:** desktop reader windows are hidden when the lock closes but their window
+  thumbnails depend on the system; Windows and macOS window previews are not blanked; the lock
+  guards the app's screens only while it runs, not the data at rest.
 
 ### Self-hosted companion (planned)
 

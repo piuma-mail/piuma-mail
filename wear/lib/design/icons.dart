@@ -23,6 +23,12 @@ enum PiumaIcon {
     'M12 18v3',
   ]),
 
+  /// The app lock is on, on the phone.
+  lock([
+    'M6 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z',
+    'M8 11V7a4 4 0 0 1 8 0v4',
+  ]),
+
   /// The phone: what waits there.
   phone([
     'M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z',

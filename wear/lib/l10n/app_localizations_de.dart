@@ -92,4 +92,8 @@ class AppLocalizationsDe extends AppLocalizations {
     );
     return 'Antworten an $name und $_temp0';
   }
+
+  @override
+  String get lockedOnPhone =>
+      'Piuma ist auf deinem Telefon gesperrt. Entsperre es dort, um deine Mails hier zu sehen.';
 }

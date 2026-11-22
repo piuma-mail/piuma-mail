@@ -7,6 +7,7 @@ pub mod feedback;
 pub mod groups;
 pub mod labels;
 pub mod links;
+pub mod lock;
 pub mod mailbox;
 pub mod oauth;
 pub mod outside;

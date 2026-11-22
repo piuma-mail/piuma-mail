@@ -7754,4 +7754,121 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Messaggio email';
+
+  @override
+  String get lockSetting => 'Blocca Piuma';
+
+  @override
+  String get lockSettingHint =>
+      'Chiedi il PIN, o lo sblocco di questo dispositivo, per aprire Piuma.';
+
+  @override
+  String get lockAfter => 'Blocca dopo';
+
+  @override
+  String get lockAfterNow => 'Subito';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Sblocca con questo dispositivo';
+
+  @override
+  String get lockDeviceHint =>
+      'Impronta, volto o blocco schermo. Il PIN funziona sempre.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello: volto, impronta o il suo PIN. Il PIN di Piuma funziona sempre.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID o la password del dispositivo. Il PIN funziona sempre.';
+
+  @override
+  String get lockPinLabel => 'PIN';
+
+  @override
+  String get lockPinHint =>
+      'Conservato solo come hash lento nel portachiavi di sistema.';
+
+  @override
+  String get lockChangePin => 'Cambia PIN';
+
+  @override
+  String get lockChoosePin => 'Scegli un PIN';
+
+  @override
+  String get lockPinWarning =>
+      'Da 4 a 12 cifre. Se lo dimentichi, Piuma si apre solo con lo sblocco di questo dispositivo, oppure cancellando i dati di Piuma dal dispositivo. Non c’è altro modo per rientrare.';
+
+  @override
+  String get lockNewPin => 'Nuovo PIN';
+
+  @override
+  String get lockPinAgain => 'Ripetilo';
+
+  @override
+  String get lockSavePin => 'Salva PIN';
+
+  @override
+  String get lockPinRule => 'Il PIN è di 4–12 cifre.';
+
+  @override
+  String get lockPinMismatch => 'I due PIN non coincidono.';
+
+  @override
+  String get lockNoKeychain =>
+      'Il portachiavi di sistema non ha potuto conservare il PIN, quindi il blocco è spento. Su Linux, Piuma ha bisogno di GNOME Keyring, KWallet o un altro Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'Con il blocco attivo, le notifiche dicono solo “Nuovo messaggio”, qui e su un orologio collegato, e l’orologio non mostra la posta. Piuma è nascosto anche tra le app recenti. Il blocco tiene le persone fuori dall’app; non cifra la posta conservata sul dispositivo.';
+
+  @override
+  String get noticeLocked => 'Nuovo messaggio';
+
+  @override
+  String get lockTitle => 'Piuma è bloccato';
+
+  @override
+  String get lockDevicePrompt => 'Sblocca per vedere la posta.';
+
+  @override
+  String get lockPinPrompt => 'Inserisci il PIN per vedere la posta.';
+
+  @override
+  String get lockReason => 'Sblocca Piuma Mail';
+
+  @override
+  String get lockUnlock => 'Sblocca';
+
+  @override
+  String get lockUsePin => 'Usa il PIN';
+
+  @override
+  String get lockUseDevice => 'Usa lo sblocco del dispositivo';
+
+  @override
+  String get lockWrongPin => 'PIN errato.';
+
+  @override
+  String lockWait(String time) {
+    return 'Troppi tentativi errati. Riprova tra $time.';
+  }
+
+  @override
+  String get lockForgot =>
+      'Hai dimenticato il PIN? Solo cancellando i dati di Piuma da questo dispositivo si riapre; poi gli account vanno aggiunti di nuovo.';
+
+  @override
+  String get lockForgotDevice =>
+      'Hai dimenticato il PIN? Sblocca con questo dispositivo. Altrimenti, solo cancellando i dati di Piuma dal dispositivo si riapre.';
+
+  @override
+  String get lockPinUnreadable =>
+      'Il portachiavi di sistema non ha restituito il PIN a Piuma. Sblocca con questo dispositivo, o riprova quando il portachiavi è aperto.';
 }

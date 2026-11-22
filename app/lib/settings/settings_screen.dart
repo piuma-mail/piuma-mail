@@ -35,6 +35,8 @@ import 'signatures_page.dart';
 import 'groups_page.dart';
 import 'sync_page.dart';
 import 'templates_page.dart';
+import '../lock/lock_screen.dart' show AppLockScope;
+import '../lock/lock_settings.dart';
 
 /// Settings' sections, in the order of `SettingsOrderToApprove` (B):
 /// the accounts, then Mail, App and About.
@@ -1214,6 +1216,11 @@ class SettingsHeader extends StatelessWidget {
     );
   }
 }
+
+/// The settings card and switch row, for sections kept in files of
+/// their own (`lock/lock_settings.dart`).
+typedef SettingsCard = _Card;
+typedef SettingsSwitchRow = _SwitchRow;
 
 /// A bordered group of rows with lines between them.
 class _Card extends StatelessWidget {
@@ -2831,6 +2838,10 @@ class _PrivacyPageState extends State<PrivacyPage> {
               ),
             ],
           ),
+        if (AppLockScope.maybeOf(context) case final lock?) ...[
+          const SizedBox(height: 28),
+          LockSection(lock: lock),
+        ],
         if (_stats case final st?) ...[
           const SizedBox(height: 28),
           Container(

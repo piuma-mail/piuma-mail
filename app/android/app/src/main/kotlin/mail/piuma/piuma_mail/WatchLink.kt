@@ -35,6 +35,9 @@ object WatchLink {
     private const val CAPABILITY = "piuma_watch"
     private const val WAIT_SECONDS = 10L
 
+    /** The summary while the app lock is on (`wear/lib/summary.dart`). */
+    private fun locked(at: Long) = """{"at":$at,"locked":true,"accounts":[],"rows":[],"templates":[]}"""
+
     /** Sends the summary when a watch is there, on a thread of its own. */
     fun publish(context: Context) {
         val app = context.applicationContext
@@ -44,11 +47,16 @@ object WatchLink {
     /** Sends the summary when a watch is there; waits, so never on the main thread. */
     fun publishNow(context: Context) {
         if (!watchNear(context)) return
-        val json = try {
-            Background.openEngine(context)
-            MailNative.watchSummary()
-        } catch (e: Throwable) {
-            ""
+        // The app lock is on: the watch is told so, and gets no mail.
+        val json = if (AppLockFile.on(context)) {
+            locked(System.currentTimeMillis() / 1000)
+        } else {
+            try {
+                Background.openEngine(context)
+                MailNative.watchSummary()
+            } catch (e: Throwable) {
+                ""
+            }
         }
         if (json.isEmpty()) return
         val request = PutDataMapRequest.create(INBOX).apply {
@@ -82,6 +90,11 @@ class WatchListener : WearableListenerService() {
         when (event.path) {
             WatchLink.REFRESH -> WatchLink.publishNow(context)
             WatchLink.ACT -> {
+                // Nothing is done from the watch while the app is locked.
+                if (AppLockFile.on(context)) {
+                    WatchLink.publishNow(context)
+                    return
+                }
                 val ask = try {
                     JSONObject(String(event.data, Charsets.UTF_8))
                 } catch (e: Exception) {
@@ -103,11 +116,15 @@ class WatchListener : WearableListenerService() {
             WatchLink.OPEN -> {
                 val payload = String(event.data, Charsets.UTF_8)
                 val offset = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
-                val text = try {
-                    Background.openEngine(context)
-                    MailNative.watchText(payload, offset)
-                } catch (e: Throwable) {
+                val text = if (AppLockFile.on(context)) {
                     ""
+                } else {
+                    try {
+                        Background.openEngine(context)
+                        MailNative.watchText(payload, offset)
+                    } catch (e: Throwable) {
+                        ""
+                    }
                 }
                 val answer = text.ifEmpty { JSONObject().put("payload", payload).put("text", "").toString() }
                 try {

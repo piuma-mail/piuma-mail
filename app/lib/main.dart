@@ -22,7 +22,11 @@ import 'feedback/report_sheet.dart';
 import 'home.dart';
 import 'l10n/app_localizations.dart';
 import 'legal.dart';
+import 'lock/app_lock.dart';
+import 'lock/lock_platform.dart';
+import 'lock/lock_screen.dart';
 import 'notify/android_background.dart';
+import 'notify/notifier.dart' show lockedNoticeTitle;
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
@@ -90,6 +94,8 @@ Future<void> _start(String dir) async {
   // A password the system can no longer read leaves its account asking
   // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
+  // Before anything is drawn: a lock that is on starts locked.
+  final lock = await _loadLock(dir);
   final source = EngineMailSource()..startSync();
   // mailto: links in emails write here, in Piuma's own compose.
   openMailtoLink = (uri) async => Arrivals.instance.mailto(uri);
@@ -108,6 +114,7 @@ Future<void> _start(String dir) async {
   runApp(
     PiumaApp(
       reportSource: source,
+      lock: lock,
       appearance: _loadAppearance(),
       onAppearance: _saveAppearance,
       home: (_, _) => MailHome(
@@ -120,6 +127,40 @@ Future<void> _start(String dir) async {
   );
   // This launch worked: the next one need not look for a fix first.
   WidgetsBinding.instance.addPostFrameCallback((_) => Updates.launched());
+}
+
+/// The app lock, as left: settings next to the database, its PIN in the
+/// keychain (`lock/`). Notices go blank while it is on; reader windows
+/// hide when it locks.
+Future<AppLock> _loadLock(String dir) async {
+  final lock = AppLock(
+    store: FileLockStore(dir),
+    hasher: const EnginePinHasher(),
+    device: SystemDeviceUnlock(),
+  );
+  try {
+    await lock.load();
+  } catch (_) {
+    // The file can't be read: as if the lock were off.
+  }
+  void follow() {
+    lockedNoticeTitle = lock.settings?.notice;
+    LockPlatform.changed(on: lock.enabled).ignore();
+  }
+
+  follow();
+  lock.onSettings = follow;
+  if (canOpenWindows) {
+    lock.onLocked = () async {
+      try {
+        final self = await WindowController.fromCurrentEngine();
+        for (final w in await WindowController.getAll()) {
+          if (w.windowId != self.windowId) await w.hide();
+        }
+      } catch (_) {}
+    };
+  }
+  return lock;
 }
 
 /// `piuma_mail --smoke-test`, run by the "Release" workflow on the
@@ -315,9 +356,14 @@ class PiumaApp extends StatefulWidget {
     this.onAppearance,
     this.locale,
     this.reportSource,
+    this.lock,
   });
 
   final HomeBuilder home;
+
+  /// Settings › Privacy & security › Lock Piuma; null in windows of their
+  /// own, which the main window hides when it locks.
+  final AppLock? lock;
   final MailSource? reportSource;
 
   /// Light or dark from the start, over [appearance]'s theme.
@@ -390,6 +436,7 @@ class _PiumaAppState extends State<PiumaApp> {
     if (!mod || other || !keys.isShiftPressed || keys.isAltPressed) {
       return false;
     }
+    if (AppLock.lockedNow) return false;
     final source = widget.reportSource;
     final context = _navigator.currentState?.overlay?.context;
     if (source == null || context == null) return false;
@@ -444,7 +491,14 @@ class _PiumaAppState extends State<PiumaApp> {
       // Around everything, so a report can show the screen as it was.
       builder: (context, child) => RepaintBoundary(
         key: ReportContext.screen,
-        child: PiumaLook(appearance: _look, onChanged: _change, child: child!),
+        child: PiumaLook(
+          appearance: _look,
+          onChanged: _change,
+          child: switch (widget.lock) {
+            final lock? => AppLockGate(lock: lock, child: child!),
+            null => child!,
+          },
+        ),
       ),
       home: widget.home(
         dark,

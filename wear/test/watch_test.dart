@@ -134,6 +134,38 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('with the app lock on the phone, no mail shows', (tester) async {
+    final asked = <MethodCall>[];
+    await _pump(tester, asked);
+    expect(find.text('Giulia Romano'), findsOneWidget);
+    // What `WatchLink.kt` sends while Lock Piuma is on.
+    await _fromPhone(
+      'summary',
+      jsonEncode({
+        'at': _at(10, 9),
+        'locked': true,
+        'accounts': [],
+        'rows': [],
+        'templates': [],
+      }),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Giulia Romano'), findsNothing);
+    expect(find.text('Inbox'), findsNothing);
+    expect(
+      find.text(
+        'Piuma is locked on your phone. Unlock it there to see your mail '
+        'here.',
+      ),
+      findsOneWidget,
+    );
+    await expectLater(
+      find.byType(ClipOval),
+      matchesGoldenFile('goldens/watch_locked.png'),
+    );
+    expect(Summary.parse(_summary())!.locked, isFalse);
+  });
+
   testWidgets('inbox, reading and archive with Undo', (tester) async {
     final asked = <MethodCall>[];
     await _pump(tester, asked);

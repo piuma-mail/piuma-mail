@@ -110,6 +110,27 @@ Future<void> handleNoticeResponse(
   }
 }
 
+/// While the app lock is on, what every notice says instead of its sender,
+/// subject and preview ("New message"), and it has no buttons: nothing of
+/// the mail shows on the screen, the lock screen or a paired watch, and
+/// nothing is done to it without unlocking. Null while the lock is off.
+/// Android's background service does the same from `app-lock.json`.
+String? lockedNoticeTitle;
+
+/// [n] as the system may show it now ([lockedNoticeTitle]).
+SystemNotice privateNotice(SystemNotice n) {
+  final title = lockedNoticeTitle;
+  if (title == null) return n;
+  return SystemNotice(
+    id: n.id,
+    title: title,
+    subject: '',
+    preview: '',
+    payload: n.payload,
+    silent: n.silent,
+  );
+}
+
 /// Shows notices through the operating system. Tests replace [notifier].
 abstract class Notifier {
   /// [onOpen] gets the payload of a clicked notice. [openLabel] names the
@@ -231,8 +252,9 @@ class SystemNotifier implements Notifier {
   }
 
   @override
-  Future<void> show(SystemNotice n) async {
+  Future<void> show(SystemNotice notice) async {
     if (!_ready) return;
+    final n = privateNotice(notice);
     // Where there is no subtitle line, the subject leads the body. Windows
     // puts its extra line under the body, so there the subject is the body
     // and the preview goes under it.

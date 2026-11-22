@@ -19,6 +19,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [android_logger](https://github.com/rust-mobile/android_logger-rs) | 0.15.1 | MIT OR Apache-2.0 |
 | [anyhow](https://github.com/dtolnay/anyhow) | 1.0.104 | MIT OR Apache-2.0 |
 | [arboard](https://github.com/1Password/arboard) | 3.7.0 | MIT OR Apache-2.0 |
+| [argon2](https://github.com/RustCrypto/password-hashes) | 0.6.0 | MIT OR Apache-2.0 |
 | [arrayref](https://github.com/droundy/arrayref) | 0.3.9 | BSD-2-Clause |
 | [arrayvec](https://github.com/bluss/arrayvec) | 0.7.8 | MIT OR Apache-2.0 |
 | [async-broadcast](https://github.com/smol-rs/async-broadcast) | 0.7.2 | MIT OR Apache-2.0 |
@@ -39,9 +40,11 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [aws-lc-sys](https://github.com/aws/aws-lc-rs) | 0.47.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) |
 | [backtrace](https://github.com/rust-lang/backtrace-rs) | 0.3.76 | MIT OR Apache-2.0 |
 | [base64](https://github.com/marshallpierce/rust-base64) | 0.23.1 | MIT OR Apache-2.0 |
+| [base64ct](https://github.com/RustCrypto/formats) | 1.8.3 | Apache-2.0 OR MIT |
 | [bip39](https://github.com/rust-bitcoin/rust-bip39/) | 3.0.0 | CC0-1.0 |
 | [bitcoin_hashes](https://github.com/rust-bitcoin/rust-bitcoin) | 0.14.101 | CC0-1.0 |
 | [bitflags](https://github.com/bitflags/bitflags) | 2.13.2 | MIT OR Apache-2.0 |
+| [blake2](https://github.com/RustCrypto/hashes) | 0.11.0 | MIT OR Apache-2.0 |
 | [block-buffer](https://github.com/RustCrypto/utils) | 0.10.4 | MIT OR Apache-2.0 |
 | [block-buffer](https://github.com/RustCrypto/utils) | 0.12.1 | MIT OR Apache-2.0 |
 | [block-padding](https://github.com/RustCrypto/utils) | 0.3.3 | MIT OR Apache-2.0 |
@@ -285,8 +288,10 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [parking](https://github.com/smol-rs/parking) | 2.2.1 | Apache-2.0 OR MIT |
 | [parking_lot](https://github.com/Amanieu/parking_lot) | 0.12.5 | MIT OR Apache-2.0 |
 | [parking_lot_core](https://github.com/Amanieu/parking_lot) | 0.9.12 | MIT OR Apache-2.0 |
+| [password-hash](https://github.com/RustCrypto/traits) | 0.6.1 | MIT OR Apache-2.0 |
 | [peniko](https://github.com/linebender/peniko) | 0.6.1 | Apache-2.0 OR MIT |
 | [percent-encoding](https://github.com/servo/rust-url/) | 2.3.2 | MIT OR Apache-2.0 |
+| [phc](https://github.com/RustCrypto/formats) | 0.6.1 | Apache-2.0 OR MIT |
 | [phf](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |
 | [phf](https://github.com/rust-phf/rust-phf) | 0.14.0 | MIT |
 | [phf_generator](https://github.com/rust-phf/rust-phf) | 0.13.1 | MIT |

@@ -25,6 +25,8 @@ class InboxScreen extends StatelessWidget {
       backgroundColor: c.darkroom,
       body: summary == null
           ? _Waiting(asked: link.asked)
+          : summary.locked
+          ? const _Locked()
           : RoundScroll(
               children: [
                 _Title(unread: summary.unread),
@@ -184,6 +186,34 @@ class _Waiting extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               asked ? l.openOnPhone : l.reaching,
+              textAlign: TextAlign.center,
+              style: PiumaType.small.copyWith(color: c.muted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The app lock is on on the phone: nothing of the mail shows here.
+class _Locked extends StatelessWidget {
+  const _Locked();
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    const c = watchColors;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PiumaIconView(PiumaIcon.lock, size: 22, color: c.muted),
+            const SizedBox(height: 10),
+            Text(
+              l.lockedOnPhone,
               textAlign: TextAlign.center,
               style: PiumaType.small.copyWith(color: c.muted),
             ),
