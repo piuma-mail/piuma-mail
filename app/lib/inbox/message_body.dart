@@ -315,7 +315,9 @@ class LinksAskFirst extends InheritedWidget {
 /// them asks first when it should. It asks with [shown], the address its
 /// text showed instead; in an email under [LinksAskFirst]; and when its
 /// host isn't one a browser reads for sure ([LinkParts.unreadable]).
-Future<void> openLink(
+/// True when the link opened; false when it couldn't or the person said
+/// not to.
+Future<bool> openLink(
   BuildContext context,
   String link, {
   String? shown,
@@ -323,7 +325,7 @@ Future<void> openLink(
   final uri = Uri.tryParse(link);
   // Only web pages and addresses: nothing an email names opens another
   // app on the device.
-  if (uri == null || !isMailLinkAllowed(uri)) return;
+  if (uri == null || !isMailLinkAllowed(uri)) return false;
   final unreadable = describeLink(link)?.unreadable ?? false;
   final impostor = LinksAskFirst.of(context);
   if (shown != null || unreadable || impostor) {
@@ -337,9 +339,9 @@ Future<void> openLink(
         uri: uri,
       ),
     );
-    if (open != true) return;
+    if (open != true) return false;
   }
-  await launchMailLink(uri);
+  return launchMailLink(uri);
 }
 
 class _SuspiciousLink extends StatelessWidget {

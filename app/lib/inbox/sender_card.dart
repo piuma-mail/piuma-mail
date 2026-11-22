@@ -195,8 +195,8 @@ class _SenderCardState extends State<SenderCard> {
 
   Future<void> _leave() async {
     if (_unsubscribe.kind == UnsubscribeKind.page) {
-      await openLink(context, _unsubscribe.address);
-      if (mounted) setState(() => _leaving = _Leaving.page);
+      final opened = await openLink(context, _unsubscribe.address);
+      if (opened && mounted) setState(() => _leaving = _Leaving.page);
       return;
     }
     // The message goes from the person's account: they see it first.
