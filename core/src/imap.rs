@@ -1106,6 +1106,9 @@ impl Connection {
             uids.retain(|u| local.contains(u) || *u <= newest);
         }
         uids.truncate(limit);
+        // Found again: its days kept start over.
+        let again: Vec<u32> = uids.iter().filter(|u| local.contains(u)).copied().collect();
+        lock(store).refresh_server_found(account, mailbox, &again)?;
         let missing: Vec<u32> = uids
             .iter()
             .filter(|u| !local.contains(u))
