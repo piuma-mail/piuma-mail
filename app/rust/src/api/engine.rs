@@ -27,7 +27,7 @@ use piuma_core::smtp::{self, Draft, SendError};
 use piuma_core::store::WaitingDraft;
 use piuma_core::{
     images, reading, Account, AccountId, AccountKind, Body, Folder, ListFilter, Login,
-    MessageSummary, PrivacyCounts, Query, Section, Security, Server, Store,
+    MessageSummary, PrivacyCounts, Query, Section, Security, Server, Store, StoreError,
 };
 
 use crate::credentials;
@@ -67,23 +67,46 @@ pub(crate) fn is_open() -> bool {
 }
 
 pub(crate) fn store() -> Result<StoreGuard<'static>, EngineError> {
-    hold(&engine()?.store)
+    Ok(hold(&engine()?.store)?)
 }
 
 /// The database for reading only, for the calls the app makes while it
 /// draws a frame: they wait neither for a write nor for a long read.
 pub(crate) fn reader() -> Result<StoreGuard<'static>, EngineError> {
     let engine = engine()?;
-    hold(engine.reader.as_ref().unwrap_or(&engine.store))
+    Ok(hold(engine.reader.as_ref().unwrap_or(&engine.store))?)
 }
 
 /// The database for reading only, for the longer reads the app asks for
 /// off the thread that draws (counts, pages, search): the first of the
-/// connections kept for them that is free, or the first one when none is.
-/// Never [`reader`]'s, so the calls made while drawing don't wait on them.
+/// connections kept for them that is free, or, when none is, one this
+/// thread doesn't hold already, waited for. Never [`reader`]'s, so the
+/// calls made while drawing don't wait on them.
 pub(crate) fn bulk_reader() -> Result<StoreGuard<'static>, EngineError> {
     let engine = engine()?;
-    for r in &engine.readers {
+    let fallback = engine.reader.as_ref().unwrap_or(&engine.store);
+    Ok(pick_bulk(&engine.readers, fallback)?)
+}
+
+/// [`bulk_reader`]'s choice among `readers`, or `fallback` when there are
+/// none (a database in memory).
+///
+/// The rule: a thread that holds no connection may wait for one; a thread
+/// that already holds any (a reader, or the store, `reader`'s connection
+/// included) never waits. It takes one that is free right now or gets
+/// [`StoreError::HeldHere`]. Two threads each holding one reader and
+/// waiting for the other's would otherwise hang for good, and so would one
+/// holding the store waiting on a reader whose holder waits for the store.
+fn pick_bulk<'a>(
+    readers: &'a [Mutex<Store>],
+    fallback: &'a Mutex<Store>,
+) -> Result<StoreGuard<'a>, StoreError> {
+    let candidates = if readers.is_empty() {
+        std::slice::from_ref(fallback)
+    } else {
+        readers
+    };
+    for r in candidates {
         if holds(r) {
             continue;
         }
@@ -95,13 +118,17 @@ pub(crate) fn bulk_reader() -> Result<StoreGuard<'static>, EngineError> {
             Err(std::sync::TryLockError::WouldBlock) => {}
         }
     }
-    hold(
-        engine
-            .readers
-            .first()
-            .or(engine.reader.as_ref())
-            .unwrap_or(&engine.store),
-    )
+    let Some(free_here) = candidates.iter().find(|r| !holds(r)) else {
+        // Every one held by this thread: a bug, refused as [`hold`] does.
+        return hold(&candidates[0]);
+    };
+    if holds_any() {
+        // Busy elsewhere, and waiting while holding one could deadlock.
+        let e = StoreError::HeldHere;
+        log::warn!("{e} (a bulk read while holding a connection, all busy)");
+        return Err(e);
+    }
+    hold(free_here)
 }
 
 thread_local! {
@@ -117,21 +144,48 @@ fn holds(m: &Mutex<Store>) -> bool {
     HELD_HERE.with(|h| h.borrow().contains(&address(m)))
 }
 
+/// Whether this thread holds any database connection at all.
+fn holds_any() -> bool {
+    HELD_HERE.with(|h| !h.borrow().is_empty())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests of the release behaviour: [`hold`] answers the error instead
+    /// of panicking, on this thread only.
+    static AS_IN_RELEASE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether asking again for a held connection panics: in debug builds,
+/// unless a test asks for the release behaviour.
+fn panics_when_held_here() -> bool {
+    #[cfg(test)]
+    if AS_IN_RELEASE.with(|c| c.get()) {
+        return false;
+    }
+    cfg!(debug_assertions)
+}
+
 /// Takes a database connection, waiting for it. A thread asking again for
 /// one it already holds would wait for itself forever (std's mutex isn't
 /// reentrant): on the thread that draws, the app would freeze for good
 /// (an ANR). That is a bug, so it panics in debug
 /// builds; a release build answers an error instead of hanging.
-fn hold(m: &Mutex<Store>) -> Result<StoreGuard<'_>, EngineError> {
+///
+/// Every lock on a connection in this crate goes through here (or
+/// [`pick_bulk`]'s `try_lock`, which also never waits while this thread
+/// holds another connection). The locks `piuma_core` takes itself, on the
+/// `&Mutex<Store>` handed to it (sync, rules, the outbox, the space sync),
+/// are not tracked: core knows nothing of this guard. They are safe as
+/// long as no [`StoreGuard`] is held while calling into core with the same
+/// connection.
+fn hold(m: &Mutex<Store>) -> Result<StoreGuard<'_>, StoreError> {
     if holds(m) {
-        let e = EngineError::new(
-            ErrorKind::Other,
-            "the database was asked for again by the thread that holds it",
-        );
-        if cfg!(debug_assertions) {
-            panic!("{}", e.detail);
+        let e = StoreError::HeldHere;
+        if panics_when_held_here() {
+            panic!("{e}");
         }
-        log::error!("{}", e.detail);
+        log::error!("{e}");
         return Err(e);
     }
     Ok(StoreGuard::new(
@@ -2338,7 +2392,9 @@ pub(crate) fn notices_for(arrived: &[notify::Arrival], store: &Mutex<Store>) -> 
     if arrived.is_empty() {
         return Vec::new();
     }
-    let store = store.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(store) = hold(store) else {
+        return Vec::new();
+    };
     let settings = notify::Settings::load(&store).unwrap_or_default();
     // Groups with notices off stay quiet, and so do muted conversations.
     let mut arrived: Vec<notify::Arrival> = arrived
@@ -4543,10 +4599,10 @@ pub async fn save_draft(message: OutgoingMessage) -> Result<MessageRef, EngineEr
             if let Some(e) = &earlier_here {
                 conn.erase(&shared, id, &e.mailbox, &[e.uid]).await?;
             }
-            lock_store(&shared).set_folder_role(id, Folder::Drafts, &folder)?;
+            hold(&shared)?.set_folder_role(id, Folder::Drafts, &folder)?;
             conn.sync_mailbox(&shared, id, &folder).await?;
             conn.close().await;
-            let uid = lock_store(&shared).uid_of(id, &folder, &wanted)?;
+            let uid = hold(&shared)?.uid_of(id, &folder, &wanted)?;
             Ok::<_, RemoteError>((folder, uid))
         })
         .await
@@ -4633,8 +4689,8 @@ static SAVING: Mutex<Vec<i64>> = Mutex::new(Vec::new());
 pub(crate) fn save_waiting_drafts(account: Account, password: Login) {
     let Ok(engine) = engine() else { return };
     let id = account.id;
-    let waiting = lock_store(&engine.store)
-        .waiting_drafts(id)
+    let waiting = hold(&engine.store)
+        .and_then(|s| s.waiting_drafts(id))
         .unwrap_or_default();
     {
         let mut saving = SAVING.lock().unwrap_or_else(|e| e.into_inner());
@@ -4663,13 +4719,13 @@ pub(crate) fn save_waiting_drafts(account: Account, password: Login) {
                     }),
                     None => {}
                 }
-                lock_store(&shared).drop_waiting_draft(d.id)?;
+                hold(&shared)?.drop_waiting_draft(d.id)?;
                 folder = Some(into);
             }
             if let Some(folder) = &folder {
-                lock_store(&shared).set_folder_role(id, Folder::Drafts, folder)?;
+                hold(&shared)?.set_folder_role(id, Folder::Drafts, folder)?;
                 conn.sync_mailbox(&shared, id, folder).await?;
-                let store = lock_store(&shared);
+                let store = hold(&shared)?;
                 for d in &waiting {
                     let (Some(picked), Ok(Some(uid))) =
                         (&d.signature, store.uid_of(id, folder, &d.message_id))
@@ -4789,10 +4845,6 @@ pub async fn open_draft(draft: MessageRef) -> Result<OutgoingMessage, EngineErro
     })
 }
 
-fn lock_store(store: &Mutex<Store>) -> StoreGuard<'_> {
-    StoreGuard::new(store, store.lock().unwrap_or_else(|e| e.into_inner()))
-}
-
 /// Hides a message from the lists while its action can be undone, or
 /// shows it again after Undo. Not on the thread that draws: a sync writing
 /// a batch holds the database for a moment.
@@ -4876,7 +4928,7 @@ pub async fn push_messages_seen(messages: Vec<MessageRef>, seen: bool) -> Result
                         let mut conn = Remote::open(&account, &password).await?;
                         for (mailbox, uids) in &by_folder {
                             conn.set_seen(&shared, id, mailbox, uids, seen).await?;
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            let store = hold(&shared)?;
                             store.settle_seen(id, mailbox, uids, seen)?;
                             done.push(mailbox.clone());
                         }
@@ -5020,10 +5072,7 @@ pub async fn apply_message_action(
                         }
                         if let (Some(FolderRole::Archive), Some(target)) = (role, target) {
                             // Show them in Archive right away, not at the next look.
-                            shared
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .set_folder_role(id, Folder::Archive, &target)?;
+                            hold(&shared)?.set_folder_role(id, Folder::Archive, &target)?;
                             conn.sync_mailbox(&shared, id, &target).await?;
                         }
                         conn.close().await;
@@ -5034,7 +5083,7 @@ pub async fn apply_message_action(
                         // Messages already moved are gone from the store,
                         // so only the rest wait.
                         Err(e) if e.is_offline() => {
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            let store = hold(&shared)?;
                             for (mailbox, uids) in &by_folder {
                                 for uid in uids {
                                     if store.message(id, mailbox, *uid)?.is_some() {
@@ -5300,7 +5349,7 @@ pub async fn move_messages_to(
                     .await;
                     match moved {
                         Err(e) if e.is_offline() => {
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            let store = hold(&shared)?;
                             for (mailbox, uids) in &by_folder {
                                 for uid in uids {
                                     if store.message(id, mailbox, *uid)?.is_some() {
@@ -5558,7 +5607,7 @@ async fn put_away(messages: Vec<MessageRef>, change: Change) -> Result<(), Engin
                     .await;
                     match sent {
                         Err(e) if e.is_offline() => {
-                            let store = shared.lock().unwrap_or_else(|e| e.into_inner());
+                            let store = hold(&shared)?;
                             for (mailbox, uids) in &by_folder {
                                 for uid in uids {
                                     if store.message(id, mailbox, *uid)?.is_some() {
@@ -6818,6 +6867,26 @@ mod store_guard_tests {
         Mutex::new(Store::open(":memory:").unwrap())
     }
 
+    fn arrival() -> notify::Arrival {
+        notify::Arrival {
+            summary: MessageSummary {
+                account: AccountId(1),
+                mailbox: "INBOX".into(),
+                uid: 1,
+                from_name: "Julia".into(),
+                from_email: "julia@example.org".into(),
+                to: String::new(),
+                subject: "Hello".into(),
+                preview: String::new(),
+                received_at: 1_000,
+                flags: Default::default(),
+                reply: Default::default(),
+                list: Default::default(),
+            },
+            automated: false,
+        }
+    }
+
     #[test]
     fn a_connection_is_taken_again_once_let_go() {
         let (a, b) = (connection(), connection());
@@ -6851,6 +6920,158 @@ mod store_guard_tests {
         let a = connection();
         let _held = hold(&a).unwrap();
         let _ = hold(&a);
+    }
+
+    /// The first reader held by this thread: it is passed over for the
+    /// other, which is not waited for while busy elsewhere (holding one,
+    /// waiting could deadlock) and taken once free.
+    #[test]
+    fn a_bulk_reader_held_here_is_passed_over_for_one_busy_elsewhere() {
+        let readers: &'static [Mutex<Store>] = Box::leak(Box::new([connection(), connection()]));
+        let fallback = connection();
+        let mine = hold(&readers[0]).unwrap();
+        let (taken, on_taken) = std::sync::mpsc::channel();
+        let (release, on_release) = std::sync::mpsc::channel::<()>();
+        let (released, on_released) = std::sync::mpsc::channel();
+        let elsewhere = std::thread::spawn(move || {
+            let held = hold(&readers[1]).unwrap();
+            taken.send(()).unwrap();
+            on_release.recv().unwrap();
+            drop(held);
+            released.send(()).unwrap();
+        });
+        on_taken.recv().unwrap();
+        assert!(matches!(
+            pick_bulk(readers, &fallback),
+            Err(StoreError::HeldHere)
+        ));
+        release.send(()).unwrap();
+        on_released.recv().unwrap();
+        let picked = pick_bulk(readers, &fallback).unwrap();
+        assert_eq!(picked.at, address(&readers[1]));
+        assert!(!holds(&fallback));
+        drop(picked);
+        drop(mine);
+        elsewhere.join().unwrap();
+    }
+
+    /// Two threads each holding one reader and asking for another: before,
+    /// each waited for the other's for good. Now both are refused.
+    #[test]
+    fn two_threads_each_holding_a_bulk_reader_do_not_deadlock() {
+        let readers: &'static [Mutex<Store>] = Box::leak(Box::new([connection(), connection()]));
+        let fallback: &'static Mutex<Store> = Box::leak(Box::new(connection()));
+        // Both pick while both hold theirs: the first wait comes after
+        // each holds one, the second after each has picked.
+        let both = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let (results, answers) = std::sync::mpsc::channel();
+        let threads: Vec<_> = (0..2)
+            .map(|i| {
+                let (both, results) = (both.clone(), results.clone());
+                std::thread::spawn(move || {
+                    let _mine = hold(&readers[i]).unwrap();
+                    both.wait();
+                    let picked = pick_bulk(readers, fallback).map(|g| g.at);
+                    results.send(picked).unwrap();
+                    both.wait();
+                })
+            })
+            .collect();
+        for _ in 0..2 {
+            let picked = answers
+                .recv_timeout(Duration::from_secs(10))
+                .expect("deadlock: a bulk reader was waited for while holding another");
+            assert!(matches!(picked, Err(StoreError::HeldHere)));
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+    }
+
+    /// The store held, every reader busy elsewhere: refused, not waited for
+    /// (the reader's holder may be waiting for the store).
+    #[test]
+    fn a_bulk_reader_is_not_waited_for_while_the_store_is_held() {
+        let readers: &'static [Mutex<Store>] = Box::leak(Box::new([connection()]));
+        let store = connection();
+        let fallback = connection();
+        let (taken, on_taken) = std::sync::mpsc::channel();
+        let (release, on_release) = std::sync::mpsc::channel::<()>();
+        let elsewhere = std::thread::spawn(move || {
+            let _held = hold(&readers[0]).unwrap();
+            taken.send(()).unwrap();
+            on_release.recv().unwrap();
+        });
+        on_taken.recv().unwrap();
+        let _store = hold(&store).unwrap();
+        assert!(matches!(
+            pick_bulk(readers, &fallback),
+            Err(StoreError::HeldHere)
+        ));
+        release.send(()).unwrap();
+        elsewhere.join().unwrap();
+    }
+
+    /// Holding nothing, a thread may wait for a reader busy elsewhere.
+    #[test]
+    fn a_thread_holding_nothing_gets_a_busy_bulk_reader() {
+        let readers: &'static [Mutex<Store>] = Box::leak(Box::new([connection()]));
+        let fallback: &'static Mutex<Store> = Box::leak(Box::new(connection()));
+        let held = hold(&readers[0]).unwrap();
+        // Whether it waits or finds it free, it gets the reader.
+        let asker = std::thread::spawn(move || pick_bulk(readers, fallback).map(|g| g.at));
+        drop(held);
+        assert_eq!(asker.join().unwrap().unwrap(), address(&readers[0]));
+    }
+
+    /// Only when this thread holds every reader is it refused.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "asked for again")]
+    fn bulk_readers_all_held_here_are_refused() {
+        let readers = [connection(), connection()];
+        let fallback = connection();
+        let _a = hold(&readers[0]).unwrap();
+        let _b = hold(&readers[1]).unwrap();
+        let _ = pick_bulk(&readers, &fallback);
+    }
+
+    /// With no readers kept (a database in memory) the fallback is used.
+    #[test]
+    fn without_bulk_readers_the_fallback_is_used() {
+        let fallback = connection();
+        let picked = pick_bulk(&[], &fallback).unwrap();
+        assert_eq!(picked.at, address(&fallback));
+    }
+
+    /// The notices look at the store through [`hold`]: asked by the
+    /// thread that holds it, they are refused instead of hanging.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "asked for again")]
+    fn notices_asked_for_by_the_store_holder_are_refused() {
+        let a = connection();
+        let _held = hold(&a).unwrap();
+        let arrived = [arrival()];
+        let _ = notices_for(&arrived, &a);
+    }
+
+    /// In a release build the notices asked for by the store's holder are
+    /// none, not a hang: [`hold`]'s error, as there, without the panic.
+    #[test]
+    fn notices_asked_for_by_the_store_holder_are_none_in_release() {
+        AS_IN_RELEASE.with(|c| c.set(true));
+        let a = connection();
+        let mut recent = arrival();
+        recent.summary.received_at = now_secs();
+        let arrived = [recent];
+        // Not held, the same arrival is a notice: the empty answer below
+        // is the refusal, not the settings.
+        assert!(!notices_for(&arrived, &a).is_empty());
+        let _held = hold(&a).unwrap();
+        assert!(notices_for(&arrived, &a).is_empty());
+        assert!(matches!(hold(&a), Err(StoreError::HeldHere)));
+        AS_IN_RELEASE.with(|c| c.set(false));
     }
 }
 
