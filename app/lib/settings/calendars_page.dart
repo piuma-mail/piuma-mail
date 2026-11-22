@@ -11,6 +11,7 @@ import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
 import 'settings_screen.dart' show SettingsHeader;
+import '../widgets/bidi.dart';
 
 enum _Way { calDav, google, ics }
 
@@ -405,7 +406,7 @@ class _AddButton extends StatelessWidget {
             duration: instant ? Duration.zero : PiumaMotion.press,
             curve: PiumaMotion.curve,
             height: 34,
-            padding: const EdgeInsets.fromLTRB(10, 0, 14, 0),
+            padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 14, 0),
             decoration: BoxDecoration(
               color: open ? c.sel : c.surface,
               borderRadius: BorderRadius.circular(PiumaRadius.button),
@@ -881,7 +882,7 @@ class _Suggestion extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 10, 10),
       decoration: BoxDecoration(
         color: c.surface,
         borderRadius: BorderRadius.circular(12),
@@ -1027,7 +1028,7 @@ class _SourceRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: EdgeInsets.fromLTRB(side, 10, side - 8, 10),
+            padding: EdgeInsetsDirectional.fromSTEB(side, 10, side - 8, 10),
             child: Row(
               children: [
                 Container(
@@ -1080,7 +1081,9 @@ class _SourceRow extends StatelessWidget {
                 ),
                 PiumaPressable(
                   onTap: onDisconnect,
-                  semanticLabel: l.calDisconnectLabel(source.name),
+                  semanticLabel: l.calDisconnectLabel(
+                    bidiArg(context, source.name),
+                  ),
                   child: ExcludeSemantics(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -1103,7 +1106,12 @@ class _SourceRow extends StatelessWidget {
           ),
           for (final cal in source.calendars)
             Padding(
-              padding: EdgeInsets.fromLTRB(phone ? 60 : 64, 2, side, 2),
+              padding: EdgeInsetsDirectional.fromSTEB(
+                phone ? 60 : 64,
+                2,
+                side,
+                2,
+              ),
               child: SizedBox(
                 height: 40,
                 child: Row(
@@ -1158,7 +1166,7 @@ class _SourceRow extends StatelessWidget {
                     ],
                     PiumaSwitch(
                       value: cal.availability,
-                      label: l.calAvailabilityFor(cal.name),
+                      label: l.calAvailabilityFor(bidiArg(context, cal.name)),
                       onChanged: (on) => onAvailability(cal, on),
                     ),
                   ],
@@ -1248,7 +1256,7 @@ class _Row extends StatelessWidget {
                         WidgetSpan(
                           alignment: PlaceholderAlignment.middle,
                           child: Padding(
-                            padding: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsetsDirectional.only(start: 8),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [_Tag(text: tag, soft: false)],
@@ -1310,7 +1318,7 @@ class _Pill extends StatelessWidget {
           onTap: calendar == null ? null : onTap,
           child: Container(
             height: 34,
-            padding: const EdgeInsets.fromLTRB(12, 0, 10, 0),
+            padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 10, 0),
             decoration: BoxDecoration(
               color: c.surface,
               borderRadius: BorderRadius.circular(999),

@@ -6,6 +6,7 @@ import '../design/motion.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
+import 'bidi.dart';
 
 /// The quick times under the month of `PickDateTime`.
 const pickTimes = [(8, 0), (9, 0), (18, 0)];
@@ -102,7 +103,7 @@ class _PickDateTimeState extends State<PickDateTime> {
         Row(
           children: [
             Transform.translate(
-              offset: const Offset(-10, 0),
+              offset: towardStart(context, 10),
               child: _Round(
                 icon: PiumaIcon.chevronLeft,
                 label: l.back,

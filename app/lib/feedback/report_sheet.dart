@@ -393,7 +393,7 @@ class _ReportSheetState extends State<ReportSheet> {
             children: [
               Expanded(
                 child: Align(
-                  alignment: Alignment.centerLeft,
+                  alignment: AlignmentDirectional.centerStart,
                   child: PiumaPressable(
                     onTap: _cancel,
                     semanticLabel: l.cancel,
@@ -617,7 +617,7 @@ class _ReportSheetState extends State<ReportSheet> {
           children: [
             Expanded(
               child: Align(
-                alignment: Alignment.centerLeft,
+                alignment: AlignmentDirectional.centerStart,
                 child: PiumaPressable(
                   onTap: _seeSent,
                   semanticLabel: l.reportSeeSent,
@@ -976,7 +976,7 @@ class _RedactPageState extends State<RedactPage> {
                   children: [
                     Expanded(
                       child: Align(
-                        alignment: Alignment.centerLeft,
+                        alignment: AlignmentDirectional.centerStart,
                         child: PiumaPressable(
                           onTap: () => Navigator.of(context).pop(),
                           semanticLabel: l.cancel,
@@ -998,7 +998,7 @@ class _RedactPageState extends State<RedactPage> {
                     ),
                     Expanded(
                       child: Align(
-                        alignment: Alignment.centerRight,
+                        alignment: AlignmentDirectional.centerEnd,
                         child: PiumaPressable(
                           onTap: _done,
                           semanticLabel: l.reportDone,

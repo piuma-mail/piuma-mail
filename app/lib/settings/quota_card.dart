@@ -84,7 +84,7 @@ class _QuotaCardState extends State<QuotaCard> {
                   child: Container(
                     height: 6,
                     color: c.chip,
-                    alignment: Alignment.centerLeft,
+                    alignment: AlignmentDirectional.centerStart,
                     child: AnimatedFractionallySizedBox(
                       duration: reduceMotion(context)
                           ? Duration.zero

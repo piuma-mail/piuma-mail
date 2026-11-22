@@ -10,6 +10,7 @@ import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import 'settings_screen.dart' show SettingsHeader;
+import '../widgets/bidi.dart';
 
 /// Settings › Groups, as on `Groups`: each group folds open to its
 /// addresses, its default signature and sending address, and its two
@@ -95,13 +96,13 @@ class _GroupsPageState extends State<GroupsPage> {
     final l = AppLocalizations.of(context);
     final yes = await showPiumaDialog<bool>(
       context,
-      label: l.groupDeleteAsk(g.name),
+      label: l.groupDeleteAsk(bidiArg(context, g.name)),
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            l.groupDeleteAsk(g.name),
+            l.groupDeleteAsk(bidiArg(context, g.name)),
             style: PiumaType.body.copyWith(
               fontSize: 17,
               fontWeight: FontWeight.w600,
@@ -262,7 +263,7 @@ class _GroupsPageState extends State<GroupsPage> {
                       !_replyAsWritten
                           ? l.groupReplyOff
                           : example != null
-                          ? l.groupReplyOn(example)
+                          ? l.groupReplyOn(bidiArg(context, example))
                           : l.groupReplyOnAny,
                       style: PiumaType.body.copyWith(
                         fontSize: 13,
@@ -286,7 +287,7 @@ class _GroupsPageState extends State<GroupsPage> {
         ),
         const SizedBox(height: 24),
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: _OutlineButton(
             icon: PiumaIcon.plus,
             label: l.groupNew,
@@ -604,7 +605,12 @@ class _GroupCardState extends State<_GroupCard> {
     );
 
     final body = Padding(
-      padding: EdgeInsets.fromLTRB(widget.phone ? 18 : 44, 2, 18, 18),
+      padding: EdgeInsetsDirectional.fromSTEB(
+        widget.phone ? 18 : 44,
+        2,
+        18,
+        18,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -670,8 +676,8 @@ class _GroupCardState extends State<_GroupCard> {
                   email: a.email,
                   note: switch (byAccount[a.accountId]) {
                     final acc? when acc.email.toLowerCase() == a.email =>
-                      l.groupAccountNote(acc.name),
-                    final acc? => l.groupAliasNote(acc.email),
+                      l.groupAccountNote(bidiArg(context, acc.name)),
+                    final acc? => l.groupAliasNote(bidiArg(context, acc.email)),
                     null => '',
                   },
                   alias: byAccount[a.accountId]?.email.toLowerCase() != a.email,
@@ -739,7 +745,7 @@ class _GroupCardState extends State<_GroupCard> {
           ),
           const SizedBox(height: 14),
           Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: PiumaButton(
               label: l.groupDelete,
               kind: PiumaButtonKind.tertiary,
@@ -797,7 +803,7 @@ class _AddressChip extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 6, 4, 6),
       decoration: BoxDecoration(
         color: c.bg,
         borderRadius: BorderRadius.circular(PiumaRadius.pill),
@@ -851,10 +857,10 @@ class _AddressChip extends StatelessWidget {
             ),
           ),
           Tooltip(
-            message: l.groupRemoveAddress(email),
+            message: l.groupRemoveAddress(bidiArg(context, email)),
             child: PiumaPressable(
               onTap: onRemove,
-              semanticLabel: l.groupRemoveAddress(email),
+              semanticLabel: l.groupRemoveAddress(bidiArg(context, email)),
               child: SizedBox.square(
                 dimension: 28,
                 child: Center(
@@ -1209,7 +1215,9 @@ class _AddAddressState extends State<_AddAddress> {
               for (final a in widget.hints)
                 _ChoiceRow(
                   label: a.email,
-                  note: l.groupAliasNote(byId[a.accountId]?.email ?? ''),
+                  note: l.groupAliasNote(
+                    bidiArg(context, byId[a.accountId]?.email ?? ''),
+                  ),
                   selected: false,
                   color: c,
                   onTap: () => Navigator.of(context).pop(a),
@@ -1329,7 +1337,7 @@ class _AddAddressState extends State<_AddAddress> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
                 child: Align(
-                  alignment: Alignment.centerRight,
+                  alignment: AlignmentDirectional.centerEnd,
                   child: PiumaButton(
                     label: l.groupAddAlias,
                     size: PiumaButtonSize.compact,

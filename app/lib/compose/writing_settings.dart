@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// Settings › Writing past the signatures: the templates, then Replies
 /// (above or below the quote, quoting the selected words, plain text by
@@ -225,7 +226,7 @@ class _RepliesSettingsState extends State<RepliesSettings> {
                   dot: a.color,
                   title: a.name,
                   hint: s.plainTextFor(a.email)
-                      ? l.plainTextOn(a.email)
+                      ? l.plainTextOn(bidiArg(context, a.email))
                       : a.email,
                   value: s.plainTextFor(a.email),
                   onChanged: (on) => _change(
@@ -403,7 +404,7 @@ class _ContactGroupsSettingsState extends State<ContactGroupsSettings> {
                 child: Container(
                   height: widget.phone ? 52 : 44,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
-                  alignment: Alignment.centerLeft,
+                  alignment: AlignmentDirectional.centerStart,
                   child: ExcludeSemantics(
                     child: Text(
                       l.contactGroupNew,
@@ -443,7 +444,9 @@ class _ContactGroupsSettingsState extends State<ContactGroupsSettings> {
               ),
               PiumaPressable(
                 onTap: () => _delete(current),
-                semanticLabel: l.contactGroupDelete(current.name),
+                semanticLabel: l.contactGroupDelete(
+                  bidiArg(context, current.name),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 4,

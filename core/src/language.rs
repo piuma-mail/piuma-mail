@@ -107,6 +107,7 @@ mod tests {
             level: 0,
             quote,
             marker: String::new(),
+            rtl: None,
             spans: vec![Span {
                 text: text.into(),
                 bold: false,

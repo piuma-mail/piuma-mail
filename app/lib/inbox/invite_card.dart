@@ -8,6 +8,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import 'message_list.dart' show initials;
+import '../widgets/bidi.dart';
 
 /// The invite a message carries, as in `PhoneInvite`: the date tile, what
 /// and when, who is invited, and Yes, Maybe and No. The answer goes to the
@@ -106,9 +107,9 @@ class _InviteCardState extends State<InviteCard> {
           InviteAnswer.declined => l.inviteSubjectDeclined(summary),
         },
         text: switch (answer) {
-          InviteAnswer.accepted => l.inviteTextAccepted(me),
-          InviteAnswer.tentative => l.inviteTextTentative(me),
-          InviteAnswer.declined => l.inviteTextDeclined(me),
+          InviteAnswer.accepted => l.inviteTextAccepted(bidiArg(context, me)),
+          InviteAnswer.tentative => l.inviteTextTentative(bidiArg(context, me)),
+          InviteAnswer.declined => l.inviteTextDeclined(bidiArg(context, me)),
         },
       );
       if (mounted) {
@@ -253,9 +254,15 @@ class _InviteCardState extends State<InviteCard> {
           InviteAnswer.declined => c.muted,
         },
         title: switch (who.answer!) {
-          InviteAnswer.accepted => l.inviteTheyAccepted(who.label),
-          InviteAnswer.tentative => l.inviteTheyTentative(who.label),
-          InviteAnswer.declined => l.inviteTheyDeclined(who.label),
+          InviteAnswer.accepted => l.inviteTheyAccepted(
+            bidiArg(context, who.label),
+          ),
+          InviteAnswer.tentative => l.inviteTheyTentative(
+            bidiArg(context, who.label),
+          ),
+          InviteAnswer.declined => l.inviteTheyDeclined(
+            bidiArg(context, who.label),
+          ),
         },
       );
     }
@@ -291,10 +298,10 @@ class _InviteCardState extends State<InviteCard> {
       detail: !_answeredHere || organizer.isEmpty
           ? null
           : _queued
-          ? l.inviteQueued(organizer)
+          ? l.inviteQueued(bidiArg(context, organizer))
           : _addedTo != null && answer != InviteAnswer.declined
-          ? l.inviteAddedTo(_addedTo!)
-          : l.inviteWillGet(organizer),
+          ? l.inviteAddedTo(bidiArg(context, _addedTo!))
+          : l.inviteWillGet(bidiArg(context, organizer)),
     );
   }
 }
@@ -335,7 +342,7 @@ class _Timeline extends StatelessWidget {
     final note = clash == null
         ? l.inviteFree
         : l.inviteOverlaps(
-            clash.summary,
+            bidiArg(context, clash.summary),
             DateFormat('H:mm', locale).format(clash.start),
           );
     final mono = TextStyle(
@@ -365,14 +372,14 @@ class _Timeline extends StatelessWidget {
               }) {
                 final left = at(start) * w;
                 final width = ((at(end) - at(start)) * w).clamp(4.0, w - left);
-                return Positioned(
-                  left: left,
+                return PositionedDirectional(
+                  start: left,
                   top: 3,
                   width: width,
                   height: 16,
                   child: Container(
-                    padding: const EdgeInsets.only(left: 5),
-                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsetsDirectional.only(start: 5),
+                    alignment: AlignmentDirectional.centerStart,
                     decoration: BoxDecoration(
                       color: event ? c.accent.withValues(alpha: 0.92) : c.busy,
                       borderRadius: BorderRadius.circular(5),
@@ -439,8 +446,8 @@ class _Timeline extends StatelessWidget {
                     child: Stack(
                       children: [
                         for (final h in marks)
-                          Positioned(
-                            left: (h - from.hour) / _Timeline._hours * w,
+                          PositionedDirectional(
+                            start: (h - from.hour) / _Timeline._hours * w,
                             child: Text('${h % 24}', style: mono),
                           ),
                       ],
@@ -604,7 +611,7 @@ class _People extends StatelessWidget {
             child: Stack(
               children: [
                 for (final (i, d) in dots.indexed)
-                  Positioned(left: 21.0 * i, child: d),
+                  PositionedDirectional(start: 21.0 * i, child: d),
               ],
             ),
           ),

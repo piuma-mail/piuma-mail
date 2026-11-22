@@ -17,6 +17,7 @@ import 'attachments.dart' show FilePreview;
 import 'message_list.dart' show initials;
 import 'newsletters.dart' show confirmUnsubscribeMail;
 import 'sections.dart' show rowTime;
+import '../widgets/bidi.dart';
 
 /// What the person picked on a sender's card.
 sealed class SenderPick {
@@ -63,14 +64,14 @@ Future<SenderPick?> showSenderCard(
   if (anchor == null) {
     return showPiumaDialog<SenderPick>(
       context,
-      label: l.senderCardLabel(row.sender),
+      label: l.senderCardLabel(bidiArg(context, row.sender)),
       width: 380,
       builder: (_) => card,
     );
   }
   return showPiumaPopover<SenderPick>(
     context,
-    label: l.senderCardLabel(row.sender),
+    label: l.senderCardLabel(bidiArg(context, row.sender)),
     anchor: anchor,
     width: 340,
     builder: (_) => card,
@@ -398,7 +399,7 @@ class _SenderCardState extends State<SenderCard> {
     return Semantics(
       scopesRoute: true,
       explicitChildNodes: true,
-      label: l.senderCardLabel(row.sender),
+      label: l.senderCardLabel(bidiArg(context, row.sender)),
       child: Scaffold(
         backgroundColor: c.surface,
         body: SafeArea(
@@ -1075,7 +1076,7 @@ class _Conversation extends StatelessWidget {
               Container(
                 width: 7,
                 height: 7,
-                margin: const EdgeInsets.only(top: 8, right: 10),
+                margin: const EdgeInsetsDirectional.only(top: 8, end: 10),
                 decoration: BoxDecoration(
                   color: row.seen ? null : c.accent,
                   shape: BoxShape.circle,
@@ -1372,7 +1373,9 @@ class _Tabs extends StatelessWidget {
             AnimatedAlign(
               duration: slide,
               curve: PiumaMotion.curve,
-              alignment: files ? Alignment.centerRight : Alignment.centerLeft,
+              alignment: files
+                  ? AlignmentDirectional.centerEnd
+                  : AlignmentDirectional.centerStart,
               child: FractionallySizedBox(
                 widthFactor: 0.5,
                 heightFactor: 1,

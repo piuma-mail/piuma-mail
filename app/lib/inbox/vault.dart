@@ -14,6 +14,7 @@ import '../mail/mail_source.dart';
 import '../widgets/links.dart';
 import 'vault_view.dart';
 import 'risky_file.dart';
+import '../widgets/bidi.dart';
 
 export 'vault_view.dart';
 
@@ -616,8 +617,11 @@ mixin _Cards<T extends StatefulWidget> on State<T> {
               _Row(
                 title: s.title.isEmpty ? _who(s) : s.title,
                 line: s.amount == null
-                    ? l.vaultSoldOnly(_who(s))
-                    : l.vaultSoldFor(_who(s), _money(s, locale)),
+                    ? l.vaultSoldOnly(bidiArg(context, _who(s)))
+                    : l.vaultSoldFor(
+                        bidiArg(context, _who(s)),
+                        _money(s, locale),
+                      ),
                 tag: s.paid
                     ? l.vaultPaidOut
                     : switch (s.stage) {
@@ -669,7 +673,7 @@ mixin _Cards<T extends StatefulWidget> on State<T> {
                 _Row(
                   title: p.card.title,
                   line: l.vaultDaysToReturn(
-                    _who(p.card),
+                    bidiArg(context, _who(p.card)),
                     p.card.returnDays > 0 ? p.card.returnDays : 14,
                   ),
                   tag: l.vaultUntilDay(day(p.returnUntil!)),
@@ -1023,7 +1027,7 @@ class _VaultBoardState extends State<VaultBoard> with _Cards<VaultBoard> {
                       const SizedBox(width: 28),
                       Expanded(
                         child: Align(
-                          alignment: Alignment.topLeft,
+                          alignment: AlignmentDirectional.topStart,
                           child: ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 720),
                             child: _page(v, cat),
@@ -1092,14 +1096,14 @@ class _BackTo extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
       child: Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: PiumaPressable(
           onTap: onTap,
           semanticLabel: label,
           child: SizedBox(
             height: 44,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -3096,8 +3100,11 @@ class _ParcelCard extends StatelessWidget {
     final ink = _ink(context);
     final day = card.day;
     final from = switch ((card.carrier.isEmpty, card.merchant.isEmpty)) {
-      (false, false) => l.vaultCarrierFrom(card.carrier, card.merchant),
-      (true, false) => l.vaultFrom(card.merchant),
+      (false, false) => l.vaultCarrierFrom(
+        card.carrier,
+        bidiArg(context, card.merchant),
+      ),
+      (true, false) => l.vaultFrom(bidiArg(context, card.merchant)),
       (false, true) => card.carrier,
       (true, true) => '',
     };
@@ -3178,7 +3185,9 @@ class _ParcelCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    card.lastScan.isEmpty ? '' : l.vaultLastScan(card.lastScan),
+                    card.lastScan.isEmpty
+                        ? ''
+                        : l.vaultLastScan(bidiArg(context, card.lastScan)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -3362,7 +3371,7 @@ class _PecCard extends StatelessWidget {
           };
     final to = m.recipients.length > 1
         ? l.pecToMany(m.recipients.length, m.delivered)
-        : l.pecTo(m.recipients.firstOrNull ?? m.failedTo);
+        : l.pecTo(bidiArg(context, m.recipients.firstOrNull ?? m.failedTo));
     final when = _pecWhen(l, m.stageAt, now, locale);
     final foot = switch (m.stage) {
       _ when !m.verified => l.pecUnverifiedNote(claimed),

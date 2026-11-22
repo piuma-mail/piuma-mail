@@ -13,6 +13,7 @@ import '../widgets/dialog.dart';
 import '../widgets/progress.dart';
 import '../widgets/text_field.dart';
 import 'snooze.dart';
+import '../widgets/bidi.dart';
 
 /// The strip at the very top of `StatesOffline`: the servers can't be
 /// reached, and the engine keeps retrying on its own.
@@ -129,7 +130,7 @@ class _SyncProgressState extends State<SyncProgress> {
     );
     final part = total == 0 ? 0.0 : (done / total).clamp(0.0, 1.0);
     return Semantics(
-      label: l.downloadingAccount(account.name),
+      label: l.downloadingAccount(bidiArg(context, account.name)),
       value: [
         l.downloadingCount(number.format(done), number.format(total)),
         ?left,
@@ -154,7 +155,8 @@ class _SyncProgressState extends State<SyncProgress> {
                     TextSpan(
                       children: [
                         TextSpan(
-                          text: '${l.downloadingAccount(account.name)} · ',
+                          text:
+                              '${l.downloadingAccount(bidiArg(context, account.name))} · ',
                         ),
                         TextSpan(text: number.format(done), style: mono),
                         TextSpan(text: ' ${l.countOf} '),
@@ -248,7 +250,9 @@ class SignInCard extends StatelessWidget {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              l.accountCantConnect(account.name),
+                              l.accountCantConnect(
+                                bidiArg(context, account.name),
+                              ),
                               style: TextStyle(
                                 fontSize: 15,
                                 height: 1.35,
@@ -260,7 +264,7 @@ class SignInCard extends StatelessWidget {
                         ],
                       ),
                       Text(
-                        l.passwordChanged(account.email),
+                        l.passwordChanged(bidiArg(context, account.email)),
                         style: TextStyle(
                           fontSize: 14,
                           height: 1.35,
@@ -563,7 +567,7 @@ Future<void> showSignInAgain(
   required bool phone,
 }) {
   final l = AppLocalizations.of(context);
-  final label = l.signInTo(account.name);
+  final label = l.signInTo(bidiArg(context, account.name));
   // Material, for the text field inside the dialog route.
   Widget form(BuildContext context) => Material(
     type: MaterialType.transparency,
@@ -702,7 +706,7 @@ class _SignInFormState extends State<_SignInForm> {
             ),
             const SizedBox(height: 6),
             Text(
-              l.signInTo(a.name),
+              l.signInTo(bidiArg(context, a.name)),
               style: TextStyle(
                 fontSize: 24,
                 height: 1.15,

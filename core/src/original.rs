@@ -165,6 +165,12 @@ impl Writer<'_> {
             };
             let _ = write!(attrs, " {key}=\"{}\"", escape(&value));
         }
+        // The email's own `dir` and `lang` are kept as written. Without a
+        // `dir` the document reads the way its first letters do, as the
+        // clean view does, rather than left to right whatever it says.
+        if name == "html" && el.value().attr("dir").is_none() {
+            attrs.push_str(" dir=\"auto\"");
+        }
         let _ = write!(self.buf, "<{name}{attrs}>");
         if name == "head" {
             self.head();
@@ -615,6 +621,17 @@ mod tests {
 
     fn plain(html: &str) -> Original {
         original(html, Options::default(), &|_| None, &Loaded::new())
+    }
+
+    #[test]
+    fn the_emails_direction_is_kept_or_left_to_its_text() {
+        let o = plain("<html dir=\"rtl\" lang=\"ar\"><body><p dir=\"ltr\">x</p></body></html>");
+        assert!(o.html.contains(" dir=\"rtl\""), "{}", o.html);
+        assert!(o.html.contains(" lang=\"ar\""));
+        assert!(o.html.contains("<p dir=\"ltr\">"));
+        assert!(!o.html.contains("dir=\"auto\""));
+        let o = plain("<p>\u{5e9}\u{5dc}\u{5d5}\u{5dd}</p>");
+        assert!(o.html.contains("<html dir=\"auto\">"), "{}", o.html);
     }
 
     #[test]

@@ -75,14 +75,14 @@ class WaitingBack extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
       child: Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: PiumaPressable(
           onTap: onBack,
           semanticLabel: l.inbox,
           child: SizedBox(
             height: 44,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

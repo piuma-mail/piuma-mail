@@ -26,6 +26,7 @@ class DemoMailSource extends MailSource {
     this.waiting = false,
     bool reminded = false,
     this.foreign = false,
+    this.rightToLeft = false,
     bool groups = false,
     bool synced = false,
     this.spaceToFind = false,
@@ -609,6 +610,13 @@ class DemoMailSource extends MailSource {
   final bool foreign;
 
   static const foreignSubject = 'Lieferung nächste Woche';
+
+  /// Has an email in Arabic and one in Hebrew, to check that mail reads
+  /// its own way whatever the app's language.
+  final bool rightToLeft;
+
+  static const arabicSubject = 'موعد الاجتماع يوم الخميس';
+  static const hebrewSubject = 'הזמנה לסדנה ביום ראשון';
 
   /// What Stop waiting took out of Waiting.
   final _doneWaiting = <Object>{};
@@ -1937,6 +1945,25 @@ class DemoMailSource extends MailSource {
               'within 24 hours to restore access…',
           seen: false,
         ),
+      if (rightToLeft) ...[
+        row(
+          _personal,
+          'ليلى حداد',
+          'layla@nakhla.example',
+          at(0, 10, 20),
+          arabicSubject,
+          'مرحباً ماتيو، هل يناسبك أن نلتقي يوم الخميس الساعة العاشرة؟',
+          seen: false,
+        ),
+        row(
+          _work,
+          'נועה לוי',
+          'noa@galim.example',
+          at(0, 10, 5),
+          hebrewSubject,
+          'שלום מתאו, הסדנה מתחילה ביום ראשון בשעה 09:30.',
+        ),
+      ],
       if (foreign)
         row(
           _personal,
@@ -4169,6 +4196,18 @@ class DemoMailSource extends MailSource {
       'Saturday at 16.';
 
   static const _bodies = {
+    arabicSubject:
+        'مرحباً ماتيو،\n\n'
+        'هل يناسبك أن نلتقي يوم الخميس الساعة العاشرة صباحاً في المكتب؟ '
+        'سأحضر النسخة الجديدة من التصميم (Mockup v3) لنراجعها معاً.\n\n'
+        '> شكراً على الملفات التي أرسلتها.\n\n'
+        'مع التحية،\nليلى',
+    hebrewSubject:
+        'שלום מתאו,\n\n'
+        'הסדנה מתחילה ביום ראשון בשעה 09:30. נא להביא מחשב נייד ואת '
+        'הקבצים מהפגישה הקודמת (Piuma Mail).\n\n'
+        'Thanks for the files, see you Sunday!\n\n'
+        'תודה,\nנועה',
     foreignSubject:
         'Hallo Matteo,\n\n'
         'die Lampen für das Studio kommen nächste Woche. Passt dir Dienstag '

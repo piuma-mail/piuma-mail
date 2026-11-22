@@ -43,8 +43,8 @@ class PiumaAvatar extends StatelessWidget {
             ),
           ),
           if (accountColor != null)
-            Positioned(
-              right: -1,
+            PositionedDirectional(
+              end: -1,
               bottom: -1,
               child: Container(
                 width: 10,

@@ -10,6 +10,7 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import 'sync_page.dart' show deviceIcon, syncAgo;
+import '../widgets/bidi.dart';
 
 /// "New phone wants to connect", as on `SyncToApprove`: a dialog on the
 /// desktop, a sheet on the phone. Typing the 6 digits the new device
@@ -156,7 +157,10 @@ class _PairAskPanelState extends State<PairAskPanel> {
                       ),
                     ),
                     Text(
-                      l.syncAskLine(ask.name, syncAgo(l, ask.at, widget.now())),
+                      l.syncAskLine(
+                        bidiArg(context, ask.name),
+                        syncAgo(l, ask.at, widget.now()),
+                      ),
                       style: PiumaType.body.copyWith(
                         fontSize: 13,
                         color: c.muted,

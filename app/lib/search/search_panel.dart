@@ -24,6 +24,7 @@ import 'saved_searches.dart';
 import 'search_start.dart';
 import 'suggestions.dart';
 import '../inbox/risky_file.dart';
+import '../widgets/bidi.dart';
 
 /// Desktop search, as in the `SearchDesktop` mockup: the field with its
 /// filters and operators on top, results on the left, the selected message
@@ -392,7 +393,7 @@ class _SearchPanelState extends State<SearchPanel> {
     final a = _accountFilter;
     return a == null
         ? l.phoneSearch(widget.source.accounts.length)
-        : l.phoneSearchOne(a.name);
+        : l.phoneSearchOne(bidiArg(context, a.name));
   }
 
   /// The filters the phone field shows: the account is left out, since
@@ -616,8 +617,8 @@ class _SearchPanelState extends State<SearchPanel> {
                                   Container(
                                     width: 420,
                                     decoration: BoxDecoration(
-                                      border: Border(
-                                        right: BorderSide(color: c.line),
+                                      border: BorderDirectional(
+                                        end: BorderSide(color: c.line),
                                       ),
                                     ),
                                     child: _resultList(context, words),
@@ -668,7 +669,7 @@ class _SearchPanelState extends State<SearchPanel> {
         children: [
           Container(
             height: 48,
-            padding: const EdgeInsets.fromLTRB(14, 0, 8, 0),
+            padding: const EdgeInsetsDirectional.fromSTEB(14, 0, 8, 0),
             decoration: BoxDecoration(
               color: c.chip,
               borderRadius: BorderRadius.circular(PiumaRadius.row),
@@ -835,7 +836,7 @@ class _SearchPanelState extends State<SearchPanel> {
       if (person != null)
         _FilterChip(
           phone: phone,
-          label: l.filterFrom(_firstName(person)),
+          label: l.filterFrom(bidiArg(context, _firstName(person))),
           on: _from != null,
           onTap: () => _filter(() => _from = _from == null ? person : null),
         ),
@@ -943,13 +944,13 @@ class _SearchPanelState extends State<SearchPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 4, 8, 0),
             child: Row(
               children: [
                 Expanded(
                   child: Container(
                     height: 44,
-                    padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
+                    padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 4, 0),
                     decoration: BoxDecoration(
                       color: c.chip,
                       borderRadius: BorderRadius.circular(PiumaRadius.row),
@@ -1298,7 +1299,7 @@ class _SearchPanelState extends State<SearchPanel> {
                     f.file.size,
                     locale: Localizations.localeOf(context).toLanguageTag(),
                   ),
-                  f.row.sender,
+                  bidiArg(context, f.row.sender),
                   fileWhen(
                     l,
                     f.row.receivedAt,
@@ -1968,7 +1969,7 @@ class _ResultRow extends StatelessWidget {
                 ],
               ),
               Padding(
-                padding: const EdgeInsets.only(left: 16),
+                padding: const EdgeInsetsDirectional.only(start: 16),
                 child: _Marked(
                   highlight(subject, words),
                   maxLines: 1,
@@ -1980,7 +1981,7 @@ class _ResultRow extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.only(left: 16),
+                padding: const EdgeInsetsDirectional.only(start: 16),
                 child: _Marked(
                   line,
                   maxLines: phone ? 2 : 1,
@@ -2306,7 +2307,7 @@ class _PreviewState extends State<_Preview> {
                                 risk: riskNote(l, a),
                                 busy: _saving.contains(a.part),
                                 semanticLabel: l.attachmentLabel(
-                                  a.name,
+                                  bidiArg(context, a.name),
                                   fileSize(a.size, locale: locale),
                                 ),
                                 onTap: () => _openFile(a),

@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/text_field.dart';
 import 'settings_screen.dart' show SettingsHeader;
+import '../widgets/bidi.dart';
 
 /// Settings › Templates, as on `FeaturesToApprove`: the templates behind
 /// compose's "/", each with its subject, New template, and the one picked
@@ -198,7 +199,7 @@ class _TemplatesPageState extends State<TemplatesPage> {
                   child: Container(
                     height: widget.phone ? 52 : 44,
                     padding: const EdgeInsets.symmetric(horizontal: 14),
-                    alignment: Alignment.centerLeft,
+                    alignment: AlignmentDirectional.centerStart,
                     child: ExcludeSemantics(
                       child: Text(
                         l.templatesNew,
@@ -289,7 +290,7 @@ class _TemplateRow extends StatelessWidget {
     final subject = template.subject.trim();
     final line = subject.isEmpty
         ? l.templateNoSubject
-        : l.templateSubjectLine(subject);
+        : l.templateSubjectLine(bidiArg(context, subject));
     final instant = reduceMotion(context);
     return Semantics(
       selected: open,

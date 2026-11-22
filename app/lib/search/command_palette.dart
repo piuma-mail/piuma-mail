@@ -14,6 +14,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/message_row.dart';
 import 'highlight.dart';
+import '../widgets/bidi.dart';
 
 /// Something the palette can do with no one in mind: write, go somewhere.
 class PaletteCommand {
@@ -157,13 +158,13 @@ class _CommandPaletteState extends State<CommandPalette> {
         ),
         _Item(
           PiumaIcon.sort,
-          l.paletteOnlyFrom(_first(person)),
+          l.paletteOnlyFrom(bidiArg(context, _first(person))),
           () => widget.onFrom(person),
         ),
         if (files > 0)
           _Item(
             PiumaIcon.paperclip,
-            l.paletteFilesFrom(_first(person)),
+            l.paletteFilesFrom(bidiArg(context, _first(person))),
             () => widget.onFilesFrom(person),
             meta: l.paletteFiles(files),
           ),
@@ -174,7 +175,7 @@ class _CommandPaletteState extends State<CommandPalette> {
       if (query.isNotEmpty)
         _Item(
           PiumaIcon.search,
-          l.paletteSearchAll(query),
+          l.paletteSearchAll(bidiArg(context, query)),
           () => widget.onSearch(query),
         ),
     ];

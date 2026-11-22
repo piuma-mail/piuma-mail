@@ -19,6 +19,7 @@ import '../widgets/links.dart' show openLocalFile;
 import '../widgets/progress.dart';
 import '../widgets/segments.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// Where Save as .eml puts the file on a computer: the system's save
 /// window, with [name] suggested and [label] naming the file type; null
@@ -165,7 +166,7 @@ class MessageActions {
       if (!context.mounted) return;
       toast(
         e.error == SendError.badAddress
-            ? l.sendBadAddress(e.detail)
+            ? l.sendBadAddress(bidiArg(context, e.detail))
             : l.redirectFailed,
         action: l.tryAgain,
         onAction: () => redirect(row),
@@ -201,7 +202,7 @@ class MessageActions {
     if (!context.mounted) return;
     switch (done.outcome) {
       case SendOutcome.sent:
-        toast(l.redirectDone(to.map(bareAddress).join(', ')));
+        toast(l.redirectDone(bidiArg(context, to.map(bareAddress).join(', '))));
       case SendOutcome.waiting:
         toast(l.inOutbox);
       case SendOutcome.maybeSent:
@@ -314,7 +315,7 @@ class MessageActions {
         final path = await source.saveFile(name, raw);
         if (context.mounted) {
           toast(
-            l.attachmentSaved(name),
+            l.attachmentSaved(bidiArg(context, name)),
             action: l.noticeOpen,
             onAction: () => openLocalFile(path),
           );
@@ -326,7 +327,7 @@ class MessageActions {
       await writeSavedFile(path, raw);
       if (context.mounted) {
         toast(
-          l.emlSaved(path.split(RegExp(r'[\\/]')).last),
+          l.emlSaved(bidiArg(context, path.split(RegExp(r'[\\/]')).last)),
           action: l.noticeOpen,
           onAction: () => openLocalFile(path),
         );
@@ -668,7 +669,7 @@ class _OutboxRedirectPanel extends StatelessWidget {
         ),
         const SizedBox(height: PiumaSpace.s12),
         Text(
-          l.outboxTo(item.recipients),
+          l.outboxTo(bidiArg(context, item.recipients)),
           style: PiumaType.body.copyWith(color: c.fg),
         ),
         Text(
@@ -769,7 +770,7 @@ class _RedirectPanelState extends State<_RedirectPanel> {
         Text(l.redirectTitle, style: PiumaType.subtitle.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s12),
         Text(
-          l.redirectBody(widget.row.sender),
+          l.redirectBody(bidiArg(context, widget.row.sender)),
           style: PiumaType.body.copyWith(color: c.muted),
         ),
         const SizedBox(height: PiumaSpace.s16),
@@ -787,7 +788,7 @@ class _RedirectPanelState extends State<_RedirectPanel> {
           Semantics(
             liveRegion: true,
             child: Text(
-              l.sendBadAddress(wrong),
+              l.sendBadAddress(bidiArg(context, wrong)),
               style: PiumaType.small.copyWith(color: c.warn),
             ),
           ),
@@ -885,7 +886,7 @@ class _SourcePanelState extends State<_SourcePanel> {
         Text(l.sourceTitle, style: PiumaType.subtitle.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s12),
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: PiumaSegments(
             label: l.sourceTitle,
             items: [

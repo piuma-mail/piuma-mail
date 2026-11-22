@@ -10,6 +10,7 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// The pieces of managing the mailbox that several screens share: the
 /// questions asked before what can't be undone (deleting for good,
@@ -114,7 +115,7 @@ Future<bool> confirmEmpty(
   final l = AppLocalizations.of(context);
   return askToConfirm(
     context,
-    title: l.emptyTitle(count, folder),
+    title: l.emptyTitle(count, bidiArg(context, folder)),
     note: l.deleteForeverNote,
     confirm: l.emptyConfirm,
     phone: phone,
@@ -137,14 +138,14 @@ Future<bool> confirmDeleteFolder(
   if (protected != null) {
     return askToConfirm(
       context,
-      title: l.folderDeleteTitle(name),
-      note: l.folderDeleteProtected(name, protected),
+      title: l.folderDeleteTitle(bidiArg(context, name)),
+      note: l.folderDeleteProtected(bidiArg(context, name), protected),
       phone: phone,
     ).then((_) => false);
   }
   return askToConfirm(
     context,
-    title: l.folderDeleteTitle(name),
+    title: l.folderDeleteTitle(bidiArg(context, name)),
     note: [
       l.folderDeleteEmails(emails),
       if (subfolders > 0) l.folderDeleteSubfolders(subfolders),
@@ -290,7 +291,7 @@ class DraggableRows extends StatelessWidget {
           feedback: Material(
             type: MaterialType.transparency,
             child: Container(
-              margin: const EdgeInsets.only(left: 14, top: 10),
+              margin: const EdgeInsetsDirectional.only(start: 14, top: 10),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
               decoration: BoxDecoration(
                 color: c.surface,
@@ -388,7 +389,7 @@ Future<void> showSpecialFolders(
   bool phone = false,
 }) {
   final l = AppLocalizations.of(context);
-  final title = l.specialFoldersOf(account.name);
+  final title = l.specialFoldersOf(bidiArg(context, account.name));
   Widget panel(BuildContext context) => Padding(
     padding: EdgeInsets.symmetric(horizontal: phone ? 20 : 0),
     child: SpecialFolders(source: source, account: account, phone: phone),
@@ -539,7 +540,7 @@ class _SpecialFoldersState extends State<SpecialFolders> {
         Semantics(
           header: true,
           child: Text(
-            l.specialFoldersOf(widget.account.name),
+            l.specialFoldersOf(bidiArg(context, widget.account.name)),
             style: PiumaType.body.copyWith(
               fontSize: 17,
               fontWeight: FontWeight.w600,
@@ -635,7 +636,9 @@ class FolderChevron extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return PiumaPressable(
       onTap: onTap,
-      semanticLabel: open ? l.folderCollapse(name) : l.folderExpand(name),
+      semanticLabel: open
+          ? l.folderCollapse(bidiArg(context, name))
+          : l.folderExpand(bidiArg(context, name)),
       child: SizedBox.square(
         dimension: 24,
         child: Center(
@@ -790,7 +793,7 @@ class _PhoneFolderTreeState extends State<PhoneFolderTree> {
             child: Semantics(
               header: true,
               child: Text(
-                l.accountFolders(widget.account.name),
+                l.accountFolders(bidiArg(context, widget.account.name)),
                 style: PiumaType.body.copyWith(
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
@@ -816,7 +819,7 @@ class _PhoneFolderTreeState extends State<PhoneFolderTree> {
                         child: Container(
                           constraints: const BoxConstraints(minHeight: 48),
                           padding: const EdgeInsets.symmetric(horizontal: 24),
-                          alignment: Alignment.centerLeft,
+                          alignment: AlignmentDirectional.centerStart,
                           child: Text(
                             _hidden
                                 ? l.hiddenFoldersHide
@@ -842,7 +845,7 @@ class _PhoneFolderTreeState extends State<PhoneFolderTree> {
     final open = !_closed.contains(f.mailbox);
     final row = Container(
       constraints: const BoxConstraints(minHeight: 48),
-      padding: EdgeInsets.only(left: 12.0 + f.depth * 20, right: 24),
+      padding: EdgeInsetsDirectional.only(start: 12.0 + f.depth * 20, end: 24),
       color: current ? c.sel : null,
       child: Row(
         children: [

@@ -234,6 +234,7 @@ mod tests {
             level: 0,
             quote,
             marker: String::new(),
+            rtl: None,
             spans: vec![TextSpan {
                 text: text.into(),
                 bold: false,

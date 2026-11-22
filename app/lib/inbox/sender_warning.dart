@@ -83,7 +83,7 @@ class SenderWarningBand extends StatelessWidget {
                   ),
                   const SizedBox(height: PiumaSpace.s8),
                   Padding(
-                    padding: const EdgeInsets.only(left: 26),
+                    padding: const EdgeInsetsDirectional.only(start: 26),
                     child: Row(
                       children: [
                         details,

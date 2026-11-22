@@ -152,7 +152,7 @@ class _EmlReaderState extends State<EmlReader> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: EdgeInsets.fromLTRB(pad - 8, 8, pad, 0),
+              padding: EdgeInsetsDirectional.fromSTEB(pad - 8, 8, pad, 0),
               child: Row(
                 children: [
                   PiumaPressable(
@@ -161,7 +161,12 @@ class _EmlReaderState extends State<EmlReader> {
                     child: SizedBox(
                       height: 44,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                          4,
+                          0,
+                          10,
+                          0,
+                        ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [

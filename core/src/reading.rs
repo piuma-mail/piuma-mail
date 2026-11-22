@@ -80,6 +80,10 @@ pub struct Block {
     pub marker: String,
     pub spans: Vec<Span>,
     pub image: Option<Image>,
+    /// The direction the markup sets with `dir` on the block or an
+    /// ancestor: `Some(true)` right to left, `Some(false)` left to right,
+    /// `None` when unset or `auto` (the app takes the text's own).
+    pub rtl: Option<bool>,
 }
 
 impl Block {
@@ -91,6 +95,7 @@ impl Block {
             marker: String::new(),
             spans: Vec::new(),
             image: None,
+            rtl: None,
         }
     }
 
@@ -537,6 +542,8 @@ struct Style {
     pre: bool,
     quote: u8,
     list_depth: u8,
+    /// From the nearest `dir`: see [`Block::rtl`].
+    rtl: Option<bool>,
 }
 
 struct Walker {
@@ -798,6 +805,7 @@ impl Walker {
             style.list_depth
         };
         block.quote = style.quote;
+        block.rtl = style.rtl;
         block.marker = marker.unwrap_or_default();
         block.spans = spans;
         self.out.blocks.push(block);
@@ -936,6 +944,7 @@ impl Walker {
         self.flush();
         let mut block = Block::new(BlockKind::Image);
         block.quote = style.quote;
+        block.rtl = style.rtl;
         block.image = Some(image);
         self.out.blocks.push(block);
     }
@@ -964,6 +973,16 @@ impl Walker {
         }
 
         let mut style = inherited;
+        // `dir` holds for everything inside, until another `dir`; `auto`
+        // hands the choice back to the text.
+        if let Some(dir) = el.value().attr("dir") {
+            style.rtl = match dir.trim().to_ascii_lowercase().as_str() {
+                "rtl" => Some(true),
+                "ltr" => Some(false),
+                "auto" => None,
+                _ => style.rtl,
+            };
+        }
         let heading = match name {
             "h1" | "h2" => 1,
             "h3" | "h4" | "h5" | "h6" => 2,
@@ -1141,6 +1160,29 @@ pub fn plain_text(r: &Readable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocks_keep_the_direction_their_markup_sets() {
+        let r = from_html(
+            "<html dir=\"rtl\"><body><p>\u{645}\u{631}\u{62d}\u{628}\u{627}</p>\
+             <div dir=\"ltr\"><p>Hello</p><p dir=\"auto\">Auto</p></div>\
+             <p dir=\"RTL \">\u{5e9}\u{5dc}\u{5d5}\u{5dd}</p><p dir=\"sideways\">Odd</p></body></html>",
+        );
+        let dirs: Vec<Option<bool>> = r.blocks.iter().map(|b| b.rtl).collect();
+        assert_eq!(
+            dirs,
+            [Some(true), Some(false), None, Some(true), Some(true)]
+        );
+        // Plain text and markup without `dir` leave it to the text.
+        assert!(from_html("<p>Hi</p>")
+            .blocks
+            .iter()
+            .all(|b| b.rtl.is_none()));
+        assert!(from_text("Hi\n\nThere")
+            .blocks
+            .iter()
+            .all(|b| b.rtl.is_none()));
+    }
 
     #[test]
     fn an_image_source_cut_inside_a_character_is_no_cid() {

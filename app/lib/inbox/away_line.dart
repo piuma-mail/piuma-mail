@@ -37,7 +37,7 @@ class AwayLineView extends StatelessWidget {
       container: true,
       child: Container(
         height: 44,
-        padding: const EdgeInsets.only(left: 14),
+        padding: const EdgeInsetsDirectional.only(start: 14),
         decoration: BoxDecoration(
           color: c.soft,
           borderRadius: BorderRadius.circular(PiumaRadius.row),

@@ -9,7 +9,8 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 
 /// An open email on the phone that a sideways swipe turns into the next
-/// one in the list (swiping left) or the one before (swiping right). The
+/// one in the list (swiping toward the reading start: left in English,
+/// right in Arabic or Hebrew) or the one before (the other way). The
 /// email follows the finger with the next one beside it, as pages; past a
 /// third of the way, or with a flick, it settles on the next on the
 /// spatial spring, which the finger can catch again. With nothing on that
@@ -44,8 +45,9 @@ class MailPager extends StatefulWidget {
 
 class _MailPagerState extends State<MailPager>
     with SingleTickerProviderStateMixin {
-  /// Where the email showing is, in widths: -1 is a whole width to the
-  /// left, where it is when the next one has come in.
+  /// Where the email showing is, in widths: -1 is a whole width toward the
+  /// reading start (left in a left-to-right layout), where it is when the
+  /// next one has come in.
   late final AnimationController _dx = AnimationController.unbounded(
     vsync: this,
   );
@@ -60,6 +62,10 @@ class _MailPagerState extends State<MailPager>
   static const _gap = PiumaSpace.s16;
 
   double _width = 1;
+
+  /// 1 in a left-to-right layout, -1 in a right-to-left one: [_dx] is in
+  /// reading order, the finger in screen pixels.
+  double _sign = 1;
 
   /// The email coming in from the side being swiped toward, and which way
   /// it is (1 the next, from the right; -1 the one before).
@@ -107,7 +113,7 @@ class _MailPagerState extends State<MailPager>
 
   void _drag(DragUpdateDetails d) {
     if (_turning) return;
-    final delta = d.primaryDelta! / _width;
+    final delta = _sign * d.primaryDelta! / _width;
     if (reduceMotion(context)) {
       _went += delta;
       return;
@@ -135,7 +141,7 @@ class _MailPagerState extends State<MailPager>
 
   void _end(DragEndDetails d) {
     if (_turning) return;
-    final v = (d.primaryVelocity ?? 0) / _width;
+    final v = _sign * (d.primaryVelocity ?? 0) / _width;
     if (reduceMotion(context)) {
       final side = _went < -_threshold || v * _width < -_flick
           ? 1
@@ -179,6 +185,7 @@ class _MailPagerState extends State<MailPager>
     final next = widget.near(widget.row, 1);
     final before = widget.near(widget.row, -1);
     final peek = _peek;
+    _sign = Directionality.of(context) == TextDirection.rtl ? -1 : 1;
     return LayoutBuilder(
       builder: (context, box) {
         _width = box.maxWidth == 0 ? 1 : box.maxWidth;
@@ -245,8 +252,10 @@ class _Slide extends AnimatedWidget {
   @override
   Widget build(BuildContext context) {
     final dx = (listenable as Animation<double>).value;
+    // In reading order: a right-to-left layout turns the other way.
+    final sign = Directionality.of(context) == TextDirection.rtl ? -1 : 1;
     return Transform.translate(
-      offset: Offset((dx + by) * width, 0),
+      offset: Offset(sign * (dx + by) * width, 0),
       child: child,
     );
   }

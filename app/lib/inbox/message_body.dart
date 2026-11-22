@@ -11,6 +11,7 @@ import '../design/tokens.g.dart';
 import '../compose/quoting.dart' show readerSelection;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/link_target.dart';
@@ -75,6 +76,10 @@ class MessageBody extends StatelessWidget {
     final children = <Widget>[];
     BodyBlock? previous;
     final dates = dateChip == null ? const <FoundDate>[] : readable.dates;
+    // The email reads its own way, whatever the app's language: as its
+    // markup says, else as its first letters do.
+    final around = Directionality.of(context);
+    final whole = readingDirection(readable) ?? around;
     for (final (i, b) in readable.blocks.indexed) {
       if (previous != null) {
         children.add(SizedBox(height: _gap(previous, b, article)));
@@ -83,13 +88,25 @@ class MessageBody extends StatelessWidget {
         for (final d in dates)
           if (d.block == i) d,
       ];
-      children.add(
-        _block(context, b, [for (final d in found) (d.start, d.end)]),
-      );
+      final own = blockDirection(b, whole);
+      Widget block = _block(context, b, [
+        for (final d in found) (d.start, d.end),
+      ]);
+      // A paragraph written the other way starts on its own side, as a
+      // browser sets `dir="auto"`.
+      if (own != whole && b.kind != BlockKind.image) {
+        block = Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: block,
+        );
+      }
+      children.add(Directionality(textDirection: own, child: block));
       for (final d in found) {
         children.add(
           Padding(
-            padding: EdgeInsets.only(left: 14.0 * b.quote.clamp(0, 4)),
+            padding: EdgeInsetsDirectional.only(
+              start: 14.0 * b.quote.clamp(0, 4),
+            ),
             child: dateChip!(d),
           ),
         );
@@ -99,9 +116,12 @@ class MessageBody extends StatelessWidget {
     return SelectionArea(
       // A reply can quote only the words selected (Settings › Writing).
       onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children,
+      child: Directionality(
+        textDirection: whole,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
       ),
     );
   }
@@ -156,7 +176,9 @@ class MessageBody extends StatelessWidget {
         ),
       ),
       BlockKind.listItem => Padding(
-        padding: EdgeInsets.only(left: 18.0 * (b.level - 1).clamp(0, 6)),
+        padding: EdgeInsetsDirectional.only(
+          start: 18.0 * (b.level - 1).clamp(0, 6),
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -174,9 +196,9 @@ class MessageBody extends StatelessWidget {
     };
     for (var i = 0; i < b.quote.clamp(0, 4); i++) {
       child = Container(
-        padding: const EdgeInsets.only(left: 14),
+        padding: const EdgeInsetsDirectional.only(start: 14),
         decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: c.line, width: 2)),
+          border: BorderDirectional(start: BorderSide(color: c.line, width: 2)),
         ),
         child: child,
       );
@@ -184,6 +206,29 @@ class MessageBody extends StatelessWidget {
     return child;
   }
 }
+
+/// Which way a whole email reads: the `dir` its markup sets on its first
+/// block, else its first strong letter. Null when nothing decides (an
+/// email of only pictures or numbers): the layout's own then.
+TextDirection? readingDirection(Readable r) {
+  for (final b in r.blocks) {
+    if (b.kind == BlockKind.image || b.kind == BlockKind.rule) continue;
+    if (b.rtl case final rtl?) {
+      return rtl ? TextDirection.rtl : TextDirection.ltr;
+    }
+    if (firstStrongDirection(b.text) case final d?) return d;
+  }
+  return null;
+}
+
+/// Which way one block reads: as the markup says, else as its own first
+/// strong letter (Unicode's paragraph rule), else as the email does.
+TextDirection blockDirection(BodyBlock b, TextDirection whole) =>
+    switch (b.rtl) {
+      true => TextDirection.rtl,
+      false => TextDirection.ltr,
+      null => firstStrongDirection(b.text) ?? whole,
+    };
 
 /// Text runs with their looks; links open outside the app, after a check
 /// when they lie about where they go.
@@ -367,8 +412,8 @@ class _SuspiciousLink extends StatelessWidget {
         ),
         const SizedBox(height: PiumaSpace.s16),
         Text(switch (shown) {
-          final shown? => l.suspiciousLinkBody(shown, host),
-          null => l.impostorLinkBody(host),
+          final shown? => l.suspiciousLinkBody(shown, bidiArg(context, host)),
+          null => l.impostorLinkBody(bidiArg(context, host)),
         }, style: PiumaType.body.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s8),
         Text(
@@ -624,7 +669,7 @@ class PrivacyChip extends StatelessWidget {
       semanticLabel: text,
       child: Container(
         height: 26,
-        padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(8, 0, 10, 0),
         decoration: BoxDecoration(
           color: c.bg,
           border: Border.all(color: c.line),
@@ -828,8 +873,8 @@ class _PrivacySheetState extends State<PrivacySheet> {
         ],
         _TrustButton(
           label: _trusted
-              ? l.senderTrusted(widget.sender)
-              : l.trustSender(widget.sender),
+              ? l.senderTrusted(bidiArg(context, widget.sender))
+              : l.trustSender(bidiArg(context, widget.sender)),
           trusted: _trusted,
           onTap: () {
             setState(() => _trusted = !_trusted);

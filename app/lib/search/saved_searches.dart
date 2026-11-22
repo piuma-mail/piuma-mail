@@ -11,6 +11,7 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// Saves [query] under a name the person picks, or with [saved] renames
 /// or deletes that one: the same small panel as a label's.
@@ -203,7 +204,7 @@ class SidebarSavedSearches extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 4, 6),
+          padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 4, 6),
           child: Semantics(
             header: true,
             child: Text(
@@ -342,7 +343,7 @@ class SavedSearchRow extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     return Container(
-      padding: const EdgeInsets.only(left: 20, right: 8),
+      padding: const EdgeInsetsDirectional.only(start: 20, end: 8),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.line)),
       ),
@@ -390,7 +391,9 @@ class SavedSearchRow extends StatelessWidget {
           ),
           PiumaPressable(
             onTap: onEdit,
-            semanticLabel: l.savedSearchEditNamed(search.name),
+            semanticLabel: l.savedSearchEditNamed(
+              bidiArg(context, search.name),
+            ),
             child: SizedBox.square(
               dimension: 44,
               child: Center(

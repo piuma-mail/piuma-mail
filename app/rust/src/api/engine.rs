@@ -2607,6 +2607,9 @@ pub struct BodyBlock {
     pub marker: String,
     pub spans: Vec<TextSpan>,
     pub image: Option<BodyImage>,
+    /// The direction the email's markup sets (`dir`): true right to left,
+    /// false left to right, none when it leaves it to the text.
+    pub rtl: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3422,6 +3425,7 @@ pub(crate) fn body_block(b: reading::Block) -> BodyBlock {
         level: b.level,
         quote: b.quote,
         marker: b.marker,
+        rtl: b.rtl,
         spans: b
             .spans
             .into_iter()

@@ -59,17 +59,17 @@ class PiumaBrand extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     Text('ı', style: style),
-                    Positioned(
-                      left: size * 0.06,
+                    PositionedDirectional(
+                      start: size * 0.06,
                       top: size * 0.06,
                       child: Container(
                         width: size * 0.15,
                         height: size * 0.15,
                         decoration: BoxDecoration(
                           color: c.accent,
-                          borderRadius: BorderRadius.only(
-                            topLeft: Radius.circular(size * 0.15),
-                            bottomRight: Radius.circular(size * 0.15),
+                          borderRadius: BorderRadiusDirectional.only(
+                            topStart: Radius.circular(size * 0.15),
+                            bottomEnd: Radius.circular(size * 0.15),
                           ),
                         ),
                       ),

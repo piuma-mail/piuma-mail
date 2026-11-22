@@ -10,7 +10,9 @@ import '../design/motion.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
 
-/// A phone row that archives with a swipe to the right, as in the
+/// A phone row that archives with a swipe toward the reading end (to the
+/// right in a left-to-right language, to the left in Arabic or Hebrew), as
+/// in the
 /// `PhoneSwipe` mockup: the row slides over a green band with "Archive",
 /// and past a quarter of the way it leaves. With
 /// [onSnooze], a swipe to the left snoozes it over an amber band. With
@@ -93,7 +95,8 @@ class SwipeToArchive extends StatefulWidget {
 
 class _SwipeToArchiveState extends State<SwipeToArchive>
     with TickerProviderStateMixin {
-  /// How far the row has moved, as a share of its width.
+  /// How far the row has moved, as a share of its width: positive toward
+  /// the reading end (Archive's side), negative toward the start.
   late final _offset = AnimationController(
     vsync: this,
     lowerBound: -1,
@@ -117,6 +120,10 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
   bool _armed = false;
   double _width = 1;
   bool _leaving = false;
+
+  /// 1 in a left-to-right layout, -1 in a right-to-left one: turns the
+  /// finger's travel into [_offset]'s reading-order direction and back.
+  double _sign = 1;
 
   static const _threshold = PiumaMotion.swipeAt;
 
@@ -199,7 +206,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
     if (_leaving || !_dragging) return;
     final left = widget.onSnooze == null ? 0.0 : -1.0;
     final right = widget.rightOff ? 0.0 : 1.0;
-    _finger = (_finger + d.primaryDelta! / _width).clamp(left, right);
+    _finger = (_finger + _sign * d.primaryDelta! / _width).clamp(left, right);
     // Snaps on past the point where letting go acts, and off a little
     // before it, so it does not chatter on the edge.
     final reach = _finger.abs();
@@ -244,7 +251,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
     if (_leaving || !_dragging) return;
     _dragging = false;
     _snap.stop();
-    final v = d.primaryVelocity ?? 0;
+    final v = _sign * (d.primaryVelocity ?? 0);
     // Leaving, the row never comes back past its edge: no overshoot.
     final away = (v / _width).abs().clamp(1.5, double.infinity);
     if (_armed && _finger > 0 && !widget.rightOff) {
@@ -297,6 +304,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
+    _sign = Directionality.of(context) == TextDirection.rtl ? -1 : 1;
     return LayoutBuilder(
       builder: (context, box) {
         _width = box.maxWidth == 0 ? 1 : box.maxWidth;
@@ -330,7 +338,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                         child: ColoredBox(
                           color: _tone(c, widget.tone),
                           child: Align(
-                            alignment: Alignment.centerLeft,
+                            alignment: AlignmentDirectional.centerStart,
                             child: SizedBox(
                               // Centered in what is showing, up to 132px.
                               width: dx.clamp(0, _bandPx),
@@ -350,7 +358,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                         child: ColoredBox(
                           color: _tone(c, widget.snoozeTone),
                           child: Align(
-                            alignment: Alignment.centerRight,
+                            alignment: AlignmentDirectional.centerEnd,
                             child: SizedBox(
                               width: (-dx).clamp(0, _bandPx),
                               child: ExcludeSemantics(
@@ -365,7 +373,7 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                         ),
                       ),
                     Transform.translate(
-                      offset: Offset(dx, 0),
+                      offset: Offset(_sign * dx, 0),
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: c.surface,
@@ -376,7 +384,10 @@ class _SwipeToArchiveState extends State<SwipeToArchive>
                                       alpha: c.shadow.a / 3,
                                     ),
                                     blurRadius: 14,
-                                    offset: Offset(dx > 0 ? -6 : 6, 0),
+                                    offset: Offset(
+                                      _sign * (dx > 0 ? -6 : 6),
+                                      0,
+                                    ),
                                   ),
                                 ]
                               : null,

@@ -72,6 +72,7 @@ Future<T?> showPiumaDialog<T>(
           opacity: fade,
           child: Transform.scale(
             scale: PiumaMotion.backScale + (1 - PiumaMotion.backScale) * spring,
+            // Physical: the origin is a point on screen.
             alignment: Alignment.topLeft,
             origin: from.center,
             child: child,
@@ -180,7 +181,12 @@ Future<T?> showPiumaPopover<T>(
     pageBuilder: (context, _, _) {
       final size = MediaQuery.sizeOf(context);
       return CustomSingleChildLayout(
-        delegate: _PopoverLayout(anchor: anchor, width: width, end: end),
+        delegate: _PopoverLayout(
+          anchor: anchor,
+          width: width,
+          // [end] is the anchor's reading end: its left edge in Arabic.
+          end: end != (Directionality.of(context) == TextDirection.rtl),
+        ),
         child: Semantics(
           scopesRoute: true,
           explicitChildNodes: true,
@@ -225,6 +231,7 @@ Future<T?> showPiumaPopover<T>(
           opacity: fade,
           child: Transform.scale(
             scale: PiumaMotion.backScale + (1 - PiumaMotion.backScale) * spring,
+            // Physical: the origin is a point on screen.
             alignment: Alignment.topLeft,
             origin: anchor.center,
             child: child,
@@ -254,6 +261,9 @@ class _PopoverLayout extends SingleChildLayoutDelegate {
 
   final Rect anchor;
   final double width;
+
+  /// Lined up with the anchor's right edge, else its left one (physical:
+  /// the caller turns reading order into this).
   final bool end;
 
   @override

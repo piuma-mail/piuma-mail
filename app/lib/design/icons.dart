@@ -57,22 +57,26 @@ enum PiumaIcon {
     'm22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7',
   ]),
   trash(['M3 6h18', 'M8 6V4h8v2', 'M6 6l1 14h10l1-14']),
-  reply(['M9 14 4 9l5-5', 'M4 9h11a5 5 0 0 1 5 5v6']),
+  reply(['M9 14 4 9l5-5', 'M4 9h11a5 5 0 0 1 5 5v6'], mirror: true),
 
   /// Reply's arrow with a second chevron behind it: Reply all.
-  replyAll(['M7 14 2 9l5-5', 'M12 14 7 9l5-5', 'M7 9h8a5 5 0 0 1 5 5v6']),
+  replyAll([
+    'M7 14 2 9l5-5',
+    'M12 14 7 9l5-5',
+    'M7 9h8a5 5 0 0 1 5 5v6',
+  ], mirror: true),
   chevronDown(['m6 9 6 6 6-6']),
   search(['M4 11a7 7 0 1 0 14 0a7 7 0 1 0-14 0z', 'm20 20-3.5-3.5']),
   bolt(['M13 2 3 14h9l-1 8 10-12h-9l1-8z']),
   plus(['M12 5v14', 'M5 12h14']),
-  send(['m22 2-7 20-4-9-9-4z', 'M22 2 11 13']),
+  send(['m22 2-7 20-4-9-9-4z', 'M22 2 11 13'], mirror: true),
   paperclip([
     'm21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7',
   ]),
   shield(['M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z', 'm9 12 2 2 4-4']),
 
   /// An arrow on to someone else: Forward.
-  forward(['M15 14l5-5-5-5', 'M20 9H9a5 5 0 0 0-5 5v6']),
+  forward(['M15 14l5-5-5-5', 'M20 9H9a5 5 0 0 0-5 5v6'], mirror: true),
 
   /// An hourglass: Waiting, sent mail nobody has answered yet.
   hourglass([
@@ -102,8 +106,8 @@ enum PiumaIcon {
     'M12 9v4',
     'M12 17h.01',
   ]),
-  chevronLeft(['m15 18-6-6 6-6']),
-  chevronRight(['m9 18 6-6-6-6']),
+  chevronLeft(['m15 18-6-6 6-6'], mirror: true),
+  chevronRight(['m9 18 6-6-6-6'], mirror: true),
   more([
     'M3.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0z',
     'M10.4 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0z',
@@ -358,7 +362,7 @@ enum PiumaIcon {
   upDown(['M7 15l5 5 5-5', 'M7 9l5-5 5 5']),
 
   /// "to fatture@…": the alias a row was written to.
-  arrowRight(['M5 12h14', 'M13 6l6 6-6 6']),
+  arrowRight(['M5 12h14', 'M13 6l6 6-6 6'], mirror: true),
 
   /// Manage groups: two sliders.
   sliders([
@@ -415,7 +419,7 @@ enum PiumaIcon {
     'M4.5 6h.01',
     'M4.5 12h.01',
     'M4.5 18h.01',
-  ]),
+  ], mirror: true),
   listNumber([
     'M10 6h10',
     'M10 12h10',
@@ -424,7 +428,7 @@ enum PiumaIcon {
     'M4 10h2',
     'M6 18H4c0-1 2-2 2-3s-1-1.5-2-1',
   ]),
-  quote(['M5 6v12', 'M10 7h9', 'M10 12h9', 'M10 17h6']),
+  quote(['M5 6v12', 'M10 7h9', 'M10 12h9', 'M10 17h6'], mirror: true),
 
   /// A question in a circle: Settings › Help & feedback.
   help([
@@ -433,7 +437,12 @@ enum PiumaIcon {
     'M12 17.5h.01',
   ]);
 
-  const PiumaIcon(this.paths, {this.feather = false, this.lines = const []});
+  const PiumaIcon(
+    this.paths, {
+    this.feather = false,
+    this.lines = const [],
+    this.mirror = false,
+  });
 
   final List<String> paths;
 
@@ -443,6 +452,11 @@ enum PiumaIcon {
 
   /// Drawn on the 24×24 grid next to a feather, with the usual stroke.
   final List<String> lines;
+
+  /// Points along the reading direction (back, next, reply, send, lists):
+  /// drawn mirrored in a right-to-left layout, as Material's guidance
+  /// asks. Icons of things in the world (a clock, a lock) never mirror.
+  final bool mirror;
 }
 
 class PiumaIconView extends StatelessWidget {
@@ -458,11 +472,14 @@ class PiumaIconView extends StatelessWidget {
         color ??
         DefaultTextStyle.of(context).style.color ??
         const Color(0xFF000000);
+    final paint = CustomPaint(
+      size: Size.square(size),
+      painter: _IconPainter(icon, c),
+    );
     return ExcludeSemantics(
-      child: CustomPaint(
-        size: Size.square(size),
-        painter: _IconPainter(icon, c),
-      ),
+      child: icon.mirror && Directionality.maybeOf(context) == TextDirection.rtl
+          ? Transform.flip(flipX: true, child: paint)
+          : paint,
     );
   }
 }

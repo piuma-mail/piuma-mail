@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/route.dart';
 import 'attachments.dart' show fileWhen;
+import '../widgets/bidi.dart';
 
 /// `AttachPreview`: a PDF's pages, drawn on this device, or a picture with
 /// the other pictures of the same email in a strip, without leaving the
@@ -237,7 +238,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                           Text(
                             l.previewMeta(
                               fileSize(_file.file.size, locale: locale),
-                              _from(_file.row),
+                              bidiArg(context, _from(_file.row)),
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -276,6 +277,8 @@ class _AttachPreviewState extends State<AttachPreview> {
         ? _CantShow()
         : GestureDetector(
             onHorizontalDragEnd: (d) {
+              // Physical on purpose: a PDF's pages turn the way the
+              // document reads, not the way the app's language does.
               final v = d.primaryVelocity ?? 0;
               if (v < -200) go(_page + 1);
               if (v > 200) go(_page - 1);
@@ -298,7 +301,10 @@ class _AttachPreviewState extends State<AttachPreview> {
                   child: _Paper(
                     width: width,
                     image: count == null ? null : _drawPage(_page, pixels),
-                    label: l.previewPageLabel(_page + 1, _file.file.name),
+                    label: l.previewPageLabel(
+                      _page + 1,
+                      bidiArg(context, _file.file.name),
+                    ),
                   ),
                 );
               },
@@ -426,7 +432,9 @@ class _AttachPreviewState extends State<AttachPreview> {
                   _Actions(
                     download: l.attachmentsDownload,
                     onDownload: () => widget.onDownload(_file),
-                    open: l.previewOpenEmail(_from(_file.row)),
+                    open: l.previewOpenEmail(
+                      bidiArg(context, _from(_file.row)),
+                    ),
                     onOpen: _openEmail,
                   ),
                 ],
@@ -499,7 +507,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                       widget.onDownload(p);
                     }
                   },
-                  open: l.previewOpenEmail(_from(_file.row)),
+                  open: l.previewOpenEmail(bidiArg(context, _from(_file.row))),
                   onOpen: _openEmail,
                 ),
               ),
@@ -528,11 +536,11 @@ class _AttachPreviewState extends State<AttachPreview> {
     final many = !_pdf && photos.length > 1;
     void close() => Navigator.of(context).maybePop();
     final meta =
-        '${l.previewMeta(fileSize(_file.file.size, locale: locale), _from(_file.row))}'
+        '${l.previewMeta(fileSize(_file.file.size, locale: locale), bidiArg(context, _from(_file.row)))}'
         ' · ${fileWhen(l, _file.row.receivedAt, widget.now(), locale)}';
     final header = Container(
       height: 68,
-      padding: const EdgeInsets.fromLTRB(20, 0, 14, 0),
+      padding: const EdgeInsetsDirectional.fromSTEB(20, 0, 14, 0),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.line)),
       ),
@@ -621,7 +629,7 @@ class _AttachPreviewState extends State<AttachPreview> {
             const SizedBox(width: 12),
             _HeaderButton(
               icon: PiumaIcon.mail,
-              label: l.previewOpenEmail(_from(_file.row)),
+              label: l.previewOpenEmail(bidiArg(context, _from(_file.row))),
               accent: true,
               onTap: open,
             ),
@@ -634,7 +642,7 @@ class _AttachPreviewState extends State<AttachPreview> {
             semanticLabel: l.previewClose,
             child: Container(
               height: 34,
-              padding: const EdgeInsets.fromLTRB(8, 0, 6, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(8, 0, 6, 0),
               child: ExcludeSemantics(
                 child: Row(
                   children: [
@@ -739,7 +747,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                     Expanded(
                       child: Text(
                         count != null && count > 1 ? l.previewKeysPages : '',
-                        textAlign: TextAlign.right,
+                        textAlign: TextAlign.end,
                         style: hint,
                       ),
                     ),
@@ -934,7 +942,7 @@ class _Sketch extends StatelessWidget {
   Widget build(BuildContext context) {
     final rule = PiumaColors.light.rule;
     Widget bar(double f, {double h = 4}) => FractionallySizedBox(
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       widthFactor: f,
       child: Container(
         height: h,

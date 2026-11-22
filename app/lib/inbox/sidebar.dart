@@ -14,6 +14,7 @@ import '../widgets/dialog.dart';
 import 'labels.dart';
 import 'mailbox_actions.dart';
 import 'sidebar_groups.dart';
+import '../widgets/bidi.dart';
 
 /// Left column of the desktop layout: Compose, folders and accounts.
 /// A chevron by an account opens its own folders under it
@@ -481,7 +482,12 @@ class _SidebarState extends State<Sidebar> {
     final folders = widget.folders[a.id] ?? const <AccountFolder>[];
     final box = dot.findRenderObject() as RenderBox?;
     if (folders.isEmpty || box == null) return;
-    final at = box.localToGlobal(Offset(Sidebar.railWidth - 4, -12));
+    // Beside the rail on its inner side: right of it in a left-to-right
+    // layout, left of it in a right-to-left one, where the popover opens
+    // toward the start.
+    final at = box.localToGlobal(
+      Offset(isRtl(dot) ? 4 : Sidebar.railWidth - 4, -12),
+    );
     final onMailbox = widget.onMailbox;
     showPiumaPopover<void>(
       dot,
@@ -958,9 +964,9 @@ class _FolderItem extends StatelessWidget {
       duration: instant ? Duration.zero : PiumaMotion.press,
       curve: PiumaMotion.curve,
       height: 34,
-      padding: EdgeInsets.only(
-        left: chevron == null ? left : (left - 24).clamp(0, left),
-        right: 10,
+      padding: EdgeInsetsDirectional.only(
+        start: chevron == null ? left : (left - 24).clamp(0, left),
+        end: 10,
       ),
       decoration: BoxDecoration(
         color: current || over ? c.sel : null,
@@ -986,7 +992,7 @@ class _FolderItem extends StatelessWidget {
           ),
           if (hiddenTag case final tag?)
             Padding(
-              padding: const EdgeInsets.only(left: 6),
+              padding: const EdgeInsetsDirectional.only(start: 6),
               child: Text(tag, style: TextStyle(fontSize: 12, color: c.muted)),
             )
           else if (folder.unread > 0)
@@ -1023,8 +1029,8 @@ class _HiddenToggle extends StatelessWidget {
       child: ExcludeSemantics(
         child: Container(
           constraints: const BoxConstraints(minHeight: 30),
-          padding: const EdgeInsets.only(left: 56, right: 10),
-          alignment: Alignment.centerLeft,
+          padding: const EdgeInsetsDirectional.only(start: 56, end: 10),
+          alignment: AlignmentDirectional.centerStart,
           child: Text(
             label,
             style: TextStyle(fontSize: 13, color: c.accentText),
@@ -1195,7 +1201,7 @@ class _SearchButton extends StatelessWidget {
       semanticLabel: l.search,
       child: Container(
         height: 40,
-        padding: const EdgeInsets.fromLTRB(12, 0, 10, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 10, 0),
         decoration: BoxDecoration(
           color: c.surface,
           borderRadius: BorderRadius.circular(PiumaRadius.button),

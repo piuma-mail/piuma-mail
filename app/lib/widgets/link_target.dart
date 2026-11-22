@@ -57,7 +57,7 @@ class _LinkTargetState extends State<LinkTarget> {
             builder: (context, url, _) => url == null || url.isEmpty
                 ? const SizedBox.shrink()
                 : Align(
-                    alignment: Alignment.bottomLeft,
+                    alignment: AlignmentDirectional.bottomStart,
                     child: LinkTargetLine(url: url),
                   ),
           ),
