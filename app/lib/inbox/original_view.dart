@@ -162,11 +162,11 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   Drag? _drag;
   VelocityTracker? _velocity;
   bool _lastToReader = false;
-  // What the web view last said it had room for, and how much of it this
-  // pan already used before it reported again (its scroll position comes
-  // back a little later than the pan).
-  double _room = -1;
-  double _spent = 0;
+  // Where the web view last said it was, and every step of this pan sent
+  // to it since: it gets them all, and its scroll position comes back a
+  // little later than the pan, often for only some of those steps.
+  double? _confirmed;
+  final _sent = <double>[];
 
   @override
   void initState() {
@@ -178,6 +178,7 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_key);
     _drag?.cancel();
+    _drag = null;
     _focus.dispose();
     super.dispose();
   }
@@ -190,8 +191,39 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     _velocity = VelocityTracker.withKind(PointerDeviceKind.trackpad)
       ..addPosition(event.timeStamp, Offset.zero);
     _lastToReader = false;
-    _room = -1;
-    _spent = 0;
+    _confirmed = null;
+    _sent.clear();
+  }
+
+  /// Where the web view is now, as far as this pan knows: where it last
+  /// said it was, moved by the steps sent that its report doesn't cover
+  /// yet.
+  double _innerOffset() {
+    final reported = widget.room(-1);
+    final extent = reported + widget.room(1);
+    double after(double from, Iterable<double> steps) =>
+        steps.fold(from, (o, d) => (o + d).clamp(0.0, extent));
+    final confirmed = _confirmed;
+    if (confirmed == null) {
+      _confirmed = reported;
+      _sent.clear();
+    } else if (reported != confirmed) {
+      // A new report: it covers the steps up to the first point the page
+      // passed that matches it; when none does (the page moved on its
+      // own), it covers them all.
+      var at = confirmed;
+      var covered = _sent.length;
+      for (var i = 0; i < _sent.length; i++) {
+        at = after(at, [_sent[i]]);
+        if ((at - reported).abs() <= 1) {
+          covered = i + 1;
+          break;
+        }
+      }
+      _sent.removeRange(0, covered);
+      _confirmed = reported;
+    }
+    return after(reported, _sent);
   }
 
   void _panUpdate(PointerPanZoomUpdateEvent event) {
@@ -199,14 +231,12 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     // The fingers move the page: up is a scroll down.
     final dy = -event.panDelta.dy;
     if (dy == 0) return;
-    final reported = widget.room(dy);
-    if (reported != _room || dy.sign != _spent.sign) {
-      _room = reported;
-      _spent = 0;
-    }
-    final room = math.max(0.0, reported - _spent.abs());
+    final offset = _innerOffset();
+    final extent = widget.room(-1) + widget.room(1);
+    final left = dy > 0 ? extent - offset : offset;
+    final room = left > 1 ? left : 0.0;
     final inner = math.min(dy.abs(), room);
-    _spent += inner * dy.sign;
+    _sent.add(dy);
     final rest = dy.abs() - inner;
     _lastToReader = rest > 0;
     if (rest <= 0) return;
@@ -286,6 +316,16 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
 
   /// With the focus on the web view (it was clicked): before the reader's
   /// own page keys, which sit further up.
+  ///
+  /// Not verified on Windows yet: webview_windows 0.4.0 forwards a click
+  /// to WebView2 (`SendMouseInput`) and never forwards keys, and typing in
+  /// a page's field works there, so WebView2 most likely takes the
+  /// system's keyboard focus on a click. Then the keys go straight to it
+  /// and never reach Flutter: the page scrolls itself, this never runs,
+  /// the reader doesn't take over at the page's end, and Tab may stay
+  /// inside the page (the plugin doesn't handle WebView2's
+  /// MoveFocusRequested). This path stays right for when Flutter does get
+  /// the keys; the PR's Windows checklist covers the rest.
   KeyEventResult _focusedKey(FocusNode node, KeyEvent event) {
     final key = _scrollKey(event);
     if (key == null) return KeyEventResult.ignored;
@@ -293,17 +333,18 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     return KeyEventResult.handled;
   }
 
-  /// With only the pointer over the web view. The focus is elsewhere and
-  /// gets the key too, so this goes first only when the focus is outside
-  /// the reader, whose page keys would otherwise scroll it as well; with
-  /// the focus inside the reader, the reader scrolls, as before.
+  /// With only the pointer over the web view. Returning true here doesn't
+  /// keep the key from the focus, so this takes it only when the focus has
+  /// nothing the key would scroll: not inside the reader or any other
+  /// list (the message list, search results, a long menu), and not in an
+  /// open menu. Otherwise the focus keeps it, as before, and only one
+  /// thing scrolls.
   bool _key(KeyEvent event) {
     if (!_over || _focus.hasFocus) return false;
     final focus = FocusManager.instance.primaryFocus?.context;
-    final reader = _verticalScrollable(context);
     if (focus != null &&
-        reader != null &&
-        _verticalScrollable(focus) == reader) {
+        (_verticalScrollable(focus) != null ||
+            (MenuController.maybeOf(focus)?.isOpen ?? false))) {
       return false;
     }
     final key = _scrollKey(event);
