@@ -149,12 +149,19 @@ String innerKeyScript(InnerScrollKey key, int seq) {
 /// (`behavior: 'instant'` overrides the page's `scroll-behavior`), so the
 /// position reported always includes it. Only numbers go into the script,
 /// each finite and within [maxPanStep].
+///
+/// A slow pan comes in steps under a pixel, which `scrollBy` would round
+/// away one by one: the page keeps what is left over (`__piumaPan`) and
+/// moves by whole pixels once they add up.
 @visibleForTesting
 String innerPanScript(int seq, Offset delta) {
   String px(double v) =>
       (v.isFinite ? v.clamp(-maxPanStep, maxPanStep) : 0.0).toStringAsFixed(2);
-  return 'window.scrollBy({left: ${px(delta.dx)}, top: ${px(delta.dy)}, '
-      "behavior: 'instant'}); _piumaScrolled(${seq.toInt()})";
+  return '(function(){var r=window.__piumaPan||(window.__piumaPan={x:0,y:0});'
+      'r.x+=${px(delta.dx)};r.y+=${px(delta.dy)};'
+      'var x=Math.trunc(r.x),y=Math.trunc(r.y);r.x-=x;r.y-=y;'
+      "if(x||y)window.scrollBy({left:x,top:y,behavior:'instant'});})(); "
+      '_piumaScrolled(${seq.toInt()})';
 }
 
 /// The longest a single pan step goes, in points, however the touchpad

@@ -730,19 +730,22 @@ void main() {
     test('a pan step is instant and acknowledged in the same script', () {
       expect(
         innerPanScript(7, const Offset(-1.5, 42)),
-        "window.scrollBy({left: -1.50, top: 42.00, behavior: 'instant'}); "
-        '_piumaScrolled(7)',
+        allOf(
+          contains('r.x+=-1.50;r.y+=42.00;'),
+          contains("behavior:'instant'"),
+          endsWith('_piumaScrolled(7)'),
+        ),
       );
     });
 
     test('a pan step carries only sane numbers', () {
       expect(
         innerPanScript(1, const Offset(double.nan, double.infinity)),
-        contains('left: 0.00, top: 0.00,'),
+        contains('r.x+=0.00;r.y+=0.00;'),
       );
       expect(
         innerPanScript(1, const Offset(1e30, -1e30)),
-        contains('left: 5000.00, top: -5000.00,'),
+        contains('r.x+=5000.00;r.y+=-5000.00;'),
       );
     });
 
