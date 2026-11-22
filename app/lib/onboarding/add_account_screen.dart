@@ -76,6 +76,15 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   bool _jmap = false;
   final _jmapServer = TextEditingController();
   FoundSettings? _found;
+
+  /// The address [_found] was looked up for, and the one the servers in
+  /// the manual form were filled for: another address fills them again.
+  String? _foundFor;
+  String? _filledFor;
+
+  /// The address the password was typed for: another address (back, a new
+  /// one) starts without it, so it is never sent to that one's servers.
+  String? _passwordFor;
   MailProvider? _provider;
   bool _notFound = false;
   bool _showPassword = false;
@@ -239,15 +248,22 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   /// Step 1: look the address up.
   Future<void> _lookUp() async {
     if (!_emailReady || _busy) return;
+    final address = _email.text.trim();
     setState(() => _busy = true);
     FoundSettings? found;
     try {
-      found = await widget.source.discoverSettings(_email.text.trim());
+      found = await widget.source.discoverSettings(address);
     } catch (_) {
       // Looking up is only a shortcut: if it fails, the servers are typed in.
       found = null;
     }
     if (!mounted) return;
+    // The address changed while looking up: what was found is another
+    // one's, so it is dropped and Continue looks the new one up.
+    if (_email.text.trim() != address) {
+      setState(() => _busy = false);
+      return;
+    }
     // Providers that sign in with their own page: Microsoft always (it
     // takes no passwords any more), Google when this build can.
     final oauth = found?.oauth;
@@ -257,6 +273,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     setState(() {
       _busy = false;
       _found = found;
+      _foundFor = address;
       _notFound = found == null;
       _fillServers(found);
       _oauth = useOAuth ? oauth : null;
@@ -271,6 +288,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   }
 
   void _fillServers(FoundSettings? s) {
+    _filledFor = _email.text.trim();
+    _forAddress();
     _username.text = s?.username ?? _email.text.trim();
     _imapHost.text = s?.imap.host ?? 'imap.$_domain';
     _imapPort.text = '${s?.imap.port ?? 993}';
@@ -280,6 +299,13 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     _smtpSecurity = s?.smtp.security ?? ServerSecurity.tls;
     _jmapServer.text = s?.jmapUrl ?? 'jmap.$_domain';
     _jmap = s?.jmapUrl != null;
+  }
+
+  /// Drops the password typed for another address.
+  void _forAddress() {
+    final address = _email.text.trim();
+    if (_passwordFor != address) _password.clear();
+    _passwordFor = address;
   }
 
   /// "Or start from": Outlook signs in on Microsoft's page, Gmail on
@@ -315,12 +341,20 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   }
 
   /// One step back: a PEC provider's password goes back to the providers.
-  void _back() => _go(
-    _step == _Step.provider && _provider!.isPec ? _Step.pec : _Step.email,
-  );
+  /// Whatever password is in the field was typed for the address shown with
+  /// it, so it is kept for that address only.
+  void _back() {
+    _passwordFor = _email.text.trim();
+    _go(_step == _Step.provider && _provider!.isPec ? _Step.pec : _Step.email);
+  }
 
+  /// The manual form keeps what was typed in it for this address; for
+  /// another one (back, a new address) it starts again from that one.
   void _manual() {
-    if (_imapHost.text.isEmpty) _fillServers(_found);
+    _forAddress();
+    final address = _email.text.trim();
+    if (_foundFor != address) _found = null;
+    if (_imapHost.text.isEmpty || _filledFor != address) _fillServers(_found);
     _go(_Step.manual);
   }
 
@@ -328,6 +362,8 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   /// an app password or an organization that still takes passwords. The
   /// provider's servers when the lookup found them, else Microsoft's.
   void _manualWithPassword() {
+    _forAddress();
+    if (_foundFor != _email.text.trim()) _found = null;
     _fillServers(_found);
     if (_found == null && _oauth == 'microsoft') {
       _imapHost.text = 'outlook.office365.com';
