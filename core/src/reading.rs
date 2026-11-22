@@ -461,7 +461,11 @@ fn site(host: &str) -> String {
 /// The host a link's visible text shows, when it reads as an address.
 fn shown_host(text: &str) -> Option<String> {
     let t = text.trim();
-    if t.is_empty() || t.contains(char::is_whitespace) || !t.contains('.') {
+    // A dot, or one UTS #46 reads as a dot ("bank．example").
+    if t.is_empty()
+        || t.contains(char::is_whitespace)
+        || !t.contains(['.', '\u{3002}', '\u{FF0E}', '\u{FF61}'])
+    {
         return None;
     }
     let with_scheme = if t.contains("://") {
@@ -487,6 +491,32 @@ pub(crate) fn suspicious(text: &str, link: &str) -> bool {
         return false;
     };
     site(&shown) != site(&real)
+}
+
+/// A link's host in the ASCII form a browser goes to: UTS #46 mapping
+/// (full-width letters and the dots `。` `．` `｡` read as ASCII, case folded,
+/// characters UTS #46 drops removed), then punycode, as the WHATWG URL
+/// standard does it. The same parsing `suspicious` compares with, so the
+/// app shows and compares the host the engine checked. An IPv4 address
+/// comes back in its usual dotted form, an IPv6 one in brackets. `None`
+/// when `host` isn't a host a browser would open (a forbidden character
+/// such as `@`, or a label UTS #46 refuses).
+pub fn link_host_ascii(host: &str) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    let parsed = if host.contains(':') && !host.starts_with('[') {
+        url::Host::parse(&format!("[{host}]"))
+    } else {
+        url::Host::parse(host)
+    };
+    match parsed.ok()? {
+        url::Host::Domain(d) if !d.is_empty() => Some(d),
+        url::Host::Domain(_) => None,
+        url::Host::Ipv4(a) => Some(a.to_string()),
+        url::Host::Ipv6(a) => Some(format!("[{a}]")),
+    }
 }
 
 /// Elements whose content is never shown.
@@ -1416,5 +1446,86 @@ mod tests {
             ok.push_str("</div>");
         }
         assert_eq!(plain_text(&from_html(&ok)), "innermost");
+    }
+
+    #[test]
+    fn link_hosts_follow_uts46_like_a_browser() {
+        // The other dots UTS #46 reads as ".".
+        for host in [
+            "example\u{3002}com",
+            "example\u{FF0E}com",
+            "example\u{FF61}com",
+        ] {
+            assert_eq!(
+                link_host_ascii(host).as_deref(),
+                Some("example.com"),
+                "{host}"
+            );
+        }
+        // Full-width ASCII letters and digits.
+        assert_eq!(
+            link_host_ascii("\u{FF45}\u{FF58}\u{FF41}\u{FF4D}\u{FF50}\u{FF4C}\u{FF45}.com")
+                .as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            link_host_ascii("\u{FF22}\u{FF21}\u{FF2E}\u{FF2B}\u{FF11}.example").as_deref(),
+            Some("bank1.example")
+        );
+        // Mixed-case IDN, in Unicode or in punycode.
+        for host in [
+            "B\u{dc}cher.DE",
+            "b\u{dc}CHER.de",
+            "XN--BCHER-KVA.DE",
+            "bücher.de",
+        ] {
+            assert_eq!(
+                link_host_ascii(host).as_deref(),
+                Some("xn--bcher-kva.de"),
+                "{host}"
+            );
+        }
+        // A character UTS #46 drops (a soft hyphen) and one it maps (ß stays
+        // ß, as browsers keep it: non-transitional).
+        assert_eq!(
+            link_host_ascii("exam\u{AD}ple.com").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(link_host_ascii("faß.de").as_deref(), Some("xn--fa-hia.de"));
+        // The hosts of #99 don't change.
+        assert_eq!(
+            link_host_ascii("раураl.com").as_deref(),
+            Some("xn--l-7sba6dbr.com")
+        );
+        assert_eq!(
+            link_host_ascii("shop.example").as_deref(),
+            Some("shop.example")
+        );
+        assert_eq!(
+            link_host_ascii("evil.example.").as_deref(),
+            Some("evil.example.")
+        );
+        assert_eq!(
+            link_host_ascii("192.168.1.10").as_deref(),
+            Some("192.168.1.10")
+        );
+        assert_eq!(link_host_ascii("FE80::1").as_deref(), Some("[fe80::1]"));
+        assert_eq!(link_host_ascii("[::1]").as_deref(), Some("[::1]"));
+        // Not a host a browser opens.
+        for host in [
+            "bank.example@evil.example",
+            "a%ff.example",
+            "",
+            "a b.example",
+        ] {
+            assert_eq!(link_host_ascii(host), None, "{host:?}");
+        }
+    }
+
+    #[test]
+    fn a_link_text_with_another_dot_is_the_same_site() {
+        assert!(!suspicious("example\u{3002}com", "https://example.com/"));
+        assert!(!suspicious("\u{FF45}xample.com", "https://EXAMPLE.com/"));
+        assert!(suspicious("bank\u{FF0E}example", "https://evil.example/"));
     }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/notify/notifier.dart';
+import 'package:piuma_mail/widgets/links.dart';
 
 import 'support/fake_notifier.dart';
 import 'support/linux_goldens.dart';
@@ -14,6 +15,9 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   compareGoldensOnLinuxOnly();
   // Tests never reach the system's notifications.
   notifier = FakeNotifier();
+  // Tests run without the engine's library: hosts are read without UTS #46
+  // (links_test checks it with the library when it is built).
+  linkHostAscii = (_) => null;
   Future<void> load(String family, List<String> files) async {
     final loader = FontLoader(family);
     for (final f in files) {
