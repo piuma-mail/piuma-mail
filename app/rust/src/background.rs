@@ -92,8 +92,7 @@ pub(crate) fn sign_in_failed(account: AccountId, certificate: bool) {
 }
 
 fn tell(account: AccountId, certificate: bool) {
-    let Ok(engine) = engine::engine() else { return };
-    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(store) = engine::store() else { return };
     let notice = told(&store, account);
     let Some(mut notice) = notice else { return };
     notice.certificate = certificate;
@@ -142,8 +141,7 @@ fn is_told(store: &Store, account: AccountId) -> bool {
 
 /// The account reached its server again: the next refusal is told anew.
 pub(crate) fn signed_in(account: AccountId) {
-    let Ok(engine) = engine::engine() else { return };
-    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(store) = engine::store() else { return };
     let mut failed = FAILED.lock().unwrap_or_else(|e| e.into_inner());
     let queued = recover_sign_in(&store, account, &mut failed);
     drop(failed);
@@ -173,8 +171,7 @@ fn recover_sign_in(store: &Store, account: AccountId, pending: &mut Vec<SignInNo
 
 /// The account is being removed: its failure goes, waiting or shown.
 pub(crate) fn forget(account: AccountId) {
-    let Ok(engine) = engine::engine() else { return };
-    let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(store) = engine::store() else { return };
     let mut failed = FAILED.lock().unwrap_or_else(|e| e.into_inner());
     let queued = forget_sign_in(&store, account, &mut failed);
     drop(failed);
@@ -239,11 +236,7 @@ pub fn open(db_path: &str) -> Result<Vec<i64>, engine::EngineError> {
 pub fn start(passwords: &[(i64, String)]) -> Result<(), engine::EngineError> {
     remember(passwords);
     enable();
-    let accounts = engine::engine()?
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     for account in accounts {
         engine::watch_account(account)?;
     }
@@ -255,11 +248,7 @@ pub fn start(passwords: &[(i64, String)]) -> Result<(), engine::EngineError> {
 pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine::EngineError> {
     remember(passwords);
     let engine = engine::engine()?;
-    let accounts = engine
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     let mut notices = Vec::new();
     for account in accounts {
         let followed = engine::WATCHED
@@ -305,11 +294,7 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
 /// away. Claims in the database keep it from going twice beside the app.
 pub fn send_outbox_once() -> Result<(), engine::EngineError> {
     let engine = engine::engine()?;
-    let accounts = engine
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     for account in accounts {
         let Ok(password) = crate::login::load(account.id) else {
             continue;
@@ -389,7 +374,7 @@ pub fn act(payload: &str, action: NoticeAction) -> Result<(), engine::EngineErro
         }
         NoticeAction::Reply(text) | NoticeAction::ReplyAll(text) => {
             let (row, signature) = {
-                let store = engine.store.lock().unwrap_or_else(|e| e.into_inner());
+                let store = engine::store()?;
                 let account = AccountId(message.account_id);
                 let row = store
                     .message(account, &message.mailbox, message.uid)?
