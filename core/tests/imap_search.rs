@@ -325,6 +325,61 @@ async fn found_mail_is_fetched_as_headers_kept_and_marked() {
     );
 }
 
+/// Moves every found message's time `days` back, as if they had passed.
+fn found_days_ago(store: &Arc<Mutex<Store>>, days: i64) {
+    store
+        .lock()
+        .unwrap()
+        .execute_for_tests(&format!(
+            "UPDATE server_found SET found_at = found_at - {}",
+            days * 86_400
+        ))
+        .unwrap();
+}
+
+/// The clean-up of cached mail, run now.
+fn clean_up(store: &Arc<Mutex<Store>>) -> std::collections::HashSet<u32> {
+    let mut s = store.lock().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    s.queue_body_clean_up(now).unwrap();
+    s.maintain_all().unwrap();
+    s.uids(AccountId(1), "INBOX").unwrap().into_iter().collect()
+}
+
+#[tokio::test]
+async fn found_again_its_days_kept_start_over() {
+    let keep = i64::from(piuma_core::store::KEEP_SERVER_FOUND_DAYS);
+    let mock = start(Behaviour {
+        found: vec![2, 5],
+        uid_validity: 7,
+        ..Behaviour::default()
+    })
+    .await;
+    let (store, a) = store_with(mock.port);
+    assert_eq!(a.id, AccountId(1));
+    assert_eq!(search(&store, &a, "order").await.at.len(), 2);
+    found_days_ago(&store, keep - 1);
+    // Searched again: 5 is found again, already here.
+    let mock2 = start(Behaviour {
+        found: vec![5],
+        uid_validity: 7,
+        ..Behaviour::default()
+    })
+    .await;
+    let mut b = a.clone();
+    if let AccountKind::Imap { imap, .. } = &mut b.kind {
+        imap.port = mock2.port;
+    }
+    assert_eq!(search(&store, &b, "order").await.at.len(), 1);
+    assert!(mock2.commands("UID FETCH").is_empty());
+    // Two days later: 2's days are over, 5's started again.
+    found_days_ago(&store, 2);
+    assert_eq!(clean_up(&store), [5].into());
+}
+
 #[tokio::test]
 async fn a_refused_charset_falls_back_to_ascii() {
     let mock = start(Behaviour {
