@@ -476,7 +476,8 @@ fn shown_host(text: &str) -> Option<String> {
     let url = Url::parse(&with_scheme).ok()?;
     let host = url.host_str()?;
     // "v1.2" or "Mr.Smith" aren't addresses: the last label must be letters.
-    let tld = host.rsplit('.').next()?;
+    // One dot at the end ("paypal.com.") is still the same address.
+    let tld = host.strip_suffix('.').unwrap_or(host).rsplit('.').next()?;
     (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())).then(|| host.to_owned())
 }
 
@@ -500,10 +501,13 @@ pub(crate) fn suspicious(text: &str, link: &str) -> bool {
 /// app shows and compares the host the engine checked. An IPv4 address
 /// comes back in its usual dotted form, an IPv6 one in brackets. `None`
 /// when `host` isn't a host a browser would open (a forbidden character
-/// such as `@`, or a label UTS #46 refuses).
+/// such as `@` or `%`, or a label UTS #46 refuses).
 pub fn link_host_ascii(host: &str) -> Option<String> {
     let host = host.trim();
-    if host.is_empty() {
+    // The app hands the host percent-decoded: a `%` left in it would be
+    // decoded a second time here (`bank%252eexample`), and a browser
+    // refuses it anyway.
+    if host.is_empty() || host.contains('%') {
         return None;
     }
     let parsed = if host.contains(':') && !host.starts_with('[') {
@@ -1527,5 +1531,31 @@ mod tests {
         assert!(!suspicious("example\u{3002}com", "https://example.com/"));
         assert!(!suspicious("\u{FF45}xample.com", "https://EXAMPLE.com/"));
         assert!(suspicious("bank\u{FF0E}example", "https://evil.example/"));
+    }
+
+    #[test]
+    fn a_link_host_is_percent_decoded_only_once() {
+        // The app decodes the host's percent-encoding before asking: a `%`
+        // left is one the browser keeps, never a second escape.
+        for host in [
+            "bank%2eexample",
+            "bank%252eexample",
+            "a%ff.example",
+            "%41.example",
+        ] {
+            assert_eq!(link_host_ascii(host), None, "{host}");
+        }
+    }
+
+    #[test]
+    fn a_link_text_ending_in_a_dot_is_an_address() {
+        for text in [
+            "paypal.com.",
+            "paypal\u{3002}com\u{3002}",
+            "www.paypal.com.",
+        ] {
+            assert!(suspicious(text, "https://evil.com/"), "{text}");
+            assert!(!suspicious(text, "https://paypal.com/"), "{text}");
+        }
     }
 }
