@@ -144,9 +144,24 @@ jobs:
         with:
           channel: stable
           flutter-version: 3.47.7
+      # The engine's library, so the tests that call into it (links_test's
+      # UTS #46) run instead of skipping: with CI=true they fail without it.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-10-16
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install system dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libdbus-1-dev
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
+      - name: Build the engine's library
+        working-directory: .
+        run: cargo build -p piuma_bridge
       - run: flutter test
       - name: Screenshots of failed tests
         if: failure()

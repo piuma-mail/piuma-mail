@@ -290,7 +290,8 @@ void main() {
 
   group('with the engine\'s UTS #46', () {
     // The engine's library, when it is built (`cargo build -p
-    // piuma_bridge`): CI checks the mapping itself in the engine's tests.
+    // piuma_bridge`). CI builds it, and there a missing library fails the
+    // tests instead of skipping them.
     final root = Directory.current.parent.path;
     final name = Platform.isWindows
         ? 'piuma_bridge.dll'
@@ -298,11 +299,15 @@ void main() {
         ? 'libpiuma_bridge.dylib'
         : 'libpiuma_bridge.so';
     final lib = File('$root/target/debug/$name');
-    final skip = lib.existsSync() ? false : 'build piuma_bridge to run';
+    final inCi = Platform.environment['CI'] == 'true';
+    final skip = lib.existsSync() || inCi ? false : 'build piuma_bridge to run';
     late String? Function(String) before;
 
     setUpAll(() async {
-      if (!lib.existsSync()) return;
+      if (!lib.existsSync()) {
+        if (inCi) fail('CI must build piuma_bridge first: ${lib.path}');
+        return;
+      }
       await RustLib.init(externalLibrary: ExternalLibrary.open(lib.path));
     });
     setUp(() {
