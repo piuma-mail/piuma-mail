@@ -142,7 +142,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [foldhash](https://github.com/orlp/foldhash) | 0.1.5 | Zlib |
 | [foldhash](https://github.com/orlp/foldhash) | 0.2.0 | Zlib |
 | [font-types](https://github.com/googlefonts/fontations) | 0.12.7 | MIT OR Apache-2.0 |
-| [form_urlencoded](https://github.com/servo/rust-url) | 1.2.2 | MIT OR Apache-2.0 |
+| [form_urlencoded](https://github.com/servo/rust-url) | 1.2.3 | MIT OR Apache-2.0 |
 | [futures](https://github.com/rust-lang/futures-rs) | 0.3.34 | MIT OR Apache-2.0 |
 | [futures-channel](https://github.com/rust-lang/futures-rs) | 0.3.34 | MIT OR Apache-2.0 |
 | [futures-core](https://github.com/rust-lang/futures-rs) | 0.3.34 | MIT OR Apache-2.0 |
@@ -441,7 +441,7 @@ compiled into the app's engine. Each keeps its own license; the full texts come 
 | [untrusted](https://github.com/briansmith/untrusted) | 0.9.0 | ISC |
 | [ureq](https://github.com/algesten/ureq) | 3.4.2 | MIT OR Apache-2.0 |
 | [ureq-proto](https://github.com/algesten/ureq-proto) | 0.6.5 | MIT OR Apache-2.0 |
-| [url](https://github.com/servo/rust-url) | 2.5.8 | MIT OR Apache-2.0 |
+| [url](https://github.com/servo/rust-url) | 2.5.9 | MIT OR Apache-2.0 |
 | [usvg](https://github.com/linebender/resvg) | 0.49.0 | Apache-2.0 OR MIT |
 | [utf8-zero](https://github.com/algesten/utf8-zero) | 0.8.1 | MIT OR Apache-2.0 |
 | [utf8_iter](https://github.com/hsivonen/utf8_iter) | 1.0.4 | Apache-2.0 OR MIT |
