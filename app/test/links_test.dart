@@ -385,5 +385,14 @@ void main() {
         'https://lume-login.example/',
       );
     }, skip: skip);
+
+    test('a host is percent-decoded once, as the browser does', () {
+      // `%25` decodes to a `%`, which stays: never a second `.`.
+      const url = 'https://bank%252eexample/login';
+      final parts = describeLink(url)!;
+      expect(parts.host, 'bank%2eexample');
+      expect(parts.registrable, isNot('bank.example'));
+      expect(isMailLinkAllowed(Uri.parse(url)), isFalse);
+    }, skip: skip);
   });
 }
