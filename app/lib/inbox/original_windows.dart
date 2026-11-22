@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_windows/webview_windows.dart';
 
@@ -44,14 +45,24 @@ function _reportHeight() {
   if (h > 0) window.chrome.webview.postMessage('#height:' + h);
   _reportScroll();
 }
-// Where the page is scrolled, and how far it can go, once it is longer
-// than its paper (paperMaxHeight): wheel turns go to it first.
+// Where the page is scrolled, how far it can go, once it is longer than
+// its paper (paperMaxHeight): wheel turns go to it first, and the last
+// scroll command of the app it had applied by then (_piumaScrolled).
+var _scrollAck = 0;
 function _reportScroll() {
   var e = document.scrollingElement || document.documentElement;
   if (!e) return;
   var max = Math.max(0, e.scrollHeight - window.innerHeight);
-  window.chrome.webview.postMessage(
-    '#scroll:' + Math.round(window.scrollY) + ',' + Math.round(max));
+  window.chrome.webview.postMessage('#scroll:' + Math.round(window.scrollY) +
+    ',' + Math.round(max) + ',' + _scrollAck);
+}
+// The app's scroll command n, run just before in the same script (a
+// key's scroll or a touchpad pan's step, both instant), has moved the
+// page: the position reported now includes it, even when the page
+// couldn't move (at its end), so every step gets acknowledged.
+function _piumaScrolled(n) {
+  if (n > _scrollAck) _scrollAck = n;
+  _reportScroll();
 }
 window.addEventListener('scroll', _reportScroll, {passive: true});
 window.addEventListener('resize', _reportScroll);
@@ -106,12 +117,62 @@ const _scrollbar = '''`
 ::-webkit-scrollbar-corner { background: transparent; }
 `''';
 
+/// The script for Page Down and the other paging keys inside the page,
+/// once it is longer than its paper ([InnerScrollFirst]), as command
+/// [seq]. The scroll is instant, whatever the page's CSS
+/// `scroll-behavior` says, so the position `_piumaScrolled` reports right
+/// after already includes it. Only numbers go into the script.
+@visibleForTesting
+String innerKeyScript(InnerScrollKey key, int seq) {
+  final scroll = switch (key) {
+    InnerScrollKey.pageDown =>
+      'window.scrollBy({top: Math.round(window.innerHeight * 0.8), '
+          "behavior: 'instant'})",
+    InnerScrollKey.pageUp =>
+      'window.scrollBy({top: -Math.round(window.innerHeight * 0.8), '
+          "behavior: 'instant'})",
+    InnerScrollKey.top => "window.scrollTo({top: 0, behavior: 'instant'})",
+    InnerScrollKey.bottom =>
+      'window.scrollTo({top: (document.scrollingElement || '
+          "document.documentElement).scrollHeight, behavior: 'instant'})",
+  };
+  return '$scroll; _piumaScrolled(${seq.toInt()})';
+}
+
+/// The script for a touchpad pan's step of [delta] points (positive: down
+/// and right) inside the page ([InnerScrollFirst]), as command [seq].
+///
+/// webview_windows would turn the pan into wheel input for WebView2,
+/// which Chromium may animate, while the acknowledgement goes through a
+/// script: the page could acknowledge a step it hadn't finished. Here the
+/// step and its acknowledgement are the same script, the step instant
+/// (`behavior: 'instant'` overrides the page's `scroll-behavior`), so the
+/// position reported always includes it. Only numbers go into the script,
+/// each finite and within [maxPanStep].
+///
+/// A slow pan comes in steps under a pixel, which `scrollBy` would round
+/// away one by one: the page keeps what is left over (`__piumaPan`) and
+/// moves by whole pixels once they add up.
+@visibleForTesting
+String innerPanScript(int seq, Offset delta) {
+  String px(double v) =>
+      (v.isFinite ? v.clamp(-maxPanStep, maxPanStep) : 0.0).toStringAsFixed(2);
+  return '(function(){var r=window.__piumaPan||(window.__piumaPan={x:0,y:0});'
+      'r.x+=${px(delta.dx)};r.y+=${px(delta.dy)};'
+      'var x=Math.trunc(r.x),y=Math.trunc(r.y);r.x-=x;r.y-=y;'
+      "if(x||y)window.scrollBy({left:x,top:y,behavior:'instant'});})(); "
+      '_piumaScrolled(${seq.toInt()})';
+}
+
+/// The longest a single pan step goes, in points, however the touchpad
+/// reports it.
+const maxPanStep = 5000.0;
+
 class _WindowsPaperState extends State<WindowsPaper> {
   final _controller = WebviewController();
   final _subs = <StreamSubscription<Object?>>[];
   bool _shown = false;
-  double _scrollY = 0;
-  double _scrollMax = 0;
+  var _scroll = const InnerScrollPosition(0, 0);
 
   @override
   void initState() {
@@ -139,9 +200,18 @@ class _WindowsPaperState extends State<WindowsPaper> {
             }
             if (m.startsWith('#scroll:')) {
               final parts = m.substring('#scroll:'.length).split(',');
-              if (parts.length != 2) return;
-              _scrollY = double.tryParse(parts[0]) ?? 0;
-              _scrollMax = double.tryParse(parts[1]) ?? 0;
+              if (parts.length != 3) return;
+              _scroll = InnerScrollPosition(
+                double.tryParse(parts[0]) ?? 0,
+                double.tryParse(parts[1]) ?? 0,
+                int.tryParse(parts[2]) ?? 0,
+              );
+              if (kDebugMode && innerScrollLog) {
+                debugPrint(
+                  'inner page: scrollY ${parts[0]} of ${parts[1]}, '
+                  'ack ${parts[2]}',
+                );
+              }
               return;
             }
             if (m.startsWith('#hover:')) {
@@ -193,6 +263,14 @@ class _WindowsPaperState extends State<WindowsPaper> {
     }
   }
 
+  void _scrollKey(InnerScrollKey key, int seq) =>
+      _run(innerKeyScript(key, seq));
+
+  void _panStep(int seq, Offset delta) => _run(innerPanScript(seq, delta));
+
+  void _run(String script) =>
+      unawaited(_controller.executeScript(script).catchError((_) => null));
+
   @override
   void didUpdateWidget(WindowsPaper old) {
     super.didUpdateWidget(old);
@@ -213,7 +291,9 @@ class _WindowsPaperState extends State<WindowsPaper> {
   @override
   Widget build(BuildContext context) => _shown
       ? InnerScrollFirst(
-          takes: (dy) => innerScrollTakes(_scrollY, _scrollMax, dy),
+          position: () => _scroll,
+          onKey: _scrollKey,
+          onPanStep: _panStep,
           child: Webview(_controller),
         )
       : const SizedBox.expand();

@@ -83,7 +83,7 @@ void main() {
             SizedBox(
               height: 2000,
               child: InnerScrollFirst(
-                takes: (_) => inner,
+                position: () => InnerScrollPosition(0, inner ? 1000 : 0),
                 child: const ColoredBox(
                   key: ValueKey('web view'),
                   color: Color(0xFFFFFFFF),
