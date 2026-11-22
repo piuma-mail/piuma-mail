@@ -23,7 +23,10 @@ hand. Nothing in this repository runs it.
    `expire-issues-<run>` artifact.
 5. When the list looks right, add the repository variable `EXPIRE_ISSUES_DELETE` = `true`. From
    then on the weekly run (Mondays, 04:23 UTC) deletes them, at most 200 a run, and keeps its log
-   as an artifact for 90 days.
+   as an artifact for 90 days. A manual run deletes only with "delete" ticked.
+
+Deleting needs both the secret `ISSUE_EXPIRY_TOKEN` and the variable `EXPIRE_ISSUES_DELETE` set to
+`true`: without the variable, every run is a dry run, ticked or not.
 
 An issue labelled `keep` is never deleted (for example one still waiting for a fix); remove the
 label when it can go. `EXPIRE_ISSUES_AFTER_DAYS` changes the 730 days, never below them.
