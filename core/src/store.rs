@@ -47,6 +47,10 @@ pub enum StoreError {
     /// [outbox] messages and [drafts] waiting on this device.
     #[error("the account still has unsent mail ({outbox} in the outbox, {drafts} drafts on this device)")]
     Unsent { outbox: u32, drafts: u32 },
+    /// A thread asked for a database connection it already holds: waiting
+    /// would hang it for good, so the app refuses instead.
+    #[error("the database was asked for again by the thread that holds it")]
+    HeldHere,
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
