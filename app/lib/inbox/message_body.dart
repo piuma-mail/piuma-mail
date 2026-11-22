@@ -632,9 +632,11 @@ class PrivacyChip extends StatelessWidget {
     return PiumaPressable(
       onTap: onTap,
       semanticLabel: text,
+      // At least a pill's height, taller when the label needs more lines:
+      // a narrow phone or large text never cuts it short (#109).
       child: Container(
-        height: 26,
-        padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
+        constraints: const BoxConstraints(minHeight: 26),
+        padding: const EdgeInsetsDirectional.fromSTEB(8, 3, 10, 3),
         decoration: BoxDecoration(
           color: c.bg,
           border: Border.all(color: c.line),
@@ -648,8 +650,6 @@ class PrivacyChip extends StatelessWidget {
             Flexible(
               child: Text(
                 text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: PiumaFonts.sans,
                   fontSize: 12,
