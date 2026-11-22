@@ -193,6 +193,23 @@ class _WindowsPaperState extends State<WindowsPaper> {
     }
   }
 
+  /// Page Down and the other paging keys inside the page, once it is
+  /// longer than its paper ([InnerScrollFirst]): the page's own scroll
+  /// reports where it got to.
+  void _scrollKey(InnerScrollKey key) {
+    final script = switch (key) {
+      InnerScrollKey.pageDown =>
+        'window.scrollBy(0, Math.round(window.innerHeight * 0.8))',
+      InnerScrollKey.pageUp =>
+        'window.scrollBy(0, -Math.round(window.innerHeight * 0.8))',
+      InnerScrollKey.top => 'window.scrollTo(0, 0)',
+      InnerScrollKey.bottom =>
+        'window.scrollTo(0, (document.scrollingElement || '
+            'document.documentElement).scrollHeight)',
+    };
+    unawaited(_controller.executeScript(script).catchError((_) => null));
+  }
+
   @override
   void didUpdateWidget(WindowsPaper old) {
     super.didUpdateWidget(old);
@@ -213,7 +230,8 @@ class _WindowsPaperState extends State<WindowsPaper> {
   @override
   Widget build(BuildContext context) => _shown
       ? InnerScrollFirst(
-          takes: (dy) => innerScrollTakes(_scrollY, _scrollMax, dy),
+          room: (dy) => innerScrollRoom(_scrollY, _scrollMax, dy),
+          onKey: _scrollKey,
           child: Webview(_controller),
         )
       : const SizedBox.expand();
