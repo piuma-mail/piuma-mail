@@ -6170,6 +6170,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'Piuma can’t tell for sure where this link goes: $real.';
+  }
+
+  @override
   String get updates => 'Updates';
 
   @override

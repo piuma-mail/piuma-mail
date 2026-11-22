@@ -2053,6 +2053,8 @@
   "senderDetailsNote": "Worked out on this device from what your mail server wrote. Links in this email ask before they open.",
   "impostorLinkBody": "This email may not be from who it says. The link goes to {real}.",
   "@impostorLinkBody": {"placeholders": {"real": {"type": "String"}}},
+  "unreadableLinkBody": "Piuma can’t tell for sure where this link goes: {real}.",
+  "@unreadableLinkBody": {"placeholders": {"real": {"type": "String"}}},
   "updates": "Updates",
   "updatesVersion": "Version",
   "upToDate": "Up to date",

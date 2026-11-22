@@ -310,9 +310,14 @@ class LinksAskFirst extends InheritedWidget {
   bool updateShouldNotify(LinksAskFirst old) => ask != old.ask;
 }
 
-/// Opens [link]; with [shown], the address its text showed instead, or in
-/// an email under [LinksAskFirst], it asks first.
-Future<void> openLink(
+/// Opens [link], from an email (its text, its list headers, a card the
+/// Vault read from it): the one way such a link opens, so every one of
+/// them asks first when it should. It asks with [shown], the address its
+/// text showed instead; in an email under [LinksAskFirst]; and when its
+/// host isn't one a browser reads for sure ([LinkParts.unreadable]).
+/// True when the link opened; false when it couldn't or the person said
+/// not to.
+Future<bool> openLink(
   BuildContext context,
   String link, {
   String? shown,
@@ -320,23 +325,41 @@ Future<void> openLink(
   final uri = Uri.tryParse(link);
   // Only web pages and addresses: nothing an email names opens another
   // app on the device.
-  if (uri == null || !isMailLinkAllowed(uri)) return;
-  if (shown != null || LinksAskFirst.of(context)) {
+  if (uri == null || !isMailLinkAllowed(uri)) return false;
+  final unreadable = describeLink(link)?.unreadable ?? false;
+  final impostor = LinksAskFirst.of(context);
+  if (shown != null || unreadable || impostor) {
     final open = await showPiumaDialog<bool>(
       context,
       label: AppLocalizations.of(context).suspiciousLinkTitle,
-      builder: (context) => _SuspiciousLink(shown: shown, uri: uri),
+      builder: (context) => _SuspiciousLink(
+        shown: shown,
+        impostor: impostor,
+        unreadable: unreadable,
+        uri: uri,
+      ),
     );
-    if (open != true) return;
+    if (open != true) return false;
   }
-  await openMailLink(uri);
+  return launchMailLink(uri);
 }
 
 class _SuspiciousLink extends StatelessWidget {
-  const _SuspiciousLink({required this.shown, required this.uri});
+  const _SuspiciousLink({
+    required this.shown,
+    required this.impostor,
+    required this.unreadable,
+    required this.uri,
+  });
 
-  /// Null when the link asks because of who sent the email.
+  /// The address the link's text showed, when it isn't where it goes.
   final String? shown;
+
+  /// The email may not be from who it says ([LinksAskFirst]).
+  final bool impostor;
+
+  /// The host isn't one a browser reads for sure ([LinkParts.unreadable]).
+  final bool unreadable;
   final Uri uri;
 
   @override
@@ -351,6 +374,12 @@ class _SuspiciousLink extends StatelessWidget {
       LinkParts(:final host, ascii: final ascii?) => '$host ($ascii)',
       LinkParts(:final host) => host,
     };
+    // Every reason it asks, who sent it first.
+    final reasons = [
+      if (impostor) l.impostorLinkBody(host),
+      if (shown case final shown?) l.suspiciousLinkBody(shown, host),
+      if (unreadable) l.unreadableLinkBody(host),
+    ];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,11 +394,10 @@ class _SuspiciousLink extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: PiumaSpace.s16),
-        Text(switch (shown) {
-          final shown? => l.suspiciousLinkBody(shown, host),
-          null => l.impostorLinkBody(host),
-        }, style: PiumaType.body.copyWith(color: c.fg)),
+        for (final (i, reason) in reasons.indexed) ...[
+          SizedBox(height: i == 0 ? PiumaSpace.s16 : PiumaSpace.s8),
+          Text(reason, style: PiumaType.body.copyWith(color: c.fg)),
+        ],
         const SizedBox(height: PiumaSpace.s8),
         Text(
           uri.toString(),

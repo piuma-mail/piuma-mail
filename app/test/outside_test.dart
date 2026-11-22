@@ -123,10 +123,10 @@ void main() {
     final before = openMailtoLink;
     addTearDown(() => openMailtoLink = before);
     openMailtoLink = (uri) async => arrivals.mailto(uri);
-    expect(await openMailLink(Uri.parse('mailto:ada@example.com')), isTrue);
+    expect(await launchMailLink(Uri.parse('mailto:ada@example.com')), isTrue);
     expect((got.single as ComposeArrival).link.to, ['ada@example.com']);
     // Other schemes from an email still never open.
-    expect(await openMailLink(Uri.parse('javascript:alert(1)')), isFalse);
+    expect(await launchMailLink(Uri.parse('javascript:alert(1)')), isFalse);
     expect(got, hasLength(1));
   });
 

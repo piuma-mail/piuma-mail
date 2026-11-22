@@ -6,6 +6,7 @@ pub mod engine;
 pub mod feedback;
 pub mod groups;
 pub mod labels;
+pub mod links;
 pub mod mailbox;
 pub mod oauth;
 pub mod outside;

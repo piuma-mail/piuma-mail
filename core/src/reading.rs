@@ -461,7 +461,11 @@ fn site(host: &str) -> String {
 /// The host a link's visible text shows, when it reads as an address.
 fn shown_host(text: &str) -> Option<String> {
     let t = text.trim();
-    if t.is_empty() || t.contains(char::is_whitespace) || !t.contains('.') {
+    // A dot, or one UTS #46 reads as a dot ("bank．example").
+    if t.is_empty()
+        || t.contains(char::is_whitespace)
+        || !t.contains(['.', '\u{3002}', '\u{FF0E}', '\u{FF61}'])
+    {
         return None;
     }
     let with_scheme = if t.contains("://") {
@@ -472,11 +476,62 @@ fn shown_host(text: &str) -> Option<String> {
     let url = Url::parse(&with_scheme).ok()?;
     let host = url.host_str()?;
     // "v1.2" or "Mr.Smith" aren't addresses: the last label must be letters.
-    let tld = host.rsplit('.').next()?;
+    // One dot at the end ("paypal.com.") is still the same address.
+    let tld = host.strip_suffix('.').unwrap_or(host).rsplit('.').next()?;
     (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())).then(|| host.to_owned())
 }
 
+/// Endings that make the name before an `@` read as a domain rather than
+/// a person ("paypal.com@…", not "john.smith@…").
+const USER_HOST_TLDS: [&str; 19] = [
+    "com", "net", "org", "info", "io", "co", "app", "biz", "it", "de", "fr", "es", "pt", "uk",
+    "eu", "ch", "at", "br", "us",
+];
+
+/// The name before an `@` in a link text's address, when it reads as an
+/// address itself: "www.paypal.com" in "www.paypal.com@evil.com", which a
+/// browser takes as a user name and doesn't go to. An email address's own
+/// name ("anna", "john.smith") isn't one: the name counts only when the
+/// text has a scheme ("https://…"), or the name starts with "www.", or it
+/// ends in a common top-level domain.
+fn shown_user_host(text: &str) -> Option<String> {
+    let t = text.trim();
+    let (has_scheme, t) = t
+        .split_once("://")
+        .map_or((false, t), |(_, rest)| (true, rest));
+    let authority = t.split(['/', '?', '#']).next()?;
+    let (name, _) = authority.rsplit_once('@')?;
+    let lower = name.to_ascii_lowercase();
+    let last = lower.trim_end_matches('.').rsplit('.').next()?;
+    if !(has_scheme || lower.starts_with("www.") || USER_HOST_TLDS.contains(&last)) {
+        return None;
+    }
+    shown_host(name)
+}
+
+/// `text` with every `%40` written back as the `@` it encodes, so
+/// "www.paypal.com%40evil.com" shows its user name like the plain form.
+/// Only that escape: the rest of the text is read as written.
+fn decode_at(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('%') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        if after.get(..2).is_some_and(|hex| hex == "40") {
+            out.push('@');
+            rest = &after[2..];
+        } else {
+            out.push('%');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub(crate) fn suspicious(text: &str, link: &str) -> bool {
+    let text = &decode_at(text);
     let Some(shown) = shown_host(text) else {
         return false;
     };
@@ -486,7 +541,37 @@ pub(crate) fn suspicious(text: &str, link: &str) -> bool {
     else {
         return false;
     };
-    site(&shown) != site(&real)
+    let real = site(&real);
+    site(&shown) != real || shown_user_host(text).is_some_and(|name| site(&name) != real)
+}
+
+/// A link's host in the ASCII form a browser goes to: UTS #46 mapping
+/// (full-width letters and the dots `。` `．` `｡` read as ASCII, case folded,
+/// characters UTS #46 drops removed), then punycode, as the WHATWG URL
+/// standard does it. The same parsing `suspicious` compares with, so the
+/// app shows and compares the host the engine checked. An IPv4 address
+/// comes back in its usual dotted form, an IPv6 one in brackets. `None`
+/// when `host` isn't a host a browser would open (a forbidden character
+/// such as `@` or `%`, or a label UTS #46 refuses).
+pub fn link_host_ascii(host: &str) -> Option<String> {
+    let host = host.trim();
+    // The app hands the host percent-decoded: a `%` left in it would be
+    // decoded a second time here (`bank%252eexample`), and a browser
+    // refuses it anyway.
+    if host.is_empty() || host.contains('%') {
+        return None;
+    }
+    let parsed = if host.contains(':') && !host.starts_with('[') {
+        url::Host::parse(&format!("[{host}]"))
+    } else {
+        url::Host::parse(host)
+    };
+    match parsed.ok()? {
+        url::Host::Domain(d) if !d.is_empty() => Some(d),
+        url::Host::Domain(_) => None,
+        url::Host::Ipv4(a) => Some(a.to_string()),
+        url::Host::Ipv6(a) => Some(format!("[{a}]")),
+    }
 }
 
 /// Elements whose content is never shown.
@@ -1416,5 +1501,177 @@ mod tests {
             ok.push_str("</div>");
         }
         assert_eq!(plain_text(&from_html(&ok)), "innermost");
+    }
+
+    #[test]
+    fn link_hosts_follow_uts46_like_a_browser() {
+        // The other dots UTS #46 reads as ".".
+        for host in [
+            "example\u{3002}com",
+            "example\u{FF0E}com",
+            "example\u{FF61}com",
+        ] {
+            assert_eq!(
+                link_host_ascii(host).as_deref(),
+                Some("example.com"),
+                "{host}"
+            );
+        }
+        // Full-width ASCII letters and digits.
+        assert_eq!(
+            link_host_ascii("\u{FF45}\u{FF58}\u{FF41}\u{FF4D}\u{FF50}\u{FF4C}\u{FF45}.com")
+                .as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            link_host_ascii("\u{FF22}\u{FF21}\u{FF2E}\u{FF2B}\u{FF11}.example").as_deref(),
+            Some("bank1.example")
+        );
+        // Mixed-case IDN, in Unicode or in punycode.
+        for host in [
+            "B\u{dc}cher.DE",
+            "b\u{dc}CHER.de",
+            "XN--BCHER-KVA.DE",
+            "bücher.de",
+        ] {
+            assert_eq!(
+                link_host_ascii(host).as_deref(),
+                Some("xn--bcher-kva.de"),
+                "{host}"
+            );
+        }
+        // A character UTS #46 drops (a soft hyphen) and one it maps (ß stays
+        // ß, as browsers keep it: non-transitional).
+        assert_eq!(
+            link_host_ascii("exam\u{AD}ple.com").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(link_host_ascii("faß.de").as_deref(), Some("xn--fa-hia.de"));
+        // The hosts of #99 don't change.
+        assert_eq!(
+            link_host_ascii("раураl.com").as_deref(),
+            Some("xn--l-7sba6dbr.com")
+        );
+        assert_eq!(
+            link_host_ascii("shop.example").as_deref(),
+            Some("shop.example")
+        );
+        assert_eq!(
+            link_host_ascii("evil.example.").as_deref(),
+            Some("evil.example.")
+        );
+        assert_eq!(
+            link_host_ascii("192.168.1.10").as_deref(),
+            Some("192.168.1.10")
+        );
+        assert_eq!(link_host_ascii("FE80::1").as_deref(), Some("[fe80::1]"));
+        assert_eq!(link_host_ascii("[::1]").as_deref(), Some("[::1]"));
+        // Not a host a browser opens.
+        for host in [
+            "bank.example@evil.example",
+            "a%ff.example",
+            "",
+            "a b.example",
+        ] {
+            assert_eq!(link_host_ascii(host), None, "{host:?}");
+        }
+    }
+
+    #[test]
+    fn a_link_text_with_another_dot_is_the_same_site() {
+        assert!(!suspicious("example\u{3002}com", "https://example.com/"));
+        assert!(!suspicious("\u{FF45}xample.com", "https://EXAMPLE.com/"));
+        assert!(suspicious("bank\u{FF0E}example", "https://evil.example/"));
+    }
+
+    #[test]
+    fn a_link_host_is_percent_decoded_only_once() {
+        // The app decodes the host's percent-encoding before asking: a `%`
+        // left is one the browser keeps, never a second escape.
+        for host in [
+            "bank%2eexample",
+            "bank%252eexample",
+            "a%ff.example",
+            "%41.example",
+        ] {
+            assert_eq!(link_host_ascii(host), None, "{host}");
+        }
+    }
+
+    #[test]
+    fn a_link_text_ending_in_a_dot_is_an_address() {
+        for text in [
+            "paypal.com.",
+            "paypal\u{3002}com\u{3002}",
+            "www.paypal.com.",
+        ] {
+            assert!(suspicious(text, "https://evil.com/"), "{text}");
+            assert!(!suspicious(text, "https://paypal.com/"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_link_text_with_a_domain_before_an_at_is_suspicious() {
+        for text in [
+            "www.paypal.com@evil.com",
+            "https://www.paypal.com@evil.com/login",
+            "paypal.com@evil.com",
+        ] {
+            assert!(suspicious(text, "https://evil.com/"), "{text}");
+        }
+        // An address as the text of its own mailto, or of its site.
+        assert!(!suspicious("anna@example.org", "mailto:anna@example.org"));
+        assert!(!suspicious(
+            "anna.rossi@example.org",
+            "mailto:anna.rossi@example.org"
+        ));
+        assert!(!suspicious("anna@example.org", "https://example.org/"));
+        assert!(suspicious("anna@example.org", "https://evil.com/"));
+    }
+
+    #[test]
+    fn a_person_s_address_is_not_a_domain_before_an_at() {
+        // A person's name with a dot, as the text of their company's site.
+        assert!(!suspicious(
+            "john.smith@company.com",
+            "https://company.com/"
+        ));
+        assert!(!suspicious(
+            "mario.rossi@azienda.it",
+            "https://www.azienda.it/"
+        ));
+        assert!(!suspicious(
+            "john.smith@company.com",
+            "mailto:john.smith@company.com"
+        ));
+        assert!(!suspicious(
+            "mario.rossi@azienda.it",
+            "mailto:mario.rossi@azienda.it"
+        ));
+        // Still a domain: a scheme, "www.", or a common ending.
+        assert!(suspicious(
+            "https://john.smith@company.com/",
+            "https://company.com/"
+        ));
+        assert!(suspicious(
+            "www.company.example@evil.com",
+            "https://evil.com/"
+        ));
+        assert!(suspicious("paypal.IT@evil.com", "https://evil.com/"));
+    }
+
+    #[test]
+    fn an_encoded_at_in_a_link_text_is_read_as_an_at() {
+        assert!(suspicious("www.paypal.com%40evil.com", "https://evil.com/"));
+        assert!(suspicious(
+            "paypal.com%40evil.com",
+            "https://evil.com/login"
+        ));
+        assert!(!suspicious(
+            "john.smith%40company.com",
+            "https://company.com/"
+        ));
+        // Other escapes stay as written.
+        assert_eq!(decode_at("a%41b%40c%4"), "a%41b@c%4");
     }
 }

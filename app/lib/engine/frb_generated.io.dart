@@ -11,6 +11,7 @@ import 'api/engine.dart';
 import 'api/feedback.dart';
 import 'api/groups.dart';
 import 'api/labels.dart';
+import 'api/links.dart';
 import 'api/mailbox.dart';
 import 'api/oauth.dart';
 import 'api/outside.dart';

@@ -9,11 +9,11 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import 'pictures.dart';
 import '../widgets/dialog.dart';
-import '../widgets/links.dart';
 import '../widgets/message_row.dart';
 import '../widgets/route.dart';
 import '../widgets/verified.dart';
 import 'attachments.dart' show FilePreview;
+import 'message_body.dart' show openLink;
 import 'message_list.dart' show initials;
 import 'newsletters.dart' show confirmUnsubscribeMail;
 import 'sections.dart' show rowTime;
@@ -195,9 +195,8 @@ class _SenderCardState extends State<SenderCard> {
 
   Future<void> _leave() async {
     if (_unsubscribe.kind == UnsubscribeKind.page) {
-      final uri = Uri.tryParse(_unsubscribe.address);
-      if (uri != null) await openMailLink(uri);
-      if (mounted) setState(() => _leaving = _Leaving.page);
+      final opened = await openLink(context, _unsubscribe.address);
+      if (opened && mounted) setState(() => _leaving = _Leaving.page);
       return;
     }
     // The message goes from the person's account: they see it first.

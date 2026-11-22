@@ -9118,6 +9118,12 @@ abstract class AppLocalizations {
   /// **'This email may not be from who it says. The link goes to {real}.'**
   String impostorLinkBody(String real);
 
+  /// No description provided for @unreadableLinkBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma can’t tell for sure where this link goes: {real}.'**
+  String unreadableLinkBody(String real);
+
   /// No description provided for @updates.
   ///
   /// In en, this message translates to:
