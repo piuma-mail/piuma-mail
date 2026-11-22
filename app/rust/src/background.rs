@@ -236,11 +236,7 @@ pub fn open(db_path: &str) -> Result<Vec<i64>, engine::EngineError> {
 pub fn start(passwords: &[(i64, String)]) -> Result<(), engine::EngineError> {
     remember(passwords);
     enable();
-    let accounts = engine::engine()?
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     for account in accounts {
         engine::watch_account(account)?;
     }
@@ -252,11 +248,7 @@ pub fn start(passwords: &[(i64, String)]) -> Result<(), engine::EngineError> {
 pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine::EngineError> {
     remember(passwords);
     let engine = engine::engine()?;
-    let accounts = engine
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     let mut notices = Vec::new();
     for account in accounts {
         let followed = engine::WATCHED
@@ -302,11 +294,7 @@ pub fn check_once(passwords: &[(i64, String)]) -> Result<Vec<MailNotice>, engine
 /// away. Claims in the database keep it from going twice beside the app.
 pub fn send_outbox_once() -> Result<(), engine::EngineError> {
     let engine = engine::engine()?;
-    let accounts = engine
-        .store
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .accounts()?;
+    let accounts = engine::store()?.accounts()?;
     for account in accounts {
         let Ok(password) = crate::login::load(account.id) else {
             continue;
