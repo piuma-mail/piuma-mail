@@ -1,10 +1,10 @@
 # Deletes issues closed more than two years ago, as the privacy notice promises (PRIVACY.md in
-# piuma-mail/piuma-mail, "How long it is kept"). For the private feedback repository
-# piuma-mail/piuma-mail-feedback: it lives in piuma-mail/piuma-mail under relay/feedback-repo/ and
-# is copied there by hand (relay/feedback-repo/README.md).
+# piuma-mail/piuma-mail, "How long it is kept"). Copied by hand from the template in
+# piuma-mail/piuma-mail, relay/feedback-repo/.github/workflows/expire-issues.yml: change both.
 #
 # Dry run by default: it lists what it would delete and deletes nothing, until the repository
-# variable EXPIRE_ISSUES_DELETE is "true" (scheduled runs) or a manual run ticks "delete".
+# variable EXPIRE_ISSUES_DELETE is "true". With it set, scheduled runs delete, and so do manual runs
+# that tick "delete"; without it, every run is a dry run, ticked or not.
 # Issue text is untrusted: the log names issues by number and closing date only, never by title.
 #
 # Needs the secret ISSUE_EXPIRY_TOKEN: a fine-grained token, resource owner piuma-mail, this
@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       delete:
-        description: "Delete them (unticked: only list what would go)"
+        description: "Delete them (needs the EXPIRE_ISSUES_DELETE variable set to true; unticked: only list what would go)"
         type: boolean
         default: false
 
@@ -41,7 +41,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ISSUE_EXPIRY_TOKEN }}
           REPO: ${{ github.repository }}
-          DELETE: ${{ (github.event_name == 'workflow_dispatch' && inputs.delete) || (github.event_name == 'schedule' && vars.EXPIRE_ISSUES_DELETE == 'true') }}
+          DELETE: ${{ vars.EXPIRE_ISSUES_DELETE == 'true' && ((github.event_name == 'workflow_dispatch' && inputs.delete) || github.event_name == 'schedule') }}
           AFTER_DAYS: ${{ vars.EXPIRE_ISSUES_AFTER_DAYS || '730' }}
         run: |
           set -euo pipefail
@@ -92,7 +92,7 @@ jobs:
             echo "| #$number | $closed | $result |" >> "$GITHUB_STEP_SUMMARY"
           done < expired.tsv
           if [ "$DELETE" != "true" ]; then
-            echo "Dry run: nothing deleted. Set EXPIRE_ISSUES_DELETE to true, or run it by hand with delete ticked."
+            echo "Dry run: nothing deleted. To delete, set the repository variable EXPIRE_ISSUES_DELETE to true."
           fi
           [ "$failed" -eq 0 ] || { echo "::error::$failed deletion(s) failed"; exit 1; }
 
