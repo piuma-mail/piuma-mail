@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -119,6 +121,18 @@ class _Named extends _Scripted {
       smtp: smtp,
       trusted: trusted,
     );
+  }
+}
+
+/// A source whose first lookup waits for the test to answer it.
+class _SlowLookup extends _Scripted {
+  final answer = Completer<FoundSettings?>();
+  final asked = <String>[];
+
+  @override
+  Future<FoundSettings?> discoverSettings(String email) {
+    asked.add(email);
+    return asked.length == 1 ? answer.future : super.discoverSettings(email);
   }
 }
 
@@ -438,6 +452,72 @@ void main() {
     );
     expect(find.widgetWithText(TextField, 'smtp.office365.com'), findsNothing);
     expect(find.widgetWithText(TextField, 'anna@outlook.com'), findsNothing);
+  });
+
+  testWidgets('a lookup answered after the address changed is dropped '
+      '(#107)', (tester) async {
+    final source = _SlowLookup();
+    await _pump(tester, source);
+    await tester.enterText(_field('Email address'), 'anna@studio.it');
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+    await tester.enterText(_field('Email address'), 'demo@test.local');
+    await tester.pump();
+    source.answer.complete(
+      const FoundSettings(
+        imap: MailServer('outlook.office365.com', 993, ServerSecurity.tls),
+        smtp: MailServer('smtp.office365.com', 587, ServerSecurity.startTls),
+        username: 'anna@studio.it',
+        source: SettingsSource.known,
+        oauth: 'microsoft',
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Anna's Microsoft is not the new address's: no sign-in page for it.
+    expect(find.text('Sign in with Microsoft'), findsNothing);
+    expect(source.asked, ['anna@studio.it']);
+
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(source.asked.last, 'demo@test.local');
+    expect(find.text('Sign in with Microsoft'), findsNothing);
+    expect(find.widgetWithText(TextField, 'imap.test.local'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextField, 'outlook.office365.com'),
+      findsNothing,
+    );
+    expect(find.widgetWithText(TextField, 'anna@studio.it'), findsNothing);
+  });
+
+  testWidgets('another address does not take the password typed for the '
+      'first one (#107)', (tester) async {
+    final source = _Scripted();
+    await _pump(tester, source);
+    await _manual(tester, 'anna@example.org');
+    await _tap(tester, 'Back');
+    await tester.enterText(_field('Email address'), 'demo@test.local');
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(_field('Password')).controller!.text,
+      isEmpty,
+    );
+    await tester.tap(find.text('Verify and connect').last);
+    await tester.pumpAndSettle();
+    expect(source.adds, 0);
+
+    // Back to the same address, the password typed for it stays.
+    await tester.enterText(_field('Password'), 'demo-password');
+    await tester.pump();
+    await _tap(tester, 'Back');
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(_field('Password')).controller!.text,
+      'demo-password',
+    );
   });
 
   testWidgets('the manual form keeps what was typed for the same address', (

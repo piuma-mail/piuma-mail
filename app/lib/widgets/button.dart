@@ -75,6 +75,8 @@ class _PiumaButtonState extends State<PiumaButton> {
 
     // Its own node, so a screen reader never merges it with the text
     // around it, and only its label once: the text drawn is the same.
+    // A Tooltip around a PiumaButton gives its message to a node of its
+    // own, not to this one: a hint the button needs goes in its label.
     return Semantics(
       container: true,
       child: MouseRegion(
