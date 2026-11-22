@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -123,59 +124,82 @@ class InnerScrollPosition {
 /// its position comes back a little after each step of the pan, so the
 /// steps it hasn't acknowledged yet ([InnerScrollPosition.ack]) are
 /// added to the last position it reported.
+///
+/// Each step stops at the page's ends as the page does, worked out with
+/// the extent of the report at hand: a page that grows or shrinks during
+/// the gesture (an image loading) is predicted with its new extent, never
+/// one it had when a step was sent.
 class InnerPanTracker {
-  /// The most steps kept waiting for an acknowledgement; past that the
-  /// oldest half is folded into the predicted position, so a gesture
-  /// with no reports at all stays cheap.
+  /// The most steps kept one by one while they wait for an
+  /// acknowledgement; past that the oldest half is set aside as runs
+  /// (consecutive steps the same way, added up), so a gesture with no
+  /// reports at all stays cheap.
   static const maxPending = 64;
 
   double? _base;
   int _baseSeq = 0;
+  // Steps set aside after [_base], no longer acknowledged one by one:
+  // runs that go each way in turn. Adding up steps that go the same way
+  // stops at the same place whatever the extent, so they are worked out
+  // again with every report's extent.
+  final _runs = <double>[];
   final _pending = <(int, double)>[];
 
-  /// Steps sent and not acknowledged yet.
+  /// Steps sent and not acknowledged yet, one by one.
   int get pending => _pending.length;
 
   /// A new gesture: nothing predicted until the next report.
   void reset() {
     _base = null;
     _baseSeq = 0;
+    _runs.clear();
     _pending.clear();
   }
 
   /// Where the web view is now: its [report], or what came before it when
   /// the report is older than what this already knows (out of order),
   /// moved by every step it hasn't acknowledged, each stopping at the
-  /// page's ends as the page does.
+  /// page's ends ([InnerScrollPosition.extent]) as the page does.
   double offset(InnerScrollPosition report) {
     if (_base == null || report.ack >= _baseSeq) {
       _base = report.offset;
       _baseSeq = report.ack;
+      _runs.clear();
       _pending.removeWhere((step) => step.$1 <= report.ack);
     }
-    return _fold(_base!, _pending, report.extent);
+    final folded = _fold(_base!, _runs, report.extent);
+    return _fold(folded, _pending.map((s) => s.$2), report.extent);
   }
 
-  /// Step [seq] of [dy] points (positive: down) went to the web view.
+  /// Step [seq] of [dy] points (positive: down) went to the web view,
+  /// which can scroll [extent] as far as the app knows.
   void sent(int seq, double dy, double extent) {
     _pending.add((seq, dy));
     if (_pending.length <= maxPending) return;
     final old = _pending.sublist(0, maxPending ~/ 2);
-    _base = _fold(_base ?? 0, old, extent);
-    _baseSeq = old.last.$1;
     _pending.removeRange(0, old.length);
+    _base ??= 0;
+    _baseSeq = old.last.$1;
+    for (final (_, d) in old) {
+      if (_runs.isNotEmpty && (_runs.last >= 0) == (d >= 0)) {
+        _runs.last += d;
+      } else {
+        _runs.add(d);
+      }
+    }
+    // Only a pan turning back and forth that often with no report at all
+    // gets here: the oldest runs go into the base with the extent known
+    // now, an estimate the next report replaces.
+    if (_runs.length > maxPending) {
+      final first = _runs.sublist(0, maxPending ~/ 2);
+      _runs.removeRange(0, first.length);
+      _base = _fold(_base!, first, extent);
+    }
   }
 
-  static double _fold(
-    double from,
-    Iterable<(int, double)> steps,
-    double extent,
-  ) {
+  static double _fold(double from, Iterable<double> steps, double extent) {
     final max = math.max(0.0, extent);
-    return steps.fold(
-      from.clamp(0.0, max),
-      (o, s) => (o + s.$2).clamp(0.0, max),
-    );
+    return steps.fold(from.clamp(0.0, max), (o, d) => (o + d).clamp(0.0, max));
   }
 }
 
@@ -199,12 +223,15 @@ enum InnerScrollKey {
 ///
 /// * a wheel turn over it goes to the web view while it can still move
 ///   that way ([innerScrollTakes]), and to the reader once it can't;
-/// * a precision touchpad's pan (pan/zoom events, which the web view also
-///   receives) scrolls the reader only with the part the web view can't
-///   take any more;
+/// * a precision touchpad's pan goes to [onPanStep], step by step, and
+///   the reader gets only the part the web view can't take any more. The
+///   pan's events don't reach [child] (the web view's own pan handling):
+///   [onPanStep] moves the page itself, at once, and acknowledges the step
+///   in the same go, so the position the page reports always includes
+///   every step it acknowledges;
 /// * Page Down, Page Up, Space, Shift+Space, Home and End, while the
 ///   pointer is over the web view or it has the focus, go to [onKey] while
-///   the web view can move that way, and to the reader after.
+///   the web view can move that way, and scroll the reader after.
 ///
 /// Every scroll command for the web view carries a sequence number, and
 /// the web view's [position] says the last one it had applied, so a pan
@@ -230,9 +257,11 @@ class InnerScrollFirst extends StatefulWidget {
   /// while the web view can move that way.
   final void Function(InnerScrollKey key, int seq)? onKey;
 
-  /// A step of a touchpad pan went to the web view (its own pan handling
-  /// moves it): the web view acknowledges `seq` once it applied it.
-  final ValueChanged<int>? onPanStep;
+  /// Scrolls the web view by a touchpad pan's step, as command `seq`:
+  /// `delta` points, positive down and right. The web view must apply it
+  /// at once, not animated, and acknowledge `seq` with the position it got
+  /// to: [child] doesn't see the pan.
+  final void Function(int seq, Offset delta)? onPanStep;
   final Widget child;
 
   @override
@@ -248,6 +277,9 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   VelocityTracker? _velocity;
   bool _lastToReader = false;
   final _tracker = InnerPanTracker();
+  // The pan this scrolls the web view for: its events don't reach the web
+  // view's own handling.
+  int? _panPointer;
   // The last scroll command's number; the web view echoes it back.
   int _seq = 0;
 
@@ -277,13 +309,15 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
       ..addPosition(event.timeStamp, Offset.zero);
     _lastToReader = false;
     _tracker.reset();
+    _panPointer = event.pointer;
   }
 
   void _panUpdate(PointerPanZoomUpdateEvent event) {
     _velocity?.addPosition(event.timeStamp, event.pan);
     // The fingers move the page: up is a scroll down.
+    final dx = -event.panDelta.dx;
     final dy = -event.panDelta.dy;
-    if (dy == 0) return;
+    if (dx == 0 && dy == 0) return;
     final position = widget.position();
     final offset = _tracker.offset(position);
     final extent = position.extent;
@@ -292,8 +326,18 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
     final inner = math.min(dy.abs(), room);
     final seq = ++_seq;
     _tracker.sent(seq, dy, extent);
-    widget.onPanStep?.call(seq);
+    widget.onPanStep?.call(seq, Offset(dx, dy));
     final rest = dy.abs() - inner;
+    if (kDebugMode && innerScrollLog) {
+      debugPrint(
+        'inner pan: seq $seq, ack ${position.ack}, '
+        'reported ${position.offset.toStringAsFixed(1)} of '
+        '${extent.toStringAsFixed(1)}, '
+        'predicted ${offset.toStringAsFixed(1)}, '
+        'dy ${dy.toStringAsFixed(1)}, to reader ${rest.toStringAsFixed(1)}',
+      );
+    }
+    if (dy == 0) return;
     _lastToReader = rest > 0;
     if (rest <= 0) return;
     final delta = -dy.sign * rest;
@@ -318,6 +362,7 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   }
 
   void _panEnd() {
+    _panPointer = null;
     final drag = _drag;
     _drag = null;
     if (drag == null) return;
@@ -392,10 +437,16 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
   /// inside the page (the plugin doesn't handle WebView2's
   /// MoveFocusRequested). This path stays right for when Flutter does get
   /// the keys; the PR's Windows checklist covers the rest.
+  ///
+  /// At the web view's end that way the reader scrolls here too: Flutter's
+  /// own shortcuts on Windows and Linux scroll it for Page Down and Page
+  /// Up only, not for Home, End, Space or Shift+Space.
   KeyEventResult _focusedKey(FocusNode node, KeyEvent event) {
     final key = _pageKey(event);
-    if (key == null || !_toPage(key)) return KeyEventResult.ignored;
-    return KeyEventResult.handled;
+    if (key == null) return KeyEventResult.ignored;
+    return _toPage(key) || _scrollReader(key)
+        ? KeyEventResult.handled
+        : KeyEventResult.ignored;
   }
 
   /// With only the pointer over the web view. Returning true here doesn't
@@ -479,11 +530,87 @@ class _InnerScrollFirstState extends State<InnerScrollFirst> {
                 ..onEnd = _panEnd,
             ),
           },
-          child: widget.child,
+          child: _PanShield(
+            keeps: (pointer) => pointer == _panPointer,
+            child: widget.child,
+          ),
         ),
       ),
     ),
   );
+}
+
+/// Logs each touchpad pan step over a long page ([InnerScrollFirst]) and
+/// each position the page reports, in debug builds run with
+/// `--dart-define=PIUMA_SCROLL_LOG=true`.
+const innerScrollLog = bool.fromEnvironment('PIUMA_SCROLL_LOG');
+
+/// Keeps a pan's updates from [child] while [keeps] says the pan is
+/// [InnerScrollFirst]'s: webview_windows' own widget forwards every
+/// pan/zoom update to WebView2 as a wheel turn, separately from the
+/// scripts that report the page's position, and that is what this
+/// replaces. Everything else (clicks, hover, the wheel, the pan's start
+/// and end) reaches [child] as usual.
+class _PanShield extends SingleChildRenderObjectWidget {
+  const _PanShield({required this.keeps, super.child});
+
+  final bool Function(int pointer) keeps;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderPanShield(keeps);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderPanShield render) =>
+      render.keeps = keeps;
+}
+
+class _RenderPanShield extends RenderProxyBox {
+  _RenderPanShield(this.keeps);
+
+  bool Function(int pointer) keeps;
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    final child = this.child;
+    if (child == null) return false;
+    // The child's targets, seen from here, each behind a filter. Mouse
+    // regions go through as they are: the mouse tracker looks for them in
+    // the result and their pointer events don't matter.
+    final inner = BoxHitTestResult();
+    final hit = child.hitTest(inner, position: position);
+    for (final entry in inner.path) {
+      if (entry.target is MouseTrackerAnnotation) {
+        result.add(entry);
+      } else {
+        result.add(HitTestEntry(_Shielded(entry, this)));
+      }
+    }
+    return hit;
+  }
+}
+
+class _Shielded implements HitTestTarget {
+  _Shielded(this.entry, this.shield);
+
+  final HitTestEntry entry;
+  final _RenderPanShield shield;
+
+  @override
+  void handleEvent(PointerEvent event, HitTestEntry _) {
+    if (event is PointerPanZoomUpdateEvent && shield.keeps(event.pointer)) {
+      return;
+    }
+    // The event comes transformed to the shield; on to the target.
+    final toTarget = entry.transform;
+    final toShield = event.transform;
+    entry.target.handleEvent(
+      toTarget == null || toShield == null
+          ? event
+          : event.transformed(toTarget.multiplied(toShield)),
+      entry,
+    );
+  }
 }
 
 /// Takes a touchpad's pan away from the reader's own drag over a web view

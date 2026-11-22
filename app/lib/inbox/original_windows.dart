@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:webview_windows/webview_windows.dart';
 
@@ -55,15 +56,13 @@ function _reportScroll() {
   window.chrome.webview.postMessage('#scroll:' + Math.round(window.scrollY) +
     ',' + Math.round(max) + ',' + _scrollAck);
 }
-// The app's scroll command n reached the page: a key's scroll, run just
-// before, or a touchpad pan's step, which came as input just before. The
-// page reports once the frame has handled that input, even when it
+// The app's scroll command n, run just before in the same script (a
+// key's scroll or a touchpad pan's step, both instant), has moved the
+// page: the position reported now includes it, even when the page
 // couldn't move (at its end), so every step gets acknowledged.
 function _piumaScrolled(n) {
-  window.requestAnimationFrame(function () {
-    if (n > _scrollAck) _scrollAck = n;
-    _reportScroll();
-  });
+  if (n > _scrollAck) _scrollAck = n;
+  _reportScroll();
 }
 window.addEventListener('scroll', _reportScroll, {passive: true});
 window.addEventListener('resize', _reportScroll);
@@ -118,6 +117,50 @@ const _scrollbar = '''`
 ::-webkit-scrollbar-corner { background: transparent; }
 `''';
 
+/// The script for Page Down and the other paging keys inside the page,
+/// once it is longer than its paper ([InnerScrollFirst]), as command
+/// [seq]. The scroll is instant, whatever the page's CSS
+/// `scroll-behavior` says, so the position `_piumaScrolled` reports right
+/// after already includes it. Only numbers go into the script.
+@visibleForTesting
+String innerKeyScript(InnerScrollKey key, int seq) {
+  final scroll = switch (key) {
+    InnerScrollKey.pageDown =>
+      'window.scrollBy({top: Math.round(window.innerHeight * 0.8), '
+          "behavior: 'instant'})",
+    InnerScrollKey.pageUp =>
+      'window.scrollBy({top: -Math.round(window.innerHeight * 0.8), '
+          "behavior: 'instant'})",
+    InnerScrollKey.top => "window.scrollTo({top: 0, behavior: 'instant'})",
+    InnerScrollKey.bottom =>
+      'window.scrollTo({top: (document.scrollingElement || '
+          "document.documentElement).scrollHeight, behavior: 'instant'})",
+  };
+  return '$scroll; _piumaScrolled(${seq.toInt()})';
+}
+
+/// The script for a touchpad pan's step of [delta] points (positive: down
+/// and right) inside the page ([InnerScrollFirst]), as command [seq].
+///
+/// webview_windows would turn the pan into wheel input for WebView2,
+/// which Chromium may animate, while the acknowledgement goes through a
+/// script: the page could acknowledge a step it hadn't finished. Here the
+/// step and its acknowledgement are the same script, the step instant
+/// (`behavior: 'instant'` overrides the page's `scroll-behavior`), so the
+/// position reported always includes it. Only numbers go into the script,
+/// each finite and within [maxPanStep].
+@visibleForTesting
+String innerPanScript(int seq, Offset delta) {
+  String px(double v) =>
+      (v.isFinite ? v.clamp(-maxPanStep, maxPanStep) : 0.0).toStringAsFixed(2);
+  return 'window.scrollBy({left: ${px(delta.dx)}, top: ${px(delta.dy)}, '
+      "behavior: 'instant'}); _piumaScrolled(${seq.toInt()})";
+}
+
+/// The longest a single pan step goes, in points, however the touchpad
+/// reports it.
+const maxPanStep = 5000.0;
+
 class _WindowsPaperState extends State<WindowsPaper> {
   final _controller = WebviewController();
   final _subs = <StreamSubscription<Object?>>[];
@@ -156,6 +199,12 @@ class _WindowsPaperState extends State<WindowsPaper> {
                 double.tryParse(parts[1]) ?? 0,
                 int.tryParse(parts[2]) ?? 0,
               );
+              if (kDebugMode && innerScrollLog) {
+                debugPrint(
+                  'inner page: scrollY ${parts[0]} of ${parts[1]}, '
+                  'ack ${parts[2]}',
+                );
+              }
               return;
             }
             if (m.startsWith('#hover:')) {
@@ -207,28 +256,10 @@ class _WindowsPaperState extends State<WindowsPaper> {
     }
   }
 
-  /// Page Down and the other paging keys inside the page, once it is
-  /// longer than its paper ([InnerScrollFirst]), as command [seq]: the
-  /// page's own scroll reports where it got to. Only numbers go into the
-  /// script.
-  void _scrollKey(InnerScrollKey key, int seq) {
-    final scroll = switch (key) {
-      InnerScrollKey.pageDown =>
-        'window.scrollBy(0, Math.round(window.innerHeight * 0.8))',
-      InnerScrollKey.pageUp =>
-        'window.scrollBy(0, -Math.round(window.innerHeight * 0.8))',
-      InnerScrollKey.top => 'window.scrollTo(0, 0)',
-      InnerScrollKey.bottom =>
-        'window.scrollTo(0, (document.scrollingElement || '
-            'document.documentElement).scrollHeight)',
-    };
-    _run('$scroll; _piumaScrolled($seq)');
-  }
+  void _scrollKey(InnerScrollKey key, int seq) =>
+      _run(innerKeyScript(key, seq));
 
-  /// A touchpad pan's step went to WebView2 through the plugin's own
-  /// `setScrollDelta`, on this same channel just before: the page
-  /// acknowledges [seq] once it handled it.
-  void _panStep(int seq) => _run('_piumaScrolled($seq)');
+  void _panStep(int seq, Offset delta) => _run(innerPanScript(seq, delta));
 
   void _run(String script) =>
       unawaited(_controller.executeScript(script).catchError((_) => null));
