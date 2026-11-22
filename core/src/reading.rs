@@ -481,6 +481,18 @@ fn shown_host(text: &str) -> Option<String> {
     (tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())).then(|| host.to_owned())
 }
 
+/// The name before an `@` in a link text's address, when it reads as an
+/// address itself: "www.paypal.com" in "www.paypal.com@evil.com", which a
+/// browser takes as a user name and doesn't go to. An email address's own
+/// name ("anna") isn't one.
+fn shown_user_host(text: &str) -> Option<String> {
+    let t = text.trim();
+    let t = t.split_once("://").map_or(t, |(_, rest)| rest);
+    let authority = t.split(['/', '?', '#']).next()?;
+    let (name, _) = authority.rsplit_once('@')?;
+    shown_host(name)
+}
+
 pub(crate) fn suspicious(text: &str, link: &str) -> bool {
     let Some(shown) = shown_host(text) else {
         return false;
@@ -491,7 +503,8 @@ pub(crate) fn suspicious(text: &str, link: &str) -> bool {
     else {
         return false;
     };
-    site(&shown) != site(&real)
+    let real = site(&real);
+    site(&shown) != real || shown_user_host(text).is_some_and(|name| site(&name) != real)
 }
 
 /// A link's host in the ASCII form a browser goes to: UTS #46 mapping
@@ -1557,5 +1570,24 @@ mod tests {
             assert!(suspicious(text, "https://evil.com/"), "{text}");
             assert!(!suspicious(text, "https://paypal.com/"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_link_text_with_a_domain_before_an_at_is_suspicious() {
+        for text in [
+            "www.paypal.com@evil.com",
+            "https://www.paypal.com@evil.com/login",
+            "paypal.com@evil.com",
+        ] {
+            assert!(suspicious(text, "https://evil.com/"), "{text}");
+        }
+        // An address as the text of its own mailto, or of its site.
+        assert!(!suspicious("anna@example.org", "mailto:anna@example.org"));
+        assert!(!suspicious(
+            "anna.rossi@example.org",
+            "mailto:anna.rossi@example.org"
+        ));
+        assert!(!suspicious("anna@example.org", "https://example.org/"));
+        assert!(suspicious("anna@example.org", "https://evil.com/"));
     }
 }
