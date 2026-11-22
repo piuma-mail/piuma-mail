@@ -520,6 +520,23 @@ void main() {
     );
   });
 
+  testWidgets('an app password typed for one provider address does not '
+      'follow another address (#107)', (tester) async {
+    await _pump(tester, _Scripted());
+    await _tap(tester, 'Gmail');
+    await tester.enterText(_field('Email address'), 'anna@gmail.com');
+    await tester.enterText(_field('App password'), 'abcd efgh ijkl mnop');
+    await tester.pump();
+    await _tap(tester, 'Back');
+    await tester.enterText(_field('Email address'), 'demo@test.local');
+    await tester.pump();
+    await _tap(tester, 'Set up manually');
+    expect(
+      tester.widget<TextField>(_field('Password')).controller!.text,
+      isEmpty,
+    );
+  });
+
   testWidgets('the manual form keeps what was typed for the same address', (
     tester,
   ) async {

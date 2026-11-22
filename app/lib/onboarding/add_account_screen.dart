@@ -304,7 +304,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   /// Drops the password typed for another address.
   void _forAddress() {
     final address = _email.text.trim();
-    if (_passwordFor != null && _passwordFor != address) _password.clear();
+    if (_passwordFor != address) _password.clear();
     _passwordFor = address;
   }
 
@@ -341,9 +341,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   }
 
   /// One step back: a PEC provider's password goes back to the providers.
-  void _back() => _go(
-    _step == _Step.provider && _provider!.isPec ? _Step.pec : _Step.email,
-  );
+  /// Whatever password is in the field was typed for the address shown with
+  /// it, so it is kept for that address only.
+  void _back() {
+    _passwordFor = _email.text.trim();
+    _go(_step == _Step.provider && _provider!.isPec ? _Step.pec : _Step.email);
+  }
 
   /// The manual form keeps what was typed in it for this address; for
   /// another one (back, a new address) it starts again from that one.
