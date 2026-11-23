@@ -154,9 +154,9 @@ object Background {
     // One outbox job per message: its id after this offset, so no two
     // waiting messages share a job (a later one would replace the other).
     private const val OUTBOX_JOB = 1000L
-    private const val MAIL_CHANNEL = "mail"
+    private const val MAIL_CHANNEL = LockedNotices.MAIL_CHANNEL
     // Quiet hours: shown in the shade, without a sound.
-    private const val QUIET_CHANNEL = "mail_quiet"
+    private const val QUIET_CHANNEL = LockedNotices.QUIET_CHANNEL
     private const val PAYLOAD = "mail.piuma.payload"
 
     /** The stand-in's intent ([LockedNotices]): no PendingIntent of a notice for one email matches it. */
@@ -285,11 +285,10 @@ object Background {
 
     /**
      * Shows the engine's notices: one per sender, opening its message.
-     * While the app lock is on, only the stand-in ([LockedNotices]): no
-     * sender, subject, preview or buttons, here or on a watch the notice
-     * reaches. Synchronized with [blankNotices], so the lock turning on
-     * can't fold the shade while a notice with mail in it is still on its
-     * way there. Never called on the main thread: it waits on the system.
+     * While the app lock is turned on (locked or not), only the stand-in
+     * ([LockedNotices]): no sender, subject, preview or buttons, here or on
+     * a watch the notice reaches. Synchronized with [clearMail]. Never
+     * called on the main thread: it waits on the system.
      */
     @Synchronized
     fun show(context: Context, json: String) {
@@ -300,12 +299,10 @@ object Background {
         }
         if (notices.length() == 0) return
         val manager = channels(context)
-        val silent = (0 until notices.length()).all { notices.getJSONObject(it).optBoolean("silent", false) }
+        val quietOnly = (0 until notices.length()).all { notices.getJSONObject(it).optBoolean("silent", false) }
         for (i in 0 until notices.length()) {
-            // Checked for each, just before it is made and again just
-            // before it goes: the lock may be turned on meanwhile.
             if (AppLockFile.on(context)) {
-                showLocked(context, manager, silent)
+                LockedNotices.show(SystemShade(context, manager), quietOnly)
                 break
             }
             val n = notices.getJSONObject(i)
@@ -366,8 +363,10 @@ object Background {
             // "Piuma Mail · Vault", as on the board.
             if (vault != null) builder.setSubText(context.getString(R.string.vault_notice_label))
             val notice = builder.build()
+            // Checked again just before it goes: the lock may have been
+            // turned on while it was made.
             if (AppLockFile.on(context)) {
-                showLocked(context, manager, silent)
+                LockedNotices.show(SystemShade(context, manager), quietOnly)
                 break
             }
             try {
@@ -452,37 +451,19 @@ object Background {
     }
 
     /**
-     * New mail while the app lock is on: any notice for one email still
-     * shown goes, and the stand-in says "New messages", with a sound
-     * unless all of it came in the quiet hours.
+     * The app lock was turned on: every mail notice already shown (this
+     * service's and the Flutter plugin's, on the same channels) is
+     * cancelled, once ([LockedNotices.clear]). Sign-in problem notices
+     * name an account, not mail, and stay. Returns at once: the work waits
+     * on the system (and on [show]), so it runs on [worker], never on the
+     * caller's thread, which is often the main one.
      */
-    private fun showLocked(context: Context, manager: NotificationManager, silent: Boolean) {
-        LockedNotices.fold(SystemShade(context, manager))
-        postStandIn(context, manager, if (silent) QUIET_CHANNEL else MAIL_CHANNEL, alert = true)
-    }
-
-    /**
-     * The app lock was turned on or closed: every mail notice already shown
-     * (this service's and the Flutter plugin's, on the same channels) is
-     * cancelled, and one stand-in that says only "New messages", with no
-     * buttons, takes their place, silently ([LockedNotices]). Tapping it
-     * opens the app, at its lock screen. Sign-in problem notices name an
-     * account, not mail, and stay as they are.
-     *
-     * Returns at once: the work waits on the system (and on [show], which
-     * may be posting), so it runs on [worker], never on the caller's
-     * thread, which is often the main one.
-     */
-    fun blankNotices(context: Context) {
+    fun clearMail(context: Context) {
         val app = context.applicationContext
-        worker.post { foldShown(app) }
-        // Once more a moment later: a notice posted just before (by [show]
-        // or the Flutter plugin) may still be on its way into the list the
-        // system gives back.
-        worker.postDelayed({ foldShown(app) }, AGAIN_MS)
+        worker.post { clearShown(app) }
     }
 
-    /** [showSignIn] off the caller's thread, as [blankNotices]. */
+    /** [showSignIn] off the caller's thread, as [clearMail]. */
     fun showSignInLater(context: Context) {
         val app = context.applicationContext
         worker.post { showSignIn(app) }
@@ -492,21 +473,16 @@ object Background {
     private val worker by lazy {
         Handler(HandlerThread("piuma-notices").apply { start() }.looper)
     }
-    private const val AGAIN_MS = 1_000L
 
     @Synchronized
-    private fun foldShown(context: Context) {
+    private fun clearShown(context: Context) {
         if (!AppLockFile.on(context)) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        try {
-            LockedNotices.fold(SystemShade(context, manager))
-        } catch (e: Exception) {
-            // The system's list could not be read: nothing more to do.
-        }
+        LockedNotices.clear(SystemShade(context, manager))
     }
 
-    /** The stand-in ([LockedNotices]) on [channel]; [alert] false for one only folding the shade. */
-    private fun postStandIn(context: Context, manager: NotificationManager, channel: String, alert: Boolean) {
+    /** The stand-in ([LockedNotices]) on [channel], which [channels] made. */
+    private fun postStandIn(context: Context, manager: NotificationManager, channel: String) {
         val tap = PendingIntent.getActivity(
             context,
             0,
@@ -523,7 +499,6 @@ object Background {
             .setContentIntent(tap)
             .setShowWhen(true)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(!alert)
             .build()
         try {
             manager.notify(LockedNotices.TAG, LockedNotices.ID, notice)
@@ -532,7 +507,7 @@ object Background {
         }
     }
 
-    /** Android's shade, for [LockedNotices.fold]. */
+    /** Android's shade, for [LockedNotices]. */
     private class SystemShade(
         private val context: Context,
         private val manager: NotificationManager,
@@ -543,7 +518,11 @@ object Background {
 
         override fun cancel(tag: String?, id: Int) = manager.cancel(tag, id)
 
-        override fun postStandIn() = postStandIn(context, manager, QUIET_CHANNEL, alert = false)
+        override fun ensureChannels() {
+            channels(context)
+        }
+
+        override fun postStandIn(channel: String) = postStandIn(context, manager, channel)
     }
 
     /** The two mail channels, made the first time. */

@@ -1876,7 +1876,7 @@
   "lockPinRule": "Eine PIN hat 4 bis 12 Ziffern.",
   "lockPinMismatch": "Die beiden PINs stimmen nicht überein.",
   "lockNoKeychain": "Der Schlüsselbund des Systems konnte die PIN nicht speichern, daher ist die Sperre aus. Unter Linux braucht Piuma GNOME Keyring, KWallet oder einen anderen Secret Service.",
-  "lockSettingNote": "Solange die Sperre an ist, zeigen Mitteilungen nur „Neue Nachrichten“, hier und auf einer gekoppelten Uhr, und die Uhr zeigt keine Mails. Auch in den zuletzt verwendeten Apps ist Piuma verborgen. Die Sperre hält andere aus der App fern; sie verschlüsselt die Mails auf diesem Gerät nicht.",
+  "lockSettingNote": "Solange die Sperre an ist, zeigen Mitteilungen und eine gekoppelte Uhr nie Ihre Mails, auch wenn Piuma entsperrt ist: Mitteilungen zeigen nur „Neue Nachrichten“, ohne Absender, Betreff oder Tasten, und die Uhr zeigt keine Mails. Auch in den zuletzt verwendeten Apps ist Piuma verborgen. Die Sperre hält andere aus der App fern; sie verschlüsselt die Mails auf diesem Gerät nicht.",
   "noticeLocked": "Neue Nachrichten",
   "lockTitle": "Piuma ist gesperrt",
   "lockDevicePrompt": "Entsperre, um deine Mails zu sehen.",

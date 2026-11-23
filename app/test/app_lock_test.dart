@@ -259,7 +259,7 @@ void main() {
     expect(LockAfter.fromSeconds(7), LockAfter.oneMinute);
   });
 
-  test('notices while the lock is on say only "New message"', () {
+  test('notices while the lock is on are the one "New messages"', () {
     const n = SystemNotice(
       id: 3,
       title: 'Giulia Romano',
@@ -267,6 +267,7 @@ void main() {
       preview: 'Shall we try the new place',
       payload: '2\nINBOX\n41',
       buttons: true,
+      silent: true,
     );
     expect(identical(privateNotice(n), n), isTrue);
     lockedNoticeTitle = 'New message';
@@ -276,8 +277,10 @@ void main() {
     expect(hidden.subject, isEmpty);
     expect(hidden.preview, isEmpty);
     expect(hidden.buttons, isFalse);
-    expect(hidden.payload, n.payload);
-    expect(hidden.id, n.id);
+    expect(hidden.payload, 'inbox');
+    expect(hidden.id, lockedNoticeId);
+    expect(hidden.standIn, isTrue);
+    expect(hidden.silent, isTrue);
   });
 
   test('the notice text follows the app language', () async {
@@ -532,27 +535,34 @@ void main() {
         n,
         seal: seal,
         post: (shown, sealed) async {
-          expect(sealed, 'sealed:${n.payload}');
+          expect(sealed, 'sealed:inbox');
           posted.add(shown);
         },
       );
-      expect(seal.sealed, 1);
       expect(posted, hasLength(1));
       expect(posted.single.title, 'New message');
       expect(posted.single.subject, isEmpty);
       expect(posted.single.preview, isEmpty);
       expect(posted.single.buttons, isFalse);
-      expect(posted.single.payload, n.payload);
+      expect(posted.single.standIn, isTrue);
+      // Its own payload is sealed, not the email's.
+      expect(posted.single.payload, 'inbox');
+      expect(seal.payloads.last, 'inbox');
     });
 
     test('keeps its words while the lock stays off', () async {
       final posted = <SystemNotice>[];
+      final sealedAs = <String>[];
       await postNotice(
         n,
         seal: _FlippingSeal(() {}),
-        post: (shown, _) async => posted.add(shown),
+        post: (shown, sealed) async {
+          posted.add(shown);
+          sealedAs.add(sealed);
+        },
       );
       expect(identical(posted.single, n), isTrue);
+      expect(sealedAs.single, 'sealed:${n.payload}');
     });
   });
 }
@@ -585,13 +595,13 @@ class _SeeingHasher extends FakeHasher {
 class _FlippingSeal extends NoticeSeal {
   _FlippingSeal(this.meanwhile);
   final void Function() meanwhile;
-  int sealed = 0;
+  final payloads = <String>[];
 
   @override
   Future<String> seal(String payload) async {
     await Future<void>.delayed(Duration.zero);
     meanwhile();
-    sealed++;
+    payloads.add(payload);
     return 'sealed:$payload';
   }
 

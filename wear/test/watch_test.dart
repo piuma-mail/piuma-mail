@@ -61,13 +61,26 @@ String _summary() => jsonEncode({
   ],
 });
 
-Future<void> _fromPhone(String method, Object? arguments) =>
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .handlePlatformMessage(
-          _channel.name,
-          _channel.codec.encodeMethodCall(MethodCall(method, arguments)),
-          (_) {},
-        );
+/// The paired phone's Data Layer node.
+const _phone = 'phone-node';
+
+/// A call from the Kotlin side. A summary comes as `WatchChannel.kt`
+/// hands it over, from [node] (the paired phone unless said).
+Future<void> _fromPhone(
+  String method,
+  Object? arguments, {
+  String node = _phone,
+}) async {
+  if (method == 'summary' && arguments is String) {
+    arguments = {'node': node, 'json': arguments};
+  }
+  await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .handlePlatformMessage(
+        _channel.name,
+        _channel.codec.encodeMethodCall(MethodCall(method, arguments)),
+        (_) {},
+      );
+}
 
 /// The app on a Pixel Watch-sized round screen, with what it asked the
 /// phone in [asked].
@@ -78,6 +91,7 @@ Future<PhoneLink> _pump(WidgetTester tester, List<MethodCall> asked) async {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(_channel, (call) async {
         asked.add(call);
+        if (call.method == 'phones') return [_phone];
         return null;
       });
   final link = PhoneLink();
@@ -217,6 +231,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_channel, (call) async {
           if (call.method == 'summary') return kept.future;
+          if (call.method == 'phones') return [_phone];
           return null;
         });
     final link = PhoneLink();
@@ -263,6 +278,7 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(_channel, (call) async {
             if (call.method == 'summary') return kept;
+            if (call.method == 'phones') return [_phone];
             return null;
           });
       return PhoneLink();
@@ -294,14 +310,15 @@ void main() {
       await _fromPhone('summary', stamped('a', 1700000000500));
       await _fromPhone('summary', stamped('a', 1700000000501, locked: true));
       expect(link.summary!.locked, isTrue);
-      // Reinstalled without the lock: its first summary has mail.
-      await _fromPhone('summary', stamped('b', 1));
+      // Reinstalled without the lock: its first summary has mail, its
+      // generation starting from the time, a minute later.
+      await _fromPhone('summary', stamped('b', 1700000060000));
       expect(link.summary!.locked, isFalse);
       expect(link.summary!.rows, isNotEmpty);
       // Reinstalled again, locked there, then the lock turned off.
-      await _fromPhone('summary', stamped('c', 1, locked: true));
+      await _fromPhone('summary', stamped('c', 1700000120000, locked: true));
       expect(link.summary!.locked, isTrue);
-      await _fromPhone('summary', stamped('c', 2));
+      await _fromPhone('summary', stamped('c', 1700000120001));
       expect(link.summary!.locked, isFalse);
     });
 
@@ -342,6 +359,83 @@ void main() {
       await again.start();
       expect(again.summary!.gen, 6);
       expect(again.summary!.rows, isNotEmpty);
+    });
+  });
+
+  group('only the connected phone, and nothing older than its lock', () {
+    String stamped(String epoch, int gen, {bool locked = false}) {
+      final m = jsonDecode(_summary()) as Map<String, dynamic>;
+      m
+        ..['epoch'] = epoch
+        ..['gen'] = gen;
+      if (locked) {
+        m
+          ..['locked'] = true
+          ..['accounts'] = []
+          ..['rows'] = []
+          ..['templates'] = [];
+      }
+      return jsonEncode(m);
+    }
+
+    Future<PhoneLink> started({Object? kept}) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_channel, (call) async {
+            if (call.method == 'summary') return kept;
+            if (call.method == 'phones') return [_phone];
+            return null;
+          });
+      final link = PhoneLink();
+      await link.start();
+      return link;
+    }
+
+    testWidgets('an older install\'s summary after a locked one is dropped', (
+      tester,
+    ) async {
+      final link = await started();
+      await _fromPhone('summary', stamped('a', 1700000000500));
+      // Reinstalled with the lock on, then a change of the old install
+      // arrives late (a TYPE_CHANGED event), even with a higher generation.
+      await _fromPhone('summary', stamped('b', 1700000060000, locked: true));
+      await _fromPhone('summary', stamped('a', 1700000090000));
+      expect(link.summary!.locked, isTrue);
+      // Nor one of the same install made before the lock closed.
+      await _fromPhone('summary', stamped('b', 1700000059999));
+      expect(link.summary!.locked, isTrue);
+      expect(link.summary!.rows, isEmpty);
+    });
+
+    testWidgets('mail from a phone not connected is ignored', (tester) async {
+      final link = await started();
+      await _fromPhone('summary', stamped('a', 10));
+      expect(link.summary!.rows, isNotEmpty);
+      // Another phone this watch was paired with once: not its mail...
+      await _fromPhone('summary', stamped('x', 900), node: 'old-phone');
+      expect(link.summary!.epoch, 'a');
+      // ...nor one with no phone named.
+      await _fromPhone('summary', {'json': stamped('x', 901), 'node': null});
+      expect(link.summary!.epoch, 'a');
+      // A locked one from any phone hides the mail.
+      await _fromPhone('summary', stamped('x', 1, locked: true), node: 'old');
+      expect(link.summary!.locked, isTrue);
+      // The connected phone's next one shows again: it isn't locked.
+      await _fromPhone('summary', stamped('a', 11));
+      expect(link.summary!.locked, isFalse);
+    });
+
+    testWidgets('offline, a kept locked one is shown, then no older mail', (
+      tester,
+    ) async {
+      // What `KeptSummaries.pick` hands over with no phone connected.
+      final link = await started(
+        kept: {'node': _phone, 'json': stamped('a', 50, locked: true)},
+      );
+      expect(link.summary!.locked, isTrue);
+      await _fromPhone('summary', stamped('a', 49));
+      expect(link.summary!.locked, isTrue);
+      await _fromPhone('summary', stamped('a', 51));
+      expect(link.summary!.locked, isFalse);
     });
   });
 

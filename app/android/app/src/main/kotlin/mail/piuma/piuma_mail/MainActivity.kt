@@ -180,16 +180,12 @@ class MainActivity : FlutterFragmentActivity() {
                     "changed" -> {
                         val on = call.argument<Boolean>("on") == true
                         secure(on)
-                        // Turned on: the mail notices already shown fold
-                        // into one "New messages" (off the main thread).
-                        if (on) Background.blankNotices(context)
+                        // Turned on: the mail notices already shown go
+                        // (off the main thread); new ones say only "New
+                        // messages" from now on, locked or not.
+                        if (on) Background.clearMail(context)
                         // The watch shows the mail again, or stops.
                         WatchLink.publish(context)
-                        result.success(null)
-                    }
-                    // The lock closed: the same, for notices shown since.
-                    "locked" -> {
-                        Background.blankNotices(context)
                         result.success(null)
                     }
                     // The boot count and the time since boot, sleep

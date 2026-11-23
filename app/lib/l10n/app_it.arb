@@ -1886,7 +1886,7 @@
   "lockPinRule": "Il PIN è di 4–12 cifre.",
   "lockPinMismatch": "I due PIN non coincidono.",
   "lockNoKeychain": "Il portachiavi di sistema non ha potuto conservare il PIN, quindi il blocco è spento. Su Linux, Piuma ha bisogno di GNOME Keyring, KWallet o un altro Secret Service.",
-  "lockSettingNote": "Con il blocco attivo, le notifiche dicono solo “Nuovi messaggi”, qui e su un orologio collegato, e l’orologio non mostra la posta. Piuma è nascosto anche tra le app recenti. Il blocco tiene le persone fuori dall’app; non cifra la posta conservata sul dispositivo.",
+  "lockSettingNote": "Con il blocco attivo, le notifiche e un orologio collegato non mostrano mai la posta, anche quando Piuma è sbloccato: le notifiche dicono solo “Nuovi messaggi”, senza mittente, oggetto né pulsanti, e l’orologio non mostra la posta. Piuma è nascosto anche tra le app recenti. Il blocco tiene le persone fuori dall’app; non cifra la posta conservata sul dispositivo.",
   "noticeLocked": "Nuovi messaggi",
   "lockTitle": "Piuma è bloccato",
   "lockDevicePrompt": "Sblocca per vedere la posta.",

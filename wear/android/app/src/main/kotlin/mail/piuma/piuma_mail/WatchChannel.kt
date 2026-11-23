@@ -22,8 +22,11 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The watch's end of the link with the phone (`WatchLink.kt` in the phone
- * app, same paths). Dart calls `summary`, `refresh`, `open`, `act` and
- * `speak`; the phone's answers come back to Dart as `summary` and `text`.
+ * app, same paths). Dart calls `summary`, `phones`, `refresh`, `open`,
+ * `act` and `speak`; the phone's answers come back to Dart as `summary`
+ * and `text`. A summary always goes to Dart with the phone (node) it came
+ * from, `{"node", "json"}`: Dart shows mail only from the phone connected
+ * now (`link.dart`).
  */
 class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
     DataClient.OnDataChangedListener, MessageClient.OnMessageReceivedListener {
@@ -36,6 +39,7 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "summary" -> background(result) { lastSummary() }
+                "phones" -> background(result) { connected().toList() }
                 "refresh" -> background(result) { send(REFRESH, ByteArray(0)); null }
                 "open" -> background(result) {
                     send(OPEN, (call.arguments as String).toByteArray(Charsets.UTF_8)); null
@@ -67,10 +71,11 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
         for (event in events) {
             if (event.type != DataEvent.TYPE_CHANGED || event.dataItem.uri.path != INBOX) continue
             val json = DataMapItem.fromDataItem(event.dataItem).dataMap.getString("json") ?: continue
-            // Dart orders them (`link.dart`). Nothing is deleted here: the
-            // phone puts every summary at the one path, each replacing the
-            // last, so there is no older one of its own to clean up.
-            main.post { channel.invokeMethod("summary", json) }
+            val node = event.dataItem.uri.host
+            // Dart checks the phone and orders them (`link.dart`). Nothing
+            // is deleted here: the phone puts every summary at the one
+            // path, each replacing the last.
+            main.post { channel.invokeMethod("summary", mapOf("node" to node, "json" to json)) }
         }
     }
 
@@ -86,14 +91,8 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
      * The summary the phone sent last, as the Data Layer keeps it: one
      * item per phone that ever sent one ([KeptSummaries.pick]).
      */
-    private fun lastSummary(): String? {
-        val connected = try {
-            Tasks.await(Wearable.getNodeClient(activity).connectedNodes, WAIT_SECONDS, TimeUnit.SECONDS)
-                .map { it.id }
-                .toSet()
-        } catch (e: Exception) {
-            emptySet()
-        }
+    private fun lastSummary(): Map<String, String?>? {
+        val connected = connected()
         val items = Tasks.await(
             Wearable.getDataClient(activity).getDataItems(inboxUri()),
             WAIT_SECONDS,
@@ -112,7 +111,17 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
         } finally {
             items.release()
         }
-        return KeptSummaries.pick(kept, connected)
+        val picked = KeptSummaries.pick(kept, connected) ?: return null
+        return mapOf("node" to picked.node, "json" to picked.json)
+    }
+
+    /** The phones connected now; none when the Data Layer can't say. */
+    private fun connected(): Set<String> = try {
+        Tasks.await(Wearable.getNodeClient(activity).connectedNodes, WAIT_SECONDS, TimeUnit.SECONDS)
+            .map { it.id }
+            .toSet()
+    } catch (e: Exception) {
+        emptySet()
     }
 
     /** Sends to every phone connected now; there is one, the paired one. */

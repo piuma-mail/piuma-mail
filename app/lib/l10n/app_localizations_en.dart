@@ -7756,7 +7756,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get lockSettingNote =>
-      'While the lock is on, notifications say only “New messages”, here and on a paired watch, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.';
+      'While the lock is on, notifications and a paired watch never show your mail, even while Piuma is unlocked: notifications say only “New messages”, with no sender, subject or buttons, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.';
 
   @override
   String get noticeLocked => 'New messages';

@@ -183,8 +183,9 @@ BootTime? linuxBootTime(String bootId, String uptime) {
 }
 
 /// What the platform does while the lock is on: Android keeps Piuma out
-/// of the recent apps' thumbnails and screenshots (FLAG_SECURE), folds
-/// the notices already shown into one "New messages" and tells the watch (`MainActivity.kt`); iOS
+/// of the recent apps' thumbnails and screenshots (FLAG_SECURE), cancels
+/// the mail notices already shown when it is turned on and tells the
+/// watch (`MainActivity.kt`); iOS
 /// covers its app switcher snapshot itself (`SceneDelegate.swift`),
 /// reading the same file.
 abstract final class LockPlatform {
@@ -196,17 +197,6 @@ abstract final class LockPlatform {
       await _channel.invokeMethod<void>('changed', {'on': on});
     } on Object {
       // An older activity: the flag follows at the next start.
-    }
-  }
-
-  /// The lock closed: Android's mail notices already shown fold into one
-  /// "New messages" without buttons, as new ones do while the lock is on.
-  static Future<void> engaged() async {
-    if (!Platform.isAndroid) return;
-    try {
-      await _channel.invokeMethod<void>('locked');
-    } on Object {
-      // Folded when the lock was turned on.
     }
   }
 }

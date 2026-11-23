@@ -21,6 +21,7 @@ class SystemNotice {
     required this.payload,
     this.silent = false,
     this.buttons = false,
+    this.standIn = false,
   });
 
   /// The same id replaces the notice already shown, so one sender keeps
@@ -39,6 +40,11 @@ class SystemNotice {
   /// Reply, Archive and Snooze, as on `Notifications`, then Delete and
   /// Mark read: for one email.
   final bool buttons;
+
+  /// The one notice that stands for all new mail while the app lock is
+  /// on ([lockedNotice]); on Android it shares its key with the
+  /// background service's (`LockedNotices.kt`), so there is one either way.
+  final bool standIn;
 }
 
 /// The words on a notice's buttons, and what to do when one is pressed:
@@ -116,40 +122,53 @@ Future<void> handleNoticeResponse(
   }
 }
 
-/// While the app lock is on, what every notice says instead of its sender,
-/// subject and preview ("New message"), and it has no buttons: nothing of
-/// the mail shows on the screen, the lock screen or a paired watch, and
-/// nothing is done to it without unlocking. Null while the lock is off.
-/// Android's background service does the same from `app-lock.json`.
+/// While the app lock is turned on in Settings, locked or not, what the
+/// one notice for new mail says ("New messages"): no sender, subject,
+/// preview or buttons, on the screen, the lock screen or a paired watch.
+/// Null while the lock is off. Android's background service does the same
+/// from `app-lock.json`.
 String? lockedNoticeTitle;
+
+/// The id of [lockedNotice]; Android's background service uses the same
+/// one, with the tag [lockedNoticeTag] (`LockedNotices.kt`).
+const lockedNoticeId = 1;
+const lockedNoticeTag = 'mail.piuma.locked';
+
+/// The one notice for new mail while the lock is on: always the same,
+/// however many senders wrote, and it only opens the app.
+SystemNotice lockedNotice(String title, {required bool silent}) => SystemNotice(
+  id: lockedNoticeId,
+  title: title,
+  subject: '',
+  preview: '',
+  payload: 'inbox',
+  silent: silent,
+  standIn: true,
+);
 
 /// [n] as the system may show it now ([lockedNoticeTitle]).
 SystemNotice privateNotice(SystemNotice n) {
   final title = lockedNoticeTitle;
   if (title == null) return n;
-  return SystemNotice(
-    id: n.id,
-    title: title,
-    subject: '',
-    preview: '',
-    payload: n.payload,
-    silent: n.silent,
-  );
+  return lockedNotice(title, silent: n.silent);
 }
 
-/// Seals [notice]'s payload, then decides what it may show
-/// ([privateNotice]) and hands it to [post] at once. The decision comes
-/// after the wait for the seal, never before it: the lock turned on
-/// meanwhile, and its blanking already done, the notice goes out blank
+/// Decides what [notice] may show ([privateNotice]), seals that one's
+/// payload and hands it to [post]. Decided again after the wait for the
+/// seal: the lock turned on meanwhile, the notice goes out as the stand-in
 /// rather than with its sender and subject.
 Future<void> postNotice(
   SystemNotice notice, {
   required NoticeSeal seal,
   required Future<void> Function(SystemNotice n, String sealed) post,
 }) async {
-  final sealed = await seal.seal(notice.payload);
-  // Nothing may wait between this and [post].
-  return post(privateNotice(notice), sealed);
+  final first = privateNotice(notice);
+  final sealed = await seal.seal(first.payload);
+  // Nothing may wait between this and [post], unless it is the stand-in,
+  // which carries no mail whenever it goes.
+  final shown = privateNotice(notice);
+  if (shown.payload == first.payload) return post(shown, sealed);
+  return post(shown, await seal.seal(shown.payload));
 }
 
 /// Shows notices through the operating system. Tests replace [notifier].
@@ -165,9 +184,9 @@ abstract class Notifier {
   });
   Future<void> show(SystemNotice notice);
 
-  /// The lock was turned on or closed: the notices already shown, which
-  /// may name a sender and have buttons, go. On Android they fold into one
-  /// "New messages" instead (`LockPlatform.engaged`, `LockedNotices.kt`).
+  /// The lock was turned on: the notices already shown, which may name a
+  /// sender and have buttons, go, once. On Android the activity does it
+  /// for every mail notice (`LockPlatform.changed`, `LockedNotices.kt`).
   Future<void> hideShown();
 }
 
@@ -282,7 +301,7 @@ class SystemNotifier implements Notifier {
 
   @override
   Future<void> hideShown() async {
-    // Android blanks its notices natively, the plugin's among them.
+    // Android cancels them natively, the plugin's among them.
     if (!_ready || Platform.isAndroid) return;
     final ids = {..._shown};
     _shown.clear();
@@ -341,11 +360,13 @@ class SystemNotifier implements Notifier {
             threadIdentifier: 'mail',
             categoryIdentifier: buttons == null ? null : 'mail',
           ),
+          // The plugin makes the channel first when it isn't there yet.
           android: AndroidNotificationDetails(
             'mail',
             _channel,
             silent: n.silent,
             category: AndroidNotificationCategory.email,
+            tag: n.standIn ? lockedNoticeTag : null,
             // Launchers that show a count on the icon read it here.
             number: UnreadBadge.count > 0 ? UnreadBadge.count : null,
           ),

@@ -134,9 +134,10 @@ Future<void> _start(String dir) async {
 ReaderWindows? _readerWindows;
 
 /// The app lock, as left: settings next to the database, its PIN in the
-/// keychain (`lock/`). Notices go blank while it is on, and those already
-/// shown go when it is turned on or closes; reader windows hide when it
-/// locks and come back when it opens.
+/// keychain (`lock/`). While it is on, locked or not, new mail shows only
+/// one "New messages" notice, and those already shown go when it is
+/// turned on; reader windows hide when it locks and come back when it
+/// opens.
 Future<AppLock> _loadLock(String dir) async {
   final lock = AppLock(
     store: FileLockStore(dir),
@@ -173,11 +174,7 @@ Future<AppLock> _loadLock(String dir) async {
           onFront: lock.windowInFront,
         )
       : null;
-  lock.onLocked = () {
-    windows?.locked().ignore();
-    LockPlatform.engaged().ignore();
-    notifier.hideShown().ignore();
-  };
+  lock.onLocked = () => windows?.locked().ignore();
   lock.onUnlocked = () => windows?.unlocked().ignore();
   return lock;
 }

@@ -24,11 +24,10 @@ class NoticeActions : BroadcastReceiver() {
         // Only a payload this app sealed: the reply's intent is mutable.
         val payload = NoticeSeal.open(context, intent.getStringExtra(PAYLOAD)) ?: return
         val id = intent.getIntExtra(ID, 0)
-        // The app lock is on: nothing is done to mail without unlocking.
-        // The notices shown before it was turned on fold into one "New
-        // messages" without buttons, which opens the app at the lock screen.
+        // The app lock is on: nothing is done to mail from a notice. One
+        // shown before it was turned on, and still there, goes.
         if (AppLockFile.on(context)) {
-            Background.blankNotices(context.applicationContext)
+            Background.clearMail(context.applicationContext)
             return
         }
         val text = RemoteInput.getResultsFromIntent(intent)

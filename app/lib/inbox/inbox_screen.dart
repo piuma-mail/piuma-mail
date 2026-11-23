@@ -472,7 +472,8 @@ class _InboxScreenState extends State<InboxScreen> {
 
   /// New mail worth it becomes a system notification, one per sender;
   /// the quiet hours take its sound, or hold it back for "While you were
-  /// away".
+  /// away". While the app lock is on, locked or not, all of it is one
+  /// "New messages" ([lockedNotice]).
   void _notify(List<MailNotice> notices) {
     // Android's background service shows them itself.
     if (!mounted || widget.source.nativeNotices) return;
@@ -493,6 +494,7 @@ class _InboxScreenState extends State<InboxScreen> {
       // Shown as they are.
     }
     final quietNow = widget.source.quietAt(now);
+    final out = <SystemNotice>[];
     for (final n in [
       for (final n in notices)
         if (reminder(n)) n,
@@ -501,7 +503,7 @@ class _InboxScreenState extends State<InboxScreen> {
       final vault = n.vault;
       final away = n.away;
       if (n.noReply case final r?) {
-        notifier.show(
+        out.add(
           SystemNotice(
             id:
                 Object.hash('no-reply', n.accountId, n.mailbox, n.uid) &
@@ -516,7 +518,7 @@ class _InboxScreenState extends State<InboxScreen> {
         );
         continue;
       }
-      notifier.show(
+      out.add(
         SystemNotice(
           id: away != null
               ? Object.hash('away', 0) & 0x7fffffff
@@ -547,6 +549,12 @@ class _InboxScreenState extends State<InboxScreen> {
         ),
       );
     }
+    if (out.isEmpty) return;
+    if (lockedNoticeTitle case final title?) {
+      notifier.show(lockedNotice(title, silent: out.every((n) => n.silent)));
+      return;
+    }
+    out.forEach(notifier.show);
   }
 
   /// A clicked notification opens its message in the inbox. A message
