@@ -6197,6 +6197,11 @@ class AppLocalizationsPt extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'Não é possível saber com certeza para onde este link leva: $real.';
+  }
+
+  @override
   String get updates => 'Atualizações';
 
   @override

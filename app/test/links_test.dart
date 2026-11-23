@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/design/theme.dart';
+import 'package:piuma_mail/engine/api/links.dart' as engine;
+import 'package:piuma_mail/engine/frb_generated.dart';
 import 'package:piuma_mail/inbox/original_view.dart';
 import 'package:piuma_mail/widgets/link_target.dart';
 import 'package:piuma_mail/widgets/links.dart';
@@ -45,15 +50,18 @@ void main() {
         'https:///no-host',
         'mailto:',
       ]) {
-        expect(await openMailLink(Uri.parse(no)), isFalse, reason: no);
+        expect(await launchMailLink(Uri.parse(no)), isFalse, reason: no);
       }
       expect(external, isEmpty);
       expect(mailto, isEmpty);
     });
 
     test('mailto goes through its own door, pages to the browser', () async {
-      expect(await openMailLink(Uri.parse('https://shop.example/a')), isTrue);
-      expect(await openMailLink(Uri.parse('mailto:help@shop.example')), isTrue);
+      expect(await launchMailLink(Uri.parse('https://shop.example/a')), isTrue);
+      expect(
+        await launchMailLink(Uri.parse('mailto:help@shop.example')),
+        isTrue,
+      );
       expect(external, [Uri.parse('https://shop.example/a')]);
       expect(mailto, [Uri.parse('mailto:help@shop.example')]);
     });
@@ -262,5 +270,148 @@ void main() {
     expect(idn, startsWith('раураl.com  xn--l-7sba6dbr.com/'));
     final ipv6 = await shown('http://[::1]:8080/admin');
     expect(ipv6, '[::1]:8080/admin');
+  });
+
+  test('hosts go through UTS #46 before they are compared or shown', () {
+    final before = linkHostAscii;
+    addTearDown(() => linkHostAscii = before);
+    final asked = <String>[];
+    linkHostAscii = (host) {
+      asked.add(host);
+      return host == 'example。com' ? 'example.com' : null;
+    };
+    expect(normalizeLink('https://example。com/x'), 'https://example.com/x');
+    final parts = describeLink('https://example。com/x')!;
+    expect(parts.host, 'example.com');
+    expect(parts.registrable, 'example.com');
+    expect(parts.ascii, isNull);
+    // Decoded, as written: the mapping folds case itself.
+    expect(asked, everyElement('example。com'));
+    // Refused by UTS #46: read as before, but the link asks first.
+    expect(normalizeLink('https://BÜCHER.de/x'), 'https://xn--bcher-kva.de/x');
+    expect(describeLink('https://BÜCHER.de/x')!.unreadable, isTrue);
+    expect(describeLink('https://example。com/x')!.unreadable, isFalse);
+  });
+
+  group('with the engine\'s UTS #46', () {
+    // The engine's library, when it is built (`cargo build -p
+    // piuma_bridge`). CI builds it, and there a missing library fails the
+    // tests instead of skipping them.
+    final root = Directory.current.parent.path;
+    final name = Platform.isWindows
+        ? 'piuma_bridge.dll'
+        : Platform.isMacOS
+        ? 'libpiuma_bridge.dylib'
+        : 'libpiuma_bridge.so';
+    final lib = File('$root/target/debug/$name');
+    final inCi = Platform.environment['CI'] == 'true';
+    final skip = lib.existsSync() || inCi ? false : 'build piuma_bridge to run';
+    late String? Function(String) before;
+
+    setUpAll(() async {
+      if (!lib.existsSync()) {
+        if (inCi) fail('CI must build piuma_bridge first: ${lib.path}');
+        return;
+      }
+      await RustLib.init(externalLibrary: ExternalLibrary.open(lib.path));
+    });
+    setUp(() {
+      before = linkHostAscii;
+      linkHostAscii = (host) => engine.linkHostAscii(host: host);
+    });
+    tearDown(() => linkHostAscii = before);
+
+    test('the other dots read as "."', () {
+      for (final dot in ['。', '．', '｡']) {
+        final url = 'https://login.example${dot}com/x';
+        expect(normalizeLink(url), 'https://login.example.com/x', reason: url);
+        final parts = describeLink(url)!;
+        expect(parts.host, 'login.example.com', reason: url);
+        expect(parts.registrable, 'example.com', reason: url);
+        expect(parts.ascii, isNull, reason: url);
+      }
+      expect(
+        describeLink('mailto:a@bank。example')!.registrable,
+        'bank.example',
+      );
+    }, skip: skip);
+
+    test('full-width letters read as ASCII', () {
+      const url = 'https://ｅｘａｍｐｌｅ.com/a';
+      expect(normalizeLink(url), 'https://example.com/a');
+      expect(normalizeLink('https://ＢＡＮＫ.example/'), 'https://bank.example/');
+      final parts = describeLink(url)!;
+      expect(parts.host, 'example.com');
+      expect(parts.ascii, isNull);
+    }, skip: skip);
+
+    test('a mixed-case IDN host is one host', () {
+      for (final url in [
+        'https://BÜcher.De/x',
+        'https://bÜCHER.de/x',
+        'https://Xn--Bcher-Kva.dE/x',
+      ]) {
+        expect(normalizeLink(url), 'https://xn--bcher-kva.de/x', reason: url);
+        final parts = describeLink(url)!;
+        expect(parts.host, 'bücher.de', reason: url);
+        expect(parts.ascii, 'xn--bcher-kva.de', reason: url);
+      }
+    }, skip: skip);
+
+    test('the hosts of #99 read as they did', () {
+      expect(
+        normalizeLink('https://раураl.com/login'),
+        'https://xn--l-7sba6dbr.com/login',
+      );
+      final idn = describeLink('https://xn--l-7sba6dbr.com/login')!;
+      expect(idn.host, 'раураl.com');
+      expect(idn.ascii, 'xn--l-7sba6dbr.com');
+      final hidden = describeLink('https://bank.example%40evil.example/login')!;
+      expect(hidden.host, 'bank.example@evil.example');
+      expect(hidden.registrable, 'evil.example');
+      expect(
+        isMailLinkAllowed(Uri.parse('https://bank.example%40evil.example/')),
+        isFalse,
+      );
+      expect(describeLink('https://a%ff.example/'), isNotNull);
+      expect(
+        describeLink('https://paypal.evil.com./')!.registrable,
+        'evil.com.',
+      );
+      expect(
+        describeLink('http://192.168.1.10:81/')!.registrable,
+        '192.168.1.10',
+      );
+      expect(describeLink('http://[FE80::1]/')!.host, '[fe80::1]');
+      expect(normalizeLink('http://[::1]:8080/'), 'http://[::1]:8080/');
+      expect(describeLink('https://shop.example/')!.ascii, isNull);
+      expect(
+        normalizeLink('HTTPS://Lume-Login.Example'),
+        'https://lume-login.example/',
+      );
+    }, skip: skip);
+
+    test('a host is percent-decoded once, as the browser does', () {
+      // `%25` decodes to a `%`, which stays: never a second `.`.
+      const url = 'https://bank%252eexample/login';
+      final parts = describeLink(url)!;
+      expect(parts.host, 'bank%2eexample');
+      expect(parts.registrable, isNot('bank.example'));
+      expect(isMailLinkAllowed(Uri.parse(url)), isFalse);
+    }, skip: skip);
+
+    test('a host UTS #46 refuses asks before it opens', () {
+      for (final url in ['https://xn--zz.com/', 'https://a.xn--zz.example/x']) {
+        expect(describeLink(url)!.unreadable, isTrue, reason: url);
+      }
+      for (final url in [
+        'https://shop.example/',
+        'https://xn--l-7sba6dbr.com/',
+        'https://ｅｘａｍｐｌｅ.com/',
+        'http://192.168.1.10/',
+      ]) {
+        expect(describeLink(url)!.unreadable, isFalse, reason: url);
+      }
+    }, skip: skip);
   });
 }

@@ -12,7 +12,6 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
-import '../widgets/links.dart';
 import 'message_body.dart';
 import 'reader.dart' show MessageView;
 import 'vault.dart' show ZoneTile;
@@ -911,8 +910,7 @@ Future<void> unsubscribeFrom(
       await source.setSenderZone(row.fromEmail, MailFolder.inbox);
       onToast(l.alwaysInInboxDone(row.sender));
     case _Choice.leave when info.kind == UnsubscribeKind.page:
-      final uri = Uri.tryParse(info.address);
-      if (uri != null) await openMailLink(uri);
+      if (context.mounted) await openLink(context, info.address);
     case _Choice.leave:
       try {
         await source.unsubscribe(row);

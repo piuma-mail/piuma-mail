@@ -6216,6 +6216,11 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'Es ist nicht eindeutig, wohin dieser Link führt: $real.';
+  }
+
+  @override
   String get updates => 'Updates';
 
   @override

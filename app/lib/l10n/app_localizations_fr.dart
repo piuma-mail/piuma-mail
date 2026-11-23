@@ -6218,6 +6218,11 @@ class AppLocalizationsFr extends AppLocalizations {
   }
 
   @override
+  String unreadableLinkBody(String real) {
+    return 'Impossible de savoir avec certitude où mène ce lien : $real.';
+  }
+
+  @override
   String get updates => 'Mises à jour';
 
   @override

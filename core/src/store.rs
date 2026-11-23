@@ -47,6 +47,10 @@ pub enum StoreError {
     /// [outbox] messages and [drafts] waiting on this device.
     #[error("the account still has unsent mail ({outbox} in the outbox, {drafts} drafts on this device)")]
     Unsent { outbox: u32, drafts: u32 },
+    /// A thread asked for a database connection it already holds: waiting
+    /// would hang it for good, so the app refuses instead.
+    #[error("the database was asked for again by the thread that holds it")]
+    HeldHere,
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -8768,6 +8772,33 @@ impl Store {
         Ok(())
     }
 
+    /// Restarts the days kept ([`KEEP_SERVER_FOUND_DAYS`]) of messages a
+    /// server search found again, already here as found mail: looked up
+    /// just now, they aren't let go of days early. Messages the sync
+    /// brought (not in `server_found`) are left as they are. Returns how
+    /// many were found mail.
+    pub fn refresh_server_found(
+        &self,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut refreshed = 0;
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE server_found SET found_at = ?4
+                  WHERE account = ?1 AND mailbox = ?2 AND uid = ?3",
+            )?;
+            let now = crate::pending::now();
+            for uid in uids {
+                refreshed += stmt.execute(params![account.0, mailbox, uid, now])?;
+            }
+        }
+        tx.commit()?;
+        Ok(refreshed)
+    }
+
     /// The messages of a folder a server search brought, not its sync.
     pub fn server_found_uids(&self, account: AccountId, mailbox: &str) -> Result<HashSet<u32>> {
         let mut stmt = self
@@ -16132,6 +16163,49 @@ From: <help@bank.example>\r\n\r\nHi";
         assert!([3, 4, 5].into_iter().all(|uid| there(&store, a, uid)));
         assert_eq!(store.body(a, "INBOX", 1).unwrap(), None);
         assert_eq!(store.body(a, "INBOX", 3).unwrap(), None);
+    }
+
+    #[test]
+    fn found_again_by_a_search_its_days_kept_start_over() {
+        let mut store = Store::open_in_memory().unwrap();
+        let a = store
+            .add_account(&imap_account("Work", "a@example.org", "#2F6FE0"))
+            .unwrap();
+        let day = 86_400;
+        let now = crate::pending::now();
+        let keep = i64::from(KEEP_SERVER_FOUND_DAYS);
+        // 1 synced; 2 and 3 found by a server search, years old.
+        store
+            .upsert_messages(&[
+                msg(a, 1, now - day, true),
+                msg(a, 2, now - 900 * day, true),
+                msg(a, 3, now - 900 * day, true),
+            ])
+            .unwrap();
+        store.note_server_found(a, "INBOX", &[2, 3], 7).unwrap();
+        // Found most of the window ago; 2 found again now.
+        store
+            .execute_for_tests(&format!(
+                "UPDATE server_found SET found_at = {}",
+                now - (keep - 1) * day
+            ))
+            .unwrap();
+        assert_eq!(store.refresh_server_found(a, "INBOX", &[1, 2]).unwrap(), 1);
+        // Synced mail doesn't become found mail.
+        assert_eq!(store.server_found_uids(a, "INBOX").unwrap(), [2, 3].into());
+        // Two days later: 3's window is over, 2's started again.
+        store
+            .execute_for_tests(&format!(
+                "UPDATE server_found SET found_at = found_at - {}",
+                2 * day
+            ))
+            .unwrap();
+        store.queue_body_clean_up(now).unwrap();
+        store.maintain_all().unwrap();
+        let left: std::collections::HashSet<u32> =
+            store.uids(a, "INBOX").unwrap().into_iter().collect();
+        assert_eq!(left, [1, 2].into());
+        assert_eq!(store.server_found_uids(a, "INBOX").unwrap(), [2].into());
     }
 
     #[test]

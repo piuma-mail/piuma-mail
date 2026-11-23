@@ -640,6 +640,14 @@ impl Client {
                 None => missing.push(id.clone()),
             }
         }
+        // Found again: its days kept start over.
+        let mut again: HashMap<&str, Vec<u32>> = HashMap::new();
+        for (mailbox, uid) in at.values() {
+            again.entry(mailbox.as_str()).or_default().push(*uid);
+        }
+        for (mailbox, uids) in again {
+            lock(store).refresh_server_found(account, mailbox, &uids)?;
+        }
         let mut properties: Vec<&str> = SUMMARY_PROPERTIES.to_vec();
         properties.extend(["mailboxIds", "attachments"]);
         for batch in missing.chunks(self.max_get) {

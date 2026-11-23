@@ -1,6 +1,17 @@
 import 'package:url_launcher/url_launcher.dart';
 
+import '../engine/api/links.dart' as engine;
 import '../mail/phone_files.dart';
+
+/// [host] (percent-decoding undone, any case) in the ASCII form the
+/// browser goes to: UTS #46 mapping (full-width letters, the dots `。` `．`
+/// `｡`, case, characters it drops), then punycode. The engine does it
+/// with the Rust `idna` crate, the same parsing its suspicious-link check
+/// uses, so the app shows and compares the host the engine checked. Null
+/// when it isn't a host a browser would open (an `@`, a label UTS #46
+/// refuses). Tests replace it.
+String? Function(String host) linkHostAscii = (host) =>
+    engine.linkHostAscii(host: host);
 
 /// Opens a link outside the app (the browser, or the mail app for
 /// mailto:). Tests replace it to see what would open.
@@ -39,10 +50,12 @@ bool isMailLinkAllowed(Uri uri) {
 /// app; this is the one place to route it to Piuma's own compose.
 Future<void> Function(Uri uri) openMailtoLink = (uri) => openExternalLink(uri);
 
-/// Opens a link that came with an email (its text, its layout, its list
-/// headers, a card the Vault read from it). Only [mailLinkSchemes] open;
-/// false when [uri] didn't.
-Future<bool> openMailLink(Uri uri) async {
+/// Hands a link that came with an email to the browser or the mail app,
+/// without asking: the app opens such links with `openLink`
+/// (inbox/message_body.dart), which asks first when the link is
+/// suspicious, and then calls this. Only [mailLinkSchemes] open; false when
+/// [uri] didn't.
+Future<bool> launchMailLink(Uri uri) async {
   if (!isMailLinkAllowed(uri)) return false;
   if (uri.scheme.toLowerCase() == 'mailto') {
     await openMailtoLink(uri);
@@ -65,20 +78,18 @@ Future<void> Function(String path) openLocalFile = (path) async {
 /// [Uri] writes it. An email's own `href` and the web view's `a.href` of
 /// it compare equal once both go through here.
 ///
-/// A host with letters outside ASCII is compared in its ASCII form, as
-/// browsers hand it back (`bücher.de` and `BÜCHER.de` are both
-/// `xn--bcher-kva.de`). A link whose host doesn't make a host once decoded
-/// (an `@` in percent-encoding) stays as it was written.
+/// A host is compared in the ASCII form browsers hand back, after UTS #46
+/// ([linkHostAscii]): `bücher.de` and `BÜCHER.de` are both
+/// `xn--bcher-kva.de`, `example。com` is `example.com`. A link whose host
+/// doesn't make a host once decoded (an `@` in percent-encoding) is only
+/// lowercased, its letters outside ASCII in punycode.
 String normalizeLink(String link) {
   final uri = Uri.tryParse(link.trim());
   if (uri == null || !uri.hasScheme) return link.trim();
-  var host = uri.host.toLowerCase();
-  if (host.contains('%')) {
-    // Lowercase after decoding: [Uri] lowercases only ASCII letters, so
-    // `Ü` arrives as `%C3%9C`.
-    final decoded = _decodeHost(host).toLowerCase();
-    host = punycodeHost(decoded) ?? decoded;
-  }
+  // An IPv6 address is left in the form [Uri] wrote it.
+  final host = uri.host.contains(':')
+      ? uri.host.toLowerCase()
+      : _asciiHost(_decodeHost(uri.host));
   try {
     var out = uri.replace(scheme: uri.scheme.toLowerCase(), host: host);
     if ((out.scheme == 'http' || out.scheme == 'https') && out.path.isEmpty) {
@@ -97,6 +108,7 @@ class LinkParts {
     required this.registrable,
     required this.ascii,
     required this.rest,
+    this.unreadable = false,
   });
 
   /// The host as people read it (Unicode, also when the link wrote it in
@@ -115,6 +127,11 @@ class LinkParts {
   /// Everything after the host: path, query, fragment (or a mailto's
   /// address).
   final String rest;
+
+  /// The host isn't one UTS #46 reads ([linkHostAscii] refuses it: a
+  /// broken punycode label such as `xn--zz.com`), so where the browser
+  /// goes can't be shown for sure: the link asks before it opens.
+  final bool unreadable;
 }
 
 /// [url] split for showing ([LinkParts]); null when it isn't a link.
@@ -124,9 +141,7 @@ LinkParts? describeLink(String url) {
   if (uri.scheme.toLowerCase() == 'mailto') {
     final to = _decodeHost(uri.path);
     final at = to.lastIndexOf('@');
-    final (host, ascii) = _readableHost(
-      at < 0 ? to : to.substring(at + 1).toLowerCase(),
-    );
+    final (host, ascii) = _readableHost(at < 0 ? to : to.substring(at + 1));
     return LinkParts(
       host: host,
       registrable: registrableDomain(host),
@@ -146,7 +161,8 @@ LinkParts? describeLink(String url) {
       rest: _rest(uri),
     );
   }
-  final (host, ascii) = _readableHost(_decodeHost(uri.host).toLowerCase());
+  final decoded = _decodeHost(uri.host);
+  final (host, ascii) = _readableHost(decoded);
   // A host hiding an `@` (`bank.example%40evil.example`): what follows the
   // `@` is the part to read, as with a user name before the host.
   final at = host.lastIndexOf('@');
@@ -156,6 +172,11 @@ LinkParts? describeLink(String url) {
     registrable: _ipv4.hasMatch(named) ? named : registrableDomain(named),
     ascii: ascii,
     rest: _rest(uri),
+    // An `@` or a `%` left already keeps the link from opening.
+    unreadable:
+        !decoded.contains('@') &&
+        !decoded.contains('%') &&
+        linkHostAscii(decoded) == null,
   );
 }
 
@@ -185,9 +206,27 @@ String _decodeHost(String host) {
   }
 }
 
-/// [host] as people read it (Unicode) and its ASCII form when the two
-/// differ, whichever of them the link wrote.
+/// [host] (decoded) in the ASCII form the browser goes to
+/// ([linkHostAscii]); when UTS #46 refuses it, lowercased with its letters
+/// outside ASCII in punycode.
+String _asciiHost(String host) {
+  if (linkHostAscii(host) case final ascii?) return ascii;
+  // Lowercase after decoding: [Uri] lowercases only ASCII letters, so `Ü`
+  // arrives as `%C3%9C`.
+  final lower = host.toLowerCase();
+  return punycodeHost(lower) ?? lower;
+}
+
+/// [host] (decoded) as people read it (Unicode) and its ASCII form when
+/// the two differ, whichever of them the link wrote. Read after UTS #46
+/// ([linkHostAscii]), so `ｅxample。com` shows as the `example.com` the
+/// browser opens.
 (String, String?) _readableHost(String host) {
+  if (linkHostAscii(host) case final ascii?) {
+    final unicode = unicodeHost(ascii);
+    return unicode == ascii ? (ascii, null) : (unicode, ascii);
+  }
+  host = host.toLowerCase();
   if (punycodeHost(host) case final ascii?) return (host, ascii);
   final unicode = unicodeHost(host);
   return unicode == host ? (host, null) : (unicode, host);
