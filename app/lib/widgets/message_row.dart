@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
+import 'bidi.dart';
 
 /// Avatar with initials and, if given, the account color dot.
 class PiumaAvatar extends StatelessWidget {
@@ -155,7 +156,7 @@ class MessageRow extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      subject,
+                      safeBidi(subject),
                       maxLines: 1,
                       overflow: ellipsis,
                       style: TextStyle(

@@ -492,7 +492,7 @@ class _NewsletterPaneState extends State<NewsletterPane> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        row.sender.toUpperCase(),
+                        safeBidi(row.sender.toUpperCase()),
                         style: TextStyle(
                           fontFamily: PiumaFonts.sans,
                           fontSize: 12,
@@ -756,7 +756,7 @@ class _Cover extends StatelessWidget {
                 bottom: PiumaSpace.s16,
               ),
               Text(
-                row.sender.toUpperCase(),
+                safeBidi(row.sender.toUpperCase()),
                 style: TextStyle(
                   fontFamily: PiumaFonts.sans,
                   fontSize: 12,
@@ -767,7 +767,7 @@ class _Cover extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                row.subject,
+                safeBidi(row.subject),
                 style: TextStyle(
                   fontFamily: PiumaFonts.sans,
                   fontSize: 23,

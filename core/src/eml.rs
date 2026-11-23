@@ -127,7 +127,7 @@ pub fn read(raw: &[u8]) -> Result<EmlMessage, EmlError> {
 fn clean(text: &str) -> String {
     text.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
-        .filter(|c| !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'))
+        .filter(|&c| !crate::bidi::is_bidi_override(c) && !crate::bidi::is_bidi_mark(c))
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()

@@ -223,7 +223,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                       child: Column(
                         children: [
                           Text(
-                            _file.file.name,
+                            safeBidi(_file.file.name),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
@@ -391,8 +391,12 @@ class _AttachPreviewState extends State<AttachPreview> {
                   if (count != null && count > 1)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
+                      // Pages turn physically, as the swipe and the arrow
+                      // keys do: previous on the left, next on the right.
+                      textDirection: TextDirection.ltr,
                       children: [
                         _IconButton(
+                          physical: true,
                           icon: PiumaIcon.chevronLeft,
                           label: l.previewPrevPage,
                           size: 18,
@@ -419,6 +423,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                           ),
                         ),
                         _IconButton(
+                          physical: true,
                           icon: PiumaIcon.chevronRight,
                           label: l.previewNextPage,
                           size: 18,
@@ -575,7 +580,7 @@ class _AttachPreviewState extends State<AttachPreview> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _file.file.name,
+                    safeBidi(_file.file.name),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -704,46 +709,55 @@ class _AttachPreviewState extends State<AttachPreview> {
                 child: Row(
                   children: [
                     Expanded(child: Text(l.previewDrawnHere, style: hint)),
-                    if (count != null) ...[
-                      _IconButton(
-                        icon: PiumaIcon.chevronLeft,
-                        label: l.previewPrevPage,
-                        size: 16,
-                        width: 36,
-                        height: 32,
-                        enabled: _page > 0,
-                        onTap: () => _turn(_page - 1),
-                      ),
-                      const SizedBox(width: 2),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(minWidth: 84),
-                        child: Semantics(
-                          liveRegion: true,
-                          child: Text(
-                            l.previewPage(_page + 1, count),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontFamily: PiumaFonts.sans,
-                              fontSize: 13,
-                              color: c.fg,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
+                    if (count != null)
+                      // Pages turn physically, as the swipe and the arrow
+                      // keys do: previous on the left, next on the right.
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        textDirection: TextDirection.ltr,
+                        children: [
+                          _IconButton(
+                            physical: true,
+                            icon: PiumaIcon.chevronLeft,
+                            label: l.previewPrevPage,
+                            size: 16,
+                            width: 36,
+                            height: 32,
+                            enabled: _page > 0,
+                            onTap: () => _turn(_page - 1),
+                          ),
+                          const SizedBox(width: 2),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(minWidth: 84),
+                            child: Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                l.previewPage(_page + 1, count),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontFamily: PiumaFonts.sans,
+                                  fontSize: 13,
+                                  color: c.fg,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          const SizedBox(width: 2),
+                          _IconButton(
+                            physical: true,
+                            icon: PiumaIcon.chevronRight,
+                            label: l.previewNextPage,
+                            size: 16,
+                            width: 36,
+                            height: 32,
+                            enabled: _page < count - 1,
+                            onTap: () => _turn(_page + 1),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 2),
-                      _IconButton(
-                        icon: PiumaIcon.chevronRight,
-                        label: l.previewNextPage,
-                        size: 16,
-                        width: 36,
-                        height: 32,
-                        enabled: _page < count - 1,
-                        onTap: () => _turn(_page + 1),
-                      ),
-                    ],
                     Expanded(
                       child: Text(
                         count != null && count > 1 ? l.previewKeysPages : '',
@@ -818,10 +832,12 @@ class _AttachPreviewState extends State<AttachPreview> {
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): close,
+        // A PDF's pages turn physically, like its buttons and the swipe;
+        // the photo strip runs the way the layout does.
         const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
-            _pdf ? _turn(_page - 1) : _step(-1),
+            _pdf ? _turn(_page - 1) : _step(isRtl(context) ? 1 : -1),
         const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
-            _pdf ? _turn(_page + 1) : _step(1),
+            _pdf ? _turn(_page + 1) : _step(isRtl(context) ? -1 : 1),
       },
       child: Focus(
         autofocus: true,
@@ -1156,6 +1172,7 @@ class _IconButton extends StatelessWidget {
     this.width = 44,
     this.height = 44,
     this.enabled = true,
+    this.physical = false,
   });
 
   final PiumaIcon icon;
@@ -1165,6 +1182,9 @@ class _IconButton extends StatelessWidget {
   final double width;
   final double height;
   final bool enabled;
+
+  /// Drawn as is, never mirrored in a right-to-left layout.
+  final bool physical;
 
   @override
   Widget build(BuildContext context) {
@@ -1176,10 +1196,15 @@ class _IconButton extends StatelessWidget {
         width: width,
         height: height,
         child: Center(
-          child: PiumaIconView(
-            icon,
-            size: size,
-            color: enabled ? c.fg : c.line,
+          child: Directionality(
+            textDirection: physical
+                ? TextDirection.ltr
+                : Directionality.of(context),
+            child: PiumaIconView(
+              icon,
+              size: size,
+              color: enabled ? c.fg : c.line,
+            ),
           ),
         ),
       ),

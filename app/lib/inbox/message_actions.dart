@@ -605,7 +605,7 @@ class _FetchPanelState extends State<_FetchPanel> {
                     const SizedBox(width: PiumaSpace.s8),
                     Expanded(
                       child: Text(
-                        f.name,
+                        safeBidi(f.name),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: PiumaType.body.copyWith(color: c.fg),
@@ -673,7 +673,7 @@ class _OutboxRedirectPanel extends StatelessWidget {
           style: PiumaType.body.copyWith(color: c.fg),
         ),
         Text(
-          item.subject.isEmpty ? l.noSubject : item.subject,
+          safeBidi(item.subject.isEmpty ? l.noSubject : item.subject),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: PiumaType.body.copyWith(color: c.muted),

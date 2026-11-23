@@ -1927,7 +1927,7 @@ class _ResultRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      row.sender,
+                      safeBidi(row.sender),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: PiumaType.body.copyWith(
@@ -2043,7 +2043,7 @@ class _FileRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      file.file.name,
+                      safeBidi(file.file.name),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: PiumaType.body.copyWith(
@@ -2249,14 +2249,14 @@ class _PreviewState extends State<_Preview> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            row.sender,
+                            safeBidi(row.sender),
                             style: PiumaType.body.copyWith(
                               fontWeight: FontWeight.w600,
                               color: c.fg,
                             ),
                           ),
                           Text(
-                            row.fromEmail,
+                            safeBidi(row.fromEmail),
                             style: PiumaType.small.copyWith(color: c.muted),
                           ),
                         ],

@@ -304,7 +304,7 @@ class _Stack extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          lead.subject,
+                          safeBidi(lead.subject),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

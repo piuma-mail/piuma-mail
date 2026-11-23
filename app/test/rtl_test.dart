@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
+import 'package:piuma_mail/inbox/attach_preview.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/mail_pager.dart';
 import 'package:piuma_mail/inbox/message_body.dart';
@@ -81,6 +83,38 @@ void main() {
       expect(firstStrongDirection(''), isNull);
     });
 
+    test('only L, R and AL letters are strong', () {
+      // Arabic digits with the Arabic decimal and thousands separators
+      // (AN), percent sign (ET), European digits and separators (EN, ES,
+      // CS) don't decide.
+      expect(firstStrongDirection('١٢٫٥ Hello'), TextDirection.ltr);
+      expect(firstStrongDirection('١٬٠٠٠ Hello'), TextDirection.ltr);
+      expect(firstStrongDirection('٪٥٠ off'), TextDirection.ltr);
+      expect(
+        firstStrongDirection('\u0600\u06DD 1.5 + 2 Go'),
+        TextDirection.ltr,
+      );
+      expect(firstStrongDirection('\u{10D30}\u{10D39} ok'), TextDirection.ltr);
+      // Punctuation goes by its own class: the Arabic comma (CS) and per
+      // mille sign (ET) are neutral, the Arabic question mark (AL) and
+      // Hebrew maqaf and geresh (R) are right to left.
+      expect(firstStrongDirection('\u060C\u0609 Hello'), TextDirection.ltr);
+      expect(firstStrongDirection('\u061F Hello'), TextDirection.rtl);
+      expect(firstStrongDirection('\u05BE Hello'), TextDirection.rtl);
+      expect(firstStrongDirection('\u05F3 Hello'), TextDirection.rtl);
+      // A leading combining mark (NSM) or format character (BN) is skipped.
+      expect(firstStrongDirection('\u064B\u0651 Hi'), TextDirection.ltr);
+      expect(firstStrongDirection('\u0301\u200B مرحبا'), TextDirection.rtl);
+      expect(firstStrongDirection('\u05B0Abc'), TextDirection.ltr);
+      // Letters elsewhere: Syriac and Thaana are right to left, a
+      // Devanagari spacing mark (L, not a letter) left to right.
+      expect(firstStrongDirection('ܐܒ'), TextDirection.rtl);
+      expect(firstStrongDirection('ހށ'), TextDirection.rtl);
+      expect(firstStrongDirection('\u0903'), TextDirection.ltr);
+      // A modifier letter that is ON, not L.
+      expect(firstStrongDirection('\u02B9 مرحبا'), TextDirection.rtl);
+    });
+
     test('marks decide, isolates do not', () {
       expect(firstStrongDirection('\u200F123 abc'), TextDirection.rtl);
       expect(firstStrongDirection('\u2068Anna\u2069 مرحبا'), TextDirection.rtl);
@@ -149,6 +183,128 @@ void main() {
       expect(arabicInLtr, '\u2068ليلى\u2069');
       expect(latinInRtl, '\u2068Anna\u2069');
       expect(isolate(''), '');
+    });
+  });
+
+  group('direction controls in what senders wrote', () {
+    test('are made harmless, one unit for one', () {
+      expect(safeBidi('Bank\u202Egro.evil'), 'Bank\uFFFDgro.evil');
+      expect(
+        safeBidi('a\u202A\u202B\u202C\u202D b'),
+        'a\uFFFD\uFFFD\uFFFD\uFFFD b',
+      );
+      expect(safeBidi('\u2066\u2067\u2068\u2069'), '\uFFFD\uFFFD\uFFFD\uFFFD');
+      expect(safeBidi('\u200Ex\u200F\u061C'), '\u2060x\u2060\u2060');
+      expect(safeBidi('שלום Anna'), 'שלום Anna');
+      const s = '\u202Dab\u200F';
+      expect(safeBidi(s).length, s.length);
+    });
+
+    testWidgets('a pop in a name cannot close its isolate early', (
+      tester,
+    ) async {
+      late String ltr, rtl;
+      Widget probe(TextDirection d, void Function(BuildContext) read) =>
+          Directionality(
+            textDirection: d,
+            child: Builder(
+              builder: (context) {
+                read(context);
+                return const SizedBox();
+              },
+            ),
+          );
+      const name = 'ليلى\u2069 \u202Eevil';
+      await tester.pumpWidget(
+        probe(TextDirection.ltr, (c) => ltr = bidiArg(c, name)),
+      );
+      await tester.pumpWidget(
+        probe(TextDirection.rtl, (c) => rtl = bidiArg(c, 'Anna\u2069x')),
+      );
+      expect(ltr, '\u2068ليلى\uFFFD \uFFFDevil\u2069');
+      expect(rtl, '\u2068Anna\uFFFDx\u2069');
+      // Even left as is, Latin in a left-to-right sentence loses them.
+      await tester.pumpWidget(
+        probe(TextDirection.ltr, (c) => ltr = bidiArg(c, 'Ann\u202Ea')),
+      );
+      expect(ltr, 'Ann\uFFFDa');
+      expect(isolate('a\u2069'), '\u2068a\uFFFD\u2069');
+    });
+
+    testWidgets('an override in a display name does not reorder it', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const Directionality(
+          textDirection: TextDirection.ltr,
+          child: BidiText('Bank\u202Egro.evil'),
+        ),
+      );
+      final text = tester.widget<Text>(find.byType(Text));
+      expect(text.data, 'Bank\uFFFDgro.evil');
+      expect(text.textDirection, TextDirection.ltr);
+    });
+
+    testWidgets('a link\'s text keeps no override and is isolated', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        PiumaApp(
+          home: (_, _) => Material(
+            child: MessageBody(
+              readable: const Readable(
+                blocks: [
+                  BodyBlock.text([
+                    BodySpan('\u202EPay at '),
+                    BodySpan(
+                      'bank\u202Emoc.\u2069x',
+                      link: 'https://evil.example/',
+                      suspicious: true,
+                    ),
+                    BodySpan(' today'),
+                  ]),
+                ],
+              ),
+              images: RemoteImages(DemoMailSource(now: _now)),
+              showRemote: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final body = _richTextContaining('today');
+      final plain = tester.widget<RichText>(body).text.toPlainText();
+      expect(plain, '\u202EPay at \u2068bank\uFFFDmoc.\uFFFDx\u2069 today');
+    });
+
+    testWidgets('the trust confirmation shows the name as it is', (
+      tester,
+    ) async {
+      tester.view.physicalSize = _phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        PiumaApp(
+          textDirection: TextDirection.rtl,
+          home: (_, _) => Material(
+            child: SingleChildScrollView(
+              child: PrivacySheet(
+                readable: const Readable(blocks: [], remoteImages: 1),
+                sender: 'PayPal\u2069\u202E moc.liame',
+                imagesShown: false,
+                onLoadOnce: () {},
+                onTrust: (_) {},
+                onBlockImages: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final label = find.textContaining('Always trust');
+      expect(label, findsOneWidget);
+      final shown = tester.widget<Text>(label).data!;
+      expect(shown, 'Always trust \u2068PayPal\uFFFD\uFFFD moc.liame\u2069');
     });
   });
 
@@ -366,6 +522,48 @@ void main() {
         matchesGoldenFile('goldens/rtl_desktop_reader_$name.png'),
       );
     }, tags: ['golden']);
+  }
+
+  for (final (kind, size) in [('desktop', _desktop), ('phone', _phone)]) {
+    testWidgets('$kind PDF pages turn the same way by button and key', (
+      tester,
+    ) async {
+      await _pump(tester, size: size, rtlMail: false);
+      await tester.tap(find.text('Mockup v3 review').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('mockup-v3.pdf').first);
+      await tester.pumpAndSettle();
+      expect(find.byType(AttachPreview), findsOneWidget);
+      final prev = find.bySemanticsLabel('Previous page');
+      final next = find.bySemanticsLabel('Next page');
+      // Physical, like the swipe and the arrow keys: previous on the
+      // left pointing left, next on the right pointing right.
+      expect(tester.getCenter(prev).dx, lessThan(tester.getCenter(next).dx));
+      for (final button in [prev, next]) {
+        final flipped = find.descendant(
+          of: button,
+          matching: find.byWidgetPredicate(
+            (w) => w is Transform && w.transform.storage[0] < 0,
+          ),
+        );
+        expect(flipped, findsNothing);
+      }
+      expect(find.text('Page 1 of 2'), findsOneWidget);
+      await tester.tap(next);
+      await tester.pumpAndSettle();
+      expect(find.text('Page 2 of 2'), findsOneWidget);
+      if (kind == 'desktop') {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+        await tester.pumpAndSettle();
+        expect(find.text('Page 1 of 2'), findsOneWidget);
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pumpAndSettle();
+        expect(find.text('Page 2 of 2'), findsOneWidget);
+      }
+      await tester.tap(prev);
+      await tester.pumpAndSettle();
+      expect(find.text('Page 1 of 2'), findsOneWidget);
+    });
   }
 
   testWidgets('rtl phone compose golden', (tester) async {

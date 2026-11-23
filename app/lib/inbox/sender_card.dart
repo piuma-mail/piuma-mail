@@ -286,7 +286,7 @@ class _SenderCardState extends State<SenderCard> {
                     Semantics(
                       header: true,
                       child: Text(
-                        row.sender,
+                        safeBidi(row.sender),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: PiumaType.subtitle.copyWith(color: c.fg),
@@ -458,7 +458,7 @@ class _SenderCardState extends State<SenderCard> {
                     Semantics(
                       header: true,
                       child: Text(
-                        row.sender,
+                        safeBidi(row.sender),
                         textAlign: TextAlign.center,
                         style: PiumaType.title.copyWith(
                           fontSize: 24,
@@ -708,7 +708,7 @@ class _SenderCardState extends State<SenderCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      f.file.name,
+                      safeBidi(f.file.name),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: PiumaType.small.copyWith(
@@ -1023,7 +1023,7 @@ class _RecentLine extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  subject,
+                  safeBidi(subject),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: PiumaType.small.copyWith(
@@ -1090,7 +1090,7 @@ class _Conversation extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            subject,
+                            safeBidi(subject),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: PiumaType.body.copyWith(

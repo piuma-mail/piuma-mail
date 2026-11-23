@@ -17,6 +17,7 @@ import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/links.dart';
 import 'arrive.dart';
+import '../widgets/bidi.dart';
 
 /// An email file opened from outside the app (`.eml`): read only, apart
 /// from the mailbox. The engine read it with the same parser as synced
@@ -246,9 +247,11 @@ class _EmlReaderState extends State<EmlReader> {
                         ),
                         const SizedBox(height: PiumaSpace.s12),
                         Text(
-                          _m.fromName.isNotEmpty
-                              ? '${_m.fromName} <${_m.fromEmail}>'
-                              : _m.fromEmail,
+                          safeBidi(
+                            _m.fromName.isNotEmpty
+                                ? '${_m.fromName} <${_m.fromEmail}>'
+                                : _m.fromEmail,
+                          ),
                           style: PiumaType.body.copyWith(
                             color: c.fg,
                             fontWeight: FontWeight.w500,

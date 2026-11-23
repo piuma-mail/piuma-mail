@@ -1130,7 +1130,7 @@ class _SourceRow extends StatelessWidget {
                         children: [
                           Flexible(
                             child: Text(
-                              cal.name,
+                              safeBidi(cal.name),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: PiumaType.body.copyWith(
@@ -1400,7 +1400,7 @@ class _MenuOption extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    calendar.name,
+                    safeBidi(calendar.name),
                     style: PiumaType.body.copyWith(fontSize: 14, color: c.fg),
                   ),
                 ),

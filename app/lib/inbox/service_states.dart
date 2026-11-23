@@ -499,7 +499,7 @@ class _SnoozedLine extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      row.subject,
+                      safeBidi(row.subject),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: PiumaType.body.copyWith(
@@ -509,7 +509,7 @@ class _SnoozedLine extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      row.sender,
+                      safeBidi(row.sender),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: PiumaType.small.copyWith(

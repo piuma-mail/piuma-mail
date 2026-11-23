@@ -248,7 +248,7 @@ class _Target extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              folder.name,
+              safeBidi(folder.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: PiumaType.body.copyWith(

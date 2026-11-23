@@ -864,7 +864,7 @@ class _PhoneFolderTreeState extends State<PhoneFolderTree> {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              f.name,
+              safeBidi(f.name),
               style: PiumaType.body.copyWith(
                 fontSize: 16,
                 color: f.selectable ? c.fg : c.muted,

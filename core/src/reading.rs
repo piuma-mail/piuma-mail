@@ -341,7 +341,7 @@ fn autolink(text: &str, clean: bool, cleaned: &mut u32) -> Vec<Span> {
                     });
                 }
                 spans.push(Span {
-                    text: word.to_owned(),
+                    text: crate::bidi::neutralize(word),
                     link: Some(link),
                     ..Span::default()
                 });
@@ -502,6 +502,15 @@ const SKIPPED: &[&str] = &[
 ];
 
 /// Elements that start a new block.
+/// Elements whose `dir` sets the direction of the blocks inside them.
+fn sets_direction(name: &str) -> bool {
+    BLOCKS.contains(&name)
+        || matches!(
+            name,
+            "blockquote" | "ul" | "ol" | "li" | "pre" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        )
+}
+
 const BLOCKS: &[&str] = &[
     "p",
     "div",
@@ -856,6 +865,12 @@ impl Walker {
             Some((l, s)) => (Some(l.clone()), *s),
             None => (None, false),
         };
+        // A link's text is the sender's: no direction controls of its own.
+        let text = if link.is_some() {
+            crate::bidi::neutralize(&text)
+        } else {
+            text
+        };
         match self.current.last_mut() {
             Some(last)
                 if last.bold == style.bold
@@ -973,9 +988,11 @@ impl Walker {
         }
 
         let mut style = inherited;
-        // `dir` holds for everything inside, until another `dir`; `auto`
-        // hands the choice back to the text.
-        if let Some(dir) = el.value().attr("dir") {
+        // A block's `dir` holds for everything inside, until another
+        // block's; `auto` hands the choice back to the text. An inline
+        // element's (a `span`, a link) turns a few words around, not the
+        // paragraph they sit in.
+        if let Some(dir) = el.value().attr("dir").filter(|_| sets_direction(name)) {
             style.rtl = match dir.trim().to_ascii_lowercase().as_str() {
                 "rtl" => Some(true),
                 "ltr" => Some(false),
@@ -1160,6 +1177,40 @@ pub fn plain_text(r: &Readable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inline_dir_does_not_turn_the_paragraph() {
+        let r = from_html(
+            "<p><span dir=\"rtl\">\u{645}\u{631}\u{62d}\u{628}\u{627}</span> English</p>\
+             <div dir=\"rtl\"><p>x <b dir=\"ltr\">y</b></p></div>\
+             <ul dir=\"rtl\"><li>a</li></ul><table><tr><td dir=\"rtl\">b</td></tr></table>\
+             <h2 dir=\"rtl\">c</h2>",
+        );
+        let dirs: Vec<Option<bool>> = r.blocks.iter().map(|b| b.rtl).collect();
+        assert_eq!(dirs, [None, Some(true), Some(true), Some(true), Some(true)]);
+    }
+
+    #[test]
+    fn a_links_text_loses_its_direction_controls() {
+        let r = from_html(
+            "<p>Pay at <a href=\"https://evil.example/\">bank\u{202E}moc.\u{2069}x\u{200F}</a></p>",
+        );
+        let link = r.blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.link.is_some())
+            .expect("a link");
+        assert_eq!(link.text, "bank\u{FFFD}moc.\u{FFFD}x\u{2060}");
+        // Text around it is the email's own and stays as written.
+        let r = from_html("<p>\u{200F}abc</p>");
+        assert_eq!(r.blocks[0].spans[0].text, "\u{200F}abc");
+        // Plain-text links too.
+        let r = from_text("see https://a.example/\u{202E}gpj.exe");
+        let link = r.blocks[0].spans.iter().find(|s| s.link.is_some());
+        if let Some(link) = link {
+            assert!(!link.text.contains('\u{202E}'), "{}", link.text);
+        }
+    }
 
     #[test]
     fn blocks_keep_the_direction_their_markup_sets() {

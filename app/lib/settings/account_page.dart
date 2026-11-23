@@ -1141,7 +1141,7 @@ class _RemoveAccountPanelState extends State<RemoveAccountPanel> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              m.subject.isEmpty ? l.noSubject : m.subject,
+              safeBidi(m.subject.isEmpty ? l.noSubject : m.subject),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: PiumaType.body.copyWith(

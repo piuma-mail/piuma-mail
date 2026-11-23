@@ -304,12 +304,19 @@ class _SpansState extends State<_Spans> {
         }
       }
       final points = cuts.toList()..sort();
+      // A link's text is the sender's: its own direction controls are
+      // made harmless (same length, so the marks above still line up) and,
+      // with other text around it, it is isolated, so an override there
+      // can't reorder what it says either.
+      final text = tap != null ? safeBidi(s.text) : s.text;
+      final isolated = tap != null && widget.spans.length > 1;
+      if (isolated) children.add(const TextSpan(text: '\u2068'));
       for (var i = 0; i + 1 < points.length; i++) {
         final from = at + points[i];
         final inMark = widget.marks.any((m) => from >= m.$1 && from < m.$2);
         children.add(
           TextSpan(
-            text: s.text.substring(points[i], points[i + 1]),
+            text: text.substring(points[i], points[i + 1]),
             style: inMark ? style.merge(marked) : style,
             mouseCursor: tap != null ? SystemMouseCursors.click : null,
             recognizer: tap,
@@ -323,6 +330,7 @@ class _SpansState extends State<_Spans> {
           ),
         );
       }
+      if (isolated) children.add(const TextSpan(text: '\u2069'));
       at += s.text.length;
     }
     return Text.rich(TextSpan(style: widget.style, children: children));
@@ -338,7 +346,7 @@ Future<void> openBodyLink(
 ]) => openLink(
   context,
   link,
-  shown: span != null && span.suspicious ? span.text.trim() : null,
+  shown: span != null && span.suspicious ? safeBidi(span.text.trim()) : null,
 );
 
 /// Around an email whose sender isn't who they say: every link in it asks
@@ -412,7 +420,10 @@ class _SuspiciousLink extends StatelessWidget {
         ),
         const SizedBox(height: PiumaSpace.s16),
         Text(switch (shown) {
-          final shown? => l.suspiciousLinkBody(shown, bidiArg(context, host)),
+          final shown? => l.suspiciousLinkBody(
+            bidiArg(context, shown),
+            bidiArg(context, host),
+          ),
           null => l.impostorLinkBody(bidiArg(context, host)),
         }, style: PiumaType.body.copyWith(color: c.fg)),
         const SizedBox(height: PiumaSpace.s8),

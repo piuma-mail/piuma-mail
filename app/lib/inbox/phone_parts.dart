@@ -118,7 +118,7 @@ class PhoneInboxHeader extends StatelessWidget {
     );
     final group = this.group;
     final heading = Text(
-      group?.name ?? title ?? folderName(l, folder),
+      safeBidi(group?.name ?? title ?? folderName(l, folder)),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
@@ -506,7 +506,7 @@ class PhoneAccountsSheet extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              lb.name,
+                              safeBidi(lb.name),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: text(

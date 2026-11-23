@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 
+import 'bidi_table.g.dart';
+
 /// Right-to-left support: which way a piece of mail reads, and how to keep
 /// a name written the other way from scrambling the sentence around it.
 ///
@@ -44,8 +46,12 @@ TextDirection? firstStrongDirection(String text, {bool subject = false}) {
     if (isolates > 0) continue;
     if (r == 0x200F) return TextDirection.rtl; // RIGHT-TO-LEFT MARK
     if (r == 0x200E) return TextDirection.ltr; // LEFT-TO-RIGHT MARK
-    if (_isRtlStrong(r)) return TextDirection.rtl;
-    if (_isLtrStrong(r)) return TextDirection.ltr;
+    switch (_strength(r)) {
+      case 0x52: // R or AL
+        return TextDirection.rtl;
+      case 0x4C: // L
+        return TextDirection.ltr;
+    }
   }
   return null;
 }
@@ -57,21 +63,60 @@ TextDirection directionOf(
   bool subject = false,
 }) => firstStrongDirection(text, subject: subject) ?? fallback;
 
-/// [text] wrapped in FIRST STRONG ISOLATE … POP DIRECTIONAL ISOLATE, so a
-/// name or subject written the other way stays in one piece inside a
-/// sentence of the interface ("From {name}") and doesn't pull its
-/// punctuation across. Empty text stays empty.
-String isolate(String text) => text.isEmpty ? text : '\u2068$text\u2069';
+/// [text] with its own direction controls made harmless, for any string
+/// that comes from outside: a sender's name or address, a subject, a
+/// link's text, an attachment's or a server folder's name.
+///
+/// Embeddings, overrides and isolates (U+202A–U+202E, U+2066–U+2069)
+/// become a visible U+FFFD, so "Bank\u202Egro.evil" can't show as
+/// "Bank live.org" and a stray POP DIRECTIONAL ISOLATE can't close the
+/// isolate [isolate] puts around it. The marks (LRM, RLM, ALM) become an
+/// invisible WORD JOINER, which the bidi algorithm ignores. Every
+/// replacement is one UTF-16 unit, like what it replaces, so offsets into
+/// the text still hold. The core does the same (`core/src/bidi.rs`).
+String safeBidi(String text) {
+  if (!_hasBidiControl(text)) return text;
+  final out = StringBuffer();
+  for (final unit in text.codeUnits) {
+    out.writeCharCode(switch (unit) {
+      0x200E || 0x200F || 0x061C => 0x2060,
+      >= 0x202A && <= 0x202E || >= 0x2066 && <= 0x2069 => 0xFFFD,
+      _ => unit,
+    });
+  }
+  return out.toString();
+}
 
-/// [text] isolated where it could scramble the sentence it goes into: when
-/// it holds right-to-left letters, or the interface reads right to left.
-/// Left-to-right text in a left-to-right interface is left as it is.
+bool _hasBidiControl(String text) {
+  for (final unit in text.codeUnits) {
+    if (unit == 0x061C ||
+        unit == 0x200E ||
+        unit == 0x200F ||
+        (unit >= 0x202A && unit <= 0x202E) ||
+        (unit >= 0x2066 && unit <= 0x2069)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// [text], made safe by [safeBidi], wrapped in FIRST STRONG ISOLATE …
+/// POP DIRECTIONAL ISOLATE, so a name or subject written the other way
+/// stays in one piece inside a sentence of the interface ("From {name}")
+/// and doesn't pull its punctuation across. Empty text stays empty.
+String isolate(String text) =>
+    text.isEmpty ? text : '\u2068${safeBidi(text)}\u2069';
+
+/// [text] made safe by [safeBidi], and isolated where it could scramble
+/// the sentence it goes into: when it holds right-to-left letters, or the
+/// interface reads right to left. Left-to-right text in a left-to-right
+/// interface is left as it is.
 String bidiArg(BuildContext context, String text) =>
-    isRtl(context) || _hasRtl(text) ? isolate(text) : text;
+    isRtl(context) || _hasRtl(text) ? isolate(text) : safeBidi(text);
 
 bool _hasRtl(String text) {
   for (final r in text.runes) {
-    if (r >= 0x0590 && _isRtlStrong(r)) return true;
+    if (r >= 0x0590 && _strength(r) == 0x52) return true;
   }
   return false;
 }
@@ -107,9 +152,10 @@ class BidiText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final around = Directionality.of(context);
-    final own = directionOf(data, around, subject: subject);
+    final text = safeBidi(data);
+    final own = directionOf(text, around, subject: subject);
     return Text(
-      data,
+      text,
       style: style,
       maxLines: maxLines,
       overflow: overflow,
@@ -138,31 +184,23 @@ final _prefixes = RegExp(
 int _runeCount(String s, int codeUnits) =>
     codeUnits == 0 ? 0 : s.substring(0, codeUnits).runes.length;
 
-/// Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic, Arabic
-/// extended, the Hebrew and Arabic presentation forms, and the
-/// right-to-left blocks of the supplementary planes.
-bool _isRtlStrong(int r) =>
-    (r >= 0x0590 && r <= 0x08FF && !_isArabicDigitOrMark(r)) ||
-    (r >= 0xFB1D && r <= 0xFDFF) ||
-    (r >= 0xFE70 && r <= 0xFEFF && r != 0xFEFF) ||
-    (r >= 0x10800 && r <= 0x10FFF) ||
-    (r >= 0x1E800 && r <= 0x1EFFF);
-
-/// Arabic-Indic digits and the combining marks in the right-to-left
-/// blocks: weak or neutral, they don't decide.
-bool _isArabicDigitOrMark(int r) =>
-    (r >= 0x0591 && r <= 0x05BD) ||
-    (r >= 0x0610 && r <= 0x061A) ||
-    (r >= 0x064B && r <= 0x065F) ||
-    (r >= 0x0660 && r <= 0x0669) ||
-    r == 0x0670 ||
-    (r >= 0x06D6 && r <= 0x06ED && r != 0x06E5 && r != 0x06E6) ||
-    (r >= 0x06F0 && r <= 0x06F9);
-
-final _letter = RegExp(r'\p{L}', unicode: true);
-
-bool _isLtrStrong(int r) {
-  if (r < 0x41) return false;
-  if (r < 0x80) return (r >= 0x41 && r <= 0x5A) || (r >= 0x61 && r <= 0x7A);
-  return _letter.hasMatch(String.fromCharCode(r));
+/// Whether [r] is strong for the bidi algorithm: `L`, `R` (for R and AL)
+/// or `N` for everything else (digits of any kind, separators, combining
+/// marks, format characters, neutrals), as a code unit. From the table
+/// `tools/gen_bidi_table.py` writes out of Unicode's Bidi_Class.
+int _strength(int r) {
+  if (r < 0x80) {
+    return (r >= 0x41 && r <= 0x5A) || (r >= 0x61 && r <= 0x7A) ? 0x4C : 0x4E;
+  }
+  var lo = 0;
+  var hi = bidiRunStarts.length - 1;
+  while (lo < hi) {
+    final mid = (lo + hi + 1) >> 1;
+    if (bidiRunStarts[mid] <= r) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return bidiStrongKinds.codeUnitAt(lo);
 }

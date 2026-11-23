@@ -1947,7 +1947,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            f.name,
+            safeBidi(f.name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: text.copyWith(color: f.selectable ? c.fg : c.muted),

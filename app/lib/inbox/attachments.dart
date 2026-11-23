@@ -1067,7 +1067,7 @@ class _FileCardState extends State<_FileCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            f.file.name,
+                            safeBidi(f.file.name),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

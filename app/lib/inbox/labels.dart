@@ -94,7 +94,7 @@ class LabelPill extends StatelessWidget {
           SizedBox(width: phone ? 4 : 5),
           Flexible(
             child: Text(
-              label.name,
+              safeBidi(label.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -660,7 +660,7 @@ class _Choice extends StatelessWidget {
                 SizedBox(width: phone ? 12 : 10),
                 Expanded(
                   child: Text(
-                    label.name,
+                    safeBidi(label.name),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: PiumaType.body.copyWith(
@@ -1061,7 +1061,7 @@ class SidebarLabels extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          label.name,
+                          safeBidi(label.name),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

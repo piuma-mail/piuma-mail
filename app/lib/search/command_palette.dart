@@ -501,7 +501,7 @@ class _HitRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          subject,
+                          safeBidi(subject),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: PiumaType.body.copyWith(
