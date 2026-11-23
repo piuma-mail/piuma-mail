@@ -7754,4 +7754,354 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Message e-mail';
+
+  @override
+  String get transferTitle => 'Importer et exporter';
+
+  @override
+  String get transferSubtitle =>
+      'Transférez vos e-mails et réglages depuis et vers d’autres apps de messagerie.';
+
+  @override
+  String get transferMail => 'E-mails';
+
+  @override
+  String get transferExportTitle => 'Exporter des e-mails';
+
+  @override
+  String get transferExportHint =>
+      'Un dossier en un seul fichier .mbox, que Thunderbird, Apple Mail et d’autres ouvrent, ou en ZIP de fichiers .eml.';
+
+  @override
+  String get transferFrom => 'Depuis';
+
+  @override
+  String get transferInto => 'Dans';
+
+  @override
+  String get transferChooseFolder => 'Choisir un dossier';
+
+  @override
+  String get transferChooseAccount => 'Choisir un compte';
+
+  @override
+  String get transferFormat => 'Format';
+
+  @override
+  String get transferFormatMbox => 'Fichier .mbox';
+
+  @override
+  String get transferFormatZip => 'ZIP de .eml';
+
+  @override
+  String get transferExportButton => 'Exporter…';
+
+  @override
+  String get transferImportTitle => 'Importer des e-mails';
+
+  @override
+  String get transferImportHint =>
+      'Fichiers .eml et .mbox de Thunderbird, Apple Mail ou d’un Takeout Gmail. Les messages que le dossier contient déjà sont ignorés.';
+
+  @override
+  String get transferImportButton => 'Choisir des fichiers…';
+
+  @override
+  String get transferSettings => 'Réglages';
+
+  @override
+  String get transferSettingsExport => 'Exporter les réglages';
+
+  @override
+  String get transferSettingsExportHint =>
+      'Comptes, signatures et apparence dans un seul fichier. Les mots de passe n’y sont jamais.';
+
+  @override
+  String get transferSettingsImport => 'Importer des réglages';
+
+  @override
+  String get transferSettingsImportHint =>
+      'Remplit les comptes depuis un fichier de réglages ; vous vous connectez vous-même à chacun.';
+
+  @override
+  String get transferSettingsImportButton => 'Importer…';
+
+  @override
+  String transferExporting(String folder) {
+    return 'Export de $folder';
+  }
+
+  @override
+  String transferImporting(String folder) {
+    return 'Import dans $folder';
+  }
+
+  @override
+  String transferMessagesSoFar(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString messages',
+      one: '1 message',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferExported(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString messages exportés',
+      one: '1 message exporté',
+      zero: 'Rien n’a été exporté',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferImported(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString messages importés',
+      one: '1 message importé',
+      zero: 'Rien de nouveau à importer',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get transferExportStopped =>
+      'Export arrêté. Aucun fichier n’a été écrit.';
+
+  @override
+  String get transferImportStopped =>
+      'Import arrêté. Ce qui a été importé reste ; importez à nouveau pour continuer.';
+
+  @override
+  String transferDuplicates(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString étaient déjà dans le dossier.',
+      one: '1 était déjà dans le dossier.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferSkippedCount(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString ignorés :',
+      one: '1 ignoré :',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferSkippedMore(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    return 'et $countString de plus';
+  }
+
+  @override
+  String get transferOffline =>
+      'Le serveur était injoignable : seuls les e-mails téléchargés sur cet appareil ont été exportés.';
+
+  @override
+  String transferRebuilt(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString messages viennent de la copie de cet appareil, sans leurs pièces jointes.',
+      one: '1 message vient de la copie de cet appareil, sans ses pièces jointes.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get transferExportFailed =>
+      'Impossible d’écrire le fichier. Vérifiez l’espace libre et essayez un autre dossier.';
+
+  @override
+  String get transferImportFailed =>
+      'Le serveur ne répond plus. Importez à nouveau pour continuer : rien n’est importé deux fois.';
+
+  @override
+  String get transferBusy =>
+      'Une autre importation ou exportation est en cours.';
+
+  @override
+  String get transferSkipNotMail => 'pas un e-mail';
+
+  @override
+  String get transferSkipTooLarge => 'trop gros pour le serveur';
+
+  @override
+  String get transferSkipNotDownloaded => 'jamais téléchargé sur cet appareil';
+
+  @override
+  String get transferSkipGone => 'n’est plus sur le serveur';
+
+  @override
+  String get transferSkipNotAFile => 'pas un fichier';
+
+  @override
+  String get transferSkipUnreadable => 'illisible';
+
+  @override
+  String get transferSkipRefused => 'refusé par le serveur';
+
+  @override
+  String get transferDone => 'OK';
+
+  @override
+  String get transferShowFile => 'Ouvrir';
+
+  @override
+  String get transferFolderExport => 'Exporter le dossier…';
+
+  @override
+  String transferExportFolderTitle(String name) {
+    return 'Exporter « $name »';
+  }
+
+  @override
+  String transferExportFolderNote(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString e-mails, récupérés en entier depuis le serveur.',
+      one: '1 e-mail, récupéré en entier depuis le serveur.',
+      zero: 'Cet appareil n’y connaît encore aucun e-mail.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get transferInFile => 'Dans ce fichier';
+
+  @override
+  String get transferAdd => 'Ajouter';
+
+  @override
+  String get transferAdded => 'Ajouté';
+
+  @override
+  String get transferSettingsApply => 'Appliquer signatures et apparence';
+
+  @override
+  String transferSettingsSignatures(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString signatures',
+      one: '1 signature',
+      zero: 'Aucune signature',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferSettingsApplied(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$countString signatures ajoutées.',
+      one: '1 signature ajoutée.',
+      zero: 'Aucune nouvelle signature.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String transferSignaturesWaiting(int count) {
+    final intl.NumberFormat countNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
+    final String countString = countNumberFormat.format(count);
+
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$countString signatures attendent leurs comptes : appliquez à nouveau une fois ajoutés.',
+      one: '1 signature attend son compte : appliquez à nouveau une fois ajouté.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get transferSettingsNotFile =>
+      'Ce n’est pas un fichier de réglages Piuma.';
+
+  @override
+  String get transferSettingsNewer =>
+      'Ce fichier vient d’une version plus récente de Piuma. Mettez l’app à jour pour le lire.';
+
+  @override
+  String transferSettingsSaved(String name) {
+    return 'Réglages enregistrés sous $name';
+  }
+
+  @override
+  String get transferSettingsNotSaved =>
+      'Impossible d’enregistrer les réglages.';
+
+  @override
+  String get fileTypeMbox => 'Fichier de boîte aux lettres';
+
+  @override
+  String get fileTypeZip => 'Archive ZIP';
+
+  @override
+  String get fileTypeSettings => 'Réglages Piuma';
+
+  @override
+  String get fileTypeMailFiles => 'Fichiers e-mail';
+
+  @override
+  String get transferSelectionExport => 'Exporter en .mbox…';
 }

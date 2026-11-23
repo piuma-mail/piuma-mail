@@ -14,7 +14,7 @@ use crate::imap::file_name;
 /// is the quarantine flag: Gatekeeper checks an app or script before it
 /// first opens. Best effort: a disk without streams or extended attributes
 /// (FAT, some network shares) keeps the file unmarked.
-fn mark_from_internet(path: &Path) {
+pub(crate) fn mark_from_internet(path: &Path) {
     #[cfg(windows)]
     {
         let mut stream = path.as_os_str().to_owned();

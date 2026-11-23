@@ -377,12 +377,18 @@ impl Server {
                             .keys()
                             .cloned()
                             .collect(),
-                        // A second apart, as imports made one after another.
-                        received: format!(
-                            "2026-10-20T09:{:02}:{:02}Z",
-                            self.next / 60,
-                            self.next % 60
-                        ),
+                        // As asked, else a second apart, as imports made
+                        // one after another.
+                        received: new["receivedAt"]
+                            .as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "2026-10-20T09:{:02}:{:02}Z",
+                                    self.next / 60,
+                                    self.next % 60
+                                )
+                            }),
                     },
                 );
                 one(json!({ "created": { "new": { "id": id } } }))
@@ -562,8 +568,7 @@ async fn serve(state: Arc<Mutex<Server>>, mut tcp: TcpStream, port: u16) {
                     .await;
             }
             ("GET", "/jmap/session") => {
-                let mut capabilities =
-                    json!({ "urn:ietf:params:jmap:core": { "maxObjectsInGet": 3 } });
+                let mut capabilities = json!({ "urn:ietf:params:jmap:core": { "maxObjectsInGet": 3, "maxSizeUpload": 1_000_000 } });
                 if state.lock().unwrap().vacation.is_some() {
                     capabilities["urn:ietf:params:jmap:vacationresponse"] = json!({});
                 }
@@ -996,6 +1001,91 @@ async fn an_email_file_is_imported_into_the_folder_picked() {
     }
     // A folder the account doesn't have is refused, not created.
     assert!(client.append_to("no-such", raw.as_bytes()).await.is_err());
+}
+
+#[tokio::test]
+async fn mail_files_are_imported_once_with_their_flags_and_exported_back() {
+    use piuma_core::mbox::MboxWriter;
+    use piuma_core::transfer::{self, ExportFormat, RemoteFolder, RemoteSource, SkipReason};
+    use std::sync::atomic::AtomicBool;
+    let (server, cfg) = start().await;
+    let (store, account) = store_with_account(&cfg);
+    let mut remote = Remote::Jmap(Client::open(&cfg).await.unwrap());
+    assert_eq!(remote.append_limit(), Some(1_000_000));
+    let dir = std::env::temp_dir().join(format!("piuma-jmap-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut file = MboxWriter::new(Vec::new());
+    file.add(
+        b"From: ada@example.com\r\nSubject: Starred\r\nMessage-ID: <star@example.com>\r\nX-Gmail-Labels: Starred,Unread\r\n\r\nHi\r\n",
+        "ada@example.com",
+        1_793_700_000,
+        None,
+    )
+    .unwrap();
+    file.add(b"Subject: Read\r\nStatus: RO\r\n\r\nOld\r\n", "", 0, None)
+        .unwrap();
+    let mut big = b"Subject: Too big\r\n\r\n".to_vec();
+    big.extend(std::iter::repeat_n(b'x', 1_100_000));
+    file.add(&big, "", 0, None).unwrap();
+    let path = dir.join("Takeout.mbox");
+    std::fs::write(&path, file.into_inner()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut target = RemoteFolder {
+        remote: &mut remote,
+        folder: "mb-misc".into(),
+    };
+    let report = transfer::import(&mut target, std::slice::from_ref(&path), &cancel, |_| {}).await;
+    assert_eq!(report.imported, 2, "{report:?}");
+    assert_eq!(report.skipped[0].reason, SkipReason::TooLarge);
+    {
+        let s = server.lock().unwrap();
+        let star = s
+            .emails
+            .values()
+            .find(|e| e.raw.windows(7).any(|w| w == b"Starred"))
+            .unwrap();
+        assert_eq!(star.mailboxes, ["mb-misc".to_owned()].into());
+        assert!(star.keywords.contains("$flagged") && !star.keywords.contains("$seen"));
+        assert_eq!(star.received, "2026-11-03T10:00:00Z");
+    }
+    // Again: nothing is added twice, the one without a Message-ID either.
+    let mut target = RemoteFolder {
+        remote: &mut remote,
+        folder: "mb-misc".into(),
+    };
+    let again = transfer::import(&mut target, std::slice::from_ref(&path), &cancel, |_| {}).await;
+    assert_eq!((again.imported, again.duplicates), (0, 2), "{again:?}");
+
+    // Exported back from the server, byte for byte.
+    remote
+        .sync_mailbox(&store, account, "mb-misc")
+        .await
+        .unwrap();
+    let uids = store.lock().unwrap().uids(account, "mb-misc").unwrap();
+    let messages: Vec<_> = uids
+        .iter()
+        .map(|u| (account, "mb-misc".to_owned(), *u))
+        .collect();
+    let dest = dir.join("Receipts.mbox");
+    let report = transfer::export(
+        &mut RemoteSource {
+            remote: &mut remote,
+            store: &store,
+        },
+        &store,
+        &messages,
+        ExportFormat::Mbox,
+        &dest,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.exported, 2);
+    let text = std::fs::read_to_string(&dest).unwrap();
+    assert!(text.contains("Message-ID: <star@example.com>"));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 const ONCE: &str = "<once-1@example.com>";

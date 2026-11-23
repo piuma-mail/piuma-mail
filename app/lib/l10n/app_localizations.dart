@@ -11235,6 +11235,396 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Email message'**
   String get fileTypeEmail;
+
+  /// No description provided for @transferTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import and export'**
+  String get transferTitle;
+
+  /// No description provided for @transferSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Move mail and settings to and from other mail apps.'**
+  String get transferSubtitle;
+
+  /// No description provided for @transferMail.
+  ///
+  /// In en, this message translates to:
+  /// **'Mail'**
+  String get transferMail;
+
+  /// No description provided for @transferExportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Export mail'**
+  String get transferExportTitle;
+
+  /// No description provided for @transferExportHint.
+  ///
+  /// In en, this message translates to:
+  /// **'A folder as one .mbox file, which Thunderbird, Apple Mail and others open, or as a ZIP of .eml files.'**
+  String get transferExportHint;
+
+  /// No description provided for @transferFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get transferFrom;
+
+  /// No description provided for @transferInto.
+  ///
+  /// In en, this message translates to:
+  /// **'Into'**
+  String get transferInto;
+
+  /// No description provided for @transferChooseFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a folder'**
+  String get transferChooseFolder;
+
+  /// No description provided for @transferChooseAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an account'**
+  String get transferChooseAccount;
+
+  /// No description provided for @transferFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Format'**
+  String get transferFormat;
+
+  /// No description provided for @transferFormatMbox.
+  ///
+  /// In en, this message translates to:
+  /// **'.mbox file'**
+  String get transferFormatMbox;
+
+  /// No description provided for @transferFormatZip.
+  ///
+  /// In en, this message translates to:
+  /// **'ZIP of .eml'**
+  String get transferFormatZip;
+
+  /// No description provided for @transferExportButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Export…'**
+  String get transferExportButton;
+
+  /// No description provided for @transferImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import mail'**
+  String get transferImportTitle;
+
+  /// No description provided for @transferImportHint.
+  ///
+  /// In en, this message translates to:
+  /// **'.eml and .mbox files from Thunderbird, Apple Mail or a Gmail Takeout. Messages the folder already has are skipped.'**
+  String get transferImportHint;
+
+  /// No description provided for @transferImportButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose files…'**
+  String get transferImportButton;
+
+  /// No description provided for @transferSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get transferSettings;
+
+  /// No description provided for @transferSettingsExport.
+  ///
+  /// In en, this message translates to:
+  /// **'Export settings'**
+  String get transferSettingsExport;
+
+  /// No description provided for @transferSettingsExportHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts, signatures and appearance in one file. Passwords are never included.'**
+  String get transferSettingsExportHint;
+
+  /// No description provided for @transferSettingsImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import settings'**
+  String get transferSettingsImport;
+
+  /// No description provided for @transferSettingsImportHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Fills in the accounts from a settings file; you sign in to each one yourself.'**
+  String get transferSettingsImportHint;
+
+  /// No description provided for @transferSettingsImportButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Import…'**
+  String get transferSettingsImportButton;
+
+  /// No description provided for @transferExporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Exporting {folder}'**
+  String transferExporting(String folder);
+
+  /// No description provided for @transferImporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing into {folder}'**
+  String transferImporting(String folder);
+
+  /// No description provided for @transferMessagesSoFar.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 message} other{{count} messages}}'**
+  String transferMessagesSoFar(int count);
+
+  /// No description provided for @transferExported.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Nothing was exported} =1{Exported 1 message} other{Exported {count} messages}}'**
+  String transferExported(int count);
+
+  /// No description provided for @transferImported.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{Nothing new to import} =1{Imported 1 message} other{Imported {count} messages}}'**
+  String transferImported(int count);
+
+  /// No description provided for @transferExportStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Export stopped. No file was written.'**
+  String get transferExportStopped;
+
+  /// No description provided for @transferImportStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Import stopped. What was imported stays; import again to carry on.'**
+  String get transferImportStopped;
+
+  /// No description provided for @transferDuplicates.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 was already in the folder.} other{{count} were already in the folder.}}'**
+  String transferDuplicates(int count);
+
+  /// No description provided for @transferSkippedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 skipped:} other{{count} skipped:}}'**
+  String transferSkippedCount(int count);
+
+  /// No description provided for @transferSkippedMore.
+  ///
+  /// In en, this message translates to:
+  /// **'and {count} more'**
+  String transferSkippedMore(int count);
+
+  /// No description provided for @transferOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'The server couldn’t be reached, so only mail downloaded on this device was exported.'**
+  String get transferOffline;
+
+  /// No description provided for @transferRebuilt.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 message came from this device’s copy, without its attachments.} other{{count} messages came from this device’s copy, without their attachments.}}'**
+  String transferRebuilt(int count);
+
+  /// No description provided for @transferExportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t write the file. Check there is room and try another folder.'**
+  String get transferExportFailed;
+
+  /// No description provided for @transferImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The server stopped answering. Import again to carry on: nothing is imported twice.'**
+  String get transferImportFailed;
+
+  /// No description provided for @transferBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Another import or export is running.'**
+  String get transferBusy;
+
+  /// No description provided for @transferSkipNotMail.
+  ///
+  /// In en, this message translates to:
+  /// **'not an email'**
+  String get transferSkipNotMail;
+
+  /// No description provided for @transferSkipTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'too large for the server'**
+  String get transferSkipTooLarge;
+
+  /// No description provided for @transferSkipNotDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'never downloaded to this device'**
+  String get transferSkipNotDownloaded;
+
+  /// No description provided for @transferSkipGone.
+  ///
+  /// In en, this message translates to:
+  /// **'no longer on the server'**
+  String get transferSkipGone;
+
+  /// No description provided for @transferSkipNotAFile.
+  ///
+  /// In en, this message translates to:
+  /// **'not a file'**
+  String get transferSkipNotAFile;
+
+  /// No description provided for @transferSkipUnreadable.
+  ///
+  /// In en, this message translates to:
+  /// **'couldn’t be read'**
+  String get transferSkipUnreadable;
+
+  /// No description provided for @transferSkipRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'refused by the server'**
+  String get transferSkipRefused;
+
+  /// No description provided for @transferDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get transferDone;
+
+  /// No description provided for @transferShowFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get transferShowFile;
+
+  /// No description provided for @transferFolderExport.
+  ///
+  /// In en, this message translates to:
+  /// **'Export folder…'**
+  String get transferFolderExport;
+
+  /// No description provided for @transferExportFolderTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Export “{name}”'**
+  String transferExportFolderTitle(String name);
+
+  /// No description provided for @transferExportFolderNote.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{This device knows of no emails in it yet.} =1{1 email, fetched whole from the server.} other{{count} emails, fetched whole from the server.}}'**
+  String transferExportFolderNote(int count);
+
+  /// No description provided for @transferInFile.
+  ///
+  /// In en, this message translates to:
+  /// **'In this file'**
+  String get transferInFile;
+
+  /// No description provided for @transferAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get transferAdd;
+
+  /// No description provided for @transferAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added'**
+  String get transferAdded;
+
+  /// No description provided for @transferSettingsApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply signatures and appearance'**
+  String get transferSettingsApply;
+
+  /// No description provided for @transferSettingsSignatures.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No signatures} =1{1 signature} other{{count} signatures}}'**
+  String transferSettingsSignatures(int count);
+
+  /// No description provided for @transferSettingsApplied.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No new signatures.} =1{1 signature added.} other{{count} signatures added.}}'**
+  String transferSettingsApplied(int count);
+
+  /// No description provided for @transferSignaturesWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 signature waits for its account: apply again once it is added.} other{{count} signatures wait for their accounts: apply again once they are added.}}'**
+  String transferSignaturesWaiting(int count);
+
+  /// No description provided for @transferSettingsNotFile.
+  ///
+  /// In en, this message translates to:
+  /// **'This isn’t a Piuma settings file.'**
+  String get transferSettingsNotFile;
+
+  /// No description provided for @transferSettingsNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'This file comes from a newer Piuma. Update the app to read it.'**
+  String get transferSettingsNewer;
+
+  /// No description provided for @transferSettingsSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings saved as {name}'**
+  String transferSettingsSaved(String name);
+
+  /// No description provided for @transferSettingsNotSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t save the settings.'**
+  String get transferSettingsNotSaved;
+
+  /// No description provided for @fileTypeMbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Mailbox file'**
+  String get fileTypeMbox;
+
+  /// No description provided for @fileTypeZip.
+  ///
+  /// In en, this message translates to:
+  /// **'ZIP archive'**
+  String get fileTypeZip;
+
+  /// No description provided for @fileTypeSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma settings'**
+  String get fileTypeSettings;
+
+  /// No description provided for @fileTypeMailFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Email files'**
+  String get fileTypeMailFiles;
+
+  /// No description provided for @transferSelectionExport.
+  ///
+  /// In en, this message translates to:
+  /// **'Export as .mbox…'**
+  String get transferSelectionExport;
 }
 
 class _AppLocalizationsDelegate

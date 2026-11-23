@@ -167,6 +167,8 @@ pub struct Connection {
     literal_plus: bool,
     /// RFC 2087: the server says how full the mailbox is.
     quota: bool,
+    /// RFC 7889: the largest message APPEND takes, when the server says.
+    append_limit: Option<u64>,
     /// Jobs the person gave folders of their choice: they win over the
     /// server's marks and the usual names (see [`Self::learn_roles`]).
     roles: Vec<(FolderRole, String)>,
@@ -357,6 +359,7 @@ impl Connection {
             uidplus: caps.has_str("UIDPLUS"),
             literal_plus: caps.has_str("LITERAL+") || caps.has_str("LITERAL-"),
             quota: caps.has_str("QUOTA"),
+            append_limit: append_limit(&caps),
             roles: Vec::new(),
             limits,
             timing,
@@ -1869,6 +1872,127 @@ impl Connection {
         Ok(())
     }
 
+    /// The largest message the server takes in APPEND, when it says
+    /// (RFC 7889 APPENDLIMIT).
+    pub fn append_limit(&self) -> Option<u64> {
+        self.append_limit
+    }
+
+    /// Puts a message in `folder` with its flags and, when known, the time
+    /// it arrived (`at`, Unix seconds): a message imported from a file.
+    pub async fn append_message(
+        &mut self,
+        folder: &str,
+        raw: &[u8],
+        flags: Flags,
+        at: Option<i64>,
+    ) -> Result<()> {
+        let mut marks = Vec::new();
+        if flags.seen {
+            marks.push("\\Seen");
+        }
+        if flags.flagged {
+            marks.push("\\Flagged");
+        }
+        if flags.answered {
+            marks.push("\\Answered");
+        }
+        let marks = format!("({})", marks.join(" "));
+        let date = at.map(|t| format!("\"{}\"", crate::mbox::imap_date_time(t)));
+        self.session()?
+            .append(folder, Some(&marks), date.as_deref(), raw)
+            .await?;
+        Ok(())
+    }
+
+    /// The Message-IDs of a folder's messages, without angle brackets,
+    /// read in pages so a large folder never comes in one answer.
+    pub async fn message_ids(&mut self, folder: &str) -> Result<HashSet<String>> {
+        const PAGE: u32 = 2_000;
+        let session = self.session()?;
+        let mailbox = session.examine(folder).await?;
+        let mut ids = HashSet::new();
+        let mut start = 1;
+        while start <= mailbox.exists {
+            let end = (start + PAGE - 1).min(mailbox.exists);
+            let fetches: Vec<Fetch> = session
+                .fetch(
+                    format!("{start}:{end}"),
+                    "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
+                )
+                .await?
+                .try_collect()
+                .await?;
+            for f in &fetches {
+                let header = f.header().or_else(|| f.body()).unwrap_or_default();
+                if let Some(id) = crate::mbox::header_value(header, "Message-ID") {
+                    let id = bare_message_id(&id);
+                    if !id.is_empty() {
+                        ids.insert(id);
+                    }
+                }
+            }
+            start = end + 1;
+        }
+        Ok(ids)
+    }
+
+    /// Whole messages of one folder, for an export: each uid with its
+    /// bytes, or None when the server has no body for it or it is larger
+    /// than [`crate::guard::MESSAGE_MAX`]. Fetched a few at a time.
+    pub async fn raw_many(
+        &mut self,
+        folder: &str,
+        uids: &[u32],
+    ) -> Result<Vec<(u32, Option<Vec<u8>>)>> {
+        /// What one fetch may bring back.
+        const BATCH_BYTES: u64 = 32 * 1024 * 1024;
+        let session = self.session()?;
+        session.examine(folder).await?;
+        let sizes: Vec<Fetch> = session
+            .uid_fetch(uid_set(uids), "(UID RFC822.SIZE)")
+            .await?
+            .try_collect()
+            .await?;
+        let size: HashMap<u32, u64> = sizes
+            .iter()
+            .filter_map(|f| Some((f.uid?, u64::from(f.size?))))
+            .collect();
+        let mut out: HashMap<u32, Option<Vec<u8>>> = HashMap::new();
+        let mut batch: Vec<u32> = Vec::new();
+        let mut bytes = 0u64;
+        let wanted: Vec<u32> = uids
+            .iter()
+            .copied()
+            .filter(|u| {
+                size.get(u)
+                    .is_some_and(|&n| n <= crate::guard::MESSAGE_MAX as u64)
+            })
+            .collect();
+        for (i, uid) in wanted.iter().enumerate() {
+            batch.push(*uid);
+            bytes += size[uid];
+            let last = i + 1 == wanted.len();
+            if bytes < BATCH_BYTES && batch.len() < 200 && !last {
+                continue;
+            }
+            let fetches: Vec<Fetch> = self
+                .session()?
+                .uid_fetch(uid_set(&batch), "(UID BODY.PEEK[])")
+                .await?
+                .try_collect()
+                .await?;
+            for f in &fetches {
+                if let (Some(uid), Some(body)) = (f.uid, f.body()) {
+                    out.insert(uid, Some(body.to_vec()));
+                }
+            }
+            batch.clear();
+            bytes = 0;
+        }
+        Ok(uids.iter().map(|u| (*u, out.remove(u).flatten())).collect())
+    }
+
     /// Files a sent message, already marked as read. Returns the folder.
     pub async fn append_sent(&mut self, raw: &[u8]) -> Result<String> {
         let folder = self.folder(FolderRole::Sent).await?;
@@ -2747,6 +2871,27 @@ fn classify_login(e: async_imap::error::Error) -> ImapError {
 /// `UID EXPUNGE`. Without UIDPLUS only a plain EXPUNGE is there, which
 /// would also remove what another app marked `\Deleted` and meant to
 /// keep a while: those lose the mark for the moment and get it back.
+/// APPENDLIMIT=n among the capabilities (RFC 7889); None when the server
+/// names no limit.
+fn append_limit(caps: &async_imap::types::Capabilities) -> Option<u64> {
+    caps.iter().find_map(|c| match c {
+        async_imap::types::Capability::Atom(a) => a
+            .strip_prefix("APPENDLIMIT=")
+            .or_else(|| a.strip_prefix("appendlimit="))
+            .and_then(|n| n.parse().ok()),
+        _ => None,
+    })
+}
+
+/// A Message-ID as it is compared: no angle brackets, no spaces around.
+pub fn bare_message_id(id: &str) -> String {
+    id.trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim()
+        .to_owned()
+}
+
 async fn expunge_only(session: &mut Session, uids: &[u32], uidplus: bool) -> Result<()> {
     if uids.is_empty() {
         return Ok(());

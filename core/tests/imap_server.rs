@@ -2048,3 +2048,94 @@ async fn server_search_finds_mail_not_here_yet() {
     assert_eq!(s.search(&Query::parse("caffè"), 10).unwrap().total, 1);
     assert_eq!(s.search(&Query::parse("website"), 10).unwrap().total, 1);
 }
+
+#[tokio::test]
+async fn mail_files_are_appended_once_with_flags_and_dates_and_exported_back() {
+    use piuma_core::mbox::MboxWriter;
+    use piuma_core::remote::Remote;
+    use piuma_core::transfer::{self, ExportFormat, RemoteFolder, RemoteSource};
+    use std::sync::atomic::AtomicBool;
+    let Some(cfg) = config("import") else { return };
+    let (store, account) = store_with_account();
+    let mut remote = Remote::Imap(Connection::open(&cfg).await.unwrap());
+    let dir = std::env::temp_dir().join(format!("piuma-imap-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut file = MboxWriter::new(Vec::new());
+    // Thunderbird: unread and flagged, delivered 2026-11-03 10:00 UTC.
+    file.add(
+        b"From: ada@example.com\nSubject: Flagged\nMessage-ID: <flag@example.com>\nX-Mozilla-Status: 0004\n\nFrom here.\n>From there.\n",
+        "ada@example.com",
+        1_793_700_000,
+        None,
+    )
+    .unwrap();
+    file.add(
+        b"Subject: No id\nStatus: RO\n\nOld\n",
+        "",
+        1_000_000_000,
+        None,
+    )
+    .unwrap();
+    file.add(b"Not: mail\x00\xff", "", 0, None).unwrap();
+    let path = dir.join("Thunderbird.mbox");
+    std::fs::write(&path, file.into_inner()).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut target = RemoteFolder {
+        remote: &mut remote,
+        folder: "INBOX".into(),
+    };
+    let report = transfer::import(&mut target, std::slice::from_ref(&path), &cancel, |_| {}).await;
+    assert_eq!(report.imported, 2, "{report:?}");
+    let mut target = RemoteFolder {
+        remote: &mut remote,
+        folder: "INBOX".into(),
+    };
+    let again = transfer::import(&mut target, std::slice::from_ref(&path), &cancel, |_| {}).await;
+    assert_eq!(again.imported, 0, "{again:?}");
+    assert_eq!(again.duplicates, 2);
+
+    // What the server keeps: flags and the time it arrived.
+    let mut outside = Outside::open(&cfg).await;
+    let fetched: Vec<_> = outside
+        .0
+        .uid_fetch("1:*", "(UID FLAGS INTERNALDATE)")
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert_eq!(fetched.len(), 2);
+    let first = fetched.iter().find(|f| f.uid == Some(1)).unwrap();
+    let flags: Vec<String> = first.flags().map(|f| format!("{f:?}")).collect();
+    assert!(flags.iter().any(|f| f.contains("Flagged")), "{flags:?}");
+    assert!(!flags.iter().any(|f| f.contains("Seen")), "{flags:?}");
+    assert_eq!(first.internal_date().unwrap().timestamp(), 1_793_700_000);
+
+    // Exported back from the server, byte for byte.
+    remote.sync_mailbox(&store, account, "INBOX").await.unwrap();
+    let messages = vec![
+        (account, "INBOX".to_owned(), 1),
+        (account, "INBOX".to_owned(), 2),
+    ];
+    let dest = dir.join("Inbox.mbox");
+    let report = transfer::export(
+        &mut RemoteSource {
+            remote: &mut remote,
+            store: &store,
+        },
+        &store,
+        &messages,
+        ExportFormat::Mbox,
+        &dest,
+        &cancel,
+        |_| {},
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.exported, 2, "{report:?}");
+    let text = std::fs::read_to_string(&dest).unwrap();
+    assert!(text.contains("\n>From here.\n>>From there.\n"), "{text}");
+    assert!(text.contains("@import.piuma.invalid>"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

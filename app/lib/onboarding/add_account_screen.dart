@@ -40,10 +40,15 @@ class AddAccountScreen extends StatefulWidget {
     this.onCancel,
     this.now = DateTime.now,
     this.scanner,
+    this.preset,
   });
 
   final MailSource source;
   final ValueChanged<MailAccount> onDone;
+
+  /// An account from a settings file: the form opens filled in with it,
+  /// and only the password is left to type.
+  final AccountPreset? preset;
   final VoidCallback? onCancel;
   final DateTime Function() now;
 
@@ -138,6 +143,46 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
   }
 
   late Color _color = _freeColor();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.preset case final p?) _fillFrom(p);
+  }
+
+  /// The manual form filled in from a settings file; the password stays
+  /// empty, for the person to type.
+  void _fillFrom(AccountPreset p) {
+    _welcome = false;
+    _email.text = p.email;
+    _passwordFor = p.email;
+    _filledFor = p.email;
+    _username.text = p.username.isEmpty ? p.email : p.username;
+    _name.text = p.name;
+    _sender.text = p.senderName;
+    _jmap = p.jmap;
+    _jmapServer.text = p.jmapUrl;
+    if (p.imapHost.isNotEmpty) {
+      _imapHost.text = p.imapHost;
+      _imapPort.text = '${p.imapPort}';
+      _imapSecurity = p.imapStartTls
+          ? ServerSecurity.startTls
+          : ServerSecurity.tls;
+    }
+    if (p.smtpHost.isNotEmpty) {
+      _smtpHost.text = p.smtpHost;
+      _smtpPort.text = '${p.smtpPort}';
+      _smtpSecurity = p.smtpStartTls
+          ? ServerSecurity.startTls
+          : ServerSecurity.tls;
+    }
+    final hex = int.tryParse(p.color.replaceFirst('#', ''), radix: 16);
+    if (p.color.length == 7 && hex != null) {
+      final color = Color(0xFF000000 | hex);
+      if (PiumaAccountColors.all.contains(color)) _color = color;
+    }
+    _step = _Step.manual;
+  }
 
   /// The first color no account has yet, else round again.
   Color _freeColor() {

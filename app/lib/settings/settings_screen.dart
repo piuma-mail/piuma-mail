@@ -35,6 +35,7 @@ import 'signatures_page.dart';
 import 'groups_page.dart';
 import 'sync_page.dart';
 import 'templates_page.dart';
+import 'transfer_page.dart';
 
 /// Settings' sections, in the order of `SettingsOrderToApprove` (B):
 /// the accounts, then Mail, App and About.
@@ -62,6 +63,9 @@ enum SettingsSection {
 
   /// Room the mail takes here, how long whole messages stay, clearing it.
   storage,
+
+  /// Mail and settings to and from other mail apps.
+  transfer,
   sync,
 
   /// Desktop only: phones have no keyboard to speak of.
@@ -349,6 +353,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   source: widget.source,
                   phone: true,
                 ),
+                SettingsSection.transfer => TransferPage(
+                  source: widget.source,
+                  phone: true,
+                ),
                 SettingsSection.help => HelpPage(
                   source: widget.source,
                   now: widget.now,
@@ -497,6 +505,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         PiumaIcon.layers,
                         l.storageTitle,
                       ),
+                      (
+                        null,
+                        SettingsSection.transfer,
+                        PiumaIcon.upDown,
+                        l.transferTitle,
+                      ),
                       (null, SettingsSection.sync, PiumaIcon.sync, l.syncTitle),
                       (
                         null,
@@ -644,6 +658,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               source: widget.source,
                             ),
                             SettingsSection.storage => StoragePage(
+                              source: widget.source,
+                            ),
+                            SettingsSection.transfer => TransferPage(
                               source: widget.source,
                             ),
                             SettingsSection.shortcuts => const ShortcutsPage(),
@@ -973,6 +990,7 @@ class _PhoneList extends StatelessWidget {
           ),
           row(l.privacyTitle, null, () => onOpen(SettingsSection.privacy)),
           row(l.storageTitle, null, () => onOpen(SettingsSection.storage)),
+          row(l.transferTitle, null, () => onOpen(SettingsSection.transfer)),
           row(l.syncTitle, sync, () => onOpen(SettingsSection.sync)),
         ]),
         heading(l.settingsAbout),

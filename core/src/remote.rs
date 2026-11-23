@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::auth::Login;
 use crate::imap::{self, FolderRole, ImapConfig, ImapError, SyncReport, WatchEvent};
 use crate::jmap::{self, JmapConfig, JmapError};
-use crate::model::{Account, AccountId, AccountKind, Folder};
+use crate::model::{Account, AccountId, AccountKind, Flags, Folder};
 use crate::outbox::Courier;
 use crate::search::{folder_key, InFolder, Query, Scope, ServerAsk};
 use crate::smtp::{self, Draft, Ready, SendError, SendReport, SmtpConfig};
@@ -744,6 +744,64 @@ impl Remote {
             Remote::Jmap(c) => c.append_to(folder, raw).await?,
         }
         Ok(())
+    }
+
+    /// The largest message the server takes in, when it says.
+    pub fn append_limit(&self) -> Option<u64> {
+        match self {
+            Remote::Imap(c) => c.append_limit(),
+            Remote::Jmap(c) => c.append_limit(),
+        }
+    }
+
+    /// Puts a message in `folder` with its flags and arrival time: a
+    /// message imported from a file.
+    pub async fn append_message(
+        &mut self,
+        folder: &str,
+        raw: &[u8],
+        flags: Flags,
+        at: Option<i64>,
+    ) -> Result<()> {
+        match self {
+            Remote::Imap(c) => c.append_message(folder, raw, flags, at).await?,
+            Remote::Jmap(c) => c.append_message(folder, raw, flags, at).await?,
+        }
+        Ok(())
+    }
+
+    /// The Message-IDs in `folder`, without angle brackets.
+    pub async fn message_ids(&mut self, folder: &str) -> Result<HashSet<String>> {
+        Ok(match self {
+            Remote::Imap(c) => c.message_ids(folder).await?,
+            Remote::Jmap(c) => c.message_ids(folder).await?,
+        })
+    }
+
+    /// Whole messages of one folder, for an export: each uid with its
+    /// bytes, or None when the server has none for it (or it is too
+    /// large). IMAP fetches them a batch at a time.
+    pub async fn raw_many(
+        &mut self,
+        store: &Mutex<Store>,
+        account: AccountId,
+        mailbox: &str,
+        uids: &[u32],
+    ) -> Result<Vec<(u32, Option<Vec<u8>>)>> {
+        match self {
+            Remote::Imap(c) => Ok(c.raw_many(mailbox, uids).await?),
+            Remote::Jmap(c) => {
+                let mut out = Vec::with_capacity(uids.len());
+                for &uid in uids {
+                    match c.raw(store, account, mailbox, uid).await {
+                        Ok(raw) => out.push((uid, Some(raw))),
+                        Err(JmapError::Gone) => out.push((uid, None)),
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Ok(out)
+            }
+        }
     }
 }
 
