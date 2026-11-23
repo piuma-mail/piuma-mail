@@ -252,14 +252,16 @@ class _SpansState extends State<_Spans> {
   final _taps = <LinkPressRecognizer>[];
   final _selection = _WithoutInserted();
 
-  /// A link is under the pointer.
-  bool _hovering = false;
+  /// The link under the pointer, if any.
+  String? _hovering;
 
   @override
   void deactivate() {
     // Closed under the pointer: where the link went doesn't stay shown.
-    if (_hovering) LinkTarget.show(context, null);
-    _hovering = false;
+    // This can happen mid-build (J opens the next message), so the line
+    // changes after the frame.
+    if (_hovering case final url?) LinkTarget.hideLater(context, url);
+    _hovering = null;
     super.deactivate();
   }
 
@@ -350,7 +352,7 @@ class _SpansState extends State<_Spans> {
             onEnter: s.link == null
                 ? null
                 : (_) {
-                    _hovering = true;
+                    _hovering = s.link;
                     LinkTarget.show(context, s.link);
                   },
             // Also called after the message closed under the pointer:
@@ -358,7 +360,7 @@ class _SpansState extends State<_Spans> {
             onExit: s.link == null
                 ? null
                 : (_) {
-                    _hovering = false;
+                    _hovering = null;
                     if (mounted) LinkTarget.show(context, null);
                   },
           ),
