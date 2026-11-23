@@ -166,8 +166,8 @@ abstract class Notifier {
   Future<void> show(SystemNotice notice);
 
   /// The lock was turned on or closed: the notices already shown, which
-  /// may name a sender and have buttons, go. Android's own are blanked in
-  /// place instead (`LockPlatform.engaged`, `Background.blankNotices`).
+  /// may name a sender and have buttons, go. On Android they fold into one
+  /// "New messages" instead (`LockPlatform.engaged`, `LockedNotices.kt`).
   Future<void> hideShown();
 }
 

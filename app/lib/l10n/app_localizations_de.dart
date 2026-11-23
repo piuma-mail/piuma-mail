@@ -7818,10 +7818,10 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get lockSettingNote =>
-      'Solange die Sperre an ist, zeigen Mitteilungen nur „Neue Nachricht“, hier und auf einer gekoppelten Uhr, und die Uhr zeigt keine Mails. Auch in den zuletzt verwendeten Apps ist Piuma verborgen. Die Sperre hält andere aus der App fern; sie verschlüsselt die Mails auf diesem Gerät nicht.';
+      'Solange die Sperre an ist, zeigen Mitteilungen nur „Neue Nachrichten“, hier und auf einer gekoppelten Uhr, und die Uhr zeigt keine Mails. Auch in den zuletzt verwendeten Apps ist Piuma verborgen. Die Sperre hält andere aus der App fern; sie verschlüsselt die Mails auf diesem Gerät nicht.';
 
   @override
-  String get noticeLocked => 'Neue Nachricht';
+  String get noticeLocked => 'Neue Nachrichten';
 
   @override
   String get lockTitle => 'Piuma ist gesperrt';

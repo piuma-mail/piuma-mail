@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import org.json.JSONObject
 import java.util.TimeZone
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -17,7 +18,9 @@ import java.util.concurrent.TimeUnit
  * watch's buttons ask. No account or password goes to the watch.
  *
  * The paths, shared with `wear/android/.../WatchChannel.kt`:
- * - [INBOX], a data item: the summary, as JSON.
+ * - [INBOX], a data item: the summary, as JSON. Always this one path, so
+ *   each summary replaces the last: the Data Layer keeps no older one
+ *   from this phone for the watch to clean up.
  * - [REFRESH], from the watch: send the summary again.
  * - [ACT], from the watch: `{"payload","action","until","text"}`, as a notice's button.
  * - [OPEN], from the watch: an email's payload; the words go back on [TEXT].
@@ -52,7 +55,9 @@ object WatchLink {
      * thread. One at a time, each with a higher generation ("gen") than
      * the last, which the watch uses to drop one that arrives late: a
      * summary with mail made just before the lock closed can't land after
-     * the locked one.
+     * the locked one. Each also carries this install's [epoch]: the count
+     * starts again on another phone or after a reinstall, and the watch
+     * takes a summary from another epoch whatever its generation.
      */
     fun publishNow(context: Context) {
         if (!watchNear(context)) return
@@ -76,7 +81,8 @@ object WatchLink {
             }
             if (json.isEmpty()) return
             val stamped = try {
-                stamp(json, nextGeneration(context))
+                val (epoch, gen) = nextGeneration(context)
+                stamp(json, epoch, gen)
             } catch (e: IllegalArgumentException) {
                 // Not a summary the watch would read.
                 return
@@ -95,15 +101,22 @@ object WatchLink {
     /** The last generation handed out, also kept across restarts. */
     private var lastGeneration = 0L
 
-    private fun nextGeneration(context: Context): Long {
+    /**
+     * This install's epoch, made once at random and kept with the
+     * generation: cleared app data or a reinstall start a new one, with
+     * the count from zero again. Then the next generation.
+     */
+    private fun nextGeneration(context: Context): Pair<String, Long> {
         val prefs = context.getSharedPreferences("watch", Context.MODE_PRIVATE)
+        val kept = prefs.getString("epoch", null)
+        val epoch = kept ?: UUID.randomUUID().toString()
         val gen = nextGeneration(
-            maxOf(lastGeneration, prefs.getLong("gen", 0L)),
+            if (kept == null) 0L else maxOf(lastGeneration, prefs.getLong("gen", 0L)),
             System.currentTimeMillis(),
         )
         lastGeneration = gen
-        prefs.edit().putLong("gen", gen).commit()
-        return gen
+        prefs.edit().putString("epoch", epoch).putLong("gen", gen).commit()
+        return epoch to gen
     }
 
     /**
@@ -113,12 +126,15 @@ object WatchLink {
      */
     internal fun nextGeneration(last: Long, nowMs: Long): Long = maxOf(last + 1, nowMs)
 
-    /** [json], a summary object from the engine, with its generation first. */
-    internal fun stamp(json: String, gen: Long): String {
+    /** [json], a summary object from the engine, with its epoch and generation first. */
+    internal fun stamp(json: String, epoch: String, gen: Long): String {
         val body = json.trim()
         require(body.startsWith("{") && body.endsWith("}"))
+        // A UUID: nothing in it to escape.
+        require(epoch.isNotEmpty() && epoch.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '-' })
         val rest = body.substring(1).trimStart()
-        return if (rest == "}") "{\"gen\":$gen}" else "{\"gen\":$gen,$rest"
+        val head = "\"epoch\":\"$epoch\",\"gen\":$gen"
+        return if (rest == "}") "{$head}" else "{$head,$rest"
     }
 
     /** A watch with Piuma on it can be reached now. */

@@ -7797,10 +7797,10 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get lockSettingNote =>
-      'Com o bloqueio ligado, as notificações dizem só “Nova mensagem”, aqui e num relógio associado, e o relógio não mostra correio. O Piuma também fica oculto nas apps recentes. O bloqueio mantém os outros fora da app; não cifra o correio guardado neste dispositivo.';
+      'Com o bloqueio ligado, as notificações dizem só “Novas mensagens”, aqui e num relógio associado, e o relógio não mostra correio. O Piuma também fica oculto nas apps recentes. O bloqueio mantém os outros fora da app; não cifra o correio guardado neste dispositivo.';
 
   @override
-  String get noticeLocked => 'Nova mensagem';
+  String get noticeLocked => 'Novas mensagens';
 
   @override
   String get lockTitle => 'O Piuma está bloqueado';

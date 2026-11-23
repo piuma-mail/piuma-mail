@@ -172,25 +172,44 @@ Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`,
   keychain can't give the hash back, the app stays locked and only the device unlock opens it; if
   the keychain answers without one, the lock screen says so (the device unlock, or removing Piuma's
   data, is the way back in).
-- **Notifications and the watch:** while the lock is on, every notice (the app's and Android's
-  background service's) says only "New message", without sender, subject, preview or buttons (the
-  buttons would act on mail without unlocking). Notices shown before the lock was turned on are
-  blanked in place on Android (silently, still opening the app) and removed elsewhere, when it is
-  turned on and again each time it closes. A button pressed on an older notice does nothing while
-  locked: on Android while the lock is on at all, the receiver refuses and blanks the notice; in the
-  app the click opens the app at the lock screen instead. Wear OS mirrors those notices, so they are
-  blank there too, and the phone sends the watch app an empty, locked summary and refuses its
-  requests to open or act on a message until the lock is turned off; when that summary arrives the
-  watch closes an email open on it and forgets the words of those it showed. Sign-in problem notices
-  from Android's background service still name the account, not any mail.
-- **Races with the lock turning on:** a notice is decided (with mail or blank) after every wait in
-  making it and handed to the system at once: in the app after its payload is sealed, on Android in
-  the background service right before it is posted. Android's posting and blanking take turns (one
-  lock), and the blanking runs again a moment later for a notice the system was still taking in.
-  The phone sends the watch one summary at a time, checks the lock again once a summary is made, and
-  numbers each with a growing generation; the watch drops a summary with mail older than the newest
-  it has seen, always takes a locked one, and on a locked one removes kept summaries with mail. A
-  watch out of reach when the lock closes keeps its last summary until it reaches the phone again.
+- **Notifications and the watch:** while the lock is on, no notice names a sender, subject or
+  preview or has buttons (the buttons would act on mail without unlocking). On Android the shade
+  holds one stand-in that says only "New messages", opens the app at its lock screen and stands for
+  all the mail (`LockedNotices.kt`); elsewhere each notice says only that. When the lock is turned on
+  and again each time it closes, the mail notices already shown (the background service's and the
+  Flutter plugin's) are cancelled on Android and the stand-in posted silently in their place; they
+  are removed elsewhere. They are cancelled, not updated in place: Android drops updates to a shown
+  notice beyond five a second per app without a word
+  (`NotificationManagerService.checkDisqualifyingFeatures` rate-limits only a post whose key is
+  already shown; cancelling has no limit), so blanking a full shade in place left some with their
+  content. An update of the stand-in that is dropped loses nothing, since it never carries mail. The
+  work runs on a thread of its own, never on the main one, so waiting on the system can't freeze the
+  app. A button pressed on an older notice does nothing while locked: on Android while the lock is
+  on at all, the receiver refuses and folds the shade; in the app the click opens the app at the
+  lock screen instead. Wear OS mirrors the notices, so only the stand-in reaches it, and the phone
+  sends the watch app an empty, locked summary and refuses its requests to open or act on a message
+  until the lock is turned off; when that summary arrives the watch closes an email open on it and
+  forgets the words of those it showed. Sign-in problem notices from Android's background service
+  still name the account, not any mail.
+- **Races with the lock turning on:** a notice is decided (with mail or the stand-in) after every
+  wait in making it and handed to the system at once: in the app after its payload is sealed, on
+  Android in the background service right before it is posted. Android's posting and folding take
+  turns (one lock), and the folding runs again a moment later for a notice the system was still
+  taking in.
+- **Ordering the watch's summaries:** the phone puts every summary at the one Data Layer path, so
+  each replaces its last and the watch has nothing of this phone's to delete (an earlier version
+  deleted older items by address after reading them, and could delete a newer one put meanwhile).
+  It sends one at a time, checks the lock again once a summary is made, and stamps each with this
+  install's epoch (random, made once and kept with the count) and a generation that grows within it.
+  The watch keeps the newest (epoch, generation) it has shown: of the same epoch it drops a summary
+  with mail older than the newest; one from another epoch (the app installed again, its data
+  cleared, or another phone) is taken whatever its generation, so a count that started over can't
+  leave the watch stuck; a locked one is always taken. What the watch kept from before it started
+  shows only until the phone sends something, never over it (of several kept, a connected phone's
+  first). A watch out of reach when the lock closes keeps its last summary until it reaches the
+  phone again. Accepted: a summary with mail left by another phone (a different Data Layer node)
+  stays in the watch app's Data Layer storage until that phone's data is gone from the watch (Wear OS
+  watches are reset to pair with another phone); it is shown only while no phone has sent anything.
 - **Not covered:** window thumbnails of the desktop systems depend on the system (Windows and
   macOS window previews are not blanked); notices an earlier run left on a desktop system that
   can't list them stay until dismissed (their buttons don't act while locked); the lock guards the

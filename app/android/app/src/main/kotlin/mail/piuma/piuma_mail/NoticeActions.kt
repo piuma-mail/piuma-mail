@@ -25,8 +25,8 @@ class NoticeActions : BroadcastReceiver() {
         val payload = NoticeSeal.open(context, intent.getStringExtra(PAYLOAD)) ?: return
         val id = intent.getIntExtra(ID, 0)
         // The app lock is on: nothing is done to mail without unlocking.
-        // A notice shown before it was turned on loses its buttons; tapped,
-        // it opens the app at the lock screen.
+        // The notices shown before it was turned on fold into one "New
+        // messages" without buttons, which opens the app at the lock screen.
         if (AppLockFile.on(context)) {
             Background.blankNotices(context.applicationContext)
             return

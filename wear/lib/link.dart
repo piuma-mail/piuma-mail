@@ -34,24 +34,45 @@ class PhoneLink extends ChangeNotifier {
   /// The words of the email [payload] names, once the phone sent them.
   String? text(String payload) => _texts[payload];
 
-  /// The newest generation seen ([Summary.gen]).
+  /// The epoch ([Summary.epoch]) and newest generation ([Summary.gen])
+  /// of what is shown.
+  String? _epoch;
   int _newest = -1;
 
   /// Reads what the watch kept, then asks the phone for a fresh summary.
   Future<void> start() async {
-    _take(Summary.parse(await _call<String>('summary')));
+    _take(Summary.parse(await _call<String>('summary')), kept: true);
     notifyListeners();
     await refresh();
   }
 
-  /// Shows [s] unless it is older than one already shown: a summary with
-  /// mail made before the phone locked must not replace the locked one.
-  /// A locked summary is always taken, whatever its generation: it only
-  /// hides. Taking one forgets the words of emails read here.
-  bool _take(Summary? s) {
+  /// Shows [s] unless it is older than what is shown:
+  /// - a locked summary is always taken, whatever its epoch or generation:
+  ///   it only hides;
+  /// - one the phone just sent from another epoch (the phone app
+  ///   installed again, or another phone) is taken whatever its
+  ///   generation, which starts over there;
+  /// - of the same epoch, one with mail made before the phone locked must
+  ///   not replace the locked one: the higher generation wins;
+  /// - what the watch [kept] (read at start, maybe made long ago) only
+  ///   shows while nothing came from the phone yet, or as a newer
+  ///   generation of the same epoch.
+  ///
+  /// Taking a locked one forgets the words of emails read here.
+  bool _take(Summary? s, {bool kept = false}) {
     if (s == null) return false;
-    if (!s.locked && s.gen < _newest) return false;
-    if (s.gen > _newest) _newest = s.gen;
+    final shown = _summary != null;
+    final same = shown && s.epoch == _epoch;
+    if (!s.locked) {
+      if (kept && shown && (!same || s.gen <= _newest)) return false;
+      if (same && s.gen < _newest) return false;
+    }
+    if (!same) {
+      _epoch = s.epoch;
+      _newest = s.gen;
+    } else if (s.gen > _newest) {
+      _newest = s.gen;
+    }
     _summary = s;
     if (s.locked) _texts.clear();
     return true;

@@ -11359,13 +11359,13 @@ abstract class AppLocalizations {
   /// No description provided for @lockSettingNote.
   ///
   /// In en, this message translates to:
-  /// **'While the lock is on, notifications say only “New message”, here and on a paired watch, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.'**
+  /// **'While the lock is on, notifications say only “New messages”, here and on a paired watch, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.'**
   String get lockSettingNote;
 
   /// No description provided for @noticeLocked.
   ///
   /// In en, this message translates to:
-  /// **'New message'**
+  /// **'New messages'**
   String get noticeLocked;
 
   /// No description provided for @lockTitle.

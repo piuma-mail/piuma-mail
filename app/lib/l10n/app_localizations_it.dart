@@ -7826,10 +7826,10 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get lockSettingNote =>
-      'Con il blocco attivo, le notifiche dicono solo “Nuovo messaggio”, qui e su un orologio collegato, e l’orologio non mostra la posta. Piuma è nascosto anche tra le app recenti. Il blocco tiene le persone fuori dall’app; non cifra la posta conservata sul dispositivo.';
+      'Con il blocco attivo, le notifiche dicono solo “Nuovi messaggi”, qui e su un orologio collegato, e l’orologio non mostra la posta. Piuma è nascosto anche tra le app recenti. Il blocco tiene le persone fuori dall’app; non cifra la posta conservata sul dispositivo.';
 
   @override
-  String get noticeLocked => 'Nuovo messaggio';
+  String get noticeLocked => 'Nuovi messaggi';
 
   @override
   String get lockTitle => 'Piuma è bloccato';

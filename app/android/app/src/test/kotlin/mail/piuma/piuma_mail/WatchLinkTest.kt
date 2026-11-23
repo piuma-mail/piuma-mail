@@ -5,8 +5,10 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The generation the watch uses to drop a summary that arrives late. */
+/** The epoch and generation the watch uses to order the summaries. */
 class WatchLinkTest {
+    private val epoch = "0f8c2a1e-5b7d-4c3a-9e21-6d4b8f0a7c55"
+
     @Test
     fun generationsOnlyGrow() {
         assertEquals(1_700_000_000_000L, WatchLink.nextGeneration(5L, 1_700_000_000_000L))
@@ -17,18 +19,20 @@ class WatchLinkTest {
     }
 
     @Test
-    fun stampsTheGenerationOnTheSummary() {
+    fun stampsTheEpochAndGenerationOnTheSummary() {
         assertEquals(
-            """{"gen":42,"at":7,"locked":true,"accounts":[],"rows":[],"templates":[]}""",
-            WatchLink.stamp("""{"at":7,"locked":true,"accounts":[],"rows":[],"templates":[]}""", 42L),
+            """{"epoch":"$epoch","gen":42,"at":7,"locked":true,"accounts":[],"rows":[],"templates":[]}""",
+            WatchLink.stamp("""{"at":7,"locked":true,"accounts":[],"rows":[],"templates":[]}""", epoch, 42L),
         )
-        assertEquals("""{"gen":3}""", WatchLink.stamp(" { } ", 3L))
-        assertTrue(WatchLink.stamp("""{"at":1}""", 9L).startsWith("""{"gen":9,"""))
+        assertEquals("""{"epoch":"$epoch","gen":3}""", WatchLink.stamp(" { } ", epoch, 3L))
+        assertTrue(WatchLink.stamp("""{"at":1}""", epoch, 9L).startsWith("""{"epoch":"$epoch","gen":9,"""))
     }
 
     @Test
     fun refusesWhatIsNotAnObject() {
-        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("", 1L) }
-        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("[1]", 1L) }
+        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("", epoch, 1L) }
+        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("[1]", epoch, 1L) }
+        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("{}", "a\"b", 1L) }
+        assertThrows(IllegalArgumentException::class.java) { WatchLink.stamp("{}", "", 1L) }
     }
 }

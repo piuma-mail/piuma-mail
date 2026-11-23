@@ -241,6 +241,110 @@ void main() {
     expect(link.summary!.rows, isEmpty);
   });
 
+  group('summaries from another phone install', () {
+    /// A summary as `WatchLink.kt` stamps it.
+    String stamped(String epoch, int gen, {bool locked = false}) {
+      final m = jsonDecode(_summary()) as Map<String, dynamic>;
+      m
+        ..['epoch'] = epoch
+        ..['gen'] = gen;
+      if (locked) {
+        m
+          ..['locked'] = true
+          ..['accounts'] = []
+          ..['rows'] = []
+          ..['templates'] = [];
+      }
+      return jsonEncode(m);
+    }
+
+    /// A link whose kept summary (read at start) is [kept].
+    Future<PhoneLink> started(Future<String?> kept) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(_channel, (call) async {
+            if (call.method == 'summary') return kept;
+            return null;
+          });
+      return PhoneLink();
+    }
+
+    testWidgets('a reinstalled phone app counts from zero again', (
+      tester,
+    ) async {
+      final link = await started(Future.value(stamped('a', 1700000000500)));
+      await link.start();
+      expect(link.summary!.epoch, 'a');
+      // Reinstalled: a new epoch, the generation starts over.
+      await _fromPhone('summary', stamped('b', 1));
+      expect(link.summary!.epoch, 'b');
+      expect(link.summary!.gen, 1);
+      await _fromPhone('summary', stamped('b', 2));
+      expect(link.summary!.gen, 2);
+      // Within the new epoch, a late one is still dropped.
+      await _fromPhone('summary', stamped('b', 1, locked: true));
+      await _fromPhone('summary', stamped('b', 1));
+      expect(link.summary!.locked, isTrue);
+    });
+
+    testWidgets('the lock turned off after a reinstall shows mail again', (
+      tester,
+    ) async {
+      final link = await started(Future.value(null));
+      await link.start();
+      await _fromPhone('summary', stamped('a', 1700000000500));
+      await _fromPhone('summary', stamped('a', 1700000000501, locked: true));
+      expect(link.summary!.locked, isTrue);
+      // Reinstalled without the lock: its first summary has mail.
+      await _fromPhone('summary', stamped('b', 1));
+      expect(link.summary!.locked, isFalse);
+      expect(link.summary!.rows, isNotEmpty);
+      // Reinstalled again, locked there, then the lock turned off.
+      await _fromPhone('summary', stamped('c', 1, locked: true));
+      expect(link.summary!.locked, isTrue);
+      await _fromPhone('summary', stamped('c', 2));
+      expect(link.summary!.locked, isFalse);
+    });
+
+    testWidgets('a kept summary read late never replaces what came', (
+      tester,
+    ) async {
+      final kept = Completer<String?>();
+      final link = await started(kept.future);
+      final start = link.start();
+      await _fromPhone('summary', stamped('b', 2));
+      // The Data Layer's copy from the earlier install, with mail.
+      kept.complete(stamped('a', 1700000000900));
+      await start;
+      expect(link.summary!.epoch, 'b');
+      expect(link.summary!.gen, 2);
+
+      // Nor an older one of the same install over a locked one.
+      final kept2 = Completer<String?>();
+      final link2 = await started(kept2.future);
+      final start2 = link2.start();
+      await _fromPhone('summary', stamped('b', 3, locked: true));
+      kept2.complete(stamped('b', 2));
+      await start2;
+      expect(link2.summary!.locked, isTrue);
+    });
+
+    testWidgets('a summary right after a locked one is kept and shown', (
+      tester,
+    ) async {
+      final link = await started(Future.value(null));
+      await link.start();
+      await _fromPhone('summary', stamped('b', 5, locked: true));
+      await _fromPhone('summary', stamped('b', 6));
+      expect(link.summary!.locked, isFalse);
+      // The watch restarts: the Data Layer still holds the newest one,
+      // since nothing deletes it on the watch any more.
+      final again = await started(Future.value(stamped('b', 6)));
+      await again.start();
+      expect(again.summary!.gen, 6);
+      expect(again.summary!.rows, isNotEmpty);
+    });
+  });
+
   testWidgets('an email open when the phone locks closes, and its words go', (
     tester,
   ) async {

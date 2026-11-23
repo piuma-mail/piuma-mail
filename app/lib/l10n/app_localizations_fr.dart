@@ -7826,10 +7826,10 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get lockSettingNote =>
-      'Tant que le verrouillage est actif, les notifications disent seulement « Nouveau message », ici et sur une montre associée, et la montre n’affiche aucun e-mail. Piuma est aussi masqué dans les applis récentes. Le verrouillage tient les autres hors de l’appli ; il ne chiffre pas les e-mails gardés sur cet appareil.';
+      'Tant que le verrouillage est actif, les notifications disent seulement « Nouveaux messages », ici et sur une montre associée, et la montre n’affiche aucun e-mail. Piuma est aussi masqué dans les applis récentes. Le verrouillage tient les autres hors de l’appli ; il ne chiffre pas les e-mails gardés sur cet appareil.';
 
   @override
-  String get noticeLocked => 'Nouveau message';
+  String get noticeLocked => 'Nouveaux messages';
 
   @override
   String get lockTitle => 'Piuma est verrouillé';

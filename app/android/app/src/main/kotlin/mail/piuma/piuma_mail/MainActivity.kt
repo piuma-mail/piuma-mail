@@ -146,7 +146,7 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(null)
                     }
                     "refreshSignInNotices" -> {
-                        Background.showSignIn(context)
+                        Background.showSignInLater(context)
                         result.success(null)
                     }
                     "askBattery" -> {
@@ -180,8 +180,8 @@ class MainActivity : FlutterFragmentActivity() {
                     "changed" -> {
                         val on = call.argument<Boolean>("on") == true
                         secure(on)
-                        // Turned on: the notices already shown lose their
-                        // sender, subject and buttons.
+                        // Turned on: the mail notices already shown fold
+                        // into one "New messages" (off the main thread).
                         if (on) Background.blankNotices(context)
                         // The watch shows the mail again, or stops.
                         WatchLink.publish(context)

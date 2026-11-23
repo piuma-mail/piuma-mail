@@ -28,6 +28,6 @@ object AppLockFile {
         } catch (e: Exception) {
             ""
         }
-        return text.ifEmpty { "New message" }
+        return text.ifEmpty { "New messages" }
     }
 }

@@ -11,12 +11,18 @@ class Summary {
     required this.templates,
     this.locked = false,
     this.gen = 0,
+    this.epoch = '',
   });
 
   /// Grows with every summary the phone sends (`WatchLink.kt`): one that
-  /// arrives after a newer one is old news and is dropped
-  /// ([PhoneLink]). Zero from a phone app that doesn't send it.
+  /// arrives after a newer one of the same [epoch] is old news and is
+  /// dropped ([PhoneLink]). Zero from a phone app that doesn't send it.
   final int gen;
+
+  /// Made at random once per install of the phone app: another phone, or
+  /// the app installed again, starts [gen] over under a new one. Empty
+  /// from a phone app that doesn't send it.
+  final String epoch;
 
   /// The app lock is on on the phone: no mail comes to the watch until
   /// it is unlocked there (`WatchLink.kt`).
@@ -47,6 +53,7 @@ class Summary {
         at: (m['at'] as num).toInt(),
         locked: m['locked'] == true,
         gen: (m['gen'] as num?)?.toInt() ?? 0,
+        epoch: m['epoch'] as String? ?? '',
         accounts: [
           for (final a in m['accounts'] as List<dynamic>)
             WatchAccount.fromJson(a as Map<String, dynamic>),
@@ -71,6 +78,7 @@ class Summary {
     at: at,
     locked: locked,
     gen: gen,
+    epoch: epoch,
     accounts: accounts,
     rows: [
       for (final r in rows)
