@@ -19,6 +19,7 @@ import '../widgets/route.dart';
 import 'settings_screen.dart' show PhoneBack, SettingsHeader;
 import 'sync_page.dart' show syncAgo;
 import '../widgets/bidi.dart';
+import 'transfer_page.dart' show showExportFolder;
 
 /// Settings › Rules & folders, as in `Rules` (desktop) and `RulesPhone`:
 /// rules that read like sentences, each with its switch, the sentence
@@ -1491,8 +1492,8 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
     widget.onChanged();
   }
 
-  /// A folder's More: Rename, Hide from lists (or Show in lists) and
-  /// Delete folder, under [at].
+  /// A folder's More: Rename, Hide from lists (or Show in lists), Export
+  /// folder and Delete folder, under [at].
   Future<void> _folderMenu(MailAccount a, AccountFolder f, Rect at) async {
     final l = AppLocalizations.of(context);
     final c = PiumaTheme.of(context);
@@ -1508,6 +1509,7 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
             f.subscribed ? l.folderHide : l.folderShow,
             c.fg,
           ),
+          (PiumaIcon.download, l.transferFolderExport, c.fg),
           (PiumaIcon.trash, l.folderDelete, c.danger),
         ].indexed)
           PiumaPressable(
@@ -1559,6 +1561,15 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
         case 1:
           await source.setFolderSubscribed(a.id, f.mailbox, !f.subscribed);
         case 2:
+          await showExportFolder(
+            context,
+            source: source,
+            account: a,
+            folder: f,
+            phone: phone,
+          );
+          return;
+        case 3:
           final contents = source.folderContents(a.id, f.mailbox);
           final yes = await confirmDeleteFolder(
             context,

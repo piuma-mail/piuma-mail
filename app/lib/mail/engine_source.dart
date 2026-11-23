@@ -33,6 +33,7 @@ import '../engine/api/sync.dart' as sync;
 import '../engine/api/templates.dart' as tpl;
 import 'contact_photos.dart';
 import 'engine_compose.dart';
+import 'engine_transfer.dart';
 import 'mail_source.dart';
 import 'recipient_suggestions.dart';
 import 'resubscribe.dart';
@@ -49,7 +50,7 @@ void refreshAndroidNotices(engine.SyncEvent e) {
 }
 
 /// The real thing: mail from the Rust engine.
-class EngineMailSource extends MailSource with EngineCompose {
+class EngineMailSource extends MailSource with EngineCompose, EngineTransfer {
   EngineMailSource() {
     _reloadAccounts();
     _readFeatures();

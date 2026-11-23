@@ -16,4 +16,5 @@ pub mod search;
 pub mod storage;
 pub mod sync;
 pub mod templates;
+pub mod transfer;
 pub mod updates;

@@ -10,12 +10,14 @@ import 'envelope.dart';
 import 'features.dart';
 import 'readable.dart';
 import 'sender_pictures.dart';
+import 'transfer.dart';
 
 export 'calendars.dart';
 export 'compose_extras.dart';
 export 'envelope.dart';
 export 'features.dart';
 export 'readable.dart';
+export 'transfer.dart';
 
 /// An account as the interface shows it.
 class MailAccount {
@@ -2631,7 +2633,7 @@ class ReportEmail {
   final List<DraftFile> files;
 }
 
-abstract class MailSource with ComposeExtras {
+abstract class MailSource with ComposeExtras, TransferExtras {
   List<MailAccount> get accounts;
 
   /// Fires whenever the inbox changed and should be redrawn.

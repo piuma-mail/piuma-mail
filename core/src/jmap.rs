@@ -314,6 +314,8 @@ pub struct Client {
     event_source_url: Option<String>,
     account_id: String,
     max_get: usize,
+    /// The largest upload the server takes (`maxSizeUpload`).
+    max_upload: Option<u64>,
     mailboxes: Vec<Mailbox>,
     /// What the session says the server can do.
     capabilities: HashSet<String>,
@@ -358,6 +360,12 @@ impl Client {
             .and_then(|c| c.get("maxObjectsInGet"))
             .and_then(Value::as_u64)
             .map_or(BATCH, |m| (m as usize).clamp(1, BATCH));
+        let max_upload = session
+            .capabilities
+            .get(CORE)
+            .and_then(|c| c.get("maxSizeUpload"))
+            .and_then(Value::as_u64)
+            .filter(|&n| n > 0);
         let capabilities = session.capabilities.keys().cloned().collect();
         let base = url::Url::parse(&cfg.session_url).ok();
         // Servers may give these relative to the session.
@@ -389,6 +397,7 @@ impl Client {
             event_source_url,
             account_id,
             max_get,
+            max_upload,
             mailboxes: Vec::new(),
             capabilities,
             roles: Vec::new(),
@@ -1603,6 +1612,76 @@ impl Client {
         }
         self.import(raw, folder, &["$seen"]).await?;
         Ok(())
+    }
+
+    /// The largest message the server takes, when it says
+    /// (`maxSizeUpload`).
+    pub fn append_limit(&self) -> Option<u64> {
+        self.max_upload
+    }
+
+    /// Puts a message in `folder` with its flags and, when known, the time
+    /// it arrived (`at`, Unix seconds): a message imported from a file.
+    pub async fn append_message(
+        &mut self,
+        folder: &str,
+        raw: &[u8],
+        flags: Flags,
+        at: Option<i64>,
+    ) -> Result<()> {
+        if self.mailboxes.is_empty() {
+            self.refresh_mailboxes().await?;
+        }
+        let blob = self.upload(raw).await?;
+        let mailbox = self.remote(folder)?;
+        let mut keywords = serde_json::Map::new();
+        for (on, k) in [
+            (flags.seen, "$seen"),
+            (flags.flagged, "$flagged"),
+            (flags.answered, "$answered"),
+        ] {
+            if on {
+                keywords.insert(k.to_owned(), json!(true));
+            }
+        }
+        let mut email =
+            json!({ "blobId": blob, "mailboxIds": { mailbox: true }, "keywords": keywords });
+        if let Some(at) = at {
+            email["receivedAt"] = json!(crate::mbox::utc_date(at));
+        }
+        let [imported] = self
+            .call([(
+                "Email/import",
+                json!({ "accountId": self.account_id, "emails": { "new": email } }),
+            )])
+            .await?;
+        imported["created"]["new"]["id"]
+            .as_str()
+            .map(|_| ())
+            .ok_or_else(|| not_done(&imported, "notCreated"))
+    }
+
+    /// The Message-IDs of a folder's messages, without angle brackets.
+    pub async fn message_ids(&mut self, folder: &str) -> Result<HashSet<String>> {
+        if self.mailboxes.is_empty() {
+            self.refresh_mailboxes().await?;
+        }
+        let remote = self.remote(folder)?;
+        let ids = self.query_ids(&remote).await?;
+        let mut found = HashSet::new();
+        for batch in ids.chunks(self.max_get) {
+            for e in self.get_emails(batch, &["id", "messageId"]).await? {
+                for id in e["messageId"].as_array().into_iter().flatten() {
+                    if let Some(id) = id.as_str() {
+                        let id = crate::imap::bare_message_id(id);
+                        if !id.is_empty() {
+                            found.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// Sends a message from `from` to `recipients` and files it in Sent.
