@@ -7,6 +7,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
+import '../widgets/bidi.dart';
 
 /// The document a disguised program pretends to be: "PDF" for
 /// "invoice.pdf.exe".
@@ -87,11 +88,14 @@ class _RiskyFile extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final body = switch (risk) {
-      FileRisk.program => l.riskBodyProgram(file.name),
-      FileRisk.disguised => l.riskBodyDisguised(file.name, _posesAs(file.name)),
-      FileRisk.macros => l.riskBodyMacros(file.name),
-      FileRisk.locked => l.riskBodyLocked(file.name),
-      FileRisk.web => l.riskBodyWeb(file.name),
+      FileRisk.program => l.riskBodyProgram(bidiArg(context, file.name)),
+      FileRisk.disguised => l.riskBodyDisguised(
+        bidiArg(context, file.name),
+        _posesAs(file.name),
+      ),
+      FileRisk.macros => l.riskBodyMacros(bidiArg(context, file.name)),
+      FileRisk.locked => l.riskBodyLocked(bidiArg(context, file.name)),
+      FileRisk.web => l.riskBodyWeb(bidiArg(context, file.name)),
     };
     final open = PiumaButton(
       label: l.openAnyway,
@@ -133,12 +137,12 @@ class _RiskyFile extends StatelessWidget {
           const SizedBox(height: PiumaSpace.s12),
           Text(
             l.riskFileFrom(
-              file.name,
+              bidiArg(context, file.name),
               fileSize(
                 file.size,
                 locale: Localizations.localeOf(context).toLanguageTag(),
               ),
-              from,
+              bidiArg(context, from),
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

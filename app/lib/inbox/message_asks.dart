@@ -6,6 +6,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 
 /// What a message being read asks of its reader, above its text: a pill
 /// when the sender marked it high priority, and a band when they asked to
@@ -133,7 +134,7 @@ class HighPriorityPill extends StatelessWidget {
       child: ExcludeSemantics(
         child: Container(
           height: 20,
-          padding: const EdgeInsets.fromLTRB(6, 0, 8, 0),
+          padding: const EdgeInsetsDirectional.fromSTEB(6, 0, 8, 0),
           decoration: BoxDecoration(
             color: c.warnSoft,
             borderRadius: BorderRadius.circular(PiumaRadius.pill),
@@ -188,7 +189,7 @@ class ReadReceiptBand extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final line = Text(
-      l.readReceiptAsk(sender),
+      l.readReceiptAsk(bidiArg(context, sender)),
       style: TextStyle(
         fontFamily: PiumaFonts.sans,
         fontSize: phone ? 14 : 13.5,

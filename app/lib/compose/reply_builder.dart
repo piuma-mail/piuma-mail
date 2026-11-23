@@ -126,6 +126,7 @@ class ReplyBuilder {
       body: quote
           ? replyBody(
               text: text,
+              // bidi-ok: the reply's text, written as received.
               header: l.quoteHeader(when, row.sender),
               quoted: quoted,
               below: settings.replyBelow,
@@ -170,6 +171,7 @@ class ReplyBuilder {
       ].map((p) => p.address).join(', '),
       _ => toLine,
     };
+    // bidi-ok: the forward's text, written as received.
     final head = '\n\n${l.forwardBlock(from, date, to, row.subject)}\n\n';
     final content = _content(row, blocks, text, fromEmail);
     return Draft(

@@ -7,6 +7,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/readable.dart' show fileSize;
 import '../widgets/progress.dart';
+import '../widgets/bidi.dart';
 
 /// "Written in German · Translate" under the sender, as on the
 /// `TranslateQuiet` board: nothing happens until it is tapped. While the
@@ -60,11 +61,14 @@ class TranslatePill extends StatelessWidget {
       final second = l.languageName(to);
       text = switch (bytes) {
         final b? => l.translateGettingSize(
-          first,
-          second,
+          bidiArg(context, first),
+          bidiArg(context, second),
           fileSize(b, locale: locale),
         ),
-        null => l.translateGetting(first, second),
+        null => l.translateGetting(
+          bidiArg(context, first),
+          bidiArg(context, second),
+        ),
       };
     } else if (busy) {
       text = l.translating;
@@ -87,7 +91,7 @@ class TranslatePill extends StatelessWidget {
           alignment: AlignmentDirectional.centerStart,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 10, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(8, 0, 10, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -147,7 +151,7 @@ class TranslatedBar extends StatelessWidget {
       color: c.accentText,
     );
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 6, 8),
       decoration: BoxDecoration(
         color: c.soft,
         borderRadius: BorderRadius.circular(PiumaRadius.button),

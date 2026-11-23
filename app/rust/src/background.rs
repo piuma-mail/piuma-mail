@@ -473,6 +473,14 @@ fn remember(passwords: &[(i64, String)]) {
     let _ = passwords;
 }
 
+/// [text], from an email (a name, a subject, a preview, what the Vault
+/// read), as a JSON string with its direction controls made harmless
+/// (`piuma_core::bidi::neutralize`): the system shows it as it is, so an
+/// override in a sender's name can't reorder the notice.
+pub(crate) fn untrusted(text: &str) -> String {
+    quote(&piuma_core::bidi::neutralize(text))
+}
+
 /// Notices as the service reads them: a JSON array, each with the
 /// notification's id, who and what, the payload the app opens, and
 /// whether it is silent (see [`quiet`]).
@@ -484,15 +492,15 @@ pub fn to_json(notices: &[MailNotice]) -> String {
                 format!(
                     r#","vault":{{"dueIn":{},"merchant":{},"title":{},"time":{},"amount":{},"currency":{}}}"#,
                     r.due_in.map_or(-1, i64::from),
-                    quote(&r.merchant),
-                    quote(&r.title),
+                    untrusted(&r.merchant),
+                    untrusted(&r.title),
                     quote(&r.time),
                     r.amount.unwrap_or(-1),
                     quote(&r.currency),
                 )
             });
             let away = n.away.as_ref().map_or(String::new(), |a| {
-                let names: Vec<String> = a.names.iter().map(|n| quote(n)).collect();
+                let names: Vec<String> = a.names.iter().map(|n| untrusted(n)).collect();
                 format!(
                     r#","away":{{"emails":{},"people":{},"names":[{}]}}"#,
                     a.emails,
@@ -518,10 +526,10 @@ pub fn to_json(notices: &[MailNotice]) -> String {
             format!(
                 r#"{{"id":{},"sender":{},"count":{},"subject":{},"preview":{},"payload":{},"silent":{}{}{}{}{}}}"#,
                 notice_id(n),
-                quote(&n.sender),
+                untrusted(&n.sender),
                 n.count,
-                quote(&n.subject),
-                quote(&n.preview),
+                untrusted(&n.subject),
+                untrusted(&n.preview),
                 quote(&if n.away.is_some() {
                     // Opens the inbox.
                     "inbox".to_owned()
@@ -648,6 +656,39 @@ mod tests {
         assert!(json.contains(r#""payload":"2\nINBOX\n41""#));
         assert!(json.contains(r#""count":2"#));
         assert!(json.ends_with(r#""silent":false}]"#));
+    }
+
+    #[test]
+    fn direction_controls_from_an_email_are_made_harmless() {
+        let mut n = notice("x@y.it", "Pay \u{202E}gro.evil");
+        n.sender = "Bank\u{2069}\u{200F}".into();
+        n.preview = "\u{2066}see".into();
+        n.reminder = Some(engine::VaultReminder {
+            due_in: Some(3),
+            merchant: "Enel\u{202D}".into(),
+            title: "\u{2067}Bill".into(),
+            time: String::new(),
+            amount: None,
+            currency: String::new(),
+            key: "K".into(),
+        });
+        n.away = Some(engine::AwayInfo {
+            emails: 2,
+            people: 1,
+            names: vec!["Dad\u{202E}".into()],
+        });
+        let json = to_json(&[n]);
+        for c in [
+            '\u{202E}', '\u{202D}', '\u{2066}', '\u{2067}', '\u{2069}', '\u{200F}',
+        ] {
+            assert!(!json.contains(c), "{c:?} left in {json}");
+        }
+        assert!(json.contains("\"sender\":\"Bank\u{FFFD}\u{2060}\""));
+        assert!(json.contains("\"subject\":\"Pay \u{FFFD}gro.evil\""));
+        assert!(json.contains("\"preview\":\"\u{FFFD}see\""));
+        assert!(json.contains("\"merchant\":\"Enel\u{FFFD}\""));
+        assert!(json.contains("\"title\":\"\u{FFFD}Bill\""));
+        assert!(json.contains("\"names\":[\"Dad\u{FFFD}\"]"));
     }
 
     #[test]

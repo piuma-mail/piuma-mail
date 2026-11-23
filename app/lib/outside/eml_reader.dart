@@ -17,6 +17,7 @@ import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/links.dart';
 import 'arrive.dart';
+import '../widgets/bidi.dart';
 
 /// An email file opened from outside the app (`.eml`): read only, apart
 /// from the mailbox. The engine read it with the same parser as synced
@@ -152,7 +153,7 @@ class _EmlReaderState extends State<EmlReader> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: EdgeInsets.fromLTRB(pad - 8, 8, pad, 0),
+              padding: EdgeInsetsDirectional.fromSTEB(pad - 8, 8, pad, 0),
               child: Row(
                 children: [
                   PiumaPressable(
@@ -161,7 +162,12 @@ class _EmlReaderState extends State<EmlReader> {
                     child: SizedBox(
                       height: 44,
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                          4,
+                          0,
+                          10,
+                          0,
+                        ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -236,14 +242,23 @@ class _EmlReaderState extends State<EmlReader> {
                         ),
                         const SizedBox(height: PiumaSpace.s12),
                         SelectableText(
-                          _m.subject.isEmpty ? l.noSubject : _m.subject,
+                          safeBidi(
+                            _m.subject.isEmpty ? l.noSubject : _m.subject,
+                          ),
+                          textDirection: directionOf(
+                            _m.subject,
+                            Directionality.of(context),
+                            subject: true,
+                          ),
                           style: PiumaType.title.copyWith(color: c.fg),
                         ),
                         const SizedBox(height: PiumaSpace.s12),
                         Text(
-                          _m.fromName.isNotEmpty
-                              ? '${_m.fromName} <${_m.fromEmail}>'
-                              : _m.fromEmail,
+                          safeBidi(
+                            _m.fromName.isNotEmpty
+                                ? '${_m.fromName} <${_m.fromEmail}>'
+                                : _m.fromEmail,
+                          ),
                           style: PiumaType.body.copyWith(
                             color: c.fg,
                             fontWeight: FontWeight.w500,

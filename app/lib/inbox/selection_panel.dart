@@ -7,6 +7,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import 'message_list.dart' show initials;
+import '../widgets/bidi.dart';
 
 /// The reading pane while several conversations are picked, as in the
 /// `DesktopSelect` mockup: a small stack of what is picked, how many and
@@ -289,8 +290,8 @@ class _Stack extends StatelessWidget {
                     child: Stack(
                       children: [
                         for (final (i, r) in faces.indexed)
-                          Positioned(
-                            left: 24.0 * i,
+                          PositionedDirectional(
+                            start: 24.0 * i,
                             child: _Face(initials(r.listName)),
                           ),
                       ],
@@ -303,7 +304,7 @@ class _Stack extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          lead.subject,
+                          safeBidi(lead.subject),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -316,7 +317,10 @@ class _Stack extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           count > 1
-                              ? l.andMore(lead.listName, count - 1)
+                              ? l.andMore(
+                                  bidiArg(context, lead.listName),
+                                  count - 1,
+                                )
                               : lead.listName,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

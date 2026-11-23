@@ -13,6 +13,7 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import 'account_errors.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// Reads codes for [ScanPairScreen]: the camera, or a stand-in in tests.
 typedef PairScanner = Widget Function(
@@ -126,7 +127,9 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
       setState(
         () => _error = switch (e.problem) {
           SyncProblem.expired => l.pairExpired,
-          SyncProblem.offline => l.syncFailOffline(code.email),
+          SyncProblem.offline => l.syncFailOffline(
+            bidiArg(context, code.email),
+          ),
           _ => l.syncFailOther,
         },
       );
@@ -156,7 +159,7 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
             children: [
               if (back != null)
                 Transform.translate(
-                  offset: const Offset(-10, 0),
+                  offset: towardStart(context, 10),
                   child: PiumaPressable(
                     onTap: back,
                     semanticLabel: camera ? l.cancel : l.back,
@@ -247,7 +250,7 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
       children: [
         const SizedBox(height: 28),
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: Container(
             width: 56,
             height: 56,
@@ -354,7 +357,7 @@ class _ScanPairScreenState extends State<ScanPairScreen> {
             color: c.bg,
             borderRadius: BorderRadius.circular(PiumaRadius.field),
           ),
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: Text(
             code.email,
             maxLines: 1,

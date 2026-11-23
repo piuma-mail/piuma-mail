@@ -67,6 +67,7 @@ import 'snooze.dart';
 import 'swipe.dart';
 import 'tablet_parts.dart';
 import 'waiting.dart';
+import '../widgets/bidi.dart';
 
 /// The desktop layout of the `Main` mockup: sidebar, inbox, reading pane.
 class InboxScreen extends StatefulWidget {
@@ -375,7 +376,7 @@ class _InboxScreenState extends State<InboxScreen> {
         SystemNotice(
           id: Object.hash('pair', ask.id) & 0x7fffffff,
           title: l.syncAskTitle(ask.kind.name),
-          subject: ask.name,
+          subject: safeBidi(ask.name),
           preview: l.syncAskCode(ask.kind.name),
           payload: 'pair',
         ),
@@ -411,7 +412,7 @@ class _InboxScreenState extends State<InboxScreen> {
       notifier.show(
         SystemNotice(
           id: Object.hash('sign-in', id) & 0x7fffffff,
-          title: l.noticeSignInTitle(account.name),
+          title: l.noticeSignInTitle(bidiArg(context, account.name)),
           subject: widget.source.accountHealth(id).certificate
               ? l.accountCertificateRefused
               : l.accountPasswordRefused,
@@ -507,8 +508,8 @@ class _InboxScreenState extends State<InboxScreen> {
                 Object.hash('no-reply', n.accountId, n.mailbox, n.uid) &
                 0x7fffffff,
             title:
-                '${l.remindNoReply(n.sender)} · ${remindSent(r.sentDaysAgo, l)}',
-            subject: n.subject,
+                '${l.remindNoReply(bidiArg(context, n.sender))} · ${remindSent(r.sentDaysAgo, l)}',
+            subject: safeBidi(n.subject),
             preview: '',
             payload: '${n.accountId}\n${n.mailbox}\n${n.uid}',
             silent: quietNow,
@@ -530,14 +531,14 @@ class _InboxScreenState extends State<InboxScreen> {
               : vault != null
               ? vaultNoticeTitle(l, vault)
               : n.count > 1
-              ? l.noticeTitleMany(n.sender, n.count)
-              : n.sender,
+              ? l.noticeTitleMany(bidiArg(context, n.sender), n.count)
+              : safeBidi(n.sender),
           subject: away != null
               ? awayNoticeDetail(l, away)
               : vault != null
               ? vaultNoticeDetail(l, vault, locale)
-              : n.subject,
-          preview: n.preview,
+              : safeBidi(n.subject),
+          preview: safeBidi(n.preview),
           payload: away != null
               ? 'inbox'
               : '${n.accountId}\n${n.mailbox}\n${n.uid}',
@@ -963,7 +964,7 @@ class _InboxScreenState extends State<InboxScreen> {
 
   String _sendProblem(AppLocalizations l, SendError error, String detail) =>
       switch (error) {
-        SendError.badAddress => l.sendBadAddress(detail),
+        SendError.badAddress => l.sendBadAddress(bidiArg(context, detail)),
         SendError.noRecipients => l.sendNoRecipients,
         SendError.wrongPassword => l.sendErrorPassword,
         SendError.unreachable => l.sendErrorUnreachable,
@@ -1051,7 +1052,7 @@ class _InboxScreenState extends State<InboxScreen> {
     final l = AppLocalizations.of(context);
     await _withUndo(
       picked,
-      l.movedMany(picked.length, target.name),
+      l.movedMany(picked.length, bidiArg(context, target.name)),
       (rows) => widget.source.moveTo(rows, target.mailbox),
       reopen: reopen,
     );
@@ -1827,7 +1828,7 @@ class _InboxScreenState extends State<InboxScreen> {
     PaletteCommand go(PiumaIcon icon, String place, MailFolder folder) =>
         PaletteCommand(
           icon,
-          l.paletteGoTo(place),
+          l.paletteGoTo(bidiArg(context, place)),
           _fromPalette(() => _showFolder(folder)),
         );
     return [
@@ -2138,7 +2139,7 @@ class _InboxScreenState extends State<InboxScreen> {
     // hidden ones on demand.
     final picked = await showPiumaSheet<AccountFolder>(
       context,
-      label: l.accountFolders(account.name),
+      label: l.accountFolders(bidiArg(context, account.name)),
       builder: (_) => PhoneFolderTree(
         account: account,
         folders: _ownFolders[account.id] ?? const [],
@@ -2552,8 +2553,11 @@ class _InboxScreenState extends State<InboxScreen> {
         // Trash and spam: Empty, as at the head of the desktop's list.
         if (_emptyButton() case final empty?)
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 12, 4),
-            child: Align(alignment: Alignment.centerRight, child: empty),
+            padding: const EdgeInsetsDirectional.fromSTEB(20, 0, 12, 4),
+            child: Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: empty,
+            ),
           ),
         // Only when something has waited 3 days or more.
         if (_waiting.long > 0 &&
@@ -2884,8 +2888,8 @@ class _InboxScreenState extends State<InboxScreen> {
                               _folder != MailFolder.newsletters &&
                               _folder != MailFolder.vault &&
                               _folder != MailFolder.attachments)
-                            Positioned(
-                              right: ComposeFab.right,
+                            PositionedDirectional(
+                              end: ComposeFab.right,
                               bottom: ComposeFab.bottom,
                               child: ComposeFab(
                                 onTap: _openCompose,
@@ -3288,7 +3292,7 @@ class _InboxScreenState extends State<InboxScreen> {
           color: c.surface,
           border: _tablet || _tabletTall
               ? null
-              : Border(left: BorderSide(color: c.line)),
+              : BorderDirectional(start: BorderSide(color: c.line)),
         ),
         child: covered && !_tabletTall
             ? Listener(
@@ -3311,9 +3315,9 @@ class _InboxScreenState extends State<InboxScreen> {
                   ),
                   // `TabletPortrait`: the message in a panel over the list.
                   if (covered)
-                    Positioned(
+                    PositionedDirectional(
                       top: 14,
-                      right: 14,
+                      end: 14,
                       bottom: 14,
                       width: 520,
                       child: PiumaEnter(
@@ -3365,7 +3369,7 @@ class _InboxScreenState extends State<InboxScreen> {
         color: c.surface,
         border: _tablet || _tabletTall
             ? null
-            : Border(left: BorderSide(color: c.line)),
+            : BorderDirectional(start: BorderSide(color: c.line)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3373,7 +3377,7 @@ class _InboxScreenState extends State<InboxScreen> {
           Container(
             width: _tablet ? 380 : (rail ? 360 : 400),
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: c.line)),
+              border: BorderDirectional(end: BorderSide(color: c.line)),
             ),
             child: list,
           ),
@@ -3393,7 +3397,7 @@ class _InboxScreenState extends State<InboxScreen> {
         color: c.surface,
         border: _tablet || _tabletTall
             ? null
-            : Border(left: BorderSide(color: c.line)),
+            : BorderDirectional(start: BorderSide(color: c.line)),
       ),
       // The board itself has no entrance: its cards have theirs.
       child: covered
@@ -3471,7 +3475,7 @@ class _InboxScreenState extends State<InboxScreen> {
       color: c.surface,
       border: _tablet || _tabletTall
           ? null
-          : Border(left: BorderSide(color: c.line)),
+          : BorderDirectional(start: BorderSide(color: c.line)),
     );
     if (_stacked) {
       final covered = _readerUp && _selected != null;
@@ -3488,7 +3492,7 @@ class _InboxScreenState extends State<InboxScreen> {
           Container(
             width: _tablet ? 380 : (rail ? 360 : 400),
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: c.line)),
+              border: BorderDirectional(end: BorderSide(color: c.line)),
             ),
             child: list,
           ),
@@ -3643,7 +3647,9 @@ class _InboxScreenState extends State<InboxScreen> {
     if (!mounted) return;
     final l = AppLocalizations.of(context);
     _toast(
-      people ? l.movedToPeople(row.sender) : l.movedToNotifications(row.sender),
+      people
+          ? l.movedToPeople(bidiArg(context, row.sender))
+          : l.movedToNotifications(bidiArg(context, row.sender)),
       action: l.undo,
       onAction: () async {
         await source.setSenderSide(row.fromEmail, null);
@@ -4005,7 +4011,7 @@ class _InboxScreenState extends State<InboxScreen> {
     }
     await _withUndo(
       rows,
-      l.movedMany(rows.length, name),
+      l.movedMany(rows.length, bidiArg(context, name)),
       (rows) => widget.source.moveTo(rows, mailbox),
     );
   }
@@ -4163,11 +4169,11 @@ class _GroupHeader extends StatelessWidget {
             const SizedBox(height: 14),
             PiumaPressable(
               onTap: onClear,
-              semanticLabel: l.groupOnlyClear(email),
+              semanticLabel: l.groupOnlyClear(bidiArg(context, email)),
               child: ExcludeSemantics(
                 child: Container(
                   height: 30,
-                  padding: const EdgeInsets.only(left: 12, right: 8),
+                  padding: const EdgeInsetsDirectional.only(start: 12, end: 8),
                   decoration: BoxDecoration(
                     color: c.chip,
                     borderRadius: BorderRadius.circular(PiumaRadius.pill),
@@ -4177,7 +4183,7 @@ class _GroupHeader extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          l.groupOnly(email),
+                          l.groupOnly(bidiArg(context, email)),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(fontSize: 13, color: c.fg),
@@ -4273,7 +4279,7 @@ class _ListHeader extends StatelessWidget {
         children: [
           if (picked > 0) ...[
             Transform.translate(
-              offset: const Offset(-8, 0),
+              offset: towardStart(context, 8),
               child: Semantics(
                 checked: picked >= total,
                 mixed: picked < total,
@@ -4304,7 +4310,7 @@ class _ListHeader extends StatelessWidget {
                     child: Container(
                       width: 12,
                       height: 12,
-                      margin: const EdgeInsets.only(right: 10),
+                      margin: const EdgeInsetsDirectional.only(end: 10),
                       decoration: BoxDecoration(
                         color: labelTint(context, label.color).$2,
                         shape: BoxShape.circle,
@@ -4355,7 +4361,7 @@ class _ListHeader extends StatelessWidget {
                       child: Container(
                         width: 8,
                         height: 8,
-                        margin: const EdgeInsets.only(right: 6),
+                        margin: const EdgeInsetsDirectional.only(end: 6),
                         decoration: BoxDecoration(
                           color: a.color,
                           shape: BoxShape.circle,
@@ -4363,7 +4369,9 @@ class _ListHeader extends StatelessWidget {
                       ),
                     ),
                     TextSpan(
-                      text: mailbox == null ? l.accountOnly(a.name) : a.name,
+                      text: mailbox == null
+                          ? l.accountOnly(bidiArg(context, a.name))
+                          : a.name,
                     ),
                   ],
                 ),
@@ -4442,20 +4450,20 @@ String vaultNoticeTitle(AppLocalizations l, VaultNotice v) {
     1 => l.vaultNoticeDueTomorrow,
     final days => l.vaultNoticeDueIn(days),
   };
-  return v.merchant.isEmpty ? what : '$what · ${v.merchant}';
+  return v.merchant.isEmpty ? what : '$what · ${safeBidi(v.merchant)}';
 }
 
 /// "Desk lamp · around 10:00", "€62.40 · Electricity bill".
 String vaultNoticeDetail(AppLocalizations l, VaultNotice v, String locale) {
   final parts = v.dueIn == null
-      ? [v.title, if (v.time.isNotEmpty) l.vaultNoticeAround(v.time)]
+      ? [safeBidi(v.title), if (v.time.isNotEmpty) l.vaultNoticeAround(v.time)]
       : [
           if (v.amount case final cents?)
             NumberFormat.simpleCurrency(
               locale: locale,
               name: v.currency.isEmpty ? null : v.currency,
             ).format(cents / 100),
-          v.title,
+          safeBidi(v.title),
         ];
   return parts.where((p) => p.isNotEmpty).join(' · ');
 }
@@ -4466,5 +4474,5 @@ String awayNoticeDetail(AppLocalizations l, AwayNotice a) {
   final all = l.noticeAwayEmails(a.emails);
   if (a.people == 0) return all;
   final from = '$all, ${l.noticeAwayPeople(a.people)}';
-  return a.names.isEmpty ? from : '$from: ${a.names.join(', ')}';
+  return a.names.isEmpty ? from : '$from: ${a.names.map(safeBidi).join(', ')}';
 }

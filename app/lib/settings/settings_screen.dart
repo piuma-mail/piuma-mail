@@ -35,6 +35,7 @@ import 'signatures_page.dart';
 import 'groups_page.dart';
 import 'sync_page.dart';
 import 'templates_page.dart';
+import '../widgets/bidi.dart';
 
 /// Settings' sections, in the order of `SettingsOrderToApprove` (B):
 /// the accounts, then Mail, App and About.
@@ -422,7 +423,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.fromLTRB(14, 24, 14, 20),
                 decoration: BoxDecoration(
                   color: c.bg,
-                  border: Border(right: BorderSide(color: c.line)),
+                  border: BorderDirectional(end: BorderSide(color: c.line)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -569,7 +570,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     key: ValueKey(_section),
                     padding: const EdgeInsets.fromLTRB(56, 44, 56, 56),
                     child: Align(
-                      alignment: Alignment.topLeft,
+                      alignment: AlignmentDirectional.topStart,
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 720),
                         child: PiumaEnter(
@@ -613,7 +614,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Align(
-                                  alignment: Alignment.centerLeft,
+                                  alignment: AlignmentDirectional.centerStart,
                                   child: SettingsBackLink(
                                     label: l.settingsAccountsTitle,
                                     onTap: () => setState(
@@ -681,14 +682,14 @@ class PhoneBack extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
       child: Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: PiumaPressable(
           onTap: onTap,
           semanticLabel: label,
           child: SizedBox(
             height: 44,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -812,14 +813,19 @@ class _PhoneList extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Transform.translate(
-                offset: const Offset(-10, 0),
+                offset: towardStart(context, 10),
                 child: PiumaPressable(
                   onTap: onBack,
                   semanticLabel: l.inbox,
                   child: SizedBox(
                     height: 44,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                      padding: const EdgeInsetsDirectional.fromSTEB(
+                        4,
+                        0,
+                        10,
+                        0,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -860,7 +866,10 @@ class _PhoneList extends StatelessWidget {
           for (final a in accounts)
             PiumaPressable(
               onTap: () => onAccount(a),
-              semanticLabel: l.accountDetailsLabel(a.name, a.email),
+              semanticLabel: l.accountDetailsLabel(
+                bidiArg(context, a.name),
+                bidiArg(context, a.email),
+              ),
               child: ExcludeSemantics(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 60),
@@ -1070,7 +1079,7 @@ class _BackButton extends StatelessWidget {
       child: SizedBox(
         height: 32,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 8, 0),
+          padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 8, 0),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1278,7 +1287,10 @@ class _AccountsPage extends StatelessWidget {
             for (final a in accounts)
               PiumaPressable(
                 onTap: () => onAccount(a),
-                semanticLabel: l.accountDetailsLabel(a.name, a.email),
+                semanticLabel: l.accountDetailsLabel(
+                  bidiArg(context, a.name),
+                  bidiArg(context, a.email),
+                ),
                 child: ExcludeSemantics(child: _AccountRow(account: a)),
               ),
           ],
@@ -1393,7 +1405,7 @@ class _AccountRow extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    l.accountKindImap(a.email),
+                    l.accountKindImap(bidiArg(context, a.email)),
                     style: TextStyle(
                       fontFamily: PiumaFonts.sans,
                       fontSize: 13,
@@ -1465,7 +1477,7 @@ class _StoragePageState extends State<StoragePage> {
   Future<void> _clear(MailAccount account) async {
     final l = AppLocalizations.of(context);
     final c = PiumaTheme.of(context);
-    final title = l.storageClearTitle(account.name);
+    final title = l.storageClearTitle(bidiArg(context, account.name));
     Widget panel(BuildContext context) => Padding(
       padding: EdgeInsets.symmetric(
         horizontal: widget.phone ? PiumaSpace.s20 : 0,
@@ -1644,7 +1656,7 @@ class _StoragePageState extends State<StoragePage> {
                     const SizedBox(height: PiumaSpace.s12),
                     FittedBox(
                       fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
+                      alignment: AlignmentDirectional.centerStart,
                       child: PiumaSegments(
                         label: l.storageKeep,
                         items: [
@@ -2061,7 +2073,7 @@ class _AccountQuietRow extends StatelessWidget {
               title: account.name,
               hint: covered
                   ? account.email
-                  : l.quietRingsAsUsual(account.email),
+                  : l.quietRingsAsUsual(bidiArg(context, account.email)),
             ),
           ),
           const SizedBox(width: 16),
@@ -3275,7 +3287,7 @@ class _TrustedRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                BidiText(
                   sender.label,
                   style: TextStyle(
                     fontFamily: PiumaFonts.sans,
@@ -3286,7 +3298,7 @@ class _TrustedRow extends StatelessWidget {
                 ),
                 Text(
                   l.trustedSince(
-                    sender.email,
+                    bidiArg(context, sender.email),
                     DateFormat.MMMd(locale).format(sender.since),
                   ),
                   style: TextStyle(

@@ -28,7 +28,7 @@ class CrashLine extends StatelessWidget {
       liveRegion: true,
       child: Container(
         constraints: const BoxConstraints(minHeight: 40),
-        padding: const EdgeInsets.only(left: 12),
+        padding: const EdgeInsetsDirectional.only(start: 12),
         decoration: BoxDecoration(
           color: c.soft,
           borderRadius: BorderRadius.circular(PiumaRadius.button),

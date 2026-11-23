@@ -20,6 +20,14 @@ The Rust crates compiled into the engine, with their licenses, are listed in [`T
 | printing | © 2017 David PHAM-VAN | Apache License 2.0 | The system's print window, with Save as PDF |
 | velopack | © Velopack Ltd. and contributors | MIT License | Windows installer and updates (with `vpk`, its packaging tool) |
 
+## Data
+
+| Component | Author | License | File |
+|---|---|---|---|
+| Unicode Character Database 16.0.0 (Bidi_Class) | © 1991-2024 Unicode, Inc. | Unicode License v3 | `app/assets/licenses/Unicode-3.0.txt` |
+
+`app/lib/widgets/bidi_table.g.dart`, which tells which characters read left to right or right to left, is derived from the Unicode Character Database by `tools/gen_bidi_table.py`; it carries the license notice in its header, and the license is shown on the app's licenses screen.
+
 ## Translation engine
 
 On-device translation uses a patched copy of fxtranslate in [`third_party/fxtranslate/`](third_party/fxtranslate/); the changes are listed in its [`PIUMA.md`](third_party/fxtranslate/PIUMA.md) and stay under its license.

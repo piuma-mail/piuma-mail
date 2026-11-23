@@ -12,6 +12,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// Asks the person for a logo; [label] names the images in the system's
 /// window. Tests replace it.
@@ -290,7 +291,7 @@ class SignaturesPageState extends State<SignaturesPage> {
           width: 280,
           padding: const EdgeInsets.fromLTRB(14, 40, 14, 24),
           decoration: BoxDecoration(
-            border: Border(right: BorderSide(color: c.line)),
+            border: BorderDirectional(end: BorderSide(color: c.line)),
           ),
           child: SingleChildScrollView(
             child: Column(
@@ -333,7 +334,7 @@ class SignaturesPageState extends State<SignaturesPage> {
               ? SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(56, 44, 56, 56),
                   child: Align(
-                    alignment: Alignment.topLeft,
+                    alignment: AlignmentDirectional.topStart,
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 720),
                       child: widget.templates,
@@ -540,7 +541,7 @@ class SignaturesPageState extends State<SignaturesPage> {
         _Jobs(
           rows: [
             (
-              l.signatureForNew(account?.email ?? ''),
+              l.signatureForNew(bidiArg(context, account?.email ?? '')),
               holder((x) => x.forNew),
               s.forNew,
               () => _save(s.copyWith(forNew: !s.forNew)),
@@ -556,9 +557,9 @@ class SignaturesPageState extends State<SignaturesPage> {
         const SizedBox(height: 28),
         // Its label lines up with the fields, not its padding.
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: Transform.translate(
-            offset: const Offset(-12, 0),
+            offset: towardStart(context, 12),
             child: PiumaButton(
               label: l.deleteSignature,
               kind: PiumaButtonKind.tertiary,
@@ -859,7 +860,9 @@ class _ListItem extends StatelessWidget {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        s.label.isEmpty ? l.newSignatureLabel : s.label,
+                        s.label.isEmpty
+                            ? l.newSignatureLabel
+                            : safeBidi(s.label),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1526,14 +1529,14 @@ class _PhoneBack extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
       child: Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: PiumaPressable(
           onTap: onTap,
           semanticLabel: label,
           child: SizedBox(
             height: 44,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

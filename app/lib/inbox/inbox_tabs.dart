@@ -139,7 +139,7 @@ class _UnreadSwitch extends StatelessWidget {
           duration: duration,
           curve: PiumaMotion.curve,
           height: phone ? 36 : 42,
-          padding: EdgeInsets.fromLTRB(
+          padding: EdgeInsetsDirectional.fromSTEB(
             phone && on ? 10 : 12,
             0,
             phone ? 14 : 12,
@@ -163,7 +163,7 @@ class _UnreadSwitch extends StatelessWidget {
                     curve: PiumaMotion.curve,
                     child: on
                         ? Padding(
-                            padding: const EdgeInsets.only(right: 5),
+                            padding: const EdgeInsetsDirectional.only(end: 5),
                             child: PiumaIconView(
                               PiumaIcon.check,
                               size: 15,

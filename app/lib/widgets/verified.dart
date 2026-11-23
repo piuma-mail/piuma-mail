@@ -33,7 +33,7 @@ class VerifiedPill extends StatelessWidget {
       curve: PiumaMotion.curve,
       child: Container(
         height: large ? 22 : 20,
-        padding: const EdgeInsets.fromLTRB(6, 0, 8, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(6, 0, 8, 0),
         decoration: BoxDecoration(
           color: c.okSoft,
           borderRadius: BorderRadius.circular(PiumaRadius.pill),

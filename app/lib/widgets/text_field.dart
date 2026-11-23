@@ -75,9 +75,9 @@ class _PiumaTextFieldState extends State<PiumaTextField> {
           duration: PiumaMotion.press,
           curve: PiumaMotion.curve,
           height: 44,
-          padding: EdgeInsets.only(
-            left: 12,
-            right: widget.trailing == null ? 12 : 4,
+          padding: EdgeInsetsDirectional.only(
+            start: 12,
+            end: widget.trailing == null ? 12 : 4,
           ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(PiumaRadius.button),

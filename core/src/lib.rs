@@ -8,6 +8,7 @@ pub mod autoconfig;
 pub mod automation;
 pub mod away;
 pub mod backoff;
+pub mod bidi;
 pub mod brief;
 pub mod calendar;
 pub mod cert;

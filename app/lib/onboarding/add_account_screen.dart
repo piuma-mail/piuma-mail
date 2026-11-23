@@ -21,6 +21,7 @@ import 'account_errors.dart';
 import 'pair_screen.dart';
 import 'providers.dart';
 import 'scan_pair.dart';
+import '../widgets/bidi.dart';
 
 /// The address; the settings found, or typed in; or, from "Or start
 /// from", the PEC provider and a provider's app password; or a
@@ -857,7 +858,9 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           )
         else
           Align(
-            alignment: phone ? Alignment.center : Alignment.centerLeft,
+            alignment: phone
+                ? Alignment.center
+                : AlignmentDirectional.centerStart,
             child: _TextLink(
               label: l.pairAlready,
               onTap: () => setState(() {
@@ -1438,7 +1441,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
           SizedBox(
             height: 44,
             child: Align(
-              alignment: Alignment.centerRight,
+              alignment: AlignmentDirectional.centerEnd,
               child: Text(
                 l.stepOf(3, 3),
                 style: TextStyle(fontSize: 13, color: c.muted),
@@ -1573,7 +1576,12 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                   child: SizedBox(
                     height: 44,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                      padding: const EdgeInsetsDirectional.fromSTEB(
+                        4,
+                        0,
+                        10,
+                        0,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -1601,7 +1609,7 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
                 const SizedBox(height: 44),
               const Spacer(),
               Padding(
-                padding: const EdgeInsets.only(right: 14),
+                padding: const EdgeInsetsDirectional.only(end: 14),
                 child: Text(
                   l.stepOf(step, 3),
                   style: TextStyle(fontSize: 13, color: c.muted),
@@ -1902,11 +1910,11 @@ class _AddAccountScreenState extends State<AddAccountScreen> {
     final l = AppLocalizations.of(context);
     return PiumaEnter(
       child: Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: SizedBox(
           height: 44,
           child: Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: _TextLink(
               label: l.reportThisProblem,
               onTap: () => openReport(
@@ -2139,7 +2147,7 @@ class _PhoneRow extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 46),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 6, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(14, 0, 6, 0),
         child: Row(
           children: [
             SizedBox(
@@ -2240,7 +2248,7 @@ class _ServerSummary extends StatelessWidget {
     }) {
       if (onEdit != null) {
         return Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+          padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 6, 12),
           decoration: BoxDecoration(
             border: last ? null : Border(bottom: BorderSide(color: c.line)),
           ),
@@ -2625,7 +2633,7 @@ class _ColorPicker extends StatelessWidget {
                 // fit, down from 44.
                 LayoutBuilder(
                   builder: (context, box) => Transform.translate(
-                    offset: const Offset(-10, 0),
+                    offset: towardStart(context, 10),
                     child: Row(
                       children: dotsIn(
                         min(44, box.maxWidth / PiumaAccountColors.all.length),
@@ -2657,7 +2665,7 @@ class _AccountsPanel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(32, 40, 32, 36),
       decoration: BoxDecoration(
         color: c.bg,
-        border: Border(left: BorderSide(color: c.line)),
+        border: BorderDirectional(start: BorderSide(color: c.line)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

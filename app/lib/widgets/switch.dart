@@ -41,7 +41,9 @@ class PiumaSwitch extends StatelessWidget {
           child: AnimatedAlign(
             duration: duration,
             curve: PiumaMotion.curve,
-            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            alignment: value
+                ? AlignmentDirectional.centerEnd
+                : AlignmentDirectional.centerStart,
             child: Container(
               width: 20,
               height: 20,

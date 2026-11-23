@@ -112,7 +112,7 @@ class PrivacyNotice extends StatelessWidget {
             if (privacy.url.isNotEmpty)
               Expanded(
                 child: Align(
-                  alignment: Alignment.centerLeft,
+                  alignment: AlignmentDirectional.centerStart,
                   child: PiumaPressable(
                     onTap: () => openExternalLink(Uri.parse(privacy.url)),
                     semanticLabel: l.reportPrivacyFull,

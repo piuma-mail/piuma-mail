@@ -29,6 +29,7 @@ import 'rich_body.dart';
 import 'send_checks.dart';
 import 'send_later.dart';
 import 'templates.dart';
+import '../widgets/bidi.dart';
 
 part 'compose_features.dart';
 
@@ -281,12 +282,14 @@ class _ComposePaneState extends State<ComposePane> {
       duration: instant ? Duration.zero : PiumaMotion.fast,
       reverseDuration: instant ? Duration.zero : PiumaMotion.press,
       layoutBuilder: (current, previous) => Stack(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         children: [...previous, ?current],
       ),
       transitionBuilder: (child, animation) => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: PiumaMotion.curve),
         child: SlideTransition(
+          // In reading order: mirrored in a right-to-left layout.
+          textDirection: Directionality.of(context),
           position:
               Tween(
                 begin: Offset(
@@ -861,7 +864,7 @@ class _ComposePaneState extends State<ComposePane> {
       problem = l.sendNoRecipients;
     } else if (d.recipients.where((a) => !isEmailAddress(a)).firstOrNull
         case final bad?) {
-      problem = l.sendBadAddress(bad);
+      problem = l.sendBadAddress(bidiArg(context, bad));
     } else if (d.filesSize > maxDraftFilesSize) {
       problem = l.filesTooLarge(
         fileSize(
@@ -1287,10 +1290,12 @@ class _ComposePaneState extends State<ComposePane> {
                               name: f.name,
                               size: fileSize(f.data.length, locale: locale),
                               semanticLabel: l.attachmentLabel(
-                                f.name,
+                                bidiArg(context, f.name),
                                 fileSize(f.data.length, locale: locale),
                               ),
-                              removeLabel: l.removeAttachment(f.name),
+                              removeLabel: l.removeAttachment(
+                                bidiArg(context, f.name),
+                              ),
                               onRemove: () {
                                 setState(() {
                                   _files.removeAt(i);
@@ -1338,7 +1343,7 @@ class _ComposePaneState extends State<ComposePane> {
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Align(
-                        alignment: Alignment.centerLeft,
+                        alignment: AlignmentDirectional.centerStart,
                         child: _remindChip(l, locale),
                       ),
                     ),
@@ -1544,33 +1549,42 @@ class _BareField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = PiumaTheme.of(context);
+    final around = Directionality.of(context);
     return Semantics(
       label: label,
       textField: true,
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        autofocus: autofocus,
-        maxLines: multiline ? null : 1,
-        // The body grows with what is written; the pane scrolls.
-        minLines: multiline ? 6 : null,
-        keyboardType: multiline ? TextInputType.multiline : TextInputType.text,
-        textAlignVertical: TextAlignVertical.top,
-        style: style.copyWith(fontFamily: PiumaFonts.sans),
-        cursorColor: c.accent,
-        decoration: const InputDecoration.collapsed(hintText: null),
-        spellCheckConfiguration: spellCheck,
-        contentInsertionConfiguration: onPicture == null
-            ? null
-            : ContentInsertionConfiguration(
-                onContentInserted: onPicture!,
-                allowedMimeTypes: const [
-                  'image/png',
-                  'image/jpeg',
-                  'image/gif',
-                  'image/webp',
-                ],
-              ),
+      // What is typed reads its own way: Arabic right to left in an
+      // English app, by its first strong letter, as `dir="auto"` does.
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, field) => TextField(
+          controller: controller,
+          textDirection: directionOf(value.text, around, subject: !multiline),
+          focusNode: focusNode,
+          autofocus: autofocus,
+          maxLines: multiline ? null : 1,
+          // The body grows with what is written; the pane scrolls.
+          minLines: multiline ? 6 : null,
+          keyboardType: multiline
+              ? TextInputType.multiline
+              : TextInputType.text,
+          textAlignVertical: TextAlignVertical.top,
+          style: style.copyWith(fontFamily: PiumaFonts.sans),
+          cursorColor: c.accent,
+          decoration: const InputDecoration.collapsed(hintText: null),
+          spellCheckConfiguration: spellCheck,
+          contentInsertionConfiguration: onPicture == null
+              ? null
+              : ContentInsertionConfiguration(
+                  onContentInserted: onPicture!,
+                  allowedMimeTypes: const [
+                    'image/png',
+                    'image/jpeg',
+                    'image/gif',
+                    'image/webp',
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -1808,8 +1822,15 @@ class _RecipientsFieldState extends State<_RecipientsField> {
       controller: _list,
       overlayChildBuilder: (context) => CompositedTransformFollower(
         link: _link,
-        targetAnchor: Alignment.bottomLeft,
-        offset: const Offset(-12, 2),
+        // Under the field's start: its left edge in a left-to-right
+        // layout, its right edge in a right-to-left one. The follower
+        // works in screen coordinates.
+        targetAnchor: isRtl(context)
+            ? Alignment.bottomRight
+            : Alignment.bottomLeft,
+        offset: isRtl(context)
+            ? Offset(12 - _listWidth(context), 2)
+            : const Offset(-12, 2),
         child: Align(
           alignment: Alignment.topLeft,
           child: TextFieldTapRegion(
@@ -1851,7 +1872,7 @@ class _RecipientsFieldState extends State<_RecipientsField> {
             _RecipientChip(
               address: a,
               valid: isEmailAddress(a),
-              removeLabel: l.removeRecipient(_display(a)),
+              removeLabel: l.removeRecipient(bidiArg(context, _display(a))),
               onRemove: () {
                 setState(() => widget.addresses.removeAt(i));
                 widget.onChanged();
@@ -2177,7 +2198,7 @@ class _RecipientChip extends StatelessWidget {
       waitDuration: const Duration(milliseconds: 600),
       child: Container(
         height: 30,
-        padding: const EdgeInsets.only(left: 10, right: 3),
+        padding: const EdgeInsetsDirectional.only(start: 10, end: 3),
         decoration: BoxDecoration(
           color: valid ? c.soft : c.danger.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(999),
@@ -2320,9 +2341,11 @@ class _SignaturePicker extends StatelessWidget {
       ),
     );
 
-    final label = l.signatureChip(shown?.label ?? l.noSignature);
+    final label = l.signatureChip(
+      shown == null ? l.noSignature : bidiArg(context, shown.label),
+    );
     Widget chip(bool open, VoidCallback onTap) => Transform.translate(
-      offset: const Offset(-8, 0),
+      offset: towardStart(context, 8),
       child: PiumaPressable(
         onTap: onTap,
         semanticLabel: label,
@@ -2556,7 +2579,7 @@ class _FromPicker extends StatelessWidget {
       return shown.split(' ').first;
     }();
     Widget chip(VoidCallback? onTap) => Align(
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       child: PiumaPressable(
         onTap: onTap,
         semanticLabel: '${current.account.fromLabel}, ${current.email}',
@@ -2668,7 +2691,10 @@ class _FromPicker extends StatelessWidget {
               ),
               if (isAuto && writerName.isNotEmpty)
                 Text(
-                  l.fromAutomaticWhy(writerName, s.email),
+                  l.fromAutomaticWhy(
+                    bidiArg(context, writerName),
+                    bidiArg(context, s.email),
+                  ),
                   style: TextStyle(fontSize: 12, height: 1.35, color: c.muted),
                 ),
             ],
@@ -3052,9 +3078,9 @@ class _PhoneHeader extends StatelessWidget {
                   semanticLabel: l.actionSend,
                   child: Container(
                     height: 40,
-                    padding: EdgeInsets.only(
-                      left: 16,
-                      right: onSendMenu == null ? 16 : 12,
+                    padding: EdgeInsetsDirectional.only(
+                      start: 16,
+                      end: onSendMenu == null ? 16 : 12,
                     ),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
@@ -3120,7 +3146,7 @@ class _SignatureSheet extends StatelessWidget {
         semanticLabel: label,
         child: Container(
           constraints: const BoxConstraints(minHeight: 48),
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           padding: EdgeInsets.all(selected ? 13 : 14),
           decoration: BoxDecoration(
             color: c.surface,

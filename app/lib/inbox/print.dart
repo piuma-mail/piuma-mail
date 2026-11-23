@@ -3,6 +3,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../widgets/bidi.dart';
+
 /// Print, or save as PDF, as on `RemindAwayPrintToApprove` section 3: the
 /// email alone, in Geist, black on white. The system's own print window
 /// does the rest, Save as PDF included.
@@ -111,7 +113,7 @@ pw.Document emailPdf(
       theme: pw.ThemeData.withFont(base: fonts.regular, bold: fonts.semiBold),
       build: (context) => [
         pw.Text(
-          email.subject,
+          safeBidi(email.subject),
           style: pw.TextStyle(
             font: fonts.semiBold,
             fontSize: 18,

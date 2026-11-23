@@ -10998,8 +10998,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   BodyBlock dco_decode_body_block(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return BodyBlock(
       kind: dco_decode_block_kind(arr[0]),
       level: dco_decode_u_8(arr[1]),
@@ -11007,6 +11007,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       marker: dco_decode_String(arr[3]),
       spans: dco_decode_list_text_span(arr[4]),
       image: dco_decode_opt_box_autoadd_body_image(arr[5]),
+      rtl: dco_decode_opt_box_autoadd_bool(arr[6]),
     );
   }
 
@@ -13997,6 +13998,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_marker = sse_decode_String(deserializer);
     var var_spans = sse_decode_list_text_span(deserializer);
     var var_image = sse_decode_opt_box_autoadd_body_image(deserializer);
+    var var_rtl = sse_decode_opt_box_autoadd_bool(deserializer);
     return BodyBlock(
       kind: var_kind,
       level: var_level,
@@ -14004,6 +14006,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       marker: var_marker,
       spans: var_spans,
       image: var_image,
+      rtl: var_rtl,
     );
   }
 
@@ -17845,6 +17848,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.marker, serializer);
     sse_encode_list_text_span(self.spans, serializer);
     sse_encode_opt_box_autoadd_body_image(self.image, serializer);
+    sse_encode_opt_box_autoadd_bool(self.rtl, serializer);
   }
 
   @protected

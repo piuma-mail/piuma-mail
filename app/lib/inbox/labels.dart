@@ -10,6 +10,7 @@ import '../mail/mail_source.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/text_field.dart';
+import '../widgets/bidi.dart';
 
 /// The tint and the ink of one label color, for the theme in use.
 (Color, Color) labelTint(BuildContext context, String color) {
@@ -93,7 +94,7 @@ class LabelPill extends StatelessWidget {
           SizedBox(width: phone ? 4 : 5),
           Flexible(
             child: Text(
-              label.name,
+              safeBidi(label.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -117,7 +118,7 @@ class LabelPill extends StatelessWidget {
     if (onRemove == null) return pill;
     return PiumaPressable(
       onTap: onRemove,
-      semanticLabel: l.labelRemove(label.name),
+      semanticLabel: l.labelRemove(bidiArg(context, label.name)),
       child: pill,
     );
   }
@@ -461,7 +462,7 @@ class _LabelPickerState extends State<LabelPicker> {
                 color: c.bg,
                 borderRadius: BorderRadius.circular(8),
               ),
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               child: TextField(
                 controller: _field,
                 autofocus: !phone,
@@ -659,7 +660,7 @@ class _Choice extends StatelessWidget {
                 SizedBox(width: phone ? 12 : 10),
                 Expanded(
                   child: Text(
-                    label.name,
+                    safeBidi(label.name),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: PiumaType.body.copyWith(
@@ -692,7 +693,7 @@ class _Create extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return PiumaPressable(
       onTap: onTap,
-      semanticLabel: l.labelCreate(name),
+      semanticLabel: l.labelCreate(bidiArg(context, name)),
       child: _Hover(
         child: Container(
           height: phone ? 46 : 34,
@@ -703,7 +704,7 @@ class _Create extends StatelessWidget {
               SizedBox(width: phone ? 12 : 10),
               Expanded(
                 child: Text(
-                  l.labelCreate(name),
+                  l.labelCreate(bidiArg(context, name)),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: PiumaType.body.copyWith(color: c.accentText),
@@ -889,7 +890,7 @@ class _LabelEditorState extends State<_LabelEditor> {
           children: [
             for (final color in labelColors)
               Padding(
-                padding: const EdgeInsets.only(right: 10),
+                padding: const EdgeInsetsDirectional.only(end: 10),
                 child: _Swatch(
                   color: color,
                   on: color == _color,
@@ -999,7 +1000,7 @@ class SidebarLabels extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 4, 6),
+          padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 4, 6),
           child: Row(
             children: [
               Expanded(
@@ -1060,7 +1061,7 @@ class SidebarLabels extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          label.name,
+                          safeBidi(label.name),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(

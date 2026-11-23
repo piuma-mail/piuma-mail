@@ -6,6 +6,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 
 /// The sidebar's Groups, as on `GroupsSidebar`: All groups (the unified
 /// inbox), then each group with its own Inbox; a chevron folds a group
@@ -64,7 +65,7 @@ class _SidebarGroupsState extends State<SidebarGroups> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(10, 0, 4, 6),
+          padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 4, 6),
           child: Row(
             children: [
               Expanded(
@@ -113,10 +114,10 @@ class _SidebarGroupsState extends State<SidebarGroups> {
           if (_open.contains(g.id) && g.addresses.isNotEmpty)
             PiumaEnter(
               child: Container(
-                margin: const EdgeInsets.fromLTRB(28, 2, 0, 6),
-                padding: const EdgeInsets.only(left: 10),
+                margin: const EdgeInsetsDirectional.fromSTEB(28, 2, 0, 6),
+                padding: const EdgeInsetsDirectional.only(start: 10),
                 decoration: BoxDecoration(
-                  border: Border(left: BorderSide(color: c.line)),
+                  border: BorderDirectional(start: BorderSide(color: c.line)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -170,8 +171,8 @@ class _AllGroups extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     for (final (i, color) in dots.indexed)
-                      Positioned(
-                        left: 5.0 * i,
+                      PositionedDirectional(
+                        start: 5.0 * i,
                         child: _Dot(color: color, size: 8),
                       ),
                   ],
@@ -250,8 +251,8 @@ class _GroupItem extends StatelessWidget {
             expanded: open,
             button: true,
             label: open
-                ? l.groupCollapse(group.name)
-                : l.groupExpand(group.name),
+                ? l.groupCollapse(bidiArg(context, group.name))
+                : l.groupExpand(bidiArg(context, group.name)),
             child: PiumaPressable(
               onTap: onOpen,
               child: SizedBox(
@@ -279,7 +280,7 @@ class _GroupItem extends StatelessWidget {
               child: PiumaPressable(
                 onTap: onTap,
                 child: Padding(
-                  padding: const EdgeInsets.only(left: 2, right: 10),
+                  padding: const EdgeInsetsDirectional.only(start: 2, end: 10),
                   child: Row(
                     children: [
                       _Dot(color: group.color, size: 10),

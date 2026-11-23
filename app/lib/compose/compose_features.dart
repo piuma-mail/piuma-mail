@@ -326,8 +326,8 @@ extension _ComposeFeatures on _ComposePaneState {
       }
       _update(
         () => _localError = e.problem == ImageProblem.tooBig
-            ? l.imageTooBig(l.pastedImage)
-            : l.fileNotRead(l.pastedImage),
+            ? l.imageTooBig(bidiArg(context, l.pastedImage))
+            : l.fileNotRead(bidiArg(context, l.pastedImage)),
       );
       return;
     } catch (_) {

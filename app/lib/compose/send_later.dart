@@ -8,6 +8,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/date_time_picker.dart';
 import '../widgets/dialog.dart';
+import '../widgets/bidi.dart';
 
 /// The times of `FeatureSchedule`, seen from [now]: tomorrow at 8:00 and
 /// at 14:00, and the next Monday at 8:00.
@@ -139,7 +140,7 @@ class _SendLaterPickerState extends State<SendLaterPicker> {
           ),
           const SizedBox(height: 4),
           Text(
-            l.outboxTo(widget.to),
+            l.outboxTo(bidiArg(context, widget.to)),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 14, color: c.muted),

@@ -18,6 +18,7 @@ import '../widgets/switch.dart';
 import '../widgets/route.dart';
 import 'settings_screen.dart' show PhoneBack, SettingsHeader;
 import 'sync_page.dart' show syncAgo;
+import '../widgets/bidi.dart';
 
 /// Settings › Rules & folders, as in `Rules` (desktop) and `RulesPhone`:
 /// rules that read like sentences, each with its switch, the sentence
@@ -501,7 +502,9 @@ class _Suggestion extends StatelessWidget {
     final name = suggestion.name.trim().isEmpty
         ? suggestion.sender
         : suggestion.name.trim();
-    final words = l.ruleSuggest('\u0000', folder).split('\u0000');
+    final words = l
+        .ruleSuggest('\u0000', bidiArg(context, folder))
+        .split('\u0000');
     final size = phone ? PiumaButtonSize.touch : PiumaButtonSize.compact;
     Widget button(PiumaButton b) => phone ? Expanded(child: b) : b;
     return CustomPaint(
@@ -650,7 +653,12 @@ class _RuleCard extends StatelessWidget {
                 semanticLabel: '$sentence. $meta',
                 child: ExcludeSemantics(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 14, 8, 14),
+                    padding: const EdgeInsetsDirectional.fromSTEB(
+                      18,
+                      14,
+                      8,
+                      14,
+                    ),
                     child: AnimatedOpacity(
                       duration: instant ? Duration.zero : PiumaMotion.theme,
                       curve: PiumaMotion.curve,
@@ -700,7 +708,7 @@ class _RuleCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 18, 18, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(8, 18, 18, 0),
               child: PiumaSwitch(
                 value: enabled,
                 label: l.ruleSwitch(sentence),
@@ -1045,7 +1053,7 @@ class _RuleEditorState extends State<RuleEditor> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(right: 4),
+                    padding: const EdgeInsetsDirectional.only(end: 4),
                     child: Text(
                       switch (menu) {
                         _Menu.field => l.ruleTrayField,
@@ -1251,7 +1259,7 @@ class _EditorChip extends StatelessWidget {
           duration: instant ? Duration.zero : PiumaMotion.press,
           curve: PiumaMotion.curve,
           height: 32,
-          padding: const EdgeInsets.fromLTRB(12, 0, 8, 0),
+          padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 8, 0),
           decoration: BoxDecoration(
             color: open ? c.soft : c.surface,
             borderRadius: BorderRadius.circular(PiumaRadius.pill),
@@ -1529,7 +1537,7 @@ class _FoldersAndLabelsState extends State<FoldersAndLabels> {
           ),
       ],
     );
-    final title = l.folderActions(f.name);
+    final title = l.folderActions(bidiArg(context, f.name));
     final picked = phone
         ? await showPiumaSheet<int>(context, label: title, builder: menu)
         : await showPiumaPopover<int>(
@@ -1939,7 +1947,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            f.name,
+            safeBidi(f.name),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: text.copyWith(color: f.selectable ? c.fg : c.muted),
@@ -1947,7 +1955,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
         ),
         if (!f.subscribed)
           Padding(
-            padding: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsetsDirectional.only(end: 8),
             child: Text(
               l.folderHidden,
               style: text.copyWith(fontSize: 12, color: c.muted),
@@ -1965,7 +1973,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
                 final box = button.findRenderObject()! as RenderBox;
                 more(f, box.localToGlobal(Offset.zero) & box.size);
               },
-              semanticLabel: l.folderActions(f.name),
+              semanticLabel: l.folderActions(bidiArg(context, f.name)),
               child: SizedBox.square(
                 dimension: 32,
                 child: Center(
@@ -2011,7 +2019,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
         return Container(
           width: box?.size.width,
           height: 40,
-          padding: const EdgeInsets.fromLTRB(6, 0, 14, 0),
+          padding: const EdgeInsetsDirectional.fromSTEB(6, 0, 14, 0),
           decoration: BoxDecoration(
             color: c.surface,
             borderRadius: BorderRadius.circular(PiumaRadius.field),
@@ -2053,7 +2061,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
       ),
     );
     final grip = Semantics(
-      label: l.folderReorder(f.name),
+      label: l.folderReorder(bidiArg(context, f.name)),
       customSemanticsActions: {
         if (i > 0)
           CustomSemanticsAction(label: l.folderMoveUp): () =>
@@ -2084,7 +2092,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
       builder: (context, _, _) => Container(
         key: key,
         height: 40,
-        padding: const EdgeInsets.fromLTRB(6, 0, 14, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(6, 0, 14, 0),
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: c.line)),
         ),
@@ -2094,7 +2102,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
             alignment: AlignmentDirectional.centerStart,
             children: [
               content(false),
-              Positioned(left: 0, top: 4, bottom: 4, child: grip),
+              PositionedDirectional(start: 0, top: 4, bottom: 4, child: grip),
             ],
           ),
         ),
@@ -2108,7 +2116,7 @@ class _AccountFoldersState extends State<_AccountFolders> {
     decoration: BoxDecoration(
       border: Border(top: BorderSide(color: c.line)),
     ),
-    alignment: Alignment.centerLeft,
+    alignment: AlignmentDirectional.centerStart,
     child: child,
   );
 }
@@ -2142,7 +2150,7 @@ class _LabelsCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: c.line)),
       ),
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       child: child,
     );
     return Container(

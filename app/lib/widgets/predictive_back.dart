@@ -339,6 +339,7 @@ class _Look {
             offset: inner,
             child: Transform.scale(
               scale: innerScale,
+              // Physical: [clip] and [inner] are measured on screen.
               alignment: Alignment.topLeft,
               child: child,
             ),

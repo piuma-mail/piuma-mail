@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart' show SelectionArea;
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/widgets.dart';
 
 import '../design/icons.dart';
@@ -11,6 +12,7 @@ import '../design/tokens.g.dart';
 import '../compose/quoting.dart' show readerSelection;
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/link_target.dart';
@@ -75,6 +77,10 @@ class MessageBody extends StatelessWidget {
     final children = <Widget>[];
     BodyBlock? previous;
     final dates = dateChip == null ? const <FoundDate>[] : readable.dates;
+    // The email reads its own way, whatever the app's language: as its
+    // markup says, else as its first letters do.
+    final around = Directionality.of(context);
+    final whole = readingDirection(readable) ?? around;
     for (final (i, b) in readable.blocks.indexed) {
       if (previous != null) {
         children.add(SizedBox(height: _gap(previous, b, article)));
@@ -83,25 +89,38 @@ class MessageBody extends StatelessWidget {
         for (final d in dates)
           if (d.block == i) d,
       ];
-      children.add(
-        _block(context, b, [for (final d in found) (d.start, d.end)]),
-      );
+      final own = blockDirection(b, whole);
+      Widget block = _block(context, b, [
+        for (final d in found) (d.start, d.end),
+      ]);
+      // A paragraph written the other way starts on its own side, as a
+      // browser sets `dir="auto"`.
+      if (own != whole && b.kind != BlockKind.image) {
+        block = Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: block,
+        );
+      }
+      children.add(Directionality(textDirection: own, child: block));
       for (final d in found) {
         children.add(
           Padding(
-            padding: EdgeInsets.only(left: 14.0 * b.quote.clamp(0, 4)),
+            padding: EdgeInsetsDirectional.only(
+              start: 14.0 * b.quote.clamp(0, 4),
+            ),
             child: dateChip!(d),
           ),
         );
       }
       previous = b;
     }
-    return SelectionArea(
-      // A reply can quote only the words selected (Settings › Writing).
-      onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children,
+    return _ReaderSelection(
+      child: Directionality(
+        textDirection: whole,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
       ),
     );
   }
@@ -156,7 +175,9 @@ class MessageBody extends StatelessWidget {
         ),
       ),
       BlockKind.listItem => Padding(
-        padding: EdgeInsets.only(left: 18.0 * (b.level - 1).clamp(0, 6)),
+        padding: EdgeInsetsDirectional.only(
+          start: 18.0 * (b.level - 1).clamp(0, 6),
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -174,9 +195,9 @@ class MessageBody extends StatelessWidget {
     };
     for (var i = 0; i < b.quote.clamp(0, 4); i++) {
       child = Container(
-        padding: const EdgeInsets.only(left: 14),
+        padding: const EdgeInsetsDirectional.only(start: 14),
         decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: c.line, width: 2)),
+          border: BorderDirectional(start: BorderSide(color: c.line, width: 2)),
         ),
         child: child,
       );
@@ -184,6 +205,29 @@ class MessageBody extends StatelessWidget {
     return child;
   }
 }
+
+/// Which way a whole email reads: the `dir` its markup sets on its first
+/// block, else its first strong letter. Null when nothing decides (an
+/// email of only pictures or numbers): the layout's own then.
+TextDirection? readingDirection(Readable r) {
+  for (final b in r.blocks) {
+    if (b.kind == BlockKind.image || b.kind == BlockKind.rule) continue;
+    if (b.rtl case final rtl?) {
+      return rtl ? TextDirection.rtl : TextDirection.ltr;
+    }
+    if (firstStrongDirection(b.text) case final d?) return d;
+  }
+  return null;
+}
+
+/// Which way one block reads: as the markup says, else as its own first
+/// strong letter (Unicode's paragraph rule), else as the email does.
+TextDirection blockDirection(BodyBlock b, TextDirection whole) =>
+    switch (b.rtl) {
+      true => TextDirection.rtl,
+      false => TextDirection.ltr,
+      null => firstStrongDirection(b.text) ?? whole,
+    };
 
 /// Text runs with their looks; links open outside the app, after a check
 /// when they lie about where they go.
@@ -206,12 +250,27 @@ class _Spans extends StatefulWidget {
 
 class _SpansState extends State<_Spans> {
   final _taps = <LinkPressRecognizer>[];
+  final _selection = _WithoutInserted();
+
+  /// The link under the pointer, if any.
+  String? _hovering;
+
+  @override
+  void deactivate() {
+    // Closed under the pointer: where the link went doesn't stay shown.
+    // This can happen mid-build (J opens the next message), so the line
+    // changes after the frame.
+    if (_hovering case final url?) LinkTarget.hideLater(context, url);
+    _hovering = null;
+    super.deactivate();
+  }
 
   @override
   void dispose() {
     for (final t in _taps) {
       t.dispose();
     }
+    _selection.dispose();
     super.dispose();
   }
 
@@ -223,6 +282,15 @@ class _SpansState extends State<_Spans> {
     }
     _taps.clear();
     final children = <InlineSpan>[];
+    // What the paragraph holds, and where in it the isolates this widget
+    // added around links sit: a copy or a quote leaves out exactly those.
+    final shown = StringBuffer();
+    final inserted = <int>{};
+    void add(String text, {bool ours = false}) {
+      if (ours) inserted.add(shown.length);
+      shown.write(text);
+    }
+
     var at = 0;
     for (final s in widget.spans) {
       LinkPressRecognizer? tap;
@@ -259,29 +327,105 @@ class _SpansState extends State<_Spans> {
         }
       }
       final points = cuts.toList()..sort();
+      // A link's text is the sender's: its own direction controls are
+      // made harmless (same length, so the marks above still line up) and,
+      // with other text around it, it is isolated, so an override there
+      // can't reorder what it says either.
+      final text = tap != null ? safeBidi(s.text) : s.text;
+      final isolated = tap != null && widget.spans.length > 1;
+      if (isolated) {
+        add('\u2068', ours: true);
+        children.add(const TextSpan(text: '\u2068'));
+      }
       for (var i = 0; i + 1 < points.length; i++) {
         final from = at + points[i];
         final inMark = widget.marks.any((m) => from >= m.$1 && from < m.$2);
+        final piece = text.substring(points[i], points[i + 1]);
+        add(piece);
         children.add(
           TextSpan(
-            text: s.text.substring(points[i], points[i + 1]),
+            text: piece,
             style: inMark ? style.merge(marked) : style,
             mouseCursor: tap != null ? SystemMouseCursors.click : null,
             recognizer: tap,
             // Where it goes, whatever its text says.
             onEnter: s.link == null
                 ? null
-                : (_) => LinkTarget.show(context, s.link),
+                : (_) {
+                    _hovering = s.link;
+                    LinkTarget.show(context, s.link);
+                  },
+            // Also called after the message closed under the pointer:
+            // [deactivate] has cleared the line then.
             onExit: s.link == null
                 ? null
-                : (_) => LinkTarget.show(context, null),
+                : (_) {
+                    _hovering = null;
+                    if (mounted) LinkTarget.show(context, null);
+                  },
           ),
         );
       }
+      if (isolated) {
+        add('\u2069', ours: true);
+        children.add(const TextSpan(text: '\u2069'));
+      }
       at += s.text.length;
     }
-    return Text.rich(TextSpan(style: widget.style, children: children));
+    _selection
+      ..text = shown.toString()
+      ..inserted = inserted;
+    return SelectionContainer(
+      delegate: _selection,
+      child: Text.rich(TextSpan(style: widget.style, children: children)),
+    );
   }
+}
+
+/// The selection of one paragraph of the reader, which copies (and
+/// quotes) its text without the isolates [_SpansState] put around links:
+/// they are layout, not the email's text. They are left out by where
+/// they are, not by what they are, so the same characters written by the
+/// sender come out as they were written.
+class _WithoutInserted extends StaticSelectionContainerDelegate {
+  /// The paragraph's text, as drawn.
+  String text = '';
+
+  /// Offsets in [text], in UTF-16 units, of the characters the reader
+  /// added.
+  Set<int> inserted = const {};
+
+  @override
+  SelectedContent? getSelectedContent() {
+    final range = getSelection();
+    if (range == null) return null;
+    final start = math.min(range.startOffset, range.endOffset);
+    final end = math.min(
+      math.max(range.startOffset, range.endOffset),
+      text.length,
+    );
+    final out = StringBuffer();
+    for (var i = start; i < end; i++) {
+      if (!inserted.contains(i)) out.writeCharCode(text.codeUnitAt(i));
+    }
+    return SelectedContent(plainText: out.toString());
+  }
+}
+
+/// The reader's [SelectionArea]. What is selected can be quoted in a
+/// reply; copied or quoted, it comes out without the isolates the reader
+/// put around links ([_WithoutInserted]).
+class _ReaderSelection extends StatelessWidget {
+  const _ReaderSelection({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SelectionArea(
+    // A reply can quote only the words selected (Settings › Writing).
+    onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
+    child: child,
+  );
 }
 
 /// Opens a link from a message. A link whose text shows another address
@@ -293,7 +437,7 @@ Future<void> openBodyLink(
 ]) => openLink(
   context,
   link,
-  shown: span != null && span.suspicious ? span.text.trim() : null,
+  shown: span != null && span.suspicious ? safeBidi(span.text.trim()) : null,
 );
 
 /// Around an email whose sender isn't who they say: every link in it asks
@@ -376,9 +520,10 @@ class _SuspiciousLink extends StatelessWidget {
     };
     // Every reason it asks, who sent it first.
     final reasons = [
-      if (impostor) l.impostorLinkBody(host),
-      if (shown case final shown?) l.suspiciousLinkBody(shown, host),
-      if (unreadable) l.unreadableLinkBody(host),
+      if (impostor) l.impostorLinkBody(bidiArg(context, host)),
+      if (shown case final shown?)
+        l.suspiciousLinkBody(bidiArg(context, shown), bidiArg(context, host)),
+      if (unreadable) l.unreadableLinkBody(bidiArg(context, host)),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -856,8 +1001,8 @@ class _PrivacySheetState extends State<PrivacySheet> {
         ],
         _TrustButton(
           label: _trusted
-              ? l.senderTrusted(widget.sender)
-              : l.trustSender(widget.sender),
+              ? l.senderTrusted(bidiArg(context, widget.sender))
+              : l.trustSender(bidiArg(context, widget.sender)),
           trusted: _trusted,
           onTap: () {
             setState(() => _trusted = !_trusted);

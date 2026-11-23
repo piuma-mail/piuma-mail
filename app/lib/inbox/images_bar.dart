@@ -6,6 +6,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/button.dart';
+import '../widgets/bidi.dart';
 
 /// The slim bar over an email whose images wait (`ImagesToApprove`):
 /// what is off and why, "Load images" for this email, and "Always for
@@ -60,7 +61,7 @@ class ImagesBar extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final note = Text(
       switch (sender) {
-        final s? => l.imagesOffBar(count, s),
+        final s? => l.imagesOffBar(count, bidiArg(context, s)),
         null => l.imagesOffFile(count),
       },
       style: TextStyle(
@@ -86,7 +87,7 @@ class ImagesBar extends StatelessWidget {
     return Container(
       padding: phone
           ? const EdgeInsets.fromLTRB(12, 10, 12, 12)
-          : const EdgeInsets.fromLTRB(14, 6, 6, 6),
+          : const EdgeInsetsDirectional.fromSTEB(14, 6, 6, 6),
       decoration: BoxDecoration(
         color: c.bg,
         borderRadius: BorderRadius.circular(PiumaRadius.row),
@@ -162,7 +163,7 @@ class ImagesBar extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Padding(
-                            padding: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsetsDirectional.only(end: 8),
                             child: note,
                           ),
                           const SizedBox(height: PiumaSpace.s8),
@@ -206,7 +207,7 @@ class ViewSwitch extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 44),
           child: Align(
-            alignment: Alignment.centerRight,
+            alignment: AlignmentDirectional.centerEnd,
             widthFactor: 1,
             child: Text(
               label,

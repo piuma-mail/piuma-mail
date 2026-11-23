@@ -9,6 +9,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 
 /// Whether the app runs on a phone or a tablet, where a wide screen takes
 /// the `Tablet` layouts instead of the desktop's. Tests set it.
@@ -55,7 +56,7 @@ class TabletRail extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(0, 28, 0, 22),
       decoration: BoxDecoration(
         color: c.bg,
-        border: Border(right: BorderSide(color: c.line)),
+        border: BorderDirectional(end: BorderSide(color: c.line)),
       ),
       child: Column(
         children: [
@@ -102,7 +103,10 @@ class TabletRail extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 2),
               child: PiumaPressable(
                 onTap: onAccounts,
-                semanticLabel: l.tabletAccount(a.name, a.email),
+                semanticLabel: l.tabletAccount(
+                  bidiArg(context, a.name),
+                  bidiArg(context, a.email),
+                ),
                 child: SizedBox.square(
                   dimension: 44,
                   child: Center(
@@ -171,9 +175,9 @@ class _RailButton extends StatelessWidget {
             children: [
               Center(child: child),
               if (dot)
-                Positioned(
+                PositionedDirectional(
                   top: 9,
-                  right: 9,
+                  end: 9,
                   child: Container(
                     width: 12,
                     height: 12,
@@ -262,7 +266,10 @@ class TabletTitleActions extends StatelessWidget {
         for (final a in accounts)
           PiumaPressable(
             onTap: onAccounts,
-            semanticLabel: l.tabletAccount(a.name, a.email),
+            semanticLabel: l.tabletAccount(
+              bidiArg(context, a.name),
+              bidiArg(context, a.email),
+            ),
             child: SizedBox(
               width: 32,
               height: 44,

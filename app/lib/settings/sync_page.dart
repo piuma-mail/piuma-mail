@@ -12,6 +12,7 @@ import '../onboarding/pair_screen.dart';
 import '../widgets/button.dart';
 import '../widgets/dialog.dart';
 import '../widgets/route.dart';
+import '../widgets/bidi.dart';
 
 /// Settings › Devices & sync, as on `SyncToApprove` (sync off) and
 /// `Groups` (sync on): where the encrypted space lives, the devices that
@@ -74,7 +75,7 @@ class _SyncPageState extends State<SyncPage> {
     final l = AppLocalizations.of(context);
     return switch (e) {
       SyncFailure(problem: SyncProblem.offline) => l.syncFailOffline(
-        _state.home ?? _homeAccount?.email ?? '',
+        bidiArg(context, _state.home ?? _homeAccount?.email ?? ''),
       ),
       SyncFailure(problem: SyncProblem.expired) => l.syncFailExpired,
       SyncFailure(problem: SyncProblem.taken) => l.syncFailTaken,
@@ -223,7 +224,7 @@ class _SyncPageState extends State<SyncPage> {
     final l = AppLocalizations.of(context);
     final yes = await showPiumaDialog<bool>(
       context,
-      label: l.syncUnlinkAsk(d.name),
+      label: l.syncUnlinkAsk(bidiArg(context, d.name)),
       builder: (context) {
         final c = PiumaTheme.of(context);
         return Column(
@@ -231,7 +232,7 @@ class _SyncPageState extends State<SyncPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              l.syncUnlinkAsk(d.name),
+              l.syncUnlinkAsk(bidiArg(context, d.name)),
               style: PiumaType.body.copyWith(
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
@@ -336,8 +337,8 @@ class _SyncPageState extends State<SyncPage> {
         if (!d.thisDevice) d.name,
     ];
     final body = switch (others) {
-      [] => l.syncTurnOffLast(s.home ?? ''),
-      [final one] => l.syncTurnOffOne(one),
+      [] => l.syncTurnOffLast(bidiArg(context, s.home ?? '')),
+      [final one] => l.syncTurnOffOne(bidiArg(context, one)),
       [...final rest, final last] => l.syncTurnOffMany(
         '${rest.join(', ')} ${l.listAnd} $last',
       ),
@@ -445,15 +446,19 @@ class _SyncPageState extends State<SyncPage> {
         const SizedBox(height: 28),
         _Note(
           ok: home != null,
-          text: home == null ? l.syncOffBody : l.syncOnBody(homeName ?? home),
-          line: home == null ? l.syncOffNote : l.syncOnLine(home),
+          text: home == null
+              ? l.syncOffBody
+              : l.syncOnBody(bidiArg(context, homeName ?? home)),
+          line: home == null
+              ? l.syncOffNote
+              : l.syncOnLine(bidiArg(context, home)),
         ),
         if (home != null) ...[
           if (s.unlinked case final by?) ...[
             const SizedBox(height: 14),
             _SyncWarning(
               icon: PiumaIcon.warning,
-              title: l.syncUnlinkedTitle(by),
+              title: l.syncUnlinkedTitle(bidiArg(context, by)),
               body: l.syncUnlinkedBody,
               actions: [
                 PiumaButton(
@@ -473,7 +478,9 @@ class _SyncPageState extends State<SyncPage> {
               icon: PiumaIcon.warning,
               urgent: true,
               title: l.syncConflictTitle,
-              body: l.syncConflictBody(_namesIn(l, s.conflict)),
+              body: l.syncConflictBody(
+                bidiArg(context, _namesIn(l, s.conflict)),
+              ),
               actions: [
                 PiumaButton(
                   label: l.syncLinkAgain,
@@ -502,8 +509,8 @@ class _SyncPageState extends State<SyncPage> {
               urgent: true,
               title: l.syncExposedNowTitle,
               body: l.syncExposedNowBody(
-                s.exposedDevice,
-                _homeFirst(s.exposed, home).first,
+                bidiArg(context, s.exposedDevice),
+                bidiArg(context, _homeFirst(s.exposed, home).first),
               ),
               list: _homeFirst(s.exposed, home),
               actions: [
@@ -519,7 +526,7 @@ class _SyncPageState extends State<SyncPage> {
             const SizedBox(height: 14),
             _SyncWarning(
               icon: PiumaIcon.warning,
-              title: l.syncHeldTitle(h.email),
+              title: l.syncHeldTitle(bidiArg(context, h.email)),
               body: _heldBody(h),
               actions: [
                 PiumaButton(
@@ -556,7 +563,7 @@ class _SyncPageState extends State<SyncPage> {
             _SyncWarning(
               icon: PiumaIcon.shield,
               title: l.syncRollbackTitle,
-              body: l.syncRollbackBody(home),
+              body: l.syncRollbackBody(bidiArg(context, home)),
             ),
           ],
           if (s.outdated) ...[
@@ -574,7 +581,7 @@ class _SyncPageState extends State<SyncPage> {
             _StoreIn(account: a, label: l.syncStoreIn, onTap: _pickHome),
           const SizedBox(height: 22),
           Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: PiumaButton(
               label: l.syncTurnOn,
               size: widget.phone
@@ -641,7 +648,7 @@ class _SyncPageState extends State<SyncPage> {
                     PiumaIconView(PiumaIcon.check, size: 18, color: c.ok),
                     const SizedBox(width: 8),
                     Text(
-                      l.syncLinked(name),
+                      l.syncLinked(bidiArg(context, name)),
                       style: PiumaType.body.copyWith(color: c.ok),
                     ),
                   ],
@@ -997,7 +1004,7 @@ Future<void> showExposedPasswords(
           ),
           const SizedBox(height: 6),
           Text(
-            l.syncExposedBody(device),
+            l.syncExposedBody(bidiArg(context, device)),
             style: PiumaType.body.copyWith(color: c.muted),
           ),
           const SizedBox(height: 16),
@@ -1045,7 +1052,9 @@ Future<void> showExposedPasswords(
           ),
           const SizedBox(height: 18),
           Align(
-            alignment: phone ? Alignment.center : Alignment.centerRight,
+            alignment: phone
+                ? Alignment.center
+                : AlignmentDirectional.centerEnd,
             child: PiumaButton(
               label: l.syncExposedDone,
               size: phone ? PiumaButtonSize.large : PiumaButtonSize.standard,
@@ -1275,7 +1284,7 @@ class _DeviceRow extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return Container(
       constraints: const BoxConstraints(minHeight: 64),
-      padding: const EdgeInsets.fromLTRB(18, 10, 16, 10),
+      padding: const EdgeInsetsDirectional.fromSTEB(18, 10, 16, 10),
       child: Row(
         children: [
           Container(
@@ -1335,7 +1344,7 @@ class _DeviceRow extends StatelessWidget {
           if (onUnlink case final unlink?)
             PiumaPressable(
               onTap: unlink,
-              semanticLabel: l.syncUnlinkName(device.name),
+              semanticLabel: l.syncUnlinkName(bidiArg(context, device.name)),
               child: ExcludeSemantics(
                 child: Container(
                   height: 34,
@@ -1373,7 +1382,7 @@ class _PhraseRow extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return Container(
       constraints: const BoxConstraints(minHeight: 64),
-      padding: const EdgeInsets.fromLTRB(18, 10, 16, 10),
+      padding: const EdgeInsetsDirectional.fromSTEB(18, 10, 16, 10),
       child: Row(
         children: [
           Expanded(
@@ -1465,7 +1474,9 @@ class _LinkPanelState extends State<_LinkPanel> {
         ? ''
         : '${left.inMinutes}:${(left.inSeconds % 60).toString().padLeft(2, '0')}';
     final body = Text(
-      invite == null ? l.syncLinkBody(widget.email) : l.syncLinkScan,
+      invite == null
+          ? l.syncLinkBody(bidiArg(context, widget.email))
+          : l.syncLinkScan,
       style: PiumaType.body.copyWith(fontSize: 14, color: c.fg),
     );
     return Container(
@@ -1511,7 +1522,7 @@ class _LinkPanelState extends State<_LinkPanel> {
           if (invite != null) ...[
             const SizedBox(height: 6),
             Text(
-              l.syncLinkNoCamera(widget.email),
+              l.syncLinkNoCamera(bidiArg(context, widget.email)),
               style: PiumaType.body.copyWith(fontSize: 13, color: c.muted),
             ),
           ],
@@ -1599,7 +1610,9 @@ Future<void> showRecoveryPhrase(
   final title = unlinked == null ? l.syncPhraseTitle : l.syncPhraseNewTitle;
   Widget panel(BuildContext context) => _PhrasePanel(
     title: title,
-    body: unlinked == null ? l.syncPhraseBody : l.syncPhraseNewBody(unlinked),
+    body: unlinked == null
+        ? l.syncPhraseBody
+        : l.syncPhraseNewBody(bidiArg(context, unlinked)),
     words: phrase.split(' '),
     phone: phone,
   );
@@ -1692,7 +1705,7 @@ class _PhrasePanel extends StatelessWidget {
                                   width: 18,
                                   child: Text(
                                     '${i + 1}',
-                                    textAlign: TextAlign.right,
+                                    textAlign: TextAlign.end,
                                     style: TextStyle(
                                       fontFamily: PiumaFonts.mono,
                                       fontSize: 12,

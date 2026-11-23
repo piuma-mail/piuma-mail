@@ -363,7 +363,7 @@ class _AwayPageState extends State<AwayPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: SettingsBackLink(
             label: widget.account.name,
             onTap: widget.onBack,
@@ -542,7 +542,7 @@ class _Row extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 52),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Align(alignment: Alignment.centerLeft, child: child),
+        child: Align(alignment: AlignmentDirectional.centerStart, child: child),
       ),
     );
     return onTap == null
