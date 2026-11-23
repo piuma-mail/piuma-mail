@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 
@@ -20,19 +21,29 @@ class FileLockStore implements LockStore {
 
   bool get _android => Platform.isAndroid;
 
-  /// Null only when there is no file. A file that is there but empty or
-  /// damaged still turns the lock on, and one that can't be read throws
-  /// ([AppLock.load] counts that as on too).
+  /// Null only when the system says there is no file (not found). A file
+  /// that is there but empty or damaged still turns the lock on, and any
+  /// other failure to read it throws ([AppLock.load] counts that as on
+  /// too): `File.exists` would say false for those, turning it off.
   @override
   Future<LockSettings?> loadSettings() async {
-    if (!await _file.exists()) return null;
-    return LockSettings.parse(await _file.readAsString());
+    final String text;
+    try {
+      text = await _file.readAsString();
+    } on PathNotFoundException {
+      return null;
+    }
+    return LockSettings.parse(text);
   }
 
   @override
   Future<void> saveSettings(LockSettings? settings) async {
     if (settings == null) {
-      if (await _file.exists()) await _file.delete();
+      try {
+        await _file.delete();
+      } on PathNotFoundException {
+        // Already gone.
+      }
       return;
     }
     // Written aside and moved in, so a crash never leaves half a file.
@@ -131,28 +142,44 @@ class SystemDeviceUnlock implements DeviceUnlock {
 /// Null elsewhere: the wrong-PIN wait then starts over at each launch.
 Future<BootTime?> systemBootClock() async {
   if (Platform.isAndroid) {
-    final r = await LockPlatform._channel.invokeListMethod<Object?>('clock');
-    if (r case [final num count, final num ms]) {
-      return BootTime(
-        'android:${count.toInt()}',
-        Duration(milliseconds: ms.toInt()),
-      );
-    }
-    return null;
+    return androidBootTime(
+      await LockPlatform._channel.invokeListMethod<Object?>('clock'),
+    );
   }
   if (Platform.isLinux) {
-    final id = (await File(
-      '/proc/sys/kernel/random/boot_id',
-    ).readAsString()).trim();
-    final up = (await File('/proc/uptime').readAsString()).split(' ').first;
-    final seconds = double.parse(up);
-    if (id.isEmpty) return null;
-    return BootTime(
-      'linux:$id',
-      Duration(milliseconds: (seconds * 1000).round()),
+    return linuxBootTime(
+      await File('/proc/sys/kernel/random/boot_id').readAsString(),
+      await File('/proc/uptime').readAsString(),
     );
   }
   return null;
+}
+
+/// What `MainActivity.kt` answers: the boot count and `elapsedRealtime`.
+/// No boot count (missing, or Android's -1 for unknown) means no clock:
+/// two boots would share an id, and a wait kept on one would be read on
+/// the other's clock. The wait then starts over in full ([LockSecret.waitAt]).
+@visibleForTesting
+BootTime? androidBootTime(List<Object?>? answer) {
+  if (answer case [final int count, final num ms] when count >= 0 && ms >= 0) {
+    return BootTime('android:$count', Duration(milliseconds: ms.toInt()));
+  }
+  return null;
+}
+
+/// The kernel's boot id and `/proc/uptime`'s first number. Null when
+/// either can't be read as such.
+@visibleForTesting
+BootTime? linuxBootTime(String bootId, String uptime) {
+  final id = bootId.trim();
+  final seconds = double.tryParse(uptime.trim().split(' ').first);
+  if (id.isEmpty || seconds == null || !seconds.isFinite || seconds < 0) {
+    return null;
+  }
+  return BootTime(
+    'linux:$id',
+    Duration(milliseconds: (seconds * 1000).round()),
+  );
 }
 
 /// What the platform does while the lock is on: Android keeps Piuma out

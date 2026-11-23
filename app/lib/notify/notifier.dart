@@ -137,6 +137,21 @@ SystemNotice privateNotice(SystemNotice n) {
   );
 }
 
+/// Seals [notice]'s payload, then decides what it may show
+/// ([privateNotice]) and hands it to [post] at once. The decision comes
+/// after the wait for the seal, never before it: the lock turned on
+/// meanwhile, and its blanking already done, the notice goes out blank
+/// rather than with its sender and subject.
+Future<void> postNotice(
+  SystemNotice notice, {
+  required NoticeSeal seal,
+  required Future<void> Function(SystemNotice n, String sealed) post,
+}) async {
+  final sealed = await seal.seal(notice.payload);
+  // Nothing may wait between this and [post].
+  return post(privateNotice(notice), sealed);
+}
+
 /// Shows notices through the operating system. Tests replace [notifier].
 abstract class Notifier {
   /// [onOpen] gets the payload of a clicked notice. [openLabel] names the
@@ -290,7 +305,11 @@ class SystemNotifier implements Notifier {
   @override
   Future<void> show(SystemNotice notice) async {
     if (!_ready) return;
-    final n = privateNotice(notice);
+    await postNotice(notice, seal: noticeSeal, post: _post);
+  }
+
+  /// Hands [n] to the system; nothing here waits before it goes.
+  Future<void> _post(SystemNotice n, String sealed) async {
     _shown.add(n.id);
     // Where there is no subtitle line, the subject leads the body. Windows
     // puts its extra line under the body, so there the subject is the body
@@ -308,7 +327,7 @@ class SystemNotifier implements Notifier {
         id: n.id,
         title: n.title,
         body: body,
-        payload: await noticeSeal.seal(n.payload),
+        payload: sealed,
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(
             subtitle: n.subject,

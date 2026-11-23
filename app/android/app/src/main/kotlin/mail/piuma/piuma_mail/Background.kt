@@ -14,6 +14,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -282,7 +284,12 @@ object Background {
         return weekday * 24 * 60 + now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
     }
 
-    /** Shows the engine's notices: one per sender, opening its message. */
+    /**
+     * Shows the engine's notices: one per sender, opening its message.
+     * Synchronized with [blankNotices], so the lock turning on can't blank
+     * the shade while a notice with mail in it is still on its way there.
+     */
+    @Synchronized
     fun show(context: Context, json: String) {
         val notices = try {
             JSONArray(json)
@@ -291,11 +298,11 @@ object Background {
         }
         if (notices.length() == 0) return
         val manager = channels(context)
-        // The app lock: no sender, subject or preview, and no buttons, here
-        // or on a watch the notice reaches.
-        val locked = if (AppLockFile.on(context)) AppLockFile.notice(context) else null
         for (i in 0 until notices.length()) {
             val n = notices.getJSONObject(i)
+            // The app lock: no sender, subject or preview, and no buttons,
+            // here or on a watch the notice reaches.
+            val locked = lockedText(context)
             val id = n.getInt("id")
             val count = n.getInt("count")
             val sender = n.getString("sender")
@@ -355,8 +362,23 @@ object Background {
             // "Piuma Mail · Vault", as on the board.
             if (vault != null && locked == null) builder.setSubText(context.getString(R.string.vault_notice_label))
             if (locked != null) builder.addExtras(Bundle().apply { putBoolean(BLANK, true) })
+            // Checked again just before it goes: the lock may have been
+            // turned on while this notice was put together.
+            val notice = if (locked == null && AppLockFile.on(context)) {
+                blank(
+                    context,
+                    if (silent) QUIET_CHANNEL else MAIL_CHANNEL,
+                    AppLockFile.notice(context),
+                    if (vault != null || noReply != null) Notification.CATEGORY_REMINDER else Notification.CATEGORY_EMAIL,
+                    tap,
+                    System.currentTimeMillis(),
+                    onlyAlertOnce = false,
+                ).build()
+            } else {
+                builder.build()
+            }
             try {
-                manager.notify(id, builder.build())
+                manager.notify(id, notice)
             } catch (e: SecurityException) {
                 // Notifications not allowed: the mail is still there.
             }
@@ -444,8 +466,20 @@ object Background {
      * lock screen. Sign-in problem notices name an account, not mail, and
      * stay as they are.
      */
-    @Synchronized
     fun blankNotices(context: Context) {
+        val app = context.applicationContext
+        blankShown(app)
+        // Once more a moment later: a notice posted just before (by [show]
+        // or the Flutter plugin) may still be on its way into the list the
+        // system gives back.
+        main.postDelayed({ Thread { blankShown(app) }.start() }, AGAIN_MS)
+    }
+
+    private val main by lazy { Handler(Looper.getMainLooper()) }
+    private const val AGAIN_MS = 1_000L
+
+    @Synchronized
+    private fun blankShown(context: Context) {
         if (!AppLockFile.on(context)) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val text = AppLockFile.notice(context)
@@ -457,18 +491,7 @@ object Background {
         for (shown in active) {
             val n = shown.notification
             if (!isMail(n)) continue
-            val builder = Notification.Builder(context, n.channelId)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setColor(context.getColor(R.color.ic_launcher_background))
-                .setContentTitle(text)
-                .setCategory(n.category)
-                .setContentIntent(n.contentIntent)
-                .setWhen(n.`when`)
-                .setShowWhen(true)
-                .setAutoCancel(true)
-                // Already announced once: no sound or buzz for this.
-                .setOnlyAlertOnce(true)
-                .addExtras(Bundle().apply { putBoolean(BLANK, true) })
+            val builder = blank(context, n.channelId, text, n.category, n.contentIntent, n.`when`, onlyAlertOnce = true)
             if (n.number > 0) builder.setNumber(n.number)
             try {
                 manager.notify(shown.tag, shown.id, builder.build())
@@ -477,6 +500,32 @@ object Background {
             }
         }
     }
+
+    /** A mail notice with only [text] on it, marked [BLANK]. */
+    private fun blank(
+        context: Context,
+        channel: String,
+        text: String,
+        category: String?,
+        tap: PendingIntent?,
+        at: Long,
+        onlyAlertOnce: Boolean,
+    ): Notification.Builder = Notification.Builder(context, channel)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setColor(context.getColor(R.color.ic_launcher_background))
+        .setContentTitle(text)
+        .setCategory(category)
+        .setContentIntent(tap)
+        .setWhen(at)
+        .setShowWhen(true)
+        .setAutoCancel(true)
+        // Already announced once (blanking those shown): no sound or buzz.
+        .setOnlyAlertOnce(onlyAlertOnce)
+        .addExtras(Bundle().apply { putBoolean(BLANK, true) })
+
+    /** What a notice says while the app lock is on; null while it is off. */
+    private fun lockedText(context: Context): String? =
+        if (AppLockFile.on(context)) AppLockFile.notice(context) else null
 
     /** A notice about mail ([blankNotices]) that isn't blank yet. */
     private fun isMail(n: Notification): Boolean {

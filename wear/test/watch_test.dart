@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -164,6 +165,80 @@ void main() {
       matchesGoldenFile('goldens/watch_locked.png'),
     );
     expect(Summary.parse(_summary())!.locked, isFalse);
+  });
+
+  testWidgets('a summary with mail older than the locked one is dropped', (
+    tester,
+  ) async {
+    final asked = <MethodCall>[];
+    final link = await _pump(tester, asked);
+    String stamped(int gen, {bool locked = false}) {
+      final m = jsonDecode(_summary()) as Map<String, dynamic>;
+      m['gen'] = gen;
+      if (locked) {
+        m
+          ..['locked'] = true
+          ..['accounts'] = []
+          ..['rows'] = []
+          ..['templates'] = [];
+      }
+      return jsonEncode(m);
+    }
+
+    await _fromPhone('summary', stamped(10));
+    await tester.pumpAndSettle();
+    expect(link.summary!.gen, 10);
+    await _fromPhone('summary', stamped(12, locked: true));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Piuma is locked on your phone'), findsOne);
+    // Made before the lock closed, it arrives late: not shown.
+    await _fromPhone('summary', stamped(11));
+    await tester.pumpAndSettle();
+    expect(link.summary!.locked, isTrue);
+    expect(find.text('Giulia Romano'), findsNothing);
+    // Unlocked on the phone: the next one comes after.
+    await _fromPhone('summary', stamped(13));
+    await tester.pumpAndSettle();
+    expect(find.text('Giulia Romano'), findsOneWidget);
+    // A locked one is always taken, even out of order: it only hides.
+    await _fromPhone('summary', stamped(5, locked: true));
+    await tester.pumpAndSettle();
+    expect(link.summary!.locked, isTrue);
+    expect(find.text('Giulia Romano'), findsNothing);
+  });
+
+  testWidgets('what the watch kept is not shown over a newer summary', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(456, 456);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    final kept = Completer<String>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_channel, (call) async {
+          if (call.method == 'summary') return kept.future;
+          return null;
+        });
+    final link = PhoneLink();
+    final started = link.start();
+    // The phone's locked summary arrives first.
+    await _fromPhone(
+      'summary',
+      jsonEncode({
+        'gen': 8,
+        'at': _at(10, 9),
+        'locked': true,
+        'accounts': [],
+        'rows': [],
+        'templates': [],
+      }),
+    );
+    // Then the Data Layer's older copy, with mail.
+    final old = jsonDecode(_summary()) as Map<String, dynamic>;
+    kept.complete(jsonEncode(old..['gen'] = 7));
+    await started;
+    expect(link.summary!.locked, isTrue);
+    expect(link.summary!.rows, isEmpty);
   });
 
   testWidgets('an email open when the phone locks closes, and its words go', (

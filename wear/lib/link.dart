@@ -34,11 +34,27 @@ class PhoneLink extends ChangeNotifier {
   /// The words of the email [payload] names, once the phone sent them.
   String? text(String payload) => _texts[payload];
 
+  /// The newest generation seen ([Summary.gen]).
+  int _newest = -1;
+
   /// Reads what the watch kept, then asks the phone for a fresh summary.
   Future<void> start() async {
-    _summary = Summary.parse(await _call<String>('summary')) ?? _summary;
+    _take(Summary.parse(await _call<String>('summary')));
     notifyListeners();
     await refresh();
+  }
+
+  /// Shows [s] unless it is older than one already shown: a summary with
+  /// mail made before the phone locked must not replace the locked one.
+  /// A locked summary is always taken, whatever its generation: it only
+  /// hides. Taking one forgets the words of emails read here.
+  bool _take(Summary? s) {
+    if (s == null) return false;
+    if (!s.locked && s.gen < _newest) return false;
+    if (s.gen > _newest) _newest = s.gen;
+    _summary = s;
+    if (s.locked) _texts.clear();
+    return true;
   }
 
   Future<void> refresh() async {
@@ -94,12 +110,9 @@ class PhoneLink extends ChangeNotifier {
   Future<dynamic> _heard(MethodCall call) async {
     switch (call.method) {
       case 'summary':
-        final s = Summary.parse(call.arguments as String?);
-        if (s != null) {
-          _summary = s;
-          // The app lock on the phone: the words of emails already read
-          // here go too.
-          if (s.locked) _texts.clear();
+        // With the app lock on the phone, the words of emails already
+        // read here go too.
+        if (_take(Summary.parse(call.arguments as String?))) {
           notifyListeners();
         }
       case 'text':

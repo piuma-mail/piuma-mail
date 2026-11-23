@@ -44,29 +44,81 @@ object WatchLink {
         Thread { publishNow(app) }.start()
     }
 
-    /** Sends the summary when a watch is there; waits, so never on the main thread. */
+    /** One summary on its way at a time ([publishNow]). */
+    private val publishing = Any()
+
+    /**
+     * Sends the summary when a watch is there; waits, so never on the main
+     * thread. One at a time, each with a higher generation ("gen") than
+     * the last, which the watch uses to drop one that arrives late: a
+     * summary with mail made just before the lock closed can't land after
+     * the locked one.
+     */
     fun publishNow(context: Context) {
         if (!watchNear(context)) return
-        // The app lock is on: the watch is told so, and gets no mail.
-        val json = if (AppLockFile.on(context)) {
-            locked(System.currentTimeMillis() / 1000)
-        } else {
-            try {
-                Background.openEngine(context)
-                MailNative.watchSummary()
-            } catch (e: Throwable) {
+        synchronized(publishing) {
+            val mail = if (AppLockFile.on(context)) {
                 ""
+            } else {
+                try {
+                    Background.openEngine(context)
+                    MailNative.watchSummary()
+                } catch (e: Throwable) {
+                    ""
+                }
+            }
+            // Checked again once the summary is made, just before it goes:
+            // the lock is on, so the watch is told so and gets no mail.
+            val json = if (AppLockFile.on(context)) {
+                locked(System.currentTimeMillis() / 1000)
+            } else {
+                mail
+            }
+            if (json.isEmpty()) return
+            val stamped = try {
+                stamp(json, nextGeneration(context))
+            } catch (e: IllegalArgumentException) {
+                // Not a summary the watch would read.
+                return
+            }
+            val request = PutDataMapRequest.create(INBOX).apply {
+                dataMap.putString("json", stamped)
+            }.asPutDataRequest().setUrgent()
+            try {
+                Tasks.await(Wearable.getDataClient(context).putDataItem(request), WAIT_SECONDS, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                // The watch went away: it asks again when it opens.
             }
         }
-        if (json.isEmpty()) return
-        val request = PutDataMapRequest.create(INBOX).apply {
-            dataMap.putString("json", json)
-        }.asPutDataRequest().setUrgent()
-        try {
-            Tasks.await(Wearable.getDataClient(context).putDataItem(request), WAIT_SECONDS, TimeUnit.SECONDS)
-        } catch (e: Exception) {
-            // The watch went away: it asks again when it opens.
-        }
+    }
+
+    /** The last generation handed out, also kept across restarts. */
+    private var lastGeneration = 0L
+
+    private fun nextGeneration(context: Context): Long {
+        val prefs = context.getSharedPreferences("watch", Context.MODE_PRIVATE)
+        val gen = nextGeneration(
+            maxOf(lastGeneration, prefs.getLong("gen", 0L)),
+            System.currentTimeMillis(),
+        )
+        lastGeneration = gen
+        prefs.edit().putLong("gen", gen).commit()
+        return gen
+    }
+
+    /**
+     * After [last], never below the time of day in milliseconds: should
+     * the kept one be lost (the app's data cleared), the count starts again
+     * above what the watch saw before, as long as the clock wasn't set back.
+     */
+    internal fun nextGeneration(last: Long, nowMs: Long): Long = maxOf(last + 1, nowMs)
+
+    /** [json], a summary object from the engine, with its generation first. */
+    internal fun stamp(json: String, gen: Long): String {
+        val body = json.trim()
+        require(body.startsWith("{") && body.endsWith("}"))
+        val rest = body.substring(1).trimStart()
+        return if (rest == "}") "{\"gen\":$gen}" else "{\"gen\":$gen,$rest"
     }
 
     /** A watch with Piuma on it can be reached now. */

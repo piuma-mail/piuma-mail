@@ -193,13 +193,13 @@ class MainActivity : FlutterFragmentActivity() {
                         result.success(null)
                     }
                     // The boot count and the time since boot, sleep
-                    // included: a clock the wrong-PIN wait can trust.
-                    "clock" -> result.success(
-                        listOf(
-                            Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1),
-                            SystemClock.elapsedRealtime(),
-                        )
-                    )
+                    // included: a clock the wrong-PIN wait can trust. No
+                    // boot count, no clock: a wait from another boot could
+                    // otherwise be read on this one's (`systemBootClock`).
+                    "clock" -> {
+                        val boot = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)
+                        result.success(if (boot < 0) null else listOf(boot, SystemClock.elapsedRealtime()))
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -278,11 +278,16 @@ internal class Passwords(context: Context) {
         val cipher = Cipher.getInstance(TRANSFORM)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val sealed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString(name, Base64.encodeToString(sealed, Base64.NO_WRAP)).apply()
+        // Written to disk before this returns, or it throws: the app lock
+        // counts a PIN try here before checking it, and a try that only
+        // might be kept could be repeated without waiting.
+        if (!prefs.edit().putString(name, Base64.encodeToString(sealed, Base64.NO_WRAP)).commit()) {
+            throw java.io.IOException("not kept")
+        }
     }
 
     fun delete(name: String) {
-        prefs.edit().remove(name).apply()
+        if (!prefs.edit().remove(name).commit()) throw java.io.IOException("not removed")
     }
 
     fun read(name: String): String? {

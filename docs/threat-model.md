@@ -144,7 +144,15 @@ Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`,
   on Android (`elapsedRealtime` with the boot count) and Linux (`CLOCK_BOOTTIME` with the kernel's
   boot id) the end on the boot clock is kept too, so time spent closed or asleep counts within the
   same boot. After a reboot, and on Windows, macOS and iOS after a restart of the app, the wait left
-  starts over: it is never shortened.
+  starts over: it is never shortened. Android without a boot count (missing, or -1) gets no boot
+  clock at all, so two boots can't be mistaken for one. Accepted: the boot count is a global setting
+  an authorized ADB shell can write, and `/proc/uptime` follows the process's time namespace on
+  Linux, so either can shorten a wait kept across closing the app; both need code running on the
+  unlocked device (or a debugging session it allowed), which is outside what the lock stops. The
+  wait within one run of the app stays on the process's own monotonic clock.
+- **Counting a try:** the try is written to the keychain before the PIN is checked, and the check
+  waits for the write: on Android the Keystore-sealed value is committed to disk synchronously and a
+  failed commit refuses the try (`PinNotKept`), never an asynchronous write that could be lost.
 - **Locking while away:** the app counts as away when its main window is hidden or paused and no
   reader window is in front. A timer locks it once away for the chosen time, whether or not a window
   comes back, and the time of day and the monotonic clock both count, so setting the clock back
@@ -158,7 +166,9 @@ Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`,
 - **Settings file:** `app-lock.json` next to the database says the lock is on, how long after leaving
   it locks and the notice text. It is not secret; deleting it turns the lock off, which needs the same
   access to the device's files that would read the database anyway. A file that is there but empty,
-  damaged or unreadable still means on: the app starts locked with the default settings. If the
+  damaged or unreadable still means on: the app starts locked with the default settings. Only "not
+  found" means off: any other failure to look at or read the file (permissions, I/O, a folder in its
+  place) counts as on, in the app and in Android's background service. If the
   keychain can't give the hash back, the app stays locked and only the device unlock opens it; if
   the keychain answers without one, the lock screen says so (the device unlock, or removing Piuma's
   data, is the way back in).
@@ -173,6 +183,14 @@ Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`,
   requests to open or act on a message until the lock is turned off; when that summary arrives the
   watch closes an email open on it and forgets the words of those it showed. Sign-in problem notices
   from Android's background service still name the account, not any mail.
+- **Races with the lock turning on:** a notice is decided (with mail or blank) after every wait in
+  making it and handed to the system at once: in the app after its payload is sealed, on Android in
+  the background service right before it is posted. Android's posting and blanking take turns (one
+  lock), and the blanking runs again a moment later for a notice the system was still taking in.
+  The phone sends the watch one summary at a time, checks the lock again once a summary is made, and
+  numbers each with a growing generation; the watch drops a summary with mail older than the newest
+  it has seen, always takes a locked one, and on a locked one removes kept summaries with mail. A
+  watch out of reach when the lock closes keeps its last summary until it reaches the phone again.
 - **Not covered:** window thumbnails of the desktop systems depend on the system (Windows and
   macOS window previews are not blanked); notices an earlier run left on a desktop system that
   can't list them stay until dismissed (their buttons don't act while locked); the lock guards the

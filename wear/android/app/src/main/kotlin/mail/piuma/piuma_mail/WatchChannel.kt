@@ -17,6 +17,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
@@ -67,6 +68,30 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
             if (event.type != DataEvent.TYPE_CHANGED || event.dataItem.uri.path != INBOX) continue
             val json = DataMapItem.fromDataItem(event.dataItem).dataMap.getString("json") ?: continue
             main.post { channel.invokeMethod("summary", json) }
+            // The app lock closed on the phone: no summary with mail stays
+            // kept here (one from an earlier phone, or left behind).
+            if (locked(json)) Thread { forgetMail(generation(json)) }.start()
+        }
+    }
+
+    /** Removes the kept summaries with mail older than generation [upTo]. */
+    private fun forgetMail(upTo: Long) {
+        try {
+            val client = Wearable.getDataClient(activity)
+            val items = Tasks.await(client.getDataItems(inboxUri()), WAIT_SECONDS, TimeUnit.SECONDS)
+            val stale = try {
+                items.mapNotNull { item ->
+                    val json = DataMapItem.fromDataItem(item).dataMap.getString("json")
+                    item.uri.takeIf { json == null || (!locked(json) && generation(json) < upTo) }
+                }
+            } finally {
+                items.release()
+            }
+            for (uri in stale) {
+                Tasks.await(client.deleteDataItems(uri), WAIT_SECONDS, TimeUnit.SECONDS)
+            }
+        } catch (e: Exception) {
+            // No Data Layer now: the phone's next summary replaces it.
         }
     }
 
@@ -76,19 +101,37 @@ class WatchChannel(private val activity: Activity, messenger: BinaryMessenger) :
         main.post { channel.invokeMethod("text", json) }
     }
 
-    /** The summary the phone sent last, as the Data Layer keeps it. */
+    private fun inboxUri(): Uri = Uri.Builder().scheme("wear").path(INBOX).build()
+
+    /**
+     * The summary the phone sent last, as the Data Layer keeps it: of
+     * several (another phone's, say), the newest generation, and a locked
+     * one over one with mail of the same generation.
+     */
     private fun lastSummary(): String? {
         val items = Tasks.await(
-            Wearable.getDataClient(activity)
-                .getDataItems(Uri.Builder().scheme("wear").path(INBOX).build()),
+            Wearable.getDataClient(activity).getDataItems(inboxUri()),
             WAIT_SECONDS,
             TimeUnit.SECONDS,
         )
-        return try {
-            items.firstOrNull()?.let { DataMapItem.fromDataItem(it).dataMap.getString("json") }
+        val kept = try {
+            items.mapNotNull { DataMapItem.fromDataItem(it).dataMap.getString("json") }
         } finally {
             items.release()
         }
+        return kept.maxWithOrNull(compareBy<String>({ generation(it) }, { locked(it) }))
+    }
+
+    private fun generation(json: String): Long = try {
+        JSONObject(json).optLong("gen", 0L)
+    } catch (e: Exception) {
+        0L
+    }
+
+    private fun locked(json: String): Boolean = try {
+        JSONObject(json).optBoolean("locked", false)
+    } catch (e: Exception) {
+        false
     }
 
     /** Sends to every phone connected now; there is one, the paired one. */

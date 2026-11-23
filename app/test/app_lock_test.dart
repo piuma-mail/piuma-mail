@@ -491,6 +491,70 @@ void main() {
       lock.dispose();
     });
   });
+
+  test('a PIN is checked only once its try is in the keychain', () async {
+    final lock = await on();
+    final hasher = _SeeingHasher(store);
+    final checked = AppLock(
+      store: store,
+      hasher: hasher,
+      device: device,
+      now: clock.call,
+      elapsed: clock.elapsed,
+      timer: timers.call,
+    );
+    await checked.load();
+    lock.dispose();
+    expect(await checked.tryPin('0000'), isA<PinWrong>());
+    expect(hasher.failuresSeen, [1]);
+    // The keychain refuses: the PIN isn't checked at all.
+    store.keychainFull = true;
+    expect(await checked.tryPin('2468'), isA<PinNotKept>());
+    expect(hasher.failuresSeen, [1]);
+    checked.dispose();
+  });
+
+  group('a notice on its way when the lock turns on', () {
+    const n = SystemNotice(
+      id: 4,
+      title: 'Giulia Romano',
+      subject: 'Dinner on Friday?',
+      preview: 'Shall we try the new place',
+      payload: '2\nINBOX\n41',
+      buttons: true,
+    );
+    tearDown(() => lockedNoticeTitle = null);
+
+    test('goes out blank when the lock turned on during the seal', () async {
+      final posted = <SystemNotice>[];
+      final seal = _FlippingSeal(() => lockedNoticeTitle = 'New message');
+      await postNotice(
+        n,
+        seal: seal,
+        post: (shown, sealed) async {
+          expect(sealed, 'sealed:${n.payload}');
+          posted.add(shown);
+        },
+      );
+      expect(seal.sealed, 1);
+      expect(posted, hasLength(1));
+      expect(posted.single.title, 'New message');
+      expect(posted.single.subject, isEmpty);
+      expect(posted.single.preview, isEmpty);
+      expect(posted.single.buttons, isFalse);
+      expect(posted.single.payload, n.payload);
+    });
+
+    test('keeps its words while the lock stays off', () async {
+      final posted = <SystemNotice>[];
+      await postNotice(
+        n,
+        seal: _FlippingSeal(() {}),
+        post: (shown, _) async => posted.add(shown),
+      );
+      expect(identical(posted.single, n), isTrue);
+    });
+  });
 }
 
 class _SlowHasher extends FakeHasher {
@@ -501,4 +565,36 @@ class _SlowHasher extends FakeHasher {
     await done.future;
     return super.verify(pin, hash);
   }
+}
+
+/// Notes how many tries the keychain held when the PIN was checked.
+class _SeeingHasher extends FakeHasher {
+  _SeeingHasher(this.store);
+  final MemoryLockStore store;
+  final failuresSeen = <int>[];
+
+  @override
+  Future<bool> verify(String pin, String hash) async {
+    failuresSeen.add(LockSecret.parse(store.secret)!.failures);
+    return super.verify(pin, hash);
+  }
+}
+
+/// A seal that takes a moment, during which [meanwhile] runs (the lock
+/// turning on).
+class _FlippingSeal extends NoticeSeal {
+  _FlippingSeal(this.meanwhile);
+  final void Function() meanwhile;
+  int sealed = 0;
+
+  @override
+  Future<String> seal(String payload) async {
+    await Future<void>.delayed(Duration.zero);
+    meanwhile();
+    sealed++;
+    return 'sealed:$payload';
+  }
+
+  @override
+  Future<String?> open(String sealed) async => sealed;
 }
