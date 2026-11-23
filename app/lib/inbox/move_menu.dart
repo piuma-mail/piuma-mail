@@ -7,6 +7,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/dialog.dart';
+import '../widgets/bidi.dart';
 
 /// "Move to…" of `AccountFolders`: the inbox and the folders of the
 /// message's own account; typing filters them, Enter takes the first.
@@ -41,7 +42,9 @@ Future<AccountFolder?> showMoveTo(
     account: account,
     targets: targets,
     updated: updated,
-    hint: copy ? l.copyToIn(account.name) : l.moveToIn(account.name),
+    hint: copy
+        ? l.copyToIn(bidiArg(context, account.name))
+        : l.moveToIn(bidiArg(context, account.name)),
     phone: phone,
   );
   if (phone) {
@@ -193,7 +196,7 @@ class _MoveMenuState extends State<MoveMenu> {
               padding: EdgeInsets.fromLTRB(pad + 12, 10, pad + 12, 10),
               child: Text(
                 _field.text.trim().isEmpty
-                    ? l.noOtherFolders(widget.account.name)
+                    ? l.noOtherFolders(bidiArg(context, widget.account.name))
                     : l.noFoldersMatch,
                 style: PiumaType.small.copyWith(color: c.muted),
               ),
@@ -231,7 +234,10 @@ class _Target extends StatelessWidget {
     final inbox = folder.mailbox == 'INBOX';
     final row = Container(
       height: phone ? 48 : 40,
-      padding: EdgeInsets.only(left: 12.0 + folder.depth * 20, right: 12),
+      padding: EdgeInsetsDirectional.only(
+        start: 12.0 + folder.depth * 20,
+        end: 12,
+      ),
       child: Row(
         children: [
           PiumaIconView(
@@ -242,7 +248,7 @@ class _Target extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              folder.name,
+              safeBidi(folder.name),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: PiumaType.body.copyWith(

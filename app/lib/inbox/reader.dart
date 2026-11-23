@@ -39,6 +39,7 @@ import 'risky_file.dart';
 import 'message_asks.dart';
 import 'sender_warning.dart';
 import '../lock/app_lock.dart' show AppLock;
+import '../widgets/bidi.dart';
 
 /// Right pane: the message being read, made safe by the engine, or its
 /// whole conversation as in `FeatureThread`. Remote images wait for
@@ -740,7 +741,9 @@ class _ReaderState extends State<Reader> {
                   SingleChildScrollView(
                     key: ValueKey(row.key),
                     child: Align(
-                      alignment: wide ? Alignment.topCenter : Alignment.topLeft,
+                      alignment: wide
+                          ? Alignment.topCenter
+                          : AlignmentDirectional.topStart,
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
                           maxWidth: wide
@@ -764,10 +767,19 @@ class _ReaderState extends State<Reader> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 SelectableText(
-                                  _subject ??
-                                      (row.subject.isEmpty
-                                          ? l.noSubject
-                                          : row.subject),
+                                  // Shown cleaned; replies keep the raw subject.
+                                  safeBidi(
+                                    _subject ??
+                                        (row.subject.isEmpty
+                                            ? l.noSubject
+                                            : row.subject),
+                                  ),
+                                  // The subject reads its own way.
+                                  textDirection: directionOf(
+                                    _subject ?? row.subject,
+                                    Directionality.of(context),
+                                    subject: true,
+                                  ),
                                   style: TextStyle(
                                     fontSize: phone ? 26 : 30,
                                     height: 1.15,
@@ -1098,7 +1110,10 @@ class _ReaderState extends State<Reader> {
             children: [
               Expanded(
                 child: Text(
-                  l.conversationSummary(messages.length, _people(messages, l)),
+                  l.conversationSummary(
+                    messages.length,
+                    bidiArg(context, _people(messages, l)),
+                  ),
                   style: TextStyle(fontSize: 13, color: c.muted),
                 ),
               ),
@@ -1129,7 +1144,10 @@ class _ReaderState extends State<Reader> {
             children: [
               Expanded(
                 child: Text(
-                  l.conversationSummary(messages.length, _people(messages, l)),
+                  l.conversationSummary(
+                    messages.length,
+                    bidiArg(context, _people(messages, l)),
+                  ),
                   style: TextStyle(fontSize: 13, color: c.muted),
                 ),
               ),
@@ -1612,8 +1630,8 @@ class _MessageViewState extends State<MessageView> {
             content: Text(
               e is TranslateNeedsDownload
                   ? l.translateNeedsDownload(
-                      l.languageName(from),
-                      l.languageName(to),
+                      bidiArg(context, l.languageName(from)),
+                      bidiArg(context, l.languageName(to)),
                     )
                   : l.translateFailed,
             ),
@@ -1714,7 +1732,10 @@ class _MessageViewState extends State<MessageView> {
             ),
             if (r.hasPrivacyNews || offer || layout)
               Padding(
-                padding: EdgeInsets.only(left: widget.chipIndent, top: 8),
+                padding: EdgeInsetsDirectional.only(
+                  start: widget.chipIndent,
+                  top: 8,
+                ),
                 // The view switch sits at the end of the chips' row while
                 // they all fit, else on a line of its own: a phone held
                 // upright never cuts the chip's label short.
@@ -1770,8 +1791,8 @@ class _MessageViewState extends State<MessageView> {
                   ? Padding(
                       // On the phone it takes the whole width, as the
                       // email under it does.
-                      padding: EdgeInsets.only(
-                        left: phone ? 0 : widget.chipIndent,
+                      padding: EdgeInsetsDirectional.only(
+                        start: phone ? 0 : widget.chipIndent,
                         top: PiumaSpace.s12,
                       ),
                       child: ImagesBar(
@@ -1853,7 +1874,7 @@ class _MessageViewState extends State<MessageView> {
                       mime: a.mime,
                       busy: _saving.contains(a.part),
                       semanticLabel: l.attachmentLabel(
-                        a.name,
+                        bidiArg(context, a.name),
                         fileSize(a.size, locale: locale),
                       ),
                       risk: riskNote(l, a),
@@ -1982,7 +2003,7 @@ class _OpenMessage extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: EdgeInsets.only(left: indent),
+            padding: EdgeInsetsDirectional.only(start: indent),
             child: child,
           ),
         ],
@@ -2053,7 +2074,7 @@ class _ClosedMessage extends StatelessWidget {
                       ),
                     ],
                   ),
-                  Text(
+                  BidiText(
                     row.preview,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -2113,8 +2134,8 @@ class _FoldedMessages extends StatelessWidget {
                   child: Stack(
                     children: [
                       for (final (i, f) in faces.take(3).indexed)
-                        Positioned(
-                          left: 16.0 * i,
+                        PositionedDirectional(
+                          start: 16.0 * i,
                           child: Container(
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
@@ -2374,7 +2395,9 @@ class _SenderLine extends StatelessWidget {
                   if (email && (row.fromName.isNotEmpty || name != null))
                     Flexible(
                       child: Text(
-                        '  ${row.fromEmail}',
+                        // An address reads left to right, kept apart from
+                        // a name written the other way.
+                        '  ${bidiArg(context, row.fromEmail)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -2390,7 +2413,7 @@ class _SenderLine extends StatelessWidget {
                 RecipientsLine(envelope: e, line: line!)
               else
                 Text(
-                  address ? row.fromEmail : when,
+                  address ? safeBidi(row.fromEmail) : when,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, height: 1.35, color: c.muted),
@@ -2435,7 +2458,7 @@ extension on _SenderLine {
 
   Widget _name(BuildContext context) {
     final c = PiumaTheme.of(context);
-    final text = Text(
+    final text = BidiText(
       name ?? row.sender,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -2714,7 +2737,7 @@ class _Toolbar extends StatelessWidget {
               child: SizedBox(
                 height: 40,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(2, 0, 10, 0),
+                  padding: const EdgeInsetsDirectional.fromSTEB(2, 0, 10, 0),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -3240,7 +3263,7 @@ class _PhoneBar extends StatelessWidget {
             child: SizedBox(
               height: 44,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -3749,7 +3772,10 @@ class _QuickReplyState extends State<_QuickReply> {
     final l = AppLocalizations.of(context);
     final everyone = widget.all && widget.others > 0;
     final hint = l.quickReplyHint(
-      everyone ? l.replyAllNames(widget.to, widget.others) : widget.to,
+      bidiArg(
+        context,
+        everyone ? l.replyAllNames(widget.to, widget.others) : widget.to,
+      ),
     );
     final from = widget.from;
     final fromLine = from == null ? null : _ReplyFromLine(from: from);
@@ -3792,7 +3818,7 @@ class _QuickReplyState extends State<_QuickReply> {
               child: machine,
             ),
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 6, 6, 6),
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 6, 6, 6),
             decoration: BoxDecoration(
               color: c.bg,
               border: Border.all(color: c.line),
@@ -3910,7 +3936,7 @@ class _QuickReplyState extends State<_QuickReply> {
               child: machine,
             ),
           Container(
-            padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
+            padding: const EdgeInsetsDirectional.fromSTEB(14, 4, 4, 4),
             decoration: BoxDecoration(
               color: c.bg,
               borderRadius: BorderRadius.circular(22),
@@ -4018,7 +4044,9 @@ class _ReplyFromLine extends StatelessWidget {
                   style: TextStyle(color: c.fg, fontWeight: FontWeight.w500),
                 ),
                 if (from.signature case final name?)
-                  TextSpan(text: ' · ${l.replyFromSignature(name)}'),
+                  TextSpan(
+                    text: ' · ${l.replyFromSignature(bidiArg(context, name))}',
+                  ),
               ],
             ),
             maxLines: 1,
@@ -4113,7 +4141,10 @@ class InShort extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.only(top: 6, right: 10),
+                      padding: const EdgeInsetsDirectional.only(
+                        top: 6,
+                        end: 10,
+                      ),
                       child: Container(
                         width: 8,
                         height: 8,
@@ -4135,7 +4166,7 @@ class InShort extends StatelessWidget {
                             ),
                             TextSpan(
                               text:
-                                  ' ${brief.askedBy.isEmpty ? turn : l.yourTurnAsks(brief.askedBy, turn)}',
+                                  ' ${brief.askedBy.isEmpty ? turn : l.yourTurnAsks(bidiArg(context, brief.askedBy), turn)}',
                             ),
                           ],
                         ),

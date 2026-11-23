@@ -259,6 +259,24 @@ void main() {
       expect(find.byType(LinkTargetLine), findsNothing);
     });
 
+    testWidgets('the next message opened under the pointer hides it, '
+        'without an error', (tester) async {
+      await _pump(tester);
+      final link = find.text('Explore the collection');
+      await tester.ensureVisible(link);
+      await tester.pumpAndSettle();
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(link));
+      await tester.pumpAndSettle();
+      expect(find.byType(LinkTargetLine), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyJ);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(LinkTargetLine), findsNothing);
+    });
+
     testWidgets('a long press in the original layout shows it too', (
       tester,
     ) async {

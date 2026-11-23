@@ -15,6 +15,7 @@ import '../widgets/dialog.dart';
 import 'message_body.dart';
 import 'reader.dart' show MessageView;
 import 'vault.dart' show ZoneTile;
+import '../widgets/bidi.dart';
 
 /// How many newsletters the list loads; older ones archive themselves.
 const _limit = 300;
@@ -319,7 +320,7 @@ class _RowText extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        BidiText(
           source.toUpperCase(),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -332,8 +333,9 @@ class _RowText extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 2),
-        Text(
+        BidiText(
           title,
+          subject: true,
           maxLines: 3,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -445,7 +447,7 @@ class _NewsletterPaneState extends State<NewsletterPane> {
               ],
               Expanded(
                 child: Text(
-                  '${row.sender} · ${row.fromEmail}',
+                  '${bidiArg(context, row.sender)} · ${bidiArg(context, row.fromEmail)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -490,7 +492,7 @@ class _NewsletterPaneState extends State<NewsletterPane> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        row.sender.toUpperCase(),
+                        safeBidi(row.sender.toUpperCase()),
                         style: TextStyle(
                           fontFamily: PiumaFonts.sans,
                           fontSize: 12,
@@ -501,7 +503,12 @@ class _NewsletterPaneState extends State<NewsletterPane> {
                       ),
                       const SizedBox(height: 10),
                       SelectableText(
-                        row.subject,
+                        safeBidi(row.subject),
+                        textDirection: directionOf(
+                          row.subject,
+                          Directionality.of(context),
+                          subject: true,
+                        ),
                         style: TextStyle(
                           fontFamily: PiumaFonts.sans,
                           fontSize: 38,
@@ -601,14 +608,14 @@ class _PhoneNewslettersState extends State<PhoneNewsletters>
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
           child: Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: PiumaPressable(
               onTap: widget.onBack,
               semanticLabel: l.inbox,
               child: SizedBox(
                 height: 44,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                  padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -754,7 +761,7 @@ class _Cover extends StatelessWidget {
                 bottom: PiumaSpace.s16,
               ),
               Text(
-                row.sender.toUpperCase(),
+                safeBidi(row.sender.toUpperCase()),
                 style: TextStyle(
                   fontFamily: PiumaFonts.sans,
                   fontSize: 12,
@@ -765,7 +772,7 @@ class _Cover extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                row.subject,
+                safeBidi(row.subject),
                 style: TextStyle(
                   fontFamily: PiumaFonts.sans,
                   fontSize: 23,
@@ -777,7 +784,7 @@ class _Cover extends StatelessWidget {
               ),
               if (row.preview.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
+                BidiText(
                   row.preview,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
@@ -897,9 +904,11 @@ Future<void> unsubscribeFrom(
   final l = AppLocalizations.of(context);
   final info = await source.unsubscribeInfo(row);
   if (!context.mounted) return;
+  // For the toasts after the dialog, when [context] may be gone.
+  final who = bidiArg(context, row.sender);
   final choice = await showPiumaDialog<_Choice>(
     context,
-    label: l.unsubscribeTitle(row.sender),
+    label: l.unsubscribeTitle(who),
     builder: (context) => _Unsubscribe(row: row, info: info),
   );
   switch (choice) {
@@ -907,13 +916,13 @@ Future<void> unsubscribeFrom(
       return;
     case _Choice.inbox:
       await source.setSenderZone(row.fromEmail, MailFolder.inbox);
-      onToast(l.alwaysInInboxDone(row.sender));
+      onToast(l.alwaysInInboxDone(who));
     case _Choice.leave when info.kind == UnsubscribeKind.page:
       if (context.mounted) await openLink(context, info.address);
     case _Choice.leave:
       try {
         await source.unsubscribe(row);
-        onToast(l.unsubscribeDone(row.sender));
+        onToast(l.unsubscribeDone(who));
       } catch (_) {
         onToast(l.unsubscribeFailed);
       }
@@ -933,17 +942,19 @@ class _Unsubscribe extends StatelessWidget {
     final c = PiumaTheme.of(context);
     final l = AppLocalizations.of(context);
     final body = switch (info.kind) {
-      UnsubscribeKind.oneClick => l.unsubscribeOneClick(row.sender),
-      UnsubscribeKind.mail => l.unsubscribeMail(info.address),
+      UnsubscribeKind.oneClick => l.unsubscribeOneClick(
+        bidiArg(context, row.sender),
+      ),
+      UnsubscribeKind.mail => l.unsubscribeMail(bidiArg(context, info.address)),
       UnsubscribeKind.page => l.unsubscribePage,
-      UnsubscribeKind.none => l.unsubscribeNone(row.sender),
+      UnsubscribeKind.none => l.unsubscribeNone(bidiArg(context, row.sender)),
     };
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          l.unsubscribeTitle(row.sender),
+          l.unsubscribeTitle(bidiArg(context, row.sender)),
           style: PiumaType.subtitle.copyWith(color: c.fg),
         ),
         const SizedBox(height: PiumaSpace.s12),
@@ -1006,9 +1017,15 @@ class UnsubscribeMailPreview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(l.unsubscribeMailTo(info.address), style: mono),
+          Text(
+            l.unsubscribeMailTo(bidiArg(context, info.address)),
+            style: mono,
+          ),
           const SizedBox(height: PiumaSpace.s4),
-          Text(l.unsubscribeMailSubject(info.subject), style: mono),
+          Text(
+            l.unsubscribeMailSubject(bidiArg(context, info.subject)),
+            style: mono,
+          ),
           if (info.body.trim().isNotEmpty) ...[
             const SizedBox(height: PiumaSpace.s8),
             Text(
@@ -1034,7 +1051,7 @@ Future<bool> confirmUnsubscribeMail(
   final l = AppLocalizations.of(context);
   final send = await showPiumaDialog<bool>(
     context,
-    label: l.unsubscribeTitle(row.sender),
+    label: l.unsubscribeTitle(bidiArg(context, row.sender)),
     builder: (context) {
       final c = PiumaTheme.of(context);
       return Column(
@@ -1042,12 +1059,12 @@ Future<bool> confirmUnsubscribeMail(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            l.unsubscribeTitle(row.sender),
+            l.unsubscribeTitle(bidiArg(context, row.sender)),
             style: PiumaType.subtitle.copyWith(color: c.fg),
           ),
           const SizedBox(height: PiumaSpace.s12),
           Text(
-            l.unsubscribeMail(info.address),
+            l.unsubscribeMail(bidiArg(context, info.address)),
             style: PiumaType.body.copyWith(color: c.fg),
           ),
           const SizedBox(height: PiumaSpace.s12),
@@ -1169,9 +1186,9 @@ class _NewsletterPictureState extends State<NewsletterPicture> {
           frameBuilder: (context, child, frame, synchronous) {
             if (frame == null) return const SizedBox.shrink();
             return Padding(
-              padding: EdgeInsets.only(
-                left: widget.left,
-                right: widget.right,
+              padding: EdgeInsetsDirectional.only(
+                start: widget.left,
+                end: widget.right,
                 bottom: widget.bottom,
               ),
               child: ClipRRect(

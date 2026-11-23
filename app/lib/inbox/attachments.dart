@@ -14,6 +14,7 @@ import '../widgets/links.dart';
 import 'attach_preview.dart';
 import 'vault.dart' show FilterPill, ZoneTile;
 import 'risky_file.dart';
+import '../widgets/bidi.dart';
 
 /// The board's filters: every file, or one kind.
 enum FileFilter { all, media, documents, sheets }
@@ -306,7 +307,7 @@ mixin _Files<T extends StatefulWidget> on State<T> {
   /// What shows when there are no cards.
   String emptyLine(AppLocalizations l) => query.trim().isEmpty
       ? l.attachmentsEmpty
-      : l.attachmentsNoMatch(query.trim());
+      : l.attachmentsNoMatch(bidiArg(context, query.trim()));
 }
 
 /// `AttachBoard` on desktop: every file as a card in a grid, by type,
@@ -473,9 +474,12 @@ class _AttachmentBoardState extends State<AttachmentBoard>
                             dot: accountColor(f),
                             account: accountName(f),
                             meta: l.attachmentsMeta(
-                              f.row.fromName.isNotEmpty
-                                  ? f.row.fromName
-                                  : f.row.fromEmail,
+                              bidiArg(
+                                context,
+                                f.row.fromName.isNotEmpty
+                                    ? f.row.fromName
+                                    : f.row.fromEmail,
+                              ),
                               fileSize(f.file.size, locale: locale),
                               fileWhen(l, f.row.receivedAt, now, locale),
                             ),
@@ -661,14 +665,14 @@ class _PhoneAttachmentsState extends State<PhoneAttachments>
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
           child: Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: PiumaPressable(
               onTap: widget.onBack,
               semanticLabel: l.inbox,
               child: SizedBox(
                 height: 44,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 0, 10, 0),
+                  padding: const EdgeInsetsDirectional.fromSTEB(4, 0, 10, 0),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -943,7 +947,7 @@ class _SortButton extends StatelessWidget {
       semanticLabel: semanticLabel,
       child: Container(
         height: 36,
-        padding: const EdgeInsets.fromLTRB(12, 0, 10, 0),
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 10, 0),
         decoration: BoxDecoration(
           color: c.surface,
           borderRadius: BorderRadius.circular(PiumaRadius.button),
@@ -1041,8 +1045,8 @@ class _FileCardState extends State<_FileCard> {
             child: PiumaPressable(
               onTap: widget.onTap,
               semanticLabel: l.attachmentsCardLabel(
-                f.file.name,
-                from,
+                bidiArg(context, f.file.name),
+                bidiArg(context, from),
                 fileSize(f.file.size, locale: locale),
               ),
               child: ExcludeSemantics(
@@ -1066,7 +1070,7 @@ class _FileCardState extends State<_FileCard> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            f.file.name,
+                            safeBidi(f.file.name),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1130,7 +1134,9 @@ class _FileCardState extends State<_FileCard> {
                       child: _BarButton(
                         icon: PiumaIcon.download,
                         label: l.attachmentsDownload,
-                        semanticLabel: l.attachmentsDownloadLabel(f.file.name),
+                        semanticLabel: l.attachmentsDownloadLabel(
+                          bidiArg(context, f.file.name),
+                        ),
                         onTap: widget.onDownload,
                       ),
                     ),
@@ -1139,7 +1145,9 @@ class _FileCardState extends State<_FileCard> {
                       child: _BarButton(
                         icon: PiumaIcon.mail,
                         label: l.attachmentsEmail,
-                        semanticLabel: l.attachmentsEmailLabel(from),
+                        semanticLabel: l.attachmentsEmailLabel(
+                          bidiArg(context, from),
+                        ),
                         onTap: widget.onOpen,
                       ),
                     ),
@@ -1158,22 +1166,26 @@ class _FileCardState extends State<_FileCard> {
         children: [
           card,
           if (_hover || widget.selected)
-            Positioned(
+            PositionedDirectional(
               top: 10,
-              right: 10,
+              end: 10,
               child: Row(
                 children: [
                   _SmallButton(
                     icon: PiumaIcon.download,
                     label: l.attachmentsDownload,
-                    semanticLabel: l.attachmentsDownloadLabel(f.file.name),
+                    semanticLabel: l.attachmentsDownloadLabel(
+                      bidiArg(context, f.file.name),
+                    ),
                     onTap: widget.onDownload,
                   ),
                   const SizedBox(width: 6),
                   _SmallButton(
                     icon: PiumaIcon.mail,
                     label: l.attachmentsOpenEmail,
-                    semanticLabel: l.attachmentsEmailLabel(from),
+                    semanticLabel: l.attachmentsEmailLabel(
+                      bidiArg(context, from),
+                    ),
                     onTap: widget.onOpen,
                   ),
                 ],
@@ -1274,8 +1286,8 @@ class _Preview extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           sketch,
-          Positioned(
-            left: 10,
+          PositionedDirectional(
+            start: 10,
             bottom: 10,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1391,7 +1403,7 @@ class _Page extends StatelessWidget {
       children: [
         Expanded(
           child: FractionallySizedBox(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             widthFactor: flex,
             child: _bar(c.rule),
           ),
@@ -1447,7 +1459,7 @@ class _Page extends StatelessWidget {
             row(0.7),
             const SizedBox(height: 8),
             Align(
-              alignment: Alignment.centerRight,
+              alignment: AlignmentDirectional.centerEnd,
               child: _bar(c.fg.withValues(alpha: 0.45), width: 26, height: 5),
             ),
           ],
@@ -1474,8 +1486,13 @@ class _Sheet extends StatelessWidget {
           child: Container(
             height: 15,
             color: c.page,
-            padding: EdgeInsets.only(left: right ? 0 : 5, right: right ? 5 : 0),
-            alignment: right ? Alignment.centerRight : Alignment.centerLeft,
+            padding: EdgeInsetsDirectional.only(
+              start: right ? 0 : 5,
+              end: right ? 5 : 0,
+            ),
+            alignment: right
+                ? AlignmentDirectional.centerEnd
+                : AlignmentDirectional.centerStart,
             child: child,
           ),
         );

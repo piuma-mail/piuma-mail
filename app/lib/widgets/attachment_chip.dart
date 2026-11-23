@@ -51,7 +51,7 @@ class AttachmentChip extends StatelessWidget {
     final tile = large ? 34.0 : 30.0;
     final instant = reduceMotion(context);
     Widget chip = Container(
-      padding: EdgeInsets.fromLTRB(
+      padding: EdgeInsetsDirectional.fromSTEB(
         large ? PiumaSpace.s8 : 6,
         large ? PiumaSpace.s8 : 6,
         onRemove == null ? PiumaSpace.s12 : PiumaSpace.s4,

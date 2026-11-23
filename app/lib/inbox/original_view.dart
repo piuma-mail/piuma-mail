@@ -898,6 +898,8 @@ class _EdgeToEdgeState extends State<_EdgeToEdge> {
       WidgetsBinding.instance.addPostFrameCallback(_measure);
       final width = box.maxWidth + _left + _right;
       return OverflowBox(
+        // Physical on purpose: [_left] and [_right] are measured on screen,
+        // whichever way the layout reads.
         alignment: Alignment.topLeft,
         minWidth: width,
         maxWidth: width,

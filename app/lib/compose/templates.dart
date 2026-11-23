@@ -7,6 +7,7 @@ import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/dialog.dart';
+import '../widgets/bidi.dart';
 
 /// What was chosen in the templates list: one to put in the message,
 /// "Save as template", or "Manage".
@@ -207,7 +208,7 @@ class _TemplatePickerState extends State<TemplatePicker> {
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
               child: Text(
-                l.templatesNoMatch(query),
+                l.templatesNoMatch(bidiArg(context, query)),
                 style: PiumaType.small.copyWith(color: c.muted),
               ),
             )

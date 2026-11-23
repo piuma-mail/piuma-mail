@@ -18,6 +18,7 @@ import '../widgets/dialog.dart';
 import '../widgets/switch.dart';
 import '../widgets/text_field.dart';
 import 'quota_card.dart';
+import '../widgets/bidi.dart';
 
 /// An account's details, as on `FeaturesToApprove` (section 2): its name,
 /// color, From name and default signature, how its connection is going,
@@ -204,7 +205,7 @@ class _AccountPageState extends State<AccountPage> {
 
   Future<void> _remove() async {
     final l = AppLocalizations.of(context);
-    final title = l.accountRemoveTitle(_account.name);
+    final title = l.accountRemoveTitle(bidiArg(context, _account.name));
     Widget panel(BuildContext context) => RemoveAccountPanel(
       source: widget.source,
       account: _account,
@@ -263,7 +264,10 @@ class _AccountPageState extends State<AccountPage> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Align(alignment: Alignment.centerRight, child: value),
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: value,
+                ),
               ),
             ],
           ),
@@ -283,7 +287,7 @@ class _AccountPageState extends State<AccountPage> {
       textField: true,
       child: TextField(
         controller: controller,
-        textAlign: TextAlign.right,
+        textAlign: TextAlign.end,
         cursorColor: c.accent,
         style: PiumaType.body.copyWith(color: c.muted),
         decoration: InputDecoration.collapsed(
@@ -336,7 +340,7 @@ class _AccountPageState extends State<AccountPage> {
             children: [
               Flexible(
                 child: Text(
-                  signature == null ? l.noSignature : signature.label,
+                  signature == null ? l.noSignature : safeBidi(signature.label),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: PiumaType.body.copyWith(color: c.muted),
@@ -478,7 +482,7 @@ class _AccountPageState extends State<AccountPage> {
       children: [
         if (!phone) ...[
           Align(
-            alignment: Alignment.centerLeft,
+            alignment: AlignmentDirectional.centerStart,
             child: SettingsBackLink(
               label: widget.backLabel,
               onTap: widget.onBack,
@@ -488,7 +492,10 @@ class _AccountPageState extends State<AccountPage> {
         ],
         Semantics(
           header: true,
-          label: l.accountDetailsLabel(_account.name, _account.email),
+          label: l.accountDetailsLabel(
+            bidiArg(context, _account.name),
+            bidiArg(context, _account.email),
+          ),
           child: ExcludeSemantics(
             child: Row(
               children: [
@@ -543,7 +550,7 @@ class _AccountPageState extends State<AccountPage> {
         alert,
         const SizedBox(height: 18),
         Align(
-          alignment: Alignment.centerLeft,
+          alignment: AlignmentDirectional.centerStart,
           child: _TextLink(
             label: l.accountRemove,
             color: c.danger,
@@ -1134,7 +1141,7 @@ class _RemoveAccountPanelState extends State<RemoveAccountPanel> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              m.subject.isEmpty ? l.noSubject : m.subject,
+              safeBidi(m.subject.isEmpty ? l.noSubject : m.subject),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: PiumaType.body.copyWith(
@@ -1145,7 +1152,7 @@ class _RemoveAccountPanelState extends State<RemoveAccountPanel> {
             Text(
               [
                 state,
-                if (m.to.isNotEmpty) l.outboxTo(_names(m.to)),
+                if (m.to.isNotEmpty) l.outboxTo(bidiArg(context, _names(m.to))),
               ].join(' · '),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,

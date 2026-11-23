@@ -330,9 +330,10 @@ class BodyBlock {
     this.marker = '',
     this.spans = const [],
     this.image,
+    this.rtl,
   });
 
-  const BodyBlock.text(this.spans, {this.quote = 0})
+  const BodyBlock.text(this.spans, {this.quote = 0, this.rtl})
     : kind = BlockKind.paragraph,
       level = 0,
       marker = '',
@@ -350,6 +351,11 @@ class BodyBlock {
   final String marker;
   final List<BodySpan> spans;
   final BodyImage? image;
+
+  /// The direction the email's markup sets (`dir`): true right to left,
+  /// false left to right, null when it leaves it to the text, as plain
+  /// text always does.
+  final bool? rtl;
 
   String get text => spans.map((s) => s.text).join();
 }

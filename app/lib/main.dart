@@ -36,6 +36,7 @@ import 'reader_window.dart';
 import 'updates/updates.dart';
 import 'updating.dart';
 import 'widgets/links.dart';
+import 'widgets/bidi.dart';
 
 Future<void> main(List<String> args) async {
   // A message opened in a window of its own: [window id, its argument].
@@ -387,6 +388,7 @@ class PiumaApp extends StatefulWidget {
     this.locale,
     this.reportSource,
     this.lock,
+    this.textDirection,
   });
 
   final HomeBuilder home;
@@ -407,6 +409,11 @@ class PiumaApp extends StatefulWidget {
 
   /// Over [appearance]'s language, as in tests.
   final Locale? locale;
+
+  /// Over the language's own direction: right to left lays the app out
+  /// as Arabic or Hebrew would, with no translation (tests, and
+  /// `--dart-define=PIUMA_RTL=true`).
+  final TextDirection? textDirection;
 
   @override
   State<PiumaApp> createState() => _PiumaAppState();
@@ -519,17 +526,27 @@ class _PiumaAppState extends State<PiumaApp> {
       themeAnimationDuration: PiumaMotion.theme,
       themeAnimationCurve: PiumaMotion.curve,
       // Around everything, so a report can show the screen as it was.
-      builder: (context, child) => RepaintBoundary(
-        key: ReportContext.screen,
-        child: PiumaLook(
-          appearance: _look,
-          onChanged: _change,
-          child: switch (widget.lock) {
-            final lock? => AppLockGate(lock: lock, child: child!),
-            null => child!,
-          },
-        ),
-      ),
+      builder: (context, child) {
+        Widget screen = RepaintBoundary(
+          key: ReportContext.screen,
+          child: PiumaLook(
+            appearance: _look,
+            onChanged: _change,
+            child: switch (widget.lock) {
+              final lock? => AppLockGate(lock: lock, child: child!),
+              null => child!,
+            },
+          ),
+        );
+        // A developer's check of the right-to-left layout, with no Arabic
+        // or Hebrew translation yet: `--dart-define=PIUMA_RTL=true`.
+        final direction =
+            widget.textDirection ?? (forceRtl ? TextDirection.rtl : null);
+        if (direction != null) {
+          screen = Directionality(textDirection: direction, child: screen);
+        }
+        return screen;
+      },
       home: widget.home(
         dark,
         () => _change(

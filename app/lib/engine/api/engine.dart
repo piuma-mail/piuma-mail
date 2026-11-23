@@ -1306,6 +1306,10 @@ class BodyBlock {
   final List<TextSpan> spans;
   final BodyImage? image;
 
+  /// The direction the email's markup sets (`dir`): true right to left,
+  /// false left to right, none when it leaves it to the text.
+  final bool? rtl;
+
   const BodyBlock({
     required this.kind,
     required this.level,
@@ -1313,6 +1317,7 @@ class BodyBlock {
     required this.marker,
     required this.spans,
     this.image,
+    this.rtl,
   });
 
   @override
@@ -1322,7 +1327,8 @@ class BodyBlock {
       quote.hashCode ^
       marker.hashCode ^
       spans.hashCode ^
-      image.hashCode;
+      image.hashCode ^
+      rtl.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1334,7 +1340,8 @@ class BodyBlock {
           quote == other.quote &&
           marker == other.marker &&
           spans == other.spans &&
-          image == other.image;
+          image == other.image &&
+          rtl == other.rtl;
 }
 
 class BodyImage {

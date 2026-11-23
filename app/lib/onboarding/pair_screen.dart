@@ -11,6 +11,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../settings/sync_page.dart' show syncAgo;
 import '../widgets/button.dart';
+import '../widgets/bidi.dart';
 
 enum _Pair { found, code, phrase, done }
 
@@ -116,12 +117,14 @@ class _PairScreenState extends State<PairScreen> {
         _error = switch (e.problem) {
           SyncProblem.refused => switch (_approverKind) {
             final kind? => l.pairRefusedDevice(kind),
-            null => l.pairRefused(_approverName),
+            null => l.pairRefused(bidiArg(context, _approverName)),
           },
           SyncProblem.wrongCode => l.pairWrongCode,
           SyncProblem.expired => l.pairExpired,
           SyncProblem.conflict => l.pairConflict,
-          SyncProblem.offline => l.syncFailOffline(widget.account.email),
+          SyncProblem.offline => l.syncFailOffline(
+            bidiArg(context, widget.account.email),
+          ),
           _ => l.syncFailOther,
         };
       });
@@ -144,7 +147,9 @@ class _PairScreenState extends State<PairScreen> {
           SyncProblem.wrongPhrase => l.pairPhraseWrong,
           SyncProblem.oldPhrase => l.pairPhraseOld,
           SyncProblem.conflict => l.pairConflict,
-          SyncProblem.offline => l.syncFailOffline(widget.account.email),
+          SyncProblem.offline => l.syncFailOffline(
+            bidiArg(context, widget.account.email),
+          ),
           _ => l.syncFailOther,
         };
       });
@@ -191,7 +196,7 @@ class _PairScreenState extends State<PairScreen> {
             children: [
               if (back != null)
                 Transform.translate(
-                  offset: const Offset(-10, 0),
+                  offset: towardStart(context, 10),
                   child: PiumaPressable(
                     onTap: back,
                     semanticLabel: l.back,
@@ -326,7 +331,7 @@ class _PairScreenState extends State<PairScreen> {
                 _heading(l.pairFoundTitle, c),
                 const SizedBox(height: 8),
                 Text(
-                  l.pairFoundBody(widget.account.email),
+                  l.pairFoundBody(bidiArg(context, widget.account.email)),
                   style: PiumaType.body.copyWith(fontSize: 15, color: c.muted),
                 ),
                 const SizedBox(height: 24),
@@ -398,7 +403,7 @@ class _PairScreenState extends State<PairScreen> {
                                 syncAgo(l, approver.lastSeen, widget.now()),
                               ),
                               null => l.pairConfirmFrom(
-                                approver.name,
+                                bidiArg(context, approver.name),
                                 syncAgo(l, approver.lastSeen, widget.now()),
                               ),
                             },
@@ -456,7 +461,7 @@ class _PairScreenState extends State<PairScreen> {
                 Text(
                   switch (_approverKind) {
                     final kind? => l.pairCodeBodyDevice(kind),
-                    null => l.pairCodeBody(name),
+                    null => l.pairCodeBody(bidiArg(context, name)),
                   },
                   style: PiumaType.body.copyWith(fontSize: 15, color: c.muted),
                 ),
@@ -517,7 +522,7 @@ class _PairScreenState extends State<PairScreen> {
                               child: Text(
                                 switch (_approverKind) {
                                   final kind? => l.pairWaitingDevice(kind),
-                                  null => l.pairWaiting(name),
+                                  null => l.pairWaiting(bidiArg(context, name)),
                                 },
                                 style: PiumaType.body.copyWith(
                                   fontSize: 14,
@@ -544,9 +549,12 @@ class _PairScreenState extends State<PairScreen> {
                       _Numbered(1, switch (_approverKind) {
                         final kind? => l.pairStep1Device(
                           kind,
-                          l.syncAskTitle(mine),
+                          bidiArg(context, l.syncAskTitle(mine)),
                         ),
-                        null => l.pairStep1(name, l.syncAskTitle(mine)),
+                        null => l.pairStep1(
+                          bidiArg(context, name),
+                          bidiArg(context, l.syncAskTitle(mine)),
+                        ),
                       }),
                       const SizedBox(height: 10),
                       _Numbered(2, l.pairStep2),
@@ -964,7 +972,7 @@ class _DoneListState extends State<_DoneList> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Align(
-                  alignment: Alignment.centerLeft,
+                  alignment: AlignmentDirectional.centerStart,
                   child: Container(
                     width: 56,
                     height: 56,

@@ -42,6 +42,7 @@ flutter:
   assets:
     - assets/fonts/OFL-Geist.txt
     - assets/licenses/rust_crates.json
+    - assets/licenses/Unicode-3.0.txt
   fonts:
     - family: Geist
       fonts:

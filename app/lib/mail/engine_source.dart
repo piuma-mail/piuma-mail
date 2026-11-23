@@ -1827,6 +1827,7 @@ class EngineMailSource extends MailSource with EngineCompose {
           level: b.level,
           quote: b.quote,
           marker: b.marker,
+          rtl: b.rtl,
           spans: [
             for (final s in b.spans)
               BodySpan(

@@ -10,6 +10,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import '../widgets/message_row.dart';
 import 'saved_searches.dart';
+import '../widgets/bidi.dart';
 
 /// The kinds of mail "Search by type" offers, as the operators they add.
 const searchTypes = [
@@ -123,7 +124,7 @@ class SearchStartView extends StatelessWidget {
             ),
         ],
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 8, 2),
+          padding: const EdgeInsetsDirectional.fromSTEB(20, 22, 8, 2),
           child: Row(
             children: [
               Expanded(child: title(l.recentSearches)),
@@ -277,7 +278,7 @@ class _TypeChip extends StatelessWidget {
             widthFactor: 1,
             child: Container(
               height: 36,
-              padding: const EdgeInsets.fromLTRB(11, 0, 14, 0),
+              padding: const EdgeInsetsDirectional.fromSTEB(11, 0, 14, 0),
               decoration: BoxDecoration(
                 color: c.surface,
                 border: Border.all(color: c.line),
@@ -322,7 +323,7 @@ class _Person extends StatelessWidget {
     final first = name.split(' ').first;
     return PiumaPressable(
       onTap: onTap,
-      semanticLabel: l.searchMailFrom(name),
+      semanticLabel: l.searchMailFrom(bidiArg(context, name)),
       child: ExcludeSemantics(
         child: SizedBox(
           width: 68,
@@ -372,7 +373,7 @@ class _Recent extends StatelessWidget {
     final op = parts.first.contains(':') ? parts.first : null;
     final words = op == null ? query : parts.skip(1).join(' ');
     return Container(
-      padding: const EdgeInsets.only(left: 20, right: 8),
+      padding: const EdgeInsetsDirectional.only(start: 20, end: 8),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.line)),
       ),
@@ -429,7 +430,7 @@ class _Recent extends StatelessWidget {
           ),
           PiumaPressable(
             onTap: onForget,
-            semanticLabel: l.removeRecentSearch(query),
+            semanticLabel: l.removeRecentSearch(bidiArg(context, query)),
             child: SizedBox.square(
               dimension: 44,
               child: Center(

@@ -80,6 +80,10 @@ pub struct Block {
     pub marker: String,
     pub spans: Vec<Span>,
     pub image: Option<Image>,
+    /// The direction the markup sets with `dir` on the block or an
+    /// ancestor: `Some(true)` right to left, `Some(false)` left to right,
+    /// `None` when unset or `auto` (the app takes the text's own).
+    pub rtl: Option<bool>,
 }
 
 impl Block {
@@ -91,6 +95,7 @@ impl Block {
             marker: String::new(),
             spans: Vec::new(),
             image: None,
+            rtl: None,
         }
     }
 
@@ -336,7 +341,7 @@ fn autolink(text: &str, clean: bool, cleaned: &mut u32) -> Vec<Span> {
                     });
                 }
                 spans.push(Span {
-                    text: word.to_owned(),
+                    text: crate::bidi::neutralize(word),
                     link: Some(link),
                     ..Span::default()
                 });
@@ -582,6 +587,15 @@ const SKIPPED: &[&str] = &[
 ];
 
 /// Elements that start a new block.
+/// Elements whose `dir` sets the direction of the blocks inside them.
+fn sets_direction(name: &str) -> bool {
+    BLOCKS.contains(&name)
+        || matches!(
+            name,
+            "blockquote" | "ul" | "ol" | "li" | "pre" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+        )
+}
+
 const BLOCKS: &[&str] = &[
     "p",
     "div",
@@ -622,6 +636,8 @@ struct Style {
     pre: bool,
     quote: u8,
     list_depth: u8,
+    /// From the nearest `dir`: see [`Block::rtl`].
+    rtl: Option<bool>,
 }
 
 struct Walker {
@@ -883,6 +899,7 @@ impl Walker {
             style.list_depth
         };
         block.quote = style.quote;
+        block.rtl = style.rtl;
         block.marker = marker.unwrap_or_default();
         block.spans = spans;
         self.out.blocks.push(block);
@@ -932,6 +949,12 @@ impl Walker {
         let (link, suspicious) = match &self.link {
             Some((l, s)) => (Some(l.clone()), *s),
             None => (None, false),
+        };
+        // A link's text is the sender's: no direction controls of its own.
+        let text = if link.is_some() {
+            crate::bidi::neutralize(&text)
+        } else {
+            text
         };
         match self.current.last_mut() {
             Some(last)
@@ -1021,6 +1044,7 @@ impl Walker {
         self.flush();
         let mut block = Block::new(BlockKind::Image);
         block.quote = style.quote;
+        block.rtl = style.rtl;
         block.image = Some(image);
         self.out.blocks.push(block);
     }
@@ -1049,6 +1073,18 @@ impl Walker {
         }
 
         let mut style = inherited;
+        // A block's `dir` holds for everything inside, until another
+        // block's; `auto` hands the choice back to the text. An inline
+        // element's (a `span`, a link) turns a few words around, not the
+        // paragraph they sit in.
+        if let Some(dir) = el.value().attr("dir").filter(|_| sets_direction(name)) {
+            style.rtl = match dir.trim().to_ascii_lowercase().as_str() {
+                "rtl" => Some(true),
+                "ltr" => Some(false),
+                "auto" => None,
+                _ => style.rtl,
+            };
+        }
         let heading = match name {
             "h1" | "h2" => 1,
             "h3" | "h4" | "h5" | "h6" => 2,
@@ -1226,6 +1262,63 @@ pub fn plain_text(r: &Readable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inline_dir_does_not_turn_the_paragraph() {
+        let r = from_html(
+            "<p><span dir=\"rtl\">\u{645}\u{631}\u{62d}\u{628}\u{627}</span> English</p>\
+             <div dir=\"rtl\"><p>x <b dir=\"ltr\">y</b></p></div>\
+             <ul dir=\"rtl\"><li>a</li></ul><table><tr><td dir=\"rtl\">b</td></tr></table>\
+             <h2 dir=\"rtl\">c</h2>",
+        );
+        let dirs: Vec<Option<bool>> = r.blocks.iter().map(|b| b.rtl).collect();
+        assert_eq!(dirs, [None, Some(true), Some(true), Some(true), Some(true)]);
+    }
+
+    #[test]
+    fn a_links_text_loses_its_direction_controls() {
+        let r = from_html(
+            "<p>Pay at <a href=\"https://evil.example/\">bank\u{202E}moc.\u{2069}x\u{200F}</a></p>",
+        );
+        let link = r.blocks[0]
+            .spans
+            .iter()
+            .find(|s| s.link.is_some())
+            .expect("a link");
+        assert_eq!(link.text, "bank\u{FFFD}moc.\u{FFFD}x\u{2060}");
+        // Text around it is the email's own and stays as written.
+        let r = from_html("<p>\u{200F}abc</p>");
+        assert_eq!(r.blocks[0].spans[0].text, "\u{200F}abc");
+        // Plain-text links too.
+        let r = from_text("see https://a.example/\u{202E}gpj.exe");
+        let link = r.blocks[0].spans.iter().find(|s| s.link.is_some());
+        if let Some(link) = link {
+            assert!(!link.text.contains('\u{202E}'), "{}", link.text);
+        }
+    }
+
+    #[test]
+    fn blocks_keep_the_direction_their_markup_sets() {
+        let r = from_html(
+            "<html dir=\"rtl\"><body><p>\u{645}\u{631}\u{62d}\u{628}\u{627}</p>\
+             <div dir=\"ltr\"><p>Hello</p><p dir=\"auto\">Auto</p></div>\
+             <p dir=\"RTL \">\u{5e9}\u{5dc}\u{5d5}\u{5dd}</p><p dir=\"sideways\">Odd</p></body></html>",
+        );
+        let dirs: Vec<Option<bool>> = r.blocks.iter().map(|b| b.rtl).collect();
+        assert_eq!(
+            dirs,
+            [Some(true), Some(false), None, Some(true), Some(true)]
+        );
+        // Plain text and markup without `dir` leave it to the text.
+        assert!(from_html("<p>Hi</p>")
+            .blocks
+            .iter()
+            .all(|b| b.rtl.is_none()));
+        assert!(from_text("Hi\n\nThere")
+            .blocks
+            .iter()
+            .all(|b| b.rtl.is_none()));
+    }
 
     #[test]
     fn an_image_source_cut_inside_a_character_is_no_cid() {

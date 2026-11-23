@@ -9,6 +9,7 @@ import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
 import 'labels.dart';
 import 'selection_panel.dart' show RollingCount;
+import '../widgets/bidi.dart';
 
 /// The top of the `Phone` inbox: the big title and the accounts chip, one
 /// dot per account. The chip opens [PhoneAccountsSheet], where Settings
@@ -85,8 +86,8 @@ class PhoneInboxHeader extends StatelessWidget {
             child: Stack(
               children: [
                 for (final (i, a) in shown.take(10).indexed)
-                  Positioned(
-                    left: 7.0 * i,
+                  PositionedDirectional(
+                    start: 7.0 * i,
                     child: Opacity(
                       opacity: dimmed.contains(a.id) ? 0.35 : 1,
                       child: Container(
@@ -117,7 +118,7 @@ class PhoneInboxHeader extends StatelessWidget {
     );
     final group = this.group;
     final heading = Text(
-      group?.name ?? title ?? folderName(l, folder),
+      safeBidi(group?.name ?? title ?? folderName(l, folder)),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
@@ -138,15 +139,15 @@ class PhoneInboxHeader extends StatelessWidget {
           Expanded(
             child: Transform.scale(
               scale: 1 - fold * (1 - _foldedTitle / 32),
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               child: switch (onGroups) {
                 final groups? => Align(
-                  alignment: Alignment.centerLeft,
+                  alignment: AlignmentDirectional.centerStart,
                   child: PiumaPressable(
                     onTap: groups,
                     semanticLabel: group == null
                         ? l.groupTitleAll
-                        : l.groupTitleOne(group.name),
+                        : l.groupTitleOne(bidiArg(context, group.name)),
                     child: ExcludeSemantics(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(minHeight: 44),
@@ -176,7 +177,7 @@ class PhoneInboxHeader extends StatelessWidget {
           if (search != null && fold > 0)
             ClipRect(
               child: Align(
-                alignment: Alignment.centerRight,
+                alignment: AlignmentDirectional.centerEnd,
                 widthFactor: fold,
                 child: Opacity(
                   opacity: PiumaMotion.curve.transform(fold),
@@ -201,7 +202,7 @@ class PhoneInboxHeader extends StatelessWidget {
           if ((group, onGroups) case (final g?, final groups?))
             PiumaPressable(
               onTap: groups,
-              semanticLabel: l.groupTitleOne(g.name),
+              semanticLabel: l.groupTitleOne(bidiArg(context, g.name)),
               child: ExcludeSemantics(
                 child: Container(
                   height: 44,
@@ -245,7 +246,7 @@ class PhoneInboxHeader extends StatelessWidget {
               onTap: open,
               semanticLabel: only.isEmpty
                   ? l.phoneAccountsMenu(accounts.length)
-                  : l.phoneAccountMenu(only.first.name),
+                  : l.phoneAccountMenu(bidiArg(context, only.first.name)),
               child: ExcludeSemantics(child: chip),
             )
           else
@@ -431,7 +432,7 @@ class PhoneAccountsSheet extends StatelessWidget {
               when ownFolders > 0 && _picked != null)
             PiumaPressable(
               onTap: open,
-              semanticLabel: l.accountFolders(_picked!.name),
+              semanticLabel: l.accountFolders(bidiArg(context, _picked!.name)),
               child: ExcludeSemantics(
                 child: SizedBox(
                   height: 52,
@@ -443,7 +444,7 @@ class PhoneAccountsSheet extends StatelessWidget {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            l.accountFolders(_picked!.name),
+                            l.accountFolders(bidiArg(context, _picked!.name)),
                             style: text(weight: FontWeight.w500),
                           ),
                         ),
@@ -505,7 +506,7 @@ class PhoneAccountsSheet extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              lb.name,
+                              safeBidi(lb.name),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: text(
@@ -694,8 +695,8 @@ class _AccountChoice extends StatelessWidget {
                     child: Stack(
                       children: [
                         for (final (i, color) in dots.take(3).indexed)
-                          Positioned(
-                            left: 7.0 * i,
+                          PositionedDirectional(
+                            start: 7.0 * i,
                             child: Container(
                               width: 12,
                               height: 12,
@@ -780,10 +781,10 @@ class PhoneSearchField extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final plain = account == null
         ? l.phoneSearch(accounts)
-        : l.phoneSearchOne(account!);
+        : l.phoneSearchOne(bidiArg(context, account!));
     final hint = syncing == null
         ? plain
-        : l.phoneSearchSyncing(plain, syncing!);
+        : l.phoneSearchSyncing(plain, bidiArg(context, syncing!));
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Semantics(

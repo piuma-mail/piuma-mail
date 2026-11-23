@@ -13,6 +13,7 @@ import '../mail/translator.dart';
 import '../widgets/segments.dart';
 import 'list_options.dart';
 import 'settings_screen.dart' show HelperSwitches, SettingsHeader;
+import '../widgets/bidi.dart';
 
 /// Settings › Appearance, as on the `Settings` board: the theme as three
 /// cards and the app's language.
@@ -538,7 +539,7 @@ class _DownloadedPairsState extends State<_DownloadedPairs> {
             for (final (i, pair) in _pairs.indexed)
               Container(
                 height: 44,
-                padding: const EdgeInsets.only(left: 14, right: 4),
+                padding: const EdgeInsetsDirectional.only(start: 14, end: 4),
                 decoration: BoxDecoration(
                   border: i == 0
                       ? null
@@ -548,7 +549,10 @@ class _DownloadedPairsState extends State<_DownloadedPairs> {
                   children: [
                     Expanded(
                       child: Text(
-                        l.translatePair(name(pair.from), name(pair.to)),
+                        l.translatePair(
+                          bidiArg(context, name(pair.from)),
+                          bidiArg(context, name(pair.to)),
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: text,
@@ -564,7 +568,10 @@ class _DownloadedPairsState extends State<_DownloadedPairs> {
                     PiumaPressable(
                       onTap: () => _remove(pair),
                       semanticLabel: l.translateRemovePair(
-                        l.translatePair(name(pair.from), name(pair.to)),
+                        l.translatePair(
+                          bidiArg(context, name(pair.from)),
+                          bidiArg(context, name(pair.to)),
+                        ),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(

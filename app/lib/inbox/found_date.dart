@@ -7,6 +7,7 @@ import '../design/theme.dart';
 import '../design/tokens.g.dart';
 import '../l10n/app_localizations.dart';
 import '../mail/mail_source.dart';
+import '../widgets/bidi.dart';
 
 /// "Add Friday 10:00 to calendar" under the words that name it, as in
 /// `PhoneInvite`: found on this device, never added without a tap.
@@ -80,9 +81,9 @@ class _FoundDateChipState extends State<FoundDateChip> {
     final added = _date.addedTo;
     final label = added == null
         ? l.foundDateAdd(when)
-        : l.foundDateAdded(added);
+        : l.foundDateAdded(bidiArg(context, added));
     return Align(
-      alignment: Alignment.centerLeft,
+      alignment: AlignmentDirectional.centerStart,
       widthFactor: 1,
       child: Tooltip(
         message: l.foundOnDevice,
@@ -90,11 +91,11 @@ class _FoundDateChipState extends State<FoundDateChip> {
           onTap: added == null && !_busy ? _add : null,
           semanticLabel: added == null
               ? l.foundDateAddLabel(when)
-              : l.foundDateAddedLabel(when, added),
+              : l.foundDateAddedLabel(when, bidiArg(context, added)),
           child: SizedBox(
             height: 44,
             child: Align(
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               widthFactor: 1,
               child: AnimatedContainer(
                 duration: reduceMotion(context)
@@ -102,7 +103,7 @@ class _FoundDateChipState extends State<FoundDateChip> {
                     : PiumaMotion.theme,
                 curve: PiumaMotion.curve,
                 height: 30,
-                padding: const EdgeInsets.fromLTRB(10, 0, 12, 0),
+                padding: const EdgeInsetsDirectional.fromSTEB(10, 0, 12, 0),
                 decoration: BoxDecoration(
                   color: added == null ? c.surface : c.soft,
                   border: Border.all(color: c.line),

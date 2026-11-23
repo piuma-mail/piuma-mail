@@ -131,6 +131,55 @@ void main() {
     expect(_fake.shown.last.title, 'Giulia Romano');
   });
 
+  testWidgets('what the sender wrote reaches the system without overrides', (
+    tester,
+  ) async {
+    final source = await _inbox(tester);
+    source.arrive([
+      const MailNotice(
+        accountId: 1,
+        mailbox: 'INBOX',
+        uid: 102,
+        sender: 'Bank\u202Egro.evil',
+        senderEmail: 'x@evil.example',
+        subject: 'Fattura \u202Etxt.exe',
+        preview: 'Pay \u2069now\u200F',
+      ),
+    ]);
+    await tester.pump();
+    final n = _fake.shown.single;
+    expect(n.title, 'Bank\uFFFDgro.evil');
+    expect(n.subject, 'Fattura \uFFFDtxt.exe');
+    expect(n.preview, 'Pay \uFFFDnow\u2060');
+    _fake.shown.clear();
+    source.reminders = const [
+      MailNotice(
+        accountId: 1,
+        mailbox: 'INBOX',
+        uid: 9,
+        sender: 'x',
+        vault: VaultNotice(
+          dueIn: 3,
+          merchant: 'Enel\u202E',
+          title: '\u2066Bill',
+        ),
+      ),
+      MailNotice(
+        accountId: 0,
+        mailbox: 'INBOX',
+        uid: 0,
+        sender: '',
+        count: 2,
+        away: AwayNotice(emails: 2, people: 1, names: ['Dad\u202D']),
+      ),
+    ];
+    await tester.pump(const Duration(minutes: 10));
+    expect(_fake.shown.map((n) => (n.title, n.subject)), [
+      ('Due in 3 days · Enel\uFFFD', '\uFFFDBill'),
+      ('While you were away', '2 emails, 1 from a person: Dad\uFFFD'),
+    ]);
+  });
+
   testWidgets('at night they come without a sound', (tester) async {
     final source = await _inbox(tester, at: DateTime(2026, 10, 15, 23, 10));
     source.arrive([_giulia]);

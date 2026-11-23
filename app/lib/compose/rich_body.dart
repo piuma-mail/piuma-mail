@@ -630,7 +630,7 @@ class InlinePicture extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 240, maxHeight: height),
           child: Container(
             height: height,
-            padding: const EdgeInsets.fromLTRB(3, 3, 10, 3),
+            padding: const EdgeInsetsDirectional.fromSTEB(3, 3, 10, 3),
             decoration: BoxDecoration(
               color: c.soft,
               border: Border.all(color: c.line),

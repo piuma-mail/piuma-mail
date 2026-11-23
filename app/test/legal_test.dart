@@ -5,7 +5,7 @@ import 'package:piuma_mail/legal.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('the Geist and Rust crate licenses are registered', () async {
+  test('the Geist, Unicode and Rust crate licenses are registered', () async {
     registerFontLicenses();
     final entries = await LicenseRegistry.licenses.toList();
     final geist = entries.where((e) => e.packages.contains('Geist'));
@@ -29,5 +29,12 @@ void main() {
         .map((p) => p.text)
         .join('\n');
     expect(fx, contains('Mozilla Public License'));
+    // The Unicode data behind which way text reads.
+    final ucd = entries
+        .where((e) => e.packages.contains('Unicode Character Database'))
+        .expand((e) => e.paragraphs)
+        .map((p) => p.text)
+        .join('\n');
+    expect(ucd, contains('UNICODE LICENSE V3'));
   });
 }

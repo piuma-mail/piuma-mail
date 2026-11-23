@@ -23,6 +23,7 @@ import 'mailbox_actions.dart';
 import 'swipe.dart';
 import 'waiting.dart';
 import '../widgets/button.dart';
+import '../widgets/bidi.dart';
 
 /// Row and header heights are fixed, so a 50,000-message inbox lays out
 /// without measuring rows it does not show.
@@ -833,7 +834,12 @@ class MessageListState extends State<MessageList>
       final l = AppLocalizations.of(context);
       return _underTop(
         Padding(
-          padding: EdgeInsets.fromLTRB(widget.phone ? 20 : 22, 18, 22, 16),
+          padding: EdgeInsetsDirectional.fromSTEB(
+            widget.phone ? 20 : 22,
+            18,
+            22,
+            16,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -889,7 +895,12 @@ class MessageListState extends State<MessageList>
       final c = PiumaTheme.of(context);
       return _underTop(
         Padding(
-          padding: EdgeInsets.fromLTRB(widget.phone ? 20 : 22, 18, 22, 16),
+          padding: EdgeInsetsDirectional.fromSTEB(
+            widget.phone ? 20 : 22,
+            18,
+            22,
+            16,
+          ),
           child: Text(
             AppLocalizations.of(context).emptyFolder,
             style: PiumaType.small.copyWith(color: c.muted),
@@ -1349,7 +1360,7 @@ class OutboxTile extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        l.outboxTo(item.recipients),
+                        l.outboxTo(bidiArg(context, item.recipients)),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: line.copyWith(
@@ -1380,8 +1391,9 @@ class OutboxTile extends StatelessWidget {
                     }, style: PiumaType.small.copyWith(color: tone)),
                   ],
                 ),
-                Text(
+                BidiText(
                   item.subject.isEmpty ? l.noSubject : item.subject,
+                  subject: true,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: line.copyWith(color: c.fg),
@@ -1524,7 +1536,7 @@ class _SyncPlaceholderState extends State<SyncPlaceholder>
     Widget bar(double width, double height, {double opacity = 1}) => Opacity(
       opacity: opacity,
       child: FractionallySizedBox(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         widthFactor: width,
         child: Container(
           height: height,
@@ -1803,8 +1815,8 @@ class _InboxRowTileState extends State<InboxRowTile> {
                     // A touch row beside the open email (the tablet): the
                     // accent edge of `Tablet` marks it.
                     if (phone && widget.selected && !picked)
-                      Positioned(
-                        left: -20,
+                      PositionedDirectional(
+                        start: -20,
                         top: -(12 - trim),
                         bottom: -(12 - trim),
                         width: 3,
@@ -1813,8 +1825,8 @@ class _InboxRowTileState extends State<InboxRowTile> {
                     // Unread: the accent dot in the gutter, where the eye
                     // starts; the account stays on the avatar's dot.
                     if (unread)
-                      Positioned(
-                        left: phone ? -15 : -10,
+                      PositionedDirectional(
+                        start: phone ? -15 : -10,
                         top: (phone ? 42 : 38) / 2 - 4,
                         child: Container(
                           width: 8,
@@ -1899,7 +1911,12 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                           style: TextStyle(color: c.muted),
                                           children: [
                                             TextSpan(
-                                              text: row.listName,
+                                              // Kept whole inside "To …",
+                                              // whichever way it reads.
+                                              text: bidiArg(
+                                                context,
+                                                row.listName,
+                                              ),
                                               style: TextStyle(
                                                 color: c.fg,
                                                 fontWeight: noReply != null
@@ -1916,12 +1933,12 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                     )
                                   else
                                     Expanded(
-                                      child: Text(
+                                      child: BidiText(
                                         // A draft may have no one to go to yet.
                                         row.listName.isEmpty
                                             ? l.noRecipients
                                             : widget.noticeCount > 1
-                                            ? '${row.listName} · ${l.notificationNotices(widget.noticeCount)}'
+                                            ? '${bidiArg(context, row.listName)} · ${l.notificationNotices(widget.noticeCount)}'
                                             : row.listName,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -1956,8 +1973,9 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                 ],
                               ),
                               const SizedBox(height: 1),
-                              Text(
+                              BidiText(
                                 row.subject.isEmpty ? l.noSubject : row.subject,
+                                subject: true,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: title.copyWith(
@@ -1989,7 +2007,7 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                   ],
                                 )
                               else
-                                Text(
+                                BidiText(
                                   widget.waiting
                                       ? l.waitingNoReply
                                       : row.preview,
@@ -2032,9 +2050,10 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                       if (labels.isNotEmpty)
                                         Flexible(
                                           child: Padding(
-                                            padding: const EdgeInsets.only(
-                                              right: 6,
-                                            ),
+                                            padding:
+                                                const EdgeInsetsDirectional.only(
+                                                  end: 6,
+                                                ),
                                             child: RowLabels(
                                               labels: labels,
                                               phone: phone,
@@ -2047,8 +2066,8 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                       if (widget.writtenTo case final to?)
                                         Flexible(
                                           child: Padding(
-                                            padding: EdgeInsets.only(
-                                              left:
+                                            padding: EdgeInsetsDirectional.only(
+                                              start:
                                                   _tag(row, l, widget.phone) ==
                                                       null
                                                   ? 0
@@ -2056,7 +2075,9 @@ class _InboxRowTileState extends State<InboxRowTile> {
                                             ),
                                             child: _RowChip(
                                               icon: PiumaIcon.arrowRight,
-                                              text: l.rowWrittenTo(to),
+                                              text: l.rowWrittenTo(
+                                                bidiArg(context, to),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -2271,9 +2292,9 @@ class _Avatar extends StatelessWidget {
             ),
           ),
           for (final (i, color) in (dots.isNotEmpty ? dots : [?dot]).indexed)
-            Positioned(
+            PositionedDirectional(
               key: ValueKey('account-dot-$i'),
-              right: -1 + i * (big ? 9 : 8).toDouble(),
+              end: -1 + i * (big ? 9 : 8).toDouble(),
               bottom: -1,
               child: Container(
                 width: big ? 12 : 11,

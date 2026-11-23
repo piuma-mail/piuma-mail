@@ -29,6 +29,23 @@ class LinkTarget extends StatefulWidget {
     scope.value = url;
   }
 
+  /// Hides [url] after this frame, if it is still the one shown: for a
+  /// link that goes away mid-build (another message opened under the
+  /// pointer), when the line can't change until the build is done.
+  static void hideLater(BuildContext context, String url) {
+    final scope = context
+        .getInheritedWidgetOfExactType<_LinkTargetScope>()
+        ?.url;
+    if (scope == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        if (scope.value == url) scope.value = null;
+      } on FlutterError {
+        // Disposed with its screen: nothing left to hide.
+      }
+    });
+  }
+
   @override
   State<LinkTarget> createState() => _LinkTargetState();
 }
@@ -57,7 +74,7 @@ class _LinkTargetState extends State<LinkTarget> {
             builder: (context, url, _) => url == null || url.isEmpty
                 ? const SizedBox.shrink()
                 : Align(
-                    alignment: Alignment.bottomLeft,
+                    alignment: AlignmentDirectional.bottomStart,
                     child: LinkTargetLine(url: url),
                   ),
           ),

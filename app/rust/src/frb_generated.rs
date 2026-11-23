@@ -11090,6 +11090,7 @@ impl SseDecode for crate::api::engine::BodyBlock {
         let mut var_marker = <String>::sse_decode(deserializer);
         let mut var_spans = <Vec<crate::api::engine::TextSpan>>::sse_decode(deserializer);
         let mut var_image = <Option<crate::api::engine::BodyImage>>::sse_decode(deserializer);
+        let mut var_rtl = <Option<bool>>::sse_decode(deserializer);
         return crate::api::engine::BodyBlock {
             kind: var_kind,
             level: var_level,
@@ -11097,6 +11098,7 @@ impl SseDecode for crate::api::engine::BodyBlock {
             marker: var_marker,
             spans: var_spans,
             image: var_image,
+            rtl: var_rtl,
         };
     }
 }
@@ -15579,6 +15581,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::BodyBlock {
             self.marker.into_into_dart().into_dart(),
             self.spans.into_into_dart().into_dart(),
             self.image.into_into_dart().into_dart(),
+            self.rtl.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -19064,6 +19067,7 @@ impl SseEncode for crate::api::engine::BodyBlock {
         <String>::sse_encode(self.marker, serializer);
         <Vec<crate::api::engine::TextSpan>>::sse_encode(self.spans, serializer);
         <Option<crate::api::engine::BodyImage>>::sse_encode(self.image, serializer);
+        <Option<bool>>::sse_encode(self.rtl, serializer);
     }
 }
 
