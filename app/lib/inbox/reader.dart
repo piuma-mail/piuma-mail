@@ -38,6 +38,7 @@ import '../widgets/link_target.dart';
 import 'risky_file.dart';
 import 'message_asks.dart';
 import 'sender_warning.dart';
+import '../lock/app_lock.dart' show AppLock;
 import '../widgets/bidi.dart';
 
 /// Right pane: the message being read, made safe by the engine, or its
@@ -299,6 +300,7 @@ class _ReaderState extends State<Reader> {
   /// ⇧⌘U on Apple, Ctrl+Shift+U elsewhere: unread, or read again, while
   /// a message is shown and nothing covers it.
   bool _seenKey(KeyEvent event) {
+    if (AppLock.lockedNow) return false;
     if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyU) {
       return false;
     }
@@ -358,6 +360,7 @@ class _ReaderState extends State<Reader> {
   /// ⌘P on Apple, Ctrl+P elsewhere, while a message is shown and nothing
   /// covers it.
   bool _printKey(KeyEvent event) {
+    if (AppLock.lockedNow) return false;
     if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyP) {
       return false;
     }

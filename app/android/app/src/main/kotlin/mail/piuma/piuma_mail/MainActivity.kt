@@ -5,11 +5,13 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
-import io.flutter.embedding.android.FlutterActivity
+import android.view.WindowManager
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.security.KeyStore
@@ -18,7 +20,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class MainActivity : FlutterActivity() {
+// A FragmentActivity: the app lock's BiometricPrompt (local_auth) needs one.
+class MainActivity : FlutterFragmentActivity() {
     private var notices: MethodChannel? = null
     private var shake: Shake? = null
     private var shared: Shared? = null
@@ -26,6 +29,12 @@ class MainActivity : FlutterActivity() {
 
     /** The notice the app was opened from, until Dart asks for it. */
     private var launchPayload: String? = null
+
+    /**
+     * Links, shares and email files, until [Shared] is there: the engine
+     * attaches after `onCreate` returns in a FlutterFragmentActivity.
+     */
+    private val arrivals = Handoff<Intent>()
     override fun onCreate(savedInstanceState: Bundle?) {
         // The engine reads system settings, such as the DNS servers, through
         // the app context, so it needs it before Flutter starts.
@@ -34,16 +43,28 @@ class MainActivity : FlutterActivity() {
         launchPayload = Background.payload(applicationContext, intent)
         oauthRedirect(intent)
         super.onCreate(savedInstanceState)
+        // Before the first frame: with the app lock on, Piuma stays out of
+        // the recent apps' thumbnails and screenshots.
+        secure(AppLockFile.on(applicationContext))
         // A link or a share that started the app; not again when Android
-        // brings the activity back after it was gone.
-        if (savedInstanceState == null) shared?.handle(intent)
+        // brings the activity back after it was gone. Held until the engine
+        // is configured, which may be after this returns.
+        if (savedInstanceState == null) arrivals.offer(intent)
+    }
+
+    private fun secure(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Background.payload(applicationContext, intent)?.let { notices?.invokeMethod("open", it) }
         oauthRedirect(intent)
-        shared?.handle(intent)
+        arrivals.offer(intent)
     }
 
     /**
@@ -96,7 +117,9 @@ class MainActivity : FlutterActivity() {
         Files(this, flutterEngine.dartExecutor.binaryMessenger)
         clipboard = Clipboard(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         shake = Shake(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
-        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger)
+        shared = Shared(this, flutterEngine.dartExecutor.binaryMessenger).also { s ->
+            arrivals.attach { s.handle(it) }
+        }
         val context = applicationContext
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/background")
             .setMethodCallHandler { call, result ->
@@ -123,7 +146,7 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "refreshSignInNotices" -> {
-                        Background.showSignIn(context)
+                        Background.showSignInLater(context)
                         result.success(null)
                     }
                     "askBattery" -> {
@@ -150,6 +173,32 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        // The app lock turned on or off (`lock_platform.dart`).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/lock")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "changed" -> {
+                        val on = call.argument<Boolean>("on") == true
+                        secure(on)
+                        // Turned on: the mail notices already shown go
+                        // (off the main thread); new ones say only "New
+                        // messages" from now on, locked or not.
+                        if (on) Background.clearMail(context)
+                        // The watch shows the mail again, or stops.
+                        WatchLink.publish(context)
+                        result.success(null)
+                    }
+                    // The boot count and the time since boot, sleep
+                    // included: a clock the wrong-PIN wait can trust. No
+                    // boot count, no clock: a wait from another boot could
+                    // otherwise be read on this one's (`systemBootClock`).
+                    "clock" -> {
+                        val boot = Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1)
+                        result.success(if (boot < 0) null else listOf(boot, SystemClock.elapsedRealtime()))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         notices = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mail.piuma/notices")
             .apply {
                 setMethodCallHandler { call, result ->
@@ -173,6 +222,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        arrivals.detach()
         shake?.stop()
         shake = null
         shared?.stop()
@@ -224,11 +274,16 @@ internal class Passwords(context: Context) {
         val cipher = Cipher.getInstance(TRANSFORM)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val sealed = cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString(name, Base64.encodeToString(sealed, Base64.NO_WRAP)).apply()
+        // Written to disk before this returns, or it throws: the app lock
+        // counts a PIN try here before checking it, and a try that only
+        // might be kept could be repeated without waiting.
+        if (!prefs.edit().putString(name, Base64.encodeToString(sealed, Base64.NO_WRAP)).commit()) {
+            throw java.io.IOException("not kept")
+        }
     }
 
     fun delete(name: String) {
-        prefs.edit().remove(name).apply()
+        if (!prefs.edit().remove(name).commit()) throw java.io.IOException("not removed")
     }
 
     fun read(name: String): String? {

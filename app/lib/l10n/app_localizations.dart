@@ -11235,6 +11235,222 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Email message'**
   String get fileTypeEmail;
+
+  /// No description provided for @lockSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock Piuma'**
+  String get lockSetting;
+
+  /// No description provided for @lockSettingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for your PIN, or this device’s own unlock, to open Piuma.'**
+  String get lockSettingHint;
+
+  /// No description provided for @lockAfter.
+  ///
+  /// In en, this message translates to:
+  /// **'Lock after'**
+  String get lockAfter;
+
+  /// No description provided for @lockAfterNow.
+  ///
+  /// In en, this message translates to:
+  /// **'At once'**
+  String get lockAfterNow;
+
+  /// No description provided for @lockAfterMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} min'**
+  String lockAfterMinutes(int count);
+
+  /// No description provided for @lockDeviceSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock with this device'**
+  String get lockDeviceSetting;
+
+  /// No description provided for @lockDeviceHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Fingerprint, face or the screen lock. The PIN always works too.'**
+  String get lockDeviceHint;
+
+  /// No description provided for @lockDeviceHintWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows Hello: face, fingerprint or its PIN. Piuma’s PIN always works too.'**
+  String get lockDeviceHintWindows;
+
+  /// No description provided for @lockDeviceHintApple.
+  ///
+  /// In en, this message translates to:
+  /// **'Touch ID, Face ID or the device’s password. The PIN always works too.'**
+  String get lockDeviceHintApple;
+
+  /// No description provided for @lockPinLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'PIN'**
+  String get lockPinLabel;
+
+  /// No description provided for @lockPinHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Kept only as a slow hash in the system keychain.'**
+  String get lockPinHint;
+
+  /// No description provided for @lockChangePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Change PIN'**
+  String get lockChangePin;
+
+  /// No description provided for @lockChoosePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a PIN'**
+  String get lockChoosePin;
+
+  /// No description provided for @lockPinWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'4 to 12 digits. If you forget it, only this device’s unlock opens Piuma, or removing Piuma’s data from the device. There’s no other way back in.'**
+  String get lockPinWarning;
+
+  /// No description provided for @lockNewPin.
+  ///
+  /// In en, this message translates to:
+  /// **'New PIN'**
+  String get lockNewPin;
+
+  /// No description provided for @lockPinAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Type it again'**
+  String get lockPinAgain;
+
+  /// No description provided for @lockSavePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Save PIN'**
+  String get lockSavePin;
+
+  /// No description provided for @lockPinRule.
+  ///
+  /// In en, this message translates to:
+  /// **'A PIN is 4 to 12 digits.'**
+  String get lockPinRule;
+
+  /// No description provided for @lockPinMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'The two PINs aren’t the same.'**
+  String get lockPinMismatch;
+
+  /// No description provided for @lockNoKeychain.
+  ///
+  /// In en, this message translates to:
+  /// **'The system keychain couldn’t keep the PIN, so the lock is off. On Linux, Piuma needs GNOME Keyring, KWallet or another Secret Service.'**
+  String get lockNoKeychain;
+
+  /// No description provided for @lockSettingNote.
+  ///
+  /// In en, this message translates to:
+  /// **'While the lock is on, notifications and a paired watch never show your mail, even while Piuma is unlocked: notifications say only “New messages”, with no sender, subject or buttons, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.'**
+  String get lockSettingNote;
+
+  /// No description provided for @noticeLocked.
+  ///
+  /// In en, this message translates to:
+  /// **'New messages'**
+  String get noticeLocked;
+
+  /// No description provided for @lockTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma is locked'**
+  String get lockTitle;
+
+  /// No description provided for @lockDevicePrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock to see your mail.'**
+  String get lockDevicePrompt;
+
+  /// No description provided for @lockPinPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Type your PIN to see your mail.'**
+  String get lockPinPrompt;
+
+  /// No description provided for @lockReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock Piuma Mail'**
+  String get lockReason;
+
+  /// No description provided for @lockUnlock.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock'**
+  String get lockUnlock;
+
+  /// No description provided for @lockUsePin.
+  ///
+  /// In en, this message translates to:
+  /// **'Use PIN'**
+  String get lockUsePin;
+
+  /// No description provided for @lockUseDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this device’s unlock'**
+  String get lockUseDevice;
+
+  /// No description provided for @lockWrongPin.
+  ///
+  /// In en, this message translates to:
+  /// **'Wrong PIN.'**
+  String get lockWrongPin;
+
+  /// No description provided for @lockWait.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many wrong tries. Try again in {time}.'**
+  String lockWait(String time);
+
+  /// No description provided for @lockForgot.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot your PIN? Only removing Piuma’s data from this device opens it again; your accounts are then added anew.'**
+  String get lockForgot;
+
+  /// No description provided for @lockForgotDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Forgot your PIN? Unlock with this device instead. Without it, only removing Piuma’s data from the device opens it again.'**
+  String get lockForgotDevice;
+
+  /// No description provided for @lockPinUnreadable.
+  ///
+  /// In en, this message translates to:
+  /// **'The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open.'**
+  String get lockPinUnreadable;
+
+  /// No description provided for @lockPinMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma’s lock is on, but the system keychain has no PIN for it. Unlock with this device; without it, only removing Piuma’s data from the device opens it again.'**
+  String get lockPinMissing;
+
+  /// No description provided for @lockTriesNotKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma couldn’t record this try in the system keychain, so it can’t check the PIN now. Try again in a moment.'**
+  String get lockTriesNotKept;
 }
 
 class _AppLocalizationsDelegate

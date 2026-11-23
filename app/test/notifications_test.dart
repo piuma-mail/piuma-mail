@@ -102,6 +102,35 @@ void main() {
     expect(_fake.shown.last.id, giulia.id);
   });
 
+  testWidgets('with the app lock on, unlocked, mail is one bare notice', (
+    tester,
+  ) async {
+    final source = await _inbox(tester);
+    // Lock Piuma is on in Settings; the app itself is unlocked and in use.
+    lockedNoticeTitle = 'New messages';
+    addTearDown(() => lockedNoticeTitle = null);
+    source.arrive([_giulia, _sara]);
+    await tester.pump();
+    final n = _fake.shown.single;
+    expect(n.standIn, isTrue);
+    expect(n.id, lockedNoticeId);
+    expect(n.title, 'New messages');
+    expect(n.subject, isEmpty);
+    expect(n.preview, isEmpty);
+    expect(n.buttons, isFalse);
+    expect(n.payload, 'inbox');
+    // More mail later replaces it: still the one notice.
+    source.arrive([_giulia]);
+    await tester.pump();
+    expect(_fake.shown.map((n) => n.id).toSet(), {lockedNoticeId});
+    expect(_fake.shown.every((n) => n.subject.isEmpty), isTrue);
+    // Turned off: new mail names its sender again.
+    lockedNoticeTitle = null;
+    source.arrive([_giulia]);
+    await tester.pump();
+    expect(_fake.shown.last.title, 'Giulia Romano');
+  });
+
   testWidgets('what the sender wrote reaches the system without overrides', (
     tester,
   ) async {

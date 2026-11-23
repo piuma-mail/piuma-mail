@@ -7746,4 +7746,129 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'E-Mail-Nachricht';
+
+  @override
+  String get lockSetting => 'Piuma sperren';
+
+  @override
+  String get lockSettingHint =>
+      'Zum Öffnen von Piuma nach deiner PIN oder der Entsperrung dieses Geräts fragen.';
+
+  @override
+  String get lockAfter => 'Sperren nach';
+
+  @override
+  String get lockAfterNow => 'Sofort';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count Min.';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Mit diesem Gerät entsperren';
+
+  @override
+  String get lockDeviceHint =>
+      'Fingerabdruck, Gesicht oder Displaysperre. Die PIN geht immer auch.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello: Gesicht, Fingerabdruck oder seine PIN. Die PIN von Piuma geht immer auch.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID oder das Gerätepasswort. Die PIN geht immer auch.';
+
+  @override
+  String get lockPinLabel => 'PIN';
+
+  @override
+  String get lockPinHint =>
+      'Nur als langsamer Hash im Schlüsselbund des Systems gespeichert.';
+
+  @override
+  String get lockChangePin => 'PIN ändern';
+
+  @override
+  String get lockChoosePin => 'PIN wählen';
+
+  @override
+  String get lockPinWarning =>
+      '4 bis 12 Ziffern. Wenn du sie vergisst, öffnet nur die Entsperrung dieses Geräts Piuma, oder das Löschen der Daten von Piuma auf dem Gerät. Einen anderen Weg zurück gibt es nicht.';
+
+  @override
+  String get lockNewPin => 'Neue PIN';
+
+  @override
+  String get lockPinAgain => 'Noch einmal eingeben';
+
+  @override
+  String get lockSavePin => 'PIN speichern';
+
+  @override
+  String get lockPinRule => 'Eine PIN hat 4 bis 12 Ziffern.';
+
+  @override
+  String get lockPinMismatch => 'Die beiden PINs stimmen nicht überein.';
+
+  @override
+  String get lockNoKeychain =>
+      'Der Schlüsselbund des Systems konnte die PIN nicht speichern, daher ist die Sperre aus. Unter Linux braucht Piuma GNOME Keyring, KWallet oder einen anderen Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'Solange die Sperre an ist, zeigen Mitteilungen und eine gekoppelte Uhr nie Ihre Mails, auch wenn Piuma entsperrt ist: Mitteilungen zeigen nur „Neue Nachrichten“, ohne Absender, Betreff oder Tasten, und die Uhr zeigt keine Mails. Auch in den zuletzt verwendeten Apps ist Piuma verborgen. Die Sperre hält andere aus der App fern; sie verschlüsselt die Mails auf diesem Gerät nicht.';
+
+  @override
+  String get noticeLocked => 'Neue Nachrichten';
+
+  @override
+  String get lockTitle => 'Piuma ist gesperrt';
+
+  @override
+  String get lockDevicePrompt => 'Entsperre, um deine Mails zu sehen.';
+
+  @override
+  String get lockPinPrompt => 'Gib deine PIN ein, um deine Mails zu sehen.';
+
+  @override
+  String get lockReason => 'Piuma Mail entsperren';
+
+  @override
+  String get lockUnlock => 'Entsperren';
+
+  @override
+  String get lockUsePin => 'PIN verwenden';
+
+  @override
+  String get lockUseDevice => 'Geräteentsperrung verwenden';
+
+  @override
+  String get lockWrongPin => 'Falsche PIN.';
+
+  @override
+  String lockWait(String time) {
+    return 'Zu viele falsche Versuche. Versuch es in $time wieder.';
+  }
+
+  @override
+  String get lockForgot =>
+      'PIN vergessen? Nur das Löschen der Daten von Piuma auf diesem Gerät öffnet es wieder; danach fügst du deine Konten neu hinzu.';
+
+  @override
+  String get lockForgotDevice =>
+      'PIN vergessen? Entsperre stattdessen mit diesem Gerät. Sonst öffnet es nur das Löschen der Daten von Piuma auf dem Gerät wieder.';
+
+  @override
+  String get lockPinUnreadable =>
+      'Der Schlüsselbund des Systems hat Piuma seine PIN nicht zurückgegeben. Entsperre mit diesem Gerät oder versuch es wieder, wenn der Schlüsselbund offen ist.';
+
+  @override
+  String get lockPinMissing =>
+      'Die Sperre von Piuma ist an, aber im Schlüsselbund des Systems ist keine PIN dafür. Entsperre mit diesem Gerät; ohne es öffnet nur das Entfernen der Daten von Piuma auf dem Gerät es wieder.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma konnte diesen Versuch nicht im Schlüsselbund des Systems festhalten und kann die PIN deshalb gerade nicht prüfen. Versuch es gleich noch einmal.';
 }

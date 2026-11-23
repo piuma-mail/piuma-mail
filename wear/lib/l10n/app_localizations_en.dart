@@ -92,4 +92,8 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return 'Reply to $name and $_temp0';
   }
+
+  @override
+  String get lockedOnPhone =>
+      'Piuma is locked on your phone. Unlock it there to see your mail here.';
 }

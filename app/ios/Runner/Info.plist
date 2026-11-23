@@ -68,6 +68,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Piuma Mail scans the code another of your devices shows, to link this one. The pictures stay on your device.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Piuma Mail uses Face ID to unlock itself when you turn on Lock Piuma.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Piuma Mail shows the photos of your contacts next to their messages. Nothing leaves your device.</string>
 </dict>

@@ -22,7 +22,11 @@ import 'feedback/report_sheet.dart';
 import 'home.dart';
 import 'l10n/app_localizations.dart';
 import 'legal.dart';
+import 'lock/app_lock.dart';
+import 'lock/lock_platform.dart';
+import 'lock/lock_screen.dart';
 import 'notify/android_background.dart';
+import 'notify/notifier.dart' show lockedNoticeTitle, notifier;
 import 'mail/android_passwords.dart';
 import 'mail/engine_source.dart';
 import 'mail/mail_source.dart';
@@ -91,6 +95,8 @@ Future<void> _start(String dir) async {
   // A password the system can no longer read leaves its account asking
   // for it again; it doesn't keep the app from starting.
   await AndroidPasswords.load();
+  // Before anything is drawn: a lock that is on starts locked.
+  final lock = await _loadLock(dir);
   final source = EngineMailSource()..startSync();
   // mailto: links in emails write here, in Piuma's own compose.
   openMailtoLink = (uri) async => Arrivals.instance.mailto(uri);
@@ -104,11 +110,13 @@ Future<void> _start(String dir) async {
       onReply: (m) async {
         if (await m.find(source) case final row?) replies.add(row);
       },
+      windows: _readerWindows,
     ).ignore();
   }
   runApp(
     PiumaApp(
       reportSource: source,
+      lock: lock,
       appearance: _loadAppearance(),
       onAppearance: _saveAppearance,
       home: (_, _) => MailHome(
@@ -121,6 +129,55 @@ Future<void> _start(String dir) async {
   );
   // This launch worked: the next one need not look for a fix first.
   WidgetsBinding.instance.addPostFrameCallback((_) => Updates.launched());
+}
+
+/// The reader windows, for the app lock (`reader_window.dart`).
+ReaderWindows? _readerWindows;
+
+/// The app lock, as left: settings next to the database, its PIN in the
+/// keychain (`lock/`). While it is on, locked or not, new mail shows only
+/// one "New messages" notice, and those already shown go when it is
+/// turned on; reader windows hide when it locks and come back when it
+/// opens.
+Future<AppLock> _loadLock(String dir) async {
+  final lock = AppLock(
+    store: FileLockStore(dir),
+    hasher: const EnginePinHasher(),
+    device: SystemDeviceUnlock(),
+    bootClock: systemBootClock,
+  );
+  // Never throws: a settings file that is there but can't be read starts
+  // locked (`AppLock.load`).
+  await lock.load();
+  var wasOn = lock.enabled;
+  void follow() {
+    lockedNoticeTitle = lock.settings?.notice;
+    LockPlatform.changed(on: lock.enabled).ignore();
+    // Just turned on: what was shown before names senders.
+    if (lock.enabled && !wasOn) notifier.hideShown().ignore();
+    wasOn = lock.enabled;
+  }
+
+  follow();
+  lock.onSettings = follow;
+  final windows = canOpenWindows
+      ? _readerWindows = ReaderWindows(
+          isLocked: () => lock.locked,
+          show: (id) => WindowController.fromWindowId(id).show(),
+          hide: (id) => WindowController.fromWindowId(id).hide(),
+          all: () async {
+            final self = await WindowController.fromCurrentEngine();
+            return [
+              for (final w in await WindowController.getAll())
+                if (w.windowId != self.windowId) w.windowId,
+            ];
+          },
+          onFront: lock.windowInFront,
+        )
+      : null;
+  lock.onLocked = () => windows?.locked().ignore();
+  lock.onUnlocked = () => windows?.unlocked().ignore();
+  return lock;
 }
 
 /// `piuma_mail --smoke-test`, run by the "Release" workflow on the
@@ -254,6 +311,14 @@ Future<void> _readerWindow(String argument) async {
   final source = EngineMailSource();
   final row = await WindowMessage.decode(argument)?.find(source);
   final self = await WindowController.fromCurrentEngine();
+  final id = self.windowId;
+  // In front or not: with the inbox's window hidden, this one in front
+  // keeps the app lock from counting the app as away.
+  AppLifecycleListener(
+    onResume: () => InboxWindow.front(id, true).ignore(),
+    onInactive: () => InboxWindow.front(id, false).ignore(),
+    onHide: () => InboxWindow.front(id, false).ignore(),
+  );
   runApp(
     PiumaApp(
       reportSource: source,
@@ -263,12 +328,18 @@ Future<void> _readerWindow(String argument) async {
         row: row,
         onChanged: InboxWindow.changed,
         onReply: InboxWindow.reply,
-        onDone: () => self.hide(),
+        onDone: () {
+          InboxWindow.done(id).ignore();
+          self.hide().ignore();
+        },
       ),
     ),
   );
-  // Shown once drawn, so it never flashes empty.
-  WidgetsBinding.instance.addPostFrameCallback((_) => self.show());
+  // Shown once drawn, so it never flashes empty, and only by the inbox's
+  // window, which keeps it hidden while the app is locked.
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => InboxWindow.show(id).ignore(),
+  );
 }
 
 Appearance _loadAppearance() {
@@ -316,10 +387,15 @@ class PiumaApp extends StatefulWidget {
     this.onAppearance,
     this.locale,
     this.reportSource,
+    this.lock,
     this.textDirection,
   });
 
   final HomeBuilder home;
+
+  /// Settings › Privacy & security › Lock Piuma; null in windows of their
+  /// own, which the main window hides when it locks.
+  final AppLock? lock;
   final MailSource? reportSource;
 
   /// Light or dark from the start, over [appearance]'s theme.
@@ -397,6 +473,7 @@ class _PiumaAppState extends State<PiumaApp> {
     if (!mod || other || !keys.isShiftPressed || keys.isAltPressed) {
       return false;
     }
+    if (AppLock.lockedNow) return false;
     final source = widget.reportSource;
     final context = _navigator.currentState?.overlay?.context;
     if (source == null || context == null) return false;
@@ -455,7 +532,10 @@ class _PiumaAppState extends State<PiumaApp> {
           child: PiumaLook(
             appearance: _look,
             onChanged: _change,
-            child: child!,
+            child: switch (widget.lock) {
+              final lock? => AppLockGate(lock: lock, child: child!),
+              null => child!,
+            },
           ),
         );
         // A developer's check of the right-to-left layout, with no Arabic

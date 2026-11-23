@@ -34,14 +34,72 @@ class PhoneLink extends ChangeNotifier {
   /// The words of the email [payload] names, once the phone sent them.
   String? text(String payload) => _texts[payload];
 
+  /// The phones (Data Layer nodes) connected now: mail is shown only
+  /// from one of them.
+  Set<String> _phones = {};
+
+  /// What was seen from each phone, by node ([_take]).
+  final _seen = <String, _Seen>{};
+
   /// Reads what the watch kept, then asks the phone for a fresh summary.
   Future<void> start() async {
-    _summary = Summary.parse(await _call<String>('summary')) ?? _summary;
+    await _askPhones();
+    final kept = _unpack(await _call<Object>('summary'));
+    _take(Summary.parse(kept.json), kept.node, kept: true);
     notifyListeners();
     await refresh();
   }
 
+  /// Shows [s], from the phone [node], unless it must not be:
+  /// - a locked summary is always taken, from any phone, whatever its
+  ///   epoch or generation: it only hides, and the words of emails read
+  ///   here go with it;
+  /// - one with mail only from a phone connected now ([_phones]), and
+  ///   only when it is newer than every locked one seen from that phone
+  ///   (its generation is higher; generations start from the time in
+  ///   milliseconds, so this holds across installs too), and not from an
+  ///   epoch that phone has already left behind (an older install of the
+  ///   app, arriving late);
+  /// - within one epoch, not when an older generation than one seen;
+  /// - what the watch [kept] (read at start, maybe made long ago, maybe
+  ///   with no phone connected) only while nothing else is shown.
+  bool _take(Summary? s, String? node, {bool kept = false}) {
+    if (s == null) return false;
+    final seen = _seen.putIfAbsent(node ?? '', _Seen.new);
+    if (!s.locked) {
+      if (seen.left.contains(s.epoch)) return false;
+      if (seen.locked case final gen? when s.gen <= gen) return false;
+      if (s.epoch == seen.epoch && s.gen < seen.newest) return false;
+      if (kept) {
+        if (_summary != null) return false;
+      } else if (node == null || !_phones.contains(node)) {
+        return false;
+      }
+    }
+    seen.add(s);
+    _summary = s;
+    if (s.locked) _texts.clear();
+    return true;
+  }
+
+  /// Asks which phones are connected now.
+  Future<void> _askPhones() async {
+    final phones = await _call<List<Object?>>('phones');
+    _phones = {...?phones?.whereType<String>()};
+  }
+
+  /// A summary as `WatchChannel.kt` hands it over: `{"node", "json"}`.
+  static ({String? node, String? json}) _unpack(Object? m) => switch (m) {
+    {'node': final String? node, 'json': final String? json} => (
+      node: node,
+      json: json,
+    ),
+    final String json => (node: null, json: json),
+    _ => (node: null, json: null),
+  };
+
   Future<void> refresh() async {
+    await _askPhones();
     await _call<void>('refresh');
     _asked = true;
     notifyListeners();
@@ -94,12 +152,17 @@ class PhoneLink extends ChangeNotifier {
   Future<dynamic> _heard(MethodCall call) async {
     switch (call.method) {
       case 'summary':
-        final s = Summary.parse(call.arguments as String?);
-        if (s != null) {
-          _summary = s;
-          notifyListeners();
+        final m = _unpack(call.arguments);
+        final s = Summary.parse(m.json);
+        // Mail from a phone not known to be connected: maybe one just
+        // paired. Asked again before it is turned down.
+        if (s != null && !s.locked && m.node != null) {
+          if (!_phones.contains(m.node)) await _askPhones();
         }
+        if (_take(s, m.node)) notifyListeners();
       case 'text':
+        // Nothing is kept while the phone is locked.
+        if (_summary?.locked ?? false) return;
         try {
           final m =
               jsonDecode(call.arguments as String) as Map<String, dynamic>;
@@ -128,6 +191,32 @@ class PhoneLink extends ChangeNotifier {
   void dispose() {
     _rotary.close();
     super.dispose();
+  }
+}
+
+/// What [PhoneLink] saw from one phone.
+class _Seen {
+  /// The epoch of the phone app's install seen last ([Summary.epoch]),
+  /// and the newest generation seen in it.
+  String? epoch;
+  int newest = -1;
+
+  /// Epochs this phone has moved on from.
+  final left = <String>{};
+
+  /// The highest generation of a locked summary seen from this phone.
+  int? locked;
+
+  void add(Summary s) {
+    if (s.locked) locked = s.gen > (locked ?? -1) ? s.gen : locked;
+    if (left.contains(s.epoch)) return;
+    if (s.epoch != epoch) {
+      if (epoch case final e?) left.add(e);
+      epoch = s.epoch;
+      newest = s.gen;
+    } else if (s.gen > newest) {
+      newest = s.gen;
+    }
   }
 }
 

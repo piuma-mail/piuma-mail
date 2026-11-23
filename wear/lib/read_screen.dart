@@ -37,10 +37,15 @@ class _ReadScreenState extends State<ReadScreen> {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     final link = LinkScope.of(context);
+    const c = watchColors;
+    // The phone locked while this was open: nothing of it shows until the
+    // app closes it.
+    if (link.summary?.locked ?? false) {
+      return Scaffold(backgroundColor: c.darkroom);
+    }
     final row = widget.row;
     final text = link.text(row.payload);
     final locale = Localizations.localeOf(context).toLanguageTag();
-    const c = watchColors;
     return Scaffold(
       backgroundColor: c.darkroom,
       body: Stack(

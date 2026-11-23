@@ -249,6 +249,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Reply to {name} and {count, plural, =1{1 other} other{{count} others}}'**
   String replyToAll(String name, int count);
+
+  /// No description provided for @lockedOnPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'Piuma is locked on your phone. Unlock it there to see your mail here.'**
+  String get lockedOnPhone;
 }
 
 class _AppLocalizationsDelegate

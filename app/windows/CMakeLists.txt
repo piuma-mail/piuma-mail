@@ -57,6 +57,13 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# local_auth_windows (the app lock's Windows Hello) still uses
+# <experimental/coroutine>, which newer MSVC refuses unless told to.
+if(TARGET local_auth_windows_plugin)
+  target_compile_definitions(local_auth_windows_plugin PRIVATE
+    _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+endif()
+
 # webview_windows still uses MSVC's /await and <experimental/coroutine>.
 # Keep the compatibility opt-in local to the plugin until it moves to C++20.
 target_compile_definitions(webview_windows_plugin PRIVATE

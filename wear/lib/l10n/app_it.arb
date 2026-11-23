@@ -23,5 +23,6 @@
   "sent": "Inviata",
   "undo": "Annulla",
   "replyAll": "Rispondi a tutti",
-  "replyToAll": "Rispondi a {name} e {count, plural, =1{a un'altra persona} other{ad altre {count} persone}}"
+  "replyToAll": "Rispondi a {name} e {count, plural, =1{a un'altra persona} other{ad altre {count} persone}}",
+  "lockedOnPhone": "Piuma è bloccato sul telefono. Sbloccalo lì per vedere qui la posta."
 }

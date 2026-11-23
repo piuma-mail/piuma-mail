@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
+import '../lock/app_lock.dart';
 import '../widgets/bidi.dart' show safeBidi;
 import 'notice_seal.dart';
 import 'unread_badge.dart';
@@ -21,6 +22,7 @@ class SystemNotice {
     required this.payload,
     this.silent = false,
     this.buttons = false,
+    this.standIn = false,
   });
 
   /// The same id replaces the notice already shown, so one sender keeps
@@ -39,6 +41,11 @@ class SystemNotice {
   /// Reply, Archive and Snooze, as on `Notifications`, then Delete and
   /// Mark read: for one email.
   final bool buttons;
+
+  /// The one notice that stands for all new mail while the app lock is
+  /// on ([lockedNotice]); on Android it shares its key with the
+  /// background service's (`LockedNotices.kt`), so there is one either way.
+  final bool standIn;
 }
 
 /// The words on a notice's buttons, and what to do when one is pressed:
@@ -92,22 +99,79 @@ const noticeActions = ['reply', 'archive', 'snooze', 'delete', 'read'];
 
 /// Acts on a clicked notice or one of its buttons, once its payload's
 /// seal checks ([NoticeSeal]): a payload made up by another app opens
-/// nothing.
+/// nothing. While the app is locked ([locked], [AppLock.lockedNow]) a
+/// button does nothing to the mail: the notice opens the app instead, at
+/// its lock screen. A notice shown before the lock was turned on can
+/// still have buttons.
 Future<void> handleNoticeResponse(
   NotificationResponse r, {
   required void Function(String payload) onOpen,
   NoticeButtons? buttons,
   NoticeSeal? seal,
+  bool Function()? locked,
 }) async {
   final read = readNoticeResponse(r);
   if (read == null) return;
   final payload = await (seal ?? noticeSeal).open(read.payload);
   if (payload == null) return;
   final action = read.action;
-  if (action != null && buttons != null) {
+  final isLocked = (locked ?? () => AppLock.lockedNow)();
+  if (action != null && buttons != null && !isLocked) {
     buttons.onAction(payload, action, read.text);
   } else {
     onOpen(payload);
+  }
+}
+
+/// While the app lock is turned on in Settings, locked or not, what the
+/// one notice for new mail says ("New messages"): no sender, subject,
+/// preview or buttons, on the screen, the lock screen or a paired watch.
+/// Null while the lock is off. Android's background service does the same
+/// from `app-lock.json`.
+String? lockedNoticeTitle;
+
+/// The id of [lockedNotice]; Android's background service uses the same
+/// one, with the tag [lockedNoticeTag] (`LockedNotices.kt`).
+const lockedNoticeId = 1;
+const lockedNoticeTag = 'mail.piuma.locked';
+
+/// The one notice for new mail while the lock is on: always the same,
+/// however many senders wrote, and it only opens the app.
+SystemNotice lockedNotice(String title, {required bool silent}) => SystemNotice(
+  id: lockedNoticeId,
+  title: title,
+  subject: '',
+  preview: '',
+  payload: 'inbox',
+  silent: silent,
+  standIn: true,
+);
+
+/// [n] as the system may show it now ([lockedNoticeTitle]).
+SystemNotice privateNotice(SystemNotice n) {
+  final title = lockedNoticeTitle;
+  if (title == null) return n;
+  return lockedNotice(title, silent: n.silent);
+}
+
+/// Decides what [notice] may show ([privateNotice]), seals that one's
+/// payload and hands it to [post]. Decided again after every wait for a
+/// seal: the lock turned on meanwhile, the notice goes out as the stand-in
+/// rather than with its sender and subject.
+Future<void> postNotice(
+  SystemNotice notice, {
+  required NoticeSeal seal,
+  required Future<void> Function(SystemNotice n, String sealed) post,
+}) async {
+  var sealedFor = privateNotice(notice).payload;
+  var sealed = await seal.seal(sealedFor);
+  while (true) {
+    // Nothing may wait between this and [post]: the lock can turn on or
+    // off during any seal.
+    final shown = privateNotice(notice);
+    if (shown.payload == sealedFor) return post(shown, sealed);
+    sealedFor = shown.payload;
+    sealed = await seal.seal(sealedFor);
   }
 }
 
@@ -123,6 +187,11 @@ abstract class Notifier {
     NoticeButtons? buttons,
   });
   Future<void> show(SystemNotice notice);
+
+  /// The lock was turned on: the notices already shown, which may name a
+  /// sender and have buttons, go, once. On Android the activity does it
+  /// for every mail notice (`LockPlatform.changed`, `LockedNotices.kt`).
+  Future<void> hideShown();
 }
 
 Notifier notifier = SystemNotifier();
@@ -153,6 +222,9 @@ String? _windowsIcon() {
 class SystemNotifier implements Notifier {
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _ready = false;
+
+  /// The ids shown by this run, for [hideShown].
+  final _shown = <int>{};
   String _channel = '';
   NoticeButtons? _buttons;
 
@@ -232,8 +304,36 @@ class SystemNotifier implements Notifier {
   }
 
   @override
-  Future<void> show(SystemNotice n) async {
+  Future<void> hideShown() async {
+    // Android cancels them natively, the plugin's among them.
+    if (!_ready || Platform.isAndroid) return;
+    final ids = {..._shown};
+    _shown.clear();
+    try {
+      // Also what an earlier run left in the notification centre, where
+      // the system can list it.
+      for (final a in await _plugin.getActiveNotifications()) {
+        if (a.id case final id?) ids.add(id);
+      }
+    } catch (_) {
+      // Not listed here: this run's own go.
+    }
+    for (final id in ids) {
+      try {
+        await _plugin.cancel(id: id);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Future<void> show(SystemNotice notice) async {
     if (!_ready) return;
+    await postNotice(notice, seal: noticeSeal, post: _post);
+  }
+
+  /// Hands [n] to the system; nothing here waits before it goes.
+  Future<void> _post(SystemNotice n, String sealed) async {
+    _shown.add(n.id);
     // Where there is no subtitle line, the subject leads the body. Windows
     // puts its extra line under the body, so there the subject is the body
     // and the preview goes under it.
@@ -255,7 +355,7 @@ class SystemNotifier implements Notifier {
         id: n.id,
         title: n.title,
         body: body,
-        payload: await noticeSeal.seal(n.payload),
+        payload: sealed,
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(
             subtitle: subject,
@@ -269,11 +369,13 @@ class SystemNotifier implements Notifier {
             threadIdentifier: 'mail',
             categoryIdentifier: buttons == null ? null : 'mail',
           ),
+          // The plugin makes the channel first when it isn't there yet.
           android: AndroidNotificationDetails(
             'mail',
             _channel,
             silent: n.silent,
             category: AndroidNotificationCategory.email,
+            tag: n.standIn ? lockedNoticeTag : null,
             // Launchers that show a count on the icon read it here.
             number: UnreadBadge.count > 0 ? UnreadBadge.count : null,
           ),

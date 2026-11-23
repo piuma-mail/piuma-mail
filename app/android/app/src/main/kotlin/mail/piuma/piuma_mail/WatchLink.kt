@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import org.json.JSONObject
 import java.util.TimeZone
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -17,7 +18,9 @@ import java.util.concurrent.TimeUnit
  * watch's buttons ask. No account or password goes to the watch.
  *
  * The paths, shared with `wear/android/.../WatchChannel.kt`:
- * - [INBOX], a data item: the summary, as JSON.
+ * - [INBOX], a data item: the summary, as JSON. Always this one path, so
+ *   each summary replaces the last: the Data Layer keeps no older one
+ *   from this phone for the watch to clean up.
  * - [REFRESH], from the watch: send the summary again.
  * - [ACT], from the watch: `{"payload","action","until","text"}`, as a notice's button.
  * - [OPEN], from the watch: an email's payload; the words go back on [TEXT].
@@ -35,31 +38,115 @@ object WatchLink {
     private const val CAPABILITY = "piuma_watch"
     private const val WAIT_SECONDS = 10L
 
+    /** The summary while the app lock is on (`wear/lib/summary.dart`). */
+    private fun locked(at: Long) = """{"at":$at,"locked":true,"accounts":[],"rows":[],"templates":[]}"""
+
     /** Sends the summary when a watch is there, on a thread of its own. */
     fun publish(context: Context) {
         val app = context.applicationContext
         Thread { publishNow(app) }.start()
     }
 
-    /** Sends the summary when a watch is there; waits, so never on the main thread. */
+    /** One summary on its way at a time ([publishNow]). */
+    private val publishing = Any()
+
+    /**
+     * Sends the summary when a watch is there; waits, so never on the main
+     * thread. One at a time, each with a higher generation ("gen") than
+     * the last, which the watch uses to drop one that arrives late: a
+     * summary with mail made just before the lock closed can't land after
+     * the locked one. Each also carries this install's [epoch]: the count
+     * starts again on another phone or after a reinstall, and the watch
+     * takes a summary from another epoch whatever its generation.
+     *
+     * While the lock is on the locked summary goes into the Data Layer
+     * even with no watch near ([sends]): it reaches the watch when it
+     * connects again, so the watch never shows the mail it kept from
+     * before while it waits for the phone to answer.
+     */
     fun publishNow(context: Context) {
-        if (!watchNear(context)) return
-        val json = try {
-            Background.openEngine(context)
-            MailNative.watchSummary()
-        } catch (e: Throwable) {
-            ""
-        }
-        if (json.isEmpty()) return
-        val request = PutDataMapRequest.create(INBOX).apply {
-            dataMap.putString("json", json)
-        }.asPutDataRequest().setUrgent()
-        try {
-            Tasks.await(Wearable.getDataClient(context).putDataItem(request), WAIT_SECONDS, TimeUnit.SECONDS)
-        } catch (e: Exception) {
-            // The watch went away: it asks again when it opens.
+        if (!sends(AppLockFile.on(context)) { watchNear(context) }) return
+        synchronized(publishing) {
+            val mail = if (AppLockFile.on(context)) {
+                ""
+            } else {
+                try {
+                    Background.openEngine(context)
+                    MailNative.watchSummary()
+                } catch (e: Throwable) {
+                    ""
+                }
+            }
+            // Checked again once the summary is made, just before it goes:
+            // the lock is on, so the watch is told so and gets no mail.
+            val json = if (AppLockFile.on(context)) {
+                locked(System.currentTimeMillis() / 1000)
+            } else {
+                mail
+            }
+            if (json.isEmpty()) return
+            val stamped = try {
+                val (epoch, gen) = nextGeneration(context)
+                stamp(json, epoch, gen)
+            } catch (e: IllegalArgumentException) {
+                // Not a summary the watch would read.
+                return
+            }
+            val request = PutDataMapRequest.create(INBOX).apply {
+                dataMap.putString("json", stamped)
+            }.asPutDataRequest().setUrgent()
+            try {
+                Tasks.await(Wearable.getDataClient(context).putDataItem(request), WAIT_SECONDS, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                // The watch went away: it asks again when it opens.
+            }
         }
     }
+
+    /** The last generation handed out, also kept across restarts. */
+    private var lastGeneration = 0L
+
+    /**
+     * This install's epoch, made once at random and kept with the
+     * generation: cleared app data or a reinstall start a new one, with
+     * the count from zero again. Then the next generation.
+     */
+    private fun nextGeneration(context: Context): Pair<String, Long> {
+        val prefs = context.getSharedPreferences("watch", Context.MODE_PRIVATE)
+        val kept = prefs.getString("epoch", null)
+        val epoch = kept ?: UUID.randomUUID().toString()
+        val gen = nextGeneration(
+            if (kept == null) 0L else maxOf(lastGeneration, prefs.getLong("gen", 0L)),
+            System.currentTimeMillis(),
+        )
+        lastGeneration = gen
+        prefs.edit().putString("epoch", epoch).putLong("gen", gen).commit()
+        return epoch to gen
+    }
+
+    /**
+     * After [last], never below the time of day in milliseconds: should
+     * the kept one be lost (the app's data cleared), the count starts again
+     * above what the watch saw before, as long as the clock wasn't set back.
+     */
+    internal fun nextGeneration(last: Long, nowMs: Long): Long = maxOf(last + 1, nowMs)
+
+    /** [json], a summary object from the engine, with its epoch and generation first. */
+    internal fun stamp(json: String, epoch: String, gen: Long): String {
+        val body = json.trim()
+        require(body.startsWith("{") && body.endsWith("}"))
+        // A UUID: nothing in it to escape.
+        require(epoch.isNotEmpty() && epoch.all { it in '0'..'9' || it in 'a'..'z' || it in 'A'..'Z' || it == '-' })
+        val rest = body.substring(1).trimStart()
+        val head = "\"epoch\":\"$epoch\",\"gen\":$gen"
+        return if (rest == "}") "{$head}" else "{$head,$rest"
+    }
+
+    /**
+     * A summary is made: always while [locked], otherwise only when a
+     * watch is [near] (asked only then, as it waits on Google Play services).
+     */
+    internal inline fun sends(locked: Boolean, near: () -> Boolean): Boolean = locked || near()
 
     /** A watch with Piuma on it can be reached now. */
     private fun watchNear(context: Context): Boolean = try {
@@ -82,6 +169,11 @@ class WatchListener : WearableListenerService() {
         when (event.path) {
             WatchLink.REFRESH -> WatchLink.publishNow(context)
             WatchLink.ACT -> {
+                // Nothing is done from the watch while the app is locked.
+                if (AppLockFile.on(context)) {
+                    WatchLink.publishNow(context)
+                    return
+                }
                 val ask = try {
                     JSONObject(String(event.data, Charsets.UTF_8))
                 } catch (e: Exception) {
@@ -103,11 +195,15 @@ class WatchListener : WearableListenerService() {
             WatchLink.OPEN -> {
                 val payload = String(event.data, Charsets.UTF_8)
                 val offset = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
-                val text = try {
-                    Background.openEngine(context)
-                    MailNative.watchText(payload, offset)
-                } catch (e: Throwable) {
+                val text = if (AppLockFile.on(context)) {
                     ""
+                } else {
+                    try {
+                        Background.openEngine(context)
+                        MailNative.watchText(payload, offset)
+                    } catch (e: Throwable) {
+                        ""
+                    }
                 }
                 val answer = text.ifEmpty { JSONObject().put("payload", payload).put("text", "").toString() }
                 try {

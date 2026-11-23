@@ -7725,4 +7725,129 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Mensagem de e-mail';
+
+  @override
+  String get lockSetting => 'Bloquear o Piuma';
+
+  @override
+  String get lockSettingHint =>
+      'Pedir o seu PIN, ou o desbloqueio deste dispositivo, para abrir o Piuma.';
+
+  @override
+  String get lockAfter => 'Bloquear após';
+
+  @override
+  String get lockAfterNow => 'Logo';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Desbloquear com este dispositivo';
+
+  @override
+  String get lockDeviceHint =>
+      'Impressão digital, rosto ou bloqueio de ecrã. O PIN também funciona sempre.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello: rosto, impressão digital ou o seu PIN. O PIN do Piuma também funciona sempre.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID ou a palavra-passe do dispositivo. O PIN também funciona sempre.';
+
+  @override
+  String get lockPinLabel => 'PIN';
+
+  @override
+  String get lockPinHint =>
+      'Guardado apenas como hash lento no porta-chaves do sistema.';
+
+  @override
+  String get lockChangePin => 'Alterar PIN';
+
+  @override
+  String get lockChoosePin => 'Escolha um PIN';
+
+  @override
+  String get lockPinWarning =>
+      'De 4 a 12 algarismos. Se o esquecer, só o desbloqueio deste dispositivo abre o Piuma, ou apagar os dados do Piuma do dispositivo. Não há outra forma de voltar a entrar.';
+
+  @override
+  String get lockNewPin => 'Novo PIN';
+
+  @override
+  String get lockPinAgain => 'Escreva-o de novo';
+
+  @override
+  String get lockSavePin => 'Guardar PIN';
+
+  @override
+  String get lockPinRule => 'Um PIN tem de 4 a 12 algarismos.';
+
+  @override
+  String get lockPinMismatch => 'Os dois PIN não coincidem.';
+
+  @override
+  String get lockNoKeychain =>
+      'O porta-chaves do sistema não conseguiu guardar o PIN, por isso o bloqueio está desligado. No Linux, o Piuma precisa do GNOME Keyring, KWallet ou outro Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'Com o bloqueio ligado, as notificações e um relógio associado nunca mostram o seu correio, mesmo com o Piuma desbloqueado: as notificações dizem só “Novas mensagens”, sem remetente, assunto nem botões, e o relógio não mostra correio. O Piuma também fica oculto nas apps recentes. O bloqueio mantém os outros fora da app; não cifra o correio guardado neste dispositivo.';
+
+  @override
+  String get noticeLocked => 'Novas mensagens';
+
+  @override
+  String get lockTitle => 'O Piuma está bloqueado';
+
+  @override
+  String get lockDevicePrompt => 'Desbloqueie para ver o seu correio.';
+
+  @override
+  String get lockPinPrompt => 'Escreva o seu PIN para ver o seu correio.';
+
+  @override
+  String get lockReason => 'Desbloquear o Piuma Mail';
+
+  @override
+  String get lockUnlock => 'Desbloquear';
+
+  @override
+  String get lockUsePin => 'Usar o PIN';
+
+  @override
+  String get lockUseDevice => 'Usar o desbloqueio do dispositivo';
+
+  @override
+  String get lockWrongPin => 'PIN errado.';
+
+  @override
+  String lockWait(String time) {
+    return 'Demasiadas tentativas erradas. Tente de novo dentro de $time.';
+  }
+
+  @override
+  String get lockForgot =>
+      'Esqueceu o PIN? Só apagar os dados do Piuma deste dispositivo o volta a abrir; depois as contas são adicionadas de novo.';
+
+  @override
+  String get lockForgotDevice =>
+      'Esqueceu o PIN? Desbloqueie com este dispositivo. Caso contrário, só apagar os dados do Piuma do dispositivo o volta a abrir.';
+
+  @override
+  String get lockPinUnreadable =>
+      'O porta-chaves do sistema não devolveu o PIN ao Piuma. Desbloqueie com este dispositivo, ou tente de novo quando o porta-chaves estiver aberto.';
+
+  @override
+  String get lockPinMissing =>
+      'O bloqueio do Piuma está ativado, mas o porta-chaves do sistema não tem o PIN dele. Desbloqueie com este dispositivo; sem ele, só apagar os dados do Piuma do dispositivo o abre de novo.';
+
+  @override
+  String get lockTriesNotKept =>
+      'O Piuma não conseguiu registar esta tentativa no porta-chaves do sistema, por isso agora não pode verificar o PIN. Tente de novo daqui a pouco.';
 }

@@ -93,4 +93,8 @@ class AppLocalizationsIt extends AppLocalizations {
     );
     return 'Rispondi a $name e $_temp0';
   }
+
+  @override
+  String get lockedOnPhone =>
+      'Piuma è bloccato sul telefono. Sbloccalo lì per vedere qui la posta.';
 }

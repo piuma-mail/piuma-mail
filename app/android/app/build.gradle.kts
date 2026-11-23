@@ -123,6 +123,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // A paired Wear OS watch (WatchLink.kt): the Data Layer.
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
+    // The AppCompat themes the app lock's BiometricPrompt needs (styles.xml).
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    // Plain JVM tests of the activity's helpers (src/test).
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Checked once the tasks are known, so debug builds and `flutter test`

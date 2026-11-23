@@ -33,7 +33,9 @@ that moves a trust boundary or adds a network service updates this file. Reporti
 6. **An abuser of the relay**: floods it, uses it to post content to the feedback repository, or tries
    to reach other repositories.
 7. **Someone with the unlocked device** or a copy of its disk. Out of scope beyond what the operating
-   system provides: the database is not encrypted separately, the keychain is the OS's.
+   system provides: the database is not encrypted separately, the keychain is the OS's. The optional
+   app lock (see "App lock" below) keeps a person holding the unlocked device out of the app's
+   screens; it is not encryption and doesn't stand against a copy of the disk.
 8. **A malicious contributor**: a pull request that hides harmful code or changes a workflow.
 
 ## Trust boundaries
@@ -119,6 +121,101 @@ un-draft: the job checks every file again once the release is published (release
 locks them) and fails loudly, to be handled as a bad release ([incident runbook](incident-runbook.md)); until a Windows certificate exists, Windows packages are unsigned; GitHub itself, its
 runners and the Actions pinned by commit are trusted; a compromised maintainer account defeats the
 environment's review (use a hardware security key and keep admin rights to as few accounts as possible).
+
+### App lock
+
+Settings › Privacy & security › Lock Piuma, off by default (`app/lib/lock/`, `core/src/app_lock.rs`).
+
+- **What it stops:** someone picking up the unlocked phone or computer and reading mail in Piuma,
+  or seeing it in the recent apps (Android `FLAG_SECURE`, iOS app switcher cover), in notifications
+  or on a paired Wear OS watch.
+- **The PIN** (4 to 12 digits) is kept only as an Argon2id hash (19 MiB, 2 passes, random 16-byte
+  salt) in the system keychain, or the Android Keystore through the app, never in the database or a
+  file. A kept hash weaker than these parameters is refused, so editing it down doesn't speed up
+  guessing. Wrong PINs wait longer and longer (free for 5, then 30 s, 1, 5, 15 minutes, then an hour
+  each); the count is kept with the hash, so restarting the app doesn't reset it. Each try is counted
+  in the keychain before the PIN is checked, so closing the app mid-check doesn't give a free try,
+  and when the keychain can't record it the PIN isn't checked at all until it can (the lock screen
+  says so). Device unlock (BiometricPrompt with the screen lock as fallback, Windows Hello, Touch
+  ID/Face ID with the device password) clears it. There is no reset: forgetting the PIN means the
+  device unlock or removing Piuma's data.
+- **The wait's clock:** never the time of day. While the app runs, the wait counts on a monotonic
+  clock, so setting the device's clock forward doesn't end it. What is left is kept with the count;
+  on Android (`elapsedRealtime` with the boot count) and Linux (`CLOCK_BOOTTIME` with the kernel's
+  boot id) the end on the boot clock is kept too, so time spent closed or asleep counts within the
+  same boot. After a reboot, and on Windows, macOS and iOS after a restart of the app, the wait left
+  starts over: it is never shortened. Android without a boot count (missing, or -1) gets no boot
+  clock at all, so two boots can't be mistaken for one. Accepted: the boot count is a global setting
+  an authorized ADB shell can write, and `/proc/uptime` follows the process's time namespace on
+  Linux, so either can shorten a wait kept across closing the app; both need code running on the
+  unlocked device (or a debugging session it allowed), which is outside what the lock stops. The
+  wait within one run of the app stays on the process's own monotonic clock.
+- **Counting a try:** the try is written to the keychain before the PIN is checked, and the check
+  waits for the write: on Android the Keystore-sealed value is committed to disk synchronously and a
+  failed commit refuses the try (`PinNotKept`), never an asynchronous write that could be lost.
+- **Locking while away:** the app counts as away when its main window is hidden or paused and no
+  reader window is in front. A timer locks it once away for the chosen time, whether or not a window
+  comes back, and the time of day and the monotonic clock both count, so setting the clock back
+  doesn't keep it open. Locking hides every desktop reader window at once; a reader window that
+  finishes starting while locked asks the main window to show it and stays hidden until unlocked;
+  the windows the lock hid come back when it opens. On Linux the original-layout web view is a GTK
+  view the runner lays over the Flutter view, so it is hidden in the runner itself the moment the
+  lock closes and kept hidden until it opens. Elsewhere the web views are drawn by Flutter (Windows'
+  WebView2 as a texture, the platform views of macOS, iOS and Android only where Flutter paints
+  them), so the lock screen covering the app hides them.
+- **Settings file:** `app-lock.json` next to the database says the lock is on, how long after leaving
+  it locks and the notice text. It is not secret; deleting it turns the lock off, which needs the same
+  access to the device's files that would read the database anyway. A file that is there but empty,
+  damaged or unreadable still means on: the app starts locked with the default settings. Only "not
+  found" means off: any other failure to look at or read the file (permissions, I/O, a folder in its
+  place) counts as on, in the app and in Android's background service. If the
+  keychain can't give the hash back, the app stays locked and only the device unlock opens it; if
+  the keychain answers without one, the lock screen says so (the device unlock, or removing Piuma's
+  data, is the way back in).
+- **Notifications and the watch:** while the lock is turned on in Settings, notices and the watch
+  never show mail, locked or not: the decision follows the setting (`app-lock.json`, read by the app
+  and by Android's background service), never whether the app happens to be locked at that moment,
+  so there is no window between unlocking and locking for mail to slip out. Every path (the app's
+  notifier on each system, Android's background service) shows new mail as one stand-in that says
+  only "New messages", with no sender, subject, preview or buttons (the buttons would act on mail
+  without unlocking), and that only opens the app; it is always the same notice (one id, and on
+  Android one tag and id shared by both paths, `LockedNotices.kt`), however many senders wrote. On
+  Android the stand-in's channel is made before it is posted, since the system drops a notice whose
+  channel isn't there. When the lock is turned on, the mail notices already shown are cancelled
+  once: on Android the background service's and the Flutter plugin's, on a thread of its own, never
+  the main one, and taking turns with the background service's posting (one lock), which checks the
+  setting again right before each notice goes; elsewhere those the system lists. They are cancelled,
+  not updated in place: Android drops updates to a shown notice beyond five a second per app without
+  a word, but not cancels. A mail notice the system was still taking in as the lock was turned on
+  goes with the next stand-in, which cancels any left. Turning the lock off brings no old notice
+  back; new ones show mail again. A button pressed on an older notice does nothing on Android while
+  the lock is on (the receiver refuses and cancels what is left); in the app it does nothing while
+  locked. Wear OS mirrors the notices, so only the stand-in reaches it. Sign-in problem notices from
+  Android's background service still name the account, not any mail.
+- **The watch:** while the lock is on, the phone sends the watch app only an empty, locked summary
+  and refuses its requests to open or act on a message; it checks the setting again once a summary is
+  made, before it goes. When the watch sees a locked summary, from any phone, it shows the locked
+  state, closes an email open on it and forgets the words of those it showed.
+- **Ordering the watch's summaries:** the phone puts every summary at the one Data Layer path, so
+  each replaces its last, sends one at a time and stamps each with this install's epoch (random, made
+  once and kept with the count) and a generation that grows within it and never starts below the
+  time in milliseconds. Each summary reaches the watch app with the phone (Data Layer node) it came
+  from. The watch shows a summary with mail only from a phone connected now, and only when its
+  generation is higher than every locked summary seen from that phone and its epoch is not one that
+  phone has already moved on from (an older install's change arriving late); within an epoch an
+  older generation is dropped. A locked summary is always taken. As it starts, the watch shows what
+  the Data Layer kept: a locked summary from any phone before any with mail; otherwise the newest
+  from a connected phone, or with no phone connected the newest one; the phone's fresh summary
+  follows under the rules above. A watch out of reach when the lock is turned on keeps its last
+  summary until it reaches the phone again. Accepted: after reinstalling the phone app with the
+  device clock set back, the watch keeps showing the locked state until the clock passes the last
+  locked summary's time (re-pairing the watch also clears it); a summary with mail left by
+  another phone stays in the watch app's Data Layer storage until that phone's data is gone from the
+  watch, and is shown only with no phone connected and nothing locked kept.
+- **Not covered:** window thumbnails of the desktop systems depend on the system (Windows and
+  macOS window previews are not blanked); notices an earlier run left on a desktop system that
+  can't list them stay until dismissed (their buttons don't act while locked); the lock guards the
+  app's screens only while it runs, not the data at rest.
 
 ### Self-hosted companion (planned)
 

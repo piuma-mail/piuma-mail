@@ -23,5 +23,6 @@
   "sent": "Enviado",
   "undo": "Desfazer",
   "replyAll": "Responder a todos",
-  "replyToAll": "Responder a {name} e {count, plural, =1{mais 1 pessoa} other{mais {count} pessoas}}"
+  "replyToAll": "Responder a {name} e {count, plural, =1{mais 1 pessoa} other{mais {count} pessoas}}",
+  "lockedOnPhone": "O Piuma está bloqueado no telemóvel. Desbloqueie-o lá para ver aqui o seu correio."
 }

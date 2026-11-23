@@ -74,23 +74,134 @@ Future<void> openReaderWindow(MailRow row) async {
 
 /// In the inbox's window: a reader window changed something, or wants a
 /// reply written. Replies are written in the inbox, where compose lives.
+/// With [windows], the app lock decides when reader windows show
+/// (`show`), knows which one is in front (`front`) and which went
+/// (`done`).
 Future<void> listenToReaderWindows({
   required VoidCallback onChanged,
   required ValueChanged<WindowMessage> onReply,
+  ReaderWindows? windows,
 }) async {
   final self = await WindowController.fromCurrentEngine();
   await _inbox.setMethodCallHandler((call) async {
+    final id = switch (call.arguments) {
+      {'id': final String id} => id,
+      _ => null,
+    };
     switch (call.method) {
       case 'changed':
         onChanged();
       case 'reply':
+        // Nothing comes from a window while the app is locked.
+        if (windows?.isLocked() ?? false) return null;
         if (WindowMessage.fromMap(call.arguments) case final m?) {
           onReply(m);
           await self.show();
         }
+      case 'show' when id != null:
+        if (windows != null) return windows.mayShow(id);
+        await WindowController.fromWindowId(id).show();
+        return true;
+      case 'front' when id != null:
+        final front = switch (call.arguments) {
+          {'front': true} => true,
+          _ => false,
+        };
+        windows?.inFront(id, front);
+      case 'done' when id != null:
+        windows?.done(id);
     }
     return null;
   });
+}
+
+/// The reader windows as the inbox's window sees them, for the app lock:
+/// a new one shows only while the app is unlocked, all of them hide the
+/// moment it locks, and those that were on screen come back once it
+/// opens. Which one is in front counts as the app being in use.
+class ReaderWindows {
+  ReaderWindows({
+    required this.isLocked,
+    required this.show,
+    required this.hide,
+    required this.all,
+    this.onFront,
+  });
+
+  final bool Function() isLocked;
+  final Future<void> Function(String id) show;
+  final Future<void> Function(String id) hide;
+
+  /// Every window but the inbox's, as the system has them now.
+  final Future<List<String>> Function() all;
+  final void Function(String id, bool front)? onFront;
+
+  final _onScreen = <String>{};
+  final _back = <String>{};
+
+  /// A reader window has drawn and asks to show: true when it did.
+  Future<bool> mayShow(String id) async {
+    if (isLocked()) {
+      _back.add(id);
+      return false;
+    }
+    _onScreen.add(id);
+    await show(id);
+    return true;
+  }
+
+  void inFront(String id, bool front) {
+    // A window that isn't shown can't be in use.
+    onFront?.call(id, front && _onScreen.contains(id) && !isLocked());
+  }
+
+  /// Closed with Done, after archiving it or the like.
+  void done(String id) {
+    _onScreen.remove(id);
+    _back.remove(id);
+    onFront?.call(id, false);
+  }
+
+  /// The lock closed: every reader window hides, the ones known to be on
+  /// screen first, without waiting to list the others.
+  Future<void> locked() async {
+    final shown = {..._onScreen};
+    _back.addAll(shown);
+    _onScreen.clear();
+    for (final id in shown) {
+      onFront?.call(id, false);
+    }
+    await Future.wait([for (final id in shown) _quietly(hide(id))]);
+    try {
+      final rest = await all();
+      await Future.wait([
+        for (final id in rest)
+          if (!shown.contains(id)) _quietly(hide(id)),
+      ]);
+    } catch (_) {}
+  }
+
+  /// The lock opened: the windows it hid come back.
+  Future<void> unlocked() async {
+    final ids = {..._back};
+    _back.clear();
+    for (final id in ids) {
+      if (isLocked()) {
+        _back.add(id);
+        continue;
+      }
+      _onScreen.add(id);
+      await _quietly(show(id));
+    }
+  }
+
+  static Future<void> _quietly(Future<void> f) async {
+    try {
+      await f;
+    } catch (_) {
+      // A window that has gone.
+    }
+  }
 }
 
 /// The reader window's own app: the message, full size, with what can be
@@ -184,6 +295,29 @@ class InboxWindow {
   static Future<void> reply(MailRow row) async {
     try {
       await _inbox.invokeMethod<void>('reply', WindowMessage.of(row).toMap());
+    } catch (_) {}
+  }
+
+  /// Asks the inbox's window to show this one ([ReaderWindows.mayShow]):
+  /// it doesn't while the app is locked, and then shows it once unlocked.
+  /// A window that can't ask stays hidden.
+  static Future<void> show(String id) async {
+    try {
+      await _inbox.invokeMethod<bool>('show', {'id': id});
+    } catch (_) {}
+  }
+
+  /// This window came in front, or left it.
+  static Future<void> front(String id, bool front) async {
+    try {
+      await _inbox.invokeMethod<void>('front', {'id': id, 'front': front});
+    } catch (_) {}
+  }
+
+  /// This window was closed with Done (hidden, as windows are kept).
+  static Future<void> done(String id) async {
+    try {
+      await _inbox.invokeMethod<void>('done', {'id': id});
     } catch (_) {}
   }
 }

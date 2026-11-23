@@ -7685,4 +7685,128 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get fileTypeEmail => 'Email message';
+
+  @override
+  String get lockSetting => 'Lock Piuma';
+
+  @override
+  String get lockSettingHint =>
+      'Ask for your PIN, or this device’s own unlock, to open Piuma.';
+
+  @override
+  String get lockAfter => 'Lock after';
+
+  @override
+  String get lockAfterNow => 'At once';
+
+  @override
+  String lockAfterMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String get lockDeviceSetting => 'Unlock with this device';
+
+  @override
+  String get lockDeviceHint =>
+      'Fingerprint, face or the screen lock. The PIN always works too.';
+
+  @override
+  String get lockDeviceHintWindows =>
+      'Windows Hello: face, fingerprint or its PIN. Piuma’s PIN always works too.';
+
+  @override
+  String get lockDeviceHintApple =>
+      'Touch ID, Face ID or the device’s password. The PIN always works too.';
+
+  @override
+  String get lockPinLabel => 'PIN';
+
+  @override
+  String get lockPinHint => 'Kept only as a slow hash in the system keychain.';
+
+  @override
+  String get lockChangePin => 'Change PIN';
+
+  @override
+  String get lockChoosePin => 'Choose a PIN';
+
+  @override
+  String get lockPinWarning =>
+      '4 to 12 digits. If you forget it, only this device’s unlock opens Piuma, or removing Piuma’s data from the device. There’s no other way back in.';
+
+  @override
+  String get lockNewPin => 'New PIN';
+
+  @override
+  String get lockPinAgain => 'Type it again';
+
+  @override
+  String get lockSavePin => 'Save PIN';
+
+  @override
+  String get lockPinRule => 'A PIN is 4 to 12 digits.';
+
+  @override
+  String get lockPinMismatch => 'The two PINs aren’t the same.';
+
+  @override
+  String get lockNoKeychain =>
+      'The system keychain couldn’t keep the PIN, so the lock is off. On Linux, Piuma needs GNOME Keyring, KWallet or another Secret Service.';
+
+  @override
+  String get lockSettingNote =>
+      'While the lock is on, notifications and a paired watch never show your mail, even while Piuma is unlocked: notifications say only “New messages”, with no sender, subject or buttons, and the watch shows no mail. Piuma is hidden in the recent apps too. The lock keeps people out of the app; it doesn’t encrypt the mail kept on this device.';
+
+  @override
+  String get noticeLocked => 'New messages';
+
+  @override
+  String get lockTitle => 'Piuma is locked';
+
+  @override
+  String get lockDevicePrompt => 'Unlock to see your mail.';
+
+  @override
+  String get lockPinPrompt => 'Type your PIN to see your mail.';
+
+  @override
+  String get lockReason => 'Unlock Piuma Mail';
+
+  @override
+  String get lockUnlock => 'Unlock';
+
+  @override
+  String get lockUsePin => 'Use PIN';
+
+  @override
+  String get lockUseDevice => 'Use this device’s unlock';
+
+  @override
+  String get lockWrongPin => 'Wrong PIN.';
+
+  @override
+  String lockWait(String time) {
+    return 'Too many wrong tries. Try again in $time.';
+  }
+
+  @override
+  String get lockForgot =>
+      'Forgot your PIN? Only removing Piuma’s data from this device opens it again; your accounts are then added anew.';
+
+  @override
+  String get lockForgotDevice =>
+      'Forgot your PIN? Unlock with this device instead. Without it, only removing Piuma’s data from the device opens it again.';
+
+  @override
+  String get lockPinUnreadable =>
+      'The system keychain didn’t give Piuma its PIN back. Unlock with this device, or try again once the keychain is open.';
+
+  @override
+  String get lockPinMissing =>
+      'Piuma’s lock is on, but the system keychain has no PIN for it. Unlock with this device; without it, only removing Piuma’s data from the device opens it again.';
+
+  @override
+  String get lockTriesNotKept =>
+      'Piuma couldn’t record this try in the system keychain, so it can’t check the PIN now. Try again in a moment.';
 }

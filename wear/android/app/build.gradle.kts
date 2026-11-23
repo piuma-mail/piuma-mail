@@ -68,6 +68,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
     // The system's voice, keyboard and handwriting input, for Reply.
     implementation("androidx.wear:wear-input:1.2.0")
+    // Plain JVM tests of the link's helpers (src/test).
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Checked once the tasks are known, so debug builds and `flutter test`
