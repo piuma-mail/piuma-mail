@@ -860,7 +860,9 @@ class _ListItem extends StatelessWidget {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        s.label.isEmpty ? l.newSignatureLabel : s.label,
+                        s.label.isEmpty
+                            ? l.newSignatureLabel
+                            : safeBidi(s.label),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

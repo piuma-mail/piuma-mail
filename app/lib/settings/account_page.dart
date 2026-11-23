@@ -340,7 +340,7 @@ class _AccountPageState extends State<AccountPage> {
             children: [
               Flexible(
                 child: Text(
-                  signature == null ? l.noSignature : signature.label,
+                  signature == null ? l.noSignature : safeBidi(signature.label),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: PiumaType.body.copyWith(color: c.muted),

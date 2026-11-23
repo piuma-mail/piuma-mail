@@ -2341,7 +2341,9 @@ class _SignaturePicker extends StatelessWidget {
       ),
     );
 
-    final label = l.signatureChip(shown?.label ?? l.noSignature);
+    final label = l.signatureChip(
+      shown == null ? l.noSignature : bidiArg(context, shown.label),
+    );
     Widget chip(bool open, VoidCallback onTap) => Transform.translate(
       offset: towardStart(context, 8),
       child: PiumaPressable(

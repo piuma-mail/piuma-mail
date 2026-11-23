@@ -320,7 +320,7 @@ class _RowText extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        BidiText(
           source.toUpperCase(),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -333,8 +333,9 @@ class _RowText extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 2),
-        Text(
+        BidiText(
           title,
+          subject: true,
           maxLines: 3,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
@@ -446,7 +447,7 @@ class _NewsletterPaneState extends State<NewsletterPane> {
               ],
               Expanded(
                 child: Text(
-                  '${row.sender} · ${row.fromEmail}',
+                  '${bidiArg(context, row.sender)} · ${bidiArg(context, row.fromEmail)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -502,7 +503,12 @@ class _NewsletterPaneState extends State<NewsletterPane> {
                       ),
                       const SizedBox(height: 10),
                       SelectableText(
-                        row.subject,
+                        safeBidi(row.subject),
+                        textDirection: directionOf(
+                          row.subject,
+                          Directionality.of(context),
+                          subject: true,
+                        ),
                         style: TextStyle(
                           fontFamily: PiumaFonts.sans,
                           fontSize: 38,
@@ -778,7 +784,7 @@ class _Cover extends StatelessWidget {
               ),
               if (row.preview.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
+                BidiText(
                   row.preview,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
@@ -898,9 +904,11 @@ Future<void> unsubscribeFrom(
   final l = AppLocalizations.of(context);
   final info = await source.unsubscribeInfo(row);
   if (!context.mounted) return;
+  // For the toasts after the dialog, when [context] may be gone.
+  final who = bidiArg(context, row.sender);
   final choice = await showPiumaDialog<_Choice>(
     context,
-    label: l.unsubscribeTitle(bidiArg(context, row.sender)),
+    label: l.unsubscribeTitle(who),
     builder: (context) => _Unsubscribe(row: row, info: info),
   );
   switch (choice) {
@@ -908,13 +916,13 @@ Future<void> unsubscribeFrom(
       return;
     case _Choice.inbox:
       await source.setSenderZone(row.fromEmail, MailFolder.inbox);
-      onToast(l.alwaysInInboxDone(row.sender));
+      onToast(l.alwaysInInboxDone(who));
     case _Choice.leave when info.kind == UnsubscribeKind.page:
       if (context.mounted) await openLink(context, info.address);
     case _Choice.leave:
       try {
         await source.unsubscribe(row);
-        onToast(l.unsubscribeDone(row.sender));
+        onToast(l.unsubscribeDone(who));
       } catch (_) {
         onToast(l.unsubscribeFailed);
       }

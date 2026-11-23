@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show LogicalKeyboardKey;
+import 'package:flutter/services.dart'
+    show LogicalKeyboardKey, MethodCall, SystemChannels;
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piuma_mail/compose/compose_pane.dart';
+import 'package:piuma_mail/compose/quoting.dart' show readerSelection;
 import 'package:piuma_mail/inbox/attach_preview.dart';
 import 'package:piuma_mail/inbox/inbox_screen.dart';
 import 'package:piuma_mail/inbox/mail_pager.dart';
@@ -27,11 +29,16 @@ Future<DemoMailSource> _pump(
   bool rtl = true,
   bool dark = false,
   bool rtlMail = true,
+  bool spoofed = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final source = DemoMailSource(now: _now, rightToLeft: rtlMail);
+  final source = DemoMailSource(
+    now: _now,
+    rightToLeft: rtlMail,
+    spoofed: spoofed,
+  );
   await tester.pumpWidget(
     PiumaApp(
       initialDark: dark,
@@ -61,6 +68,21 @@ TextDirection _drawnDirection(WidgetTester tester, Finder text) {
   );
   return paragraph.textDirection;
 }
+
+/// Every text on screen, outside a message's body (the email's own text,
+/// shown as written), that still holds a RIGHT-TO-LEFT OVERRIDE.
+List<String> _bareOverrides(WidgetTester tester) => [
+  for (final e
+      in find
+          .byWidgetPredicate((w) => w is RichText || w is EditableText)
+          .evaluate())
+    if (e.findAncestorWidgetOfExactType<MessageBody>() == null)
+      switch (e.widget) {
+        RichText(:final text) => text.toPlainText(),
+        EditableText(:final controller) => controller.text,
+        _ => '',
+      },
+].where((t) => t.contains('\u202E')).toList();
 
 /// The body's paragraph holding [part].
 Finder _richTextContaining(String part) => find.descendant(
@@ -274,7 +296,161 @@ void main() {
       await tester.pumpAndSettle();
       final body = _richTextContaining('today');
       final plain = tester.widget<RichText>(body).text.toPlainText();
-      expect(plain, '\u202EPay at \u2068bank\uFFFDmoc.\uFFFDx\u2069 today');
+      expect(
+        plain,
+        '\u202EPay at \u2068\u2060bank\uFFFDmoc.\uFFFDx\u2060\u2069 today',
+      );
+    });
+
+    test('only the reader\'s own isolates are taken out of a selection', () {
+      expect(
+        stripLinkIsolates(
+          'a \u2068own\u2069 $linkIsolateStart\u2060x$linkIsolateEnd b',
+        ),
+        'a \u2068own\u2069 \u2060x b',
+      );
+      expect(stripLinkIsolates('y\u2060$linkIsolateEnd'), 'y\u2060');
+    });
+
+    testWidgets('a selection is quoted and copied without them', (
+      tester,
+    ) async {
+      final copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      addTearDown(() => readerSelection.value = null);
+      await tester.pumpWidget(
+        PiumaApp(
+          home: (_, _) => Material(
+            child: MessageBody(
+              readable: const Readable(
+                blocks: [
+                  BodyBlock.text([
+                    BodySpan('Pay \u2068here\u2069 at '),
+                    BodySpan('bank.example', link: 'https://bank.example/'),
+                    BodySpan(' today'),
+                  ]),
+                ],
+              ),
+              images: RemoteImages(DemoMailSource(now: _now)),
+              showRemote: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // On screen the link is isolated…
+      expect(
+        tester
+            .widget<RichText>(_richTextContaining('today'))
+            .text
+            .toPlainText(),
+        contains(
+          '$linkIsolateStart'
+          'bank.example$linkIsolateEnd',
+        ),
+      );
+      final region = tester.state<SelectableRegionState>(
+        find.byType(SelectableRegion),
+      );
+      region.selectAll();
+      await tester.pumpAndSettle();
+      // …the quote holds the email's text, its own isolate included.
+      const clean = 'Pay \u2068here\u2069 at bank.example today';
+      expect(readerSelection.value, clean);
+      // Ctrl+C.
+      Actions.invoke(
+        tester.element(_richTextContaining('today')),
+        CopySelectionTextIntent.copy,
+      );
+      await tester.pump();
+      expect(copied.last, clean);
+      // Copy in the menu.
+      copied.clear();
+      final area = tester.widget<SelectionArea>(find.byType(SelectionArea));
+      final menu = area.contextMenuBuilder!(
+        tester.element(find.byType(SelectableRegion)),
+        region,
+      ) as AdaptiveTextSelectionToolbar;
+      menu.buttonItems!
+          .firstWhere((i) => i.type == ContextMenuButtonType.copy)
+          .onPressed!();
+      await tester.pump();
+      expect(copied.last, clean);
+    });
+
+    testWidgets('a spoofed subject opens with its override made visible', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        size: _desktop,
+        rtl: false,
+        rtlMail: false,
+        spoofed: true,
+      );
+      expect(_bareOverrides(tester), isEmpty);
+      await tester.tap(_row('Fattura \uFFFDtxt.exe'));
+      await tester.pumpAndSettle();
+      final subject = tester.widget<SelectableText>(
+        find.byType(SelectableText).first,
+      );
+      expect(subject.data, 'Fattura \uFFFDtxt.exe');
+      expect(_bareOverrides(tester), isEmpty);
+    });
+
+    testWidgets('newsletters show no override, from list to toast', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        size: _desktop,
+        rtl: false,
+        rtlMail: false,
+        spoofed: true,
+      );
+      await tester.tap(find.text('Newsletters'));
+      await tester.pumpAndSettle();
+      expect(_bareOverrides(tester), isEmpty);
+      await tester.tap(find.text('Issue \uFFFDfdp.exe').first);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Banca\uFFFDgro.evil · issue@banca.example'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<SelectableText>(
+              find.byWidgetPredicate(
+                (w) => w is SelectableText && w.data == 'Issue \uFFFDfdp.exe',
+              ),
+            )
+            .data,
+        isNotNull,
+      );
+      expect(_bareOverrides(tester), isEmpty);
+      await tester.tap(find.text('Unsubscribe'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Always in Inbox'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Mail from Banca\uFFFDgro.evil now goes to the Inbox'),
+        findsOneWidget,
+      );
+      expect(_bareOverrides(tester), isEmpty);
     });
 
     testWidgets('the trust confirmation shows the name as it is', (

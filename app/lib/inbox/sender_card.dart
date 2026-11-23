@@ -1107,7 +1107,7 @@ class _Conversation extends StatelessWidget {
                         ),
                       ],
                     ),
-                    Text(
+                    BidiText(
                       row.preview,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,

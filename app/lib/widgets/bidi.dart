@@ -107,6 +107,21 @@ bool _hasBidiControl(String text) {
 String isolate(String text) =>
     text.isEmpty ? text : '\u2068${safeBidi(text)}\u2069';
 
+/// Opens the isolate the reader puts around a link's text: FIRST STRONG
+/// ISOLATE and a WORD JOINER, which the bidi algorithm ignores. The joiner
+/// tells it from an isolate the email itself holds, so [stripLinkIsolates]
+/// takes out only the reader's when the text is copied or quoted.
+const linkIsolateStart = '\u2068\u2060';
+
+/// Closes what [linkIsolateStart] opened.
+const linkIsolateEnd = '\u2060\u2069';
+
+/// [text], selected in the reader, without the isolates it put around
+/// links ([linkIsolateStart], [linkIsolateEnd]): the email's own text,
+/// direction controls included, stays as written.
+String stripLinkIsolates(String text) =>
+    text.replaceAll(linkIsolateStart, '').replaceAll(linkIsolateEnd, '');
+
 /// [text] made safe by [safeBidi], and isolated where it could scramble
 /// the sentence it goes into: when it holds right-to-left letters, or the
 /// interface reads right to left. Left-to-right text in a left-to-right

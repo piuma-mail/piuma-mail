@@ -3412,7 +3412,7 @@ class _PecCard extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: _Titled(title: m.subject, line: to),
+                child: _Titled(title: safeBidi(m.subject), line: to),
               ),
               const SizedBox(width: 10),
               Text(

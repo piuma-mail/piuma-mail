@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart' show SelectionArea;
+import 'package:flutter/material.dart'
+    show AdaptiveTextSelectionToolbar, SelectionArea;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter/widgets.dart';
 
 import '../design/icons.dart';
@@ -113,9 +115,7 @@ class MessageBody extends StatelessWidget {
       }
       previous = b;
     }
-    return SelectionArea(
-      // A reply can quote only the words selected (Settings › Writing).
-      onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
+    return _CleanCopy(
       child: Directionality(
         textDirection: whole,
         child: Column(
@@ -310,7 +310,7 @@ class _SpansState extends State<_Spans> {
       // can't reorder what it says either.
       final text = tap != null ? safeBidi(s.text) : s.text;
       final isolated = tap != null && widget.spans.length > 1;
-      if (isolated) children.add(const TextSpan(text: '\u2068'));
+      if (isolated) children.add(const TextSpan(text: linkIsolateStart));
       for (var i = 0; i + 1 < points.length; i++) {
         final from = at + points[i];
         final inMark = widget.marks.any((m) => from >= m.$1 && from < m.$2);
@@ -330,11 +330,74 @@ class _SpansState extends State<_Spans> {
           ),
         );
       }
-      if (isolated) children.add(const TextSpan(text: '\u2069'));
+      if (isolated) children.add(const TextSpan(text: linkIsolateEnd));
       at += s.text.length;
     }
     return Text.rich(TextSpan(style: widget.style, children: children));
   }
+}
+
+/// The reader's [SelectionArea]. What is selected, copied or quoted in a
+/// reply, comes out without the isolates the reader put around links
+/// ([stripLinkIsolates]), which are layout, not the email's text.
+class _CleanCopy extends StatefulWidget {
+  const _CleanCopy({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_CleanCopy> createState() => _CleanCopyState();
+}
+
+class _CleanCopyState extends State<_CleanCopy> {
+  String? _picked;
+
+  void _copy(String? text) {
+    if (text != null) Clipboard.setData(ClipboardData(text: text));
+  }
+
+  @override
+  Widget build(BuildContext context) => Actions(
+    // Ctrl+C and Cmd+C.
+    actions: {
+      CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
+        onInvoke: (_) {
+          _copy(_picked);
+          return null;
+        },
+      ),
+    },
+    child: SelectionArea(
+      onSelectionChanged: (picked) {
+        final text = picked == null
+            ? null
+            : stripLinkIsolates(picked.plainText);
+        _picked = text;
+        // A reply can quote only the words selected (Settings › Writing).
+        readerSelection.value = text;
+      },
+      contextMenuBuilder: (context, region) =>
+          AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: region.contextMenuAnchors,
+            buttonItems: [
+              for (final item in region.contextMenuButtonItems)
+                if (item.type == ContextMenuButtonType.copy)
+                  item.copyWith(
+                    onPressed: () {
+                      final text = _picked;
+                      // The region's own copy, then the clean text over it
+                      // (it may clear the selection, so read it first).
+                      item.onPressed?.call();
+                      _copy(text);
+                    },
+                  )
+                else
+                  item,
+            ],
+          ),
+      child: widget.child,
+    ),
+  );
 }
 
 /// Opens a link from a message. A link whose text shows another address

@@ -509,7 +509,7 @@ class _HitRow extends StatelessWidget {
                             color: c.fg,
                           ),
                         ),
-                        Text(
+                        BidiText(
                           row.preview,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

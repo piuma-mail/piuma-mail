@@ -474,9 +474,12 @@ class _AttachmentBoardState extends State<AttachmentBoard>
                             dot: accountColor(f),
                             account: accountName(f),
                             meta: l.attachmentsMeta(
-                              f.row.fromName.isNotEmpty
-                                  ? f.row.fromName
-                                  : f.row.fromEmail,
+                              bidiArg(
+                                context,
+                                f.row.fromName.isNotEmpty
+                                    ? f.row.fromName
+                                    : f.row.fromEmail,
+                              ),
                               fileSize(f.file.size, locale: locale),
                               fileWhen(l, f.row.receivedAt, now, locale),
                             ),

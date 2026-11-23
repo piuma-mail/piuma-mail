@@ -27,6 +27,7 @@ class DemoMailSource extends MailSource {
     bool reminded = false,
     this.foreign = false,
     this.rightToLeft = false,
+    this.spoofed = false,
     bool groups = false,
     bool synced = false,
     this.spaceToFind = false,
@@ -617,6 +618,14 @@ class DemoMailSource extends MailSource {
 
   static const arabicSubject = 'موعد الاجتماع يوم الخميس';
   static const hebrewSubject = 'הזמנה לסדנה ביום ראשון';
+
+  /// Has an email and a newsletter whose sender, subject and preview hide
+  /// a RIGHT-TO-LEFT OVERRIDE, to check that none of it is shown as is.
+  final bool spoofed;
+
+  static const spoofedSubject = 'Fattura \u202Etxt.exe';
+  static const spoofedSender = 'Banca\u202Egro.evil';
+  static const spoofedLetter = 'Issue \u202Efdp.exe';
 
   /// What Stop waiting took out of Waiting.
   final _doneWaiting = <Object>{};
@@ -1945,6 +1954,16 @@ class DemoMailSource extends MailSource {
               'within 24 hours to restore access…',
           seen: false,
         ),
+      if (spoofed)
+        row(
+          _personal,
+          spoofedSender,
+          'billing@banca.example',
+          at(0, 10, 25),
+          spoofedSubject,
+          'Open \u202Efdp.exe today',
+          seen: false,
+        ),
       if (rightToLeft) ...[
         row(
           _personal,
@@ -2306,6 +2325,16 @@ class DemoMailSource extends MailSource {
       minutes: minutes,
     );
     return [
+      if (spoofed)
+        letter(
+          spoofedSender,
+          'issue@banca.example',
+          at(0, 7, 30),
+          spoofedLetter,
+          'Read \u202Egnol today',
+          3,
+          seen: false,
+        ),
       letter(
         'Forma',
         'issue@forma.example',

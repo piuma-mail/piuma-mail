@@ -242,7 +242,14 @@ class _EmlReaderState extends State<EmlReader> {
                         ),
                         const SizedBox(height: PiumaSpace.s12),
                         SelectableText(
-                          _m.subject.isEmpty ? l.noSubject : _m.subject,
+                          safeBidi(
+                            _m.subject.isEmpty ? l.noSubject : _m.subject,
+                          ),
+                          textDirection: directionOf(
+                            _m.subject,
+                            Directionality.of(context),
+                            subject: true,
+                          ),
                           style: PiumaType.title.copyWith(color: c.fg),
                         ),
                         const SizedBox(height: PiumaSpace.s12),

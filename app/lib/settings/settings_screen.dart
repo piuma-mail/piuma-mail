@@ -3287,7 +3287,7 @@ class _TrustedRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                BidiText(
                   sender.label,
                   style: TextStyle(
                     fontFamily: PiumaFonts.sans,

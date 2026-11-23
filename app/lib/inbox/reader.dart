@@ -764,10 +764,13 @@ class _ReaderState extends State<Reader> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 SelectableText(
-                                  _subject ??
-                                      (row.subject.isEmpty
-                                          ? l.noSubject
-                                          : row.subject),
+                                  // Shown cleaned; replies keep the raw subject.
+                                  safeBidi(
+                                    _subject ??
+                                        (row.subject.isEmpty
+                                            ? l.noSubject
+                                            : row.subject),
+                                  ),
                                   // The subject reads its own way.
                                   textDirection: directionOf(
                                     _subject ?? row.subject,
@@ -2068,7 +2071,7 @@ class _ClosedMessage extends StatelessWidget {
                       ),
                     ],
                   ),
-                  Text(
+                  BidiText(
                     row.preview,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -2407,7 +2410,7 @@ class _SenderLine extends StatelessWidget {
                 RecipientsLine(envelope: e, line: line!)
               else
                 Text(
-                  address ? row.fromEmail : when,
+                  address ? safeBidi(row.fromEmail) : when,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 13, height: 1.35, color: c.muted),
