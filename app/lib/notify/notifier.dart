@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import '../dev_copy.dart';
+import '../widgets/bidi.dart' show safeBidi;
 import 'notice_seal.dart';
 import 'unread_badge.dart';
 
@@ -237,12 +238,17 @@ class SystemNotifier implements Notifier {
     // puts its extra line under the body, so there the subject is the body
     // and the preview goes under it.
     final apple = Platform.isMacOS || Platform.isIOS;
-    final windows = Platform.isWindows && n.subject.isNotEmpty;
-    final body = apple || n.subject.isEmpty
-        ? n.preview
+    // The subject and the preview are the sender's: the system shows them
+    // as they are, so their direction controls are made harmless here.
+    // The title is the caller's to make safe (it may isolate a name).
+    final subject = safeBidi(n.subject);
+    final preview = safeBidi(n.preview);
+    final windows = Platform.isWindows && subject.isNotEmpty;
+    final body = apple || subject.isEmpty
+        ? preview
         : windows
-        ? n.subject
-        : [n.subject, if (n.preview.isNotEmpty) n.preview].join('\n');
+        ? subject
+        : [subject, if (preview.isNotEmpty) preview].join('\n');
     final buttons = n.buttons ? _buttons : null;
     try {
       await _plugin.show(
@@ -252,13 +258,13 @@ class SystemNotifier implements Notifier {
         payload: await noticeSeal.seal(n.payload),
         notificationDetails: NotificationDetails(
           macOS: DarwinNotificationDetails(
-            subtitle: n.subject,
+            subtitle: subject,
             presentSound: !n.silent,
             threadIdentifier: 'mail',
             categoryIdentifier: buttons == null ? null : 'mail',
           ),
           iOS: DarwinNotificationDetails(
-            subtitle: n.subject,
+            subtitle: subject,
             presentSound: !n.silent,
             threadIdentifier: 'mail',
             categoryIdentifier: buttons == null ? null : 'mail',
@@ -286,7 +292,7 @@ class SystemNotifier implements Notifier {
             ],
           ),
           windows: WindowsNotificationDetails(
-            subtitle: windows && n.preview.isNotEmpty ? n.preview : null,
+            subtitle: windows && preview.isNotEmpty ? preview : null,
             audio: n.silent ? WindowsNotificationAudio.silent() : null,
             inputs: [
               if (buttons != null)

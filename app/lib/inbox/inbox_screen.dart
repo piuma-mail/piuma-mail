@@ -376,7 +376,7 @@ class _InboxScreenState extends State<InboxScreen> {
         SystemNotice(
           id: Object.hash('pair', ask.id) & 0x7fffffff,
           title: l.syncAskTitle(ask.kind.name),
-          subject: ask.name,
+          subject: safeBidi(ask.name),
           preview: l.syncAskCode(ask.kind.name),
           payload: 'pair',
         ),
@@ -509,7 +509,7 @@ class _InboxScreenState extends State<InboxScreen> {
                 0x7fffffff,
             title:
                 '${l.remindNoReply(bidiArg(context, n.sender))} · ${remindSent(r.sentDaysAgo, l)}',
-            subject: n.subject,
+            subject: safeBidi(n.subject),
             preview: '',
             payload: '${n.accountId}\n${n.mailbox}\n${n.uid}',
             silent: quietNow,
@@ -532,13 +532,13 @@ class _InboxScreenState extends State<InboxScreen> {
               ? vaultNoticeTitle(l, vault)
               : n.count > 1
               ? l.noticeTitleMany(bidiArg(context, n.sender), n.count)
-              : n.sender,
+              : safeBidi(n.sender),
           subject: away != null
               ? awayNoticeDetail(l, away)
               : vault != null
               ? vaultNoticeDetail(l, vault, locale)
-              : n.subject,
-          preview: n.preview,
+              : safeBidi(n.subject),
+          preview: safeBidi(n.preview),
           payload: away != null
               ? 'inbox'
               : '${n.accountId}\n${n.mailbox}\n${n.uid}',
@@ -4450,20 +4450,20 @@ String vaultNoticeTitle(AppLocalizations l, VaultNotice v) {
     1 => l.vaultNoticeDueTomorrow,
     final days => l.vaultNoticeDueIn(days),
   };
-  return v.merchant.isEmpty ? what : '$what · ${v.merchant}';
+  return v.merchant.isEmpty ? what : '$what · ${safeBidi(v.merchant)}';
 }
 
 /// "Desk lamp · around 10:00", "€62.40 · Electricity bill".
 String vaultNoticeDetail(AppLocalizations l, VaultNotice v, String locale) {
   final parts = v.dueIn == null
-      ? [v.title, if (v.time.isNotEmpty) l.vaultNoticeAround(v.time)]
+      ? [safeBidi(v.title), if (v.time.isNotEmpty) l.vaultNoticeAround(v.time)]
       : [
           if (v.amount case final cents?)
             NumberFormat.simpleCurrency(
               locale: locale,
               name: v.currency.isEmpty ? null : v.currency,
             ).format(cents / 100),
-          v.title,
+          safeBidi(v.title),
         ];
   return parts.where((p) => p.isNotEmpty).join(' · ');
 }
@@ -4474,5 +4474,5 @@ String awayNoticeDetail(AppLocalizations l, AwayNotice a) {
   final all = l.noticeAwayEmails(a.emails);
   if (a.people == 0) return all;
   final from = '$all, ${l.noticeAwayPeople(a.people)}';
-  return a.names.isEmpty ? from : '$from: ${a.names.join(', ')}';
+  return a.names.isEmpty ? from : '$from: ${a.names.map(safeBidi).join(', ')}';
 }

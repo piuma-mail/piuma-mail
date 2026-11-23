@@ -5,7 +5,7 @@
 //! are in `android.rs`, so this file builds and tests everywhere.
 
 use crate::api::engine::{self, BlockKind, BodyBlock, EngineError, InboxTab, MailFolder};
-use crate::background::quote;
+use crate::background::{quote, untrusted};
 
 /// How many conversations the watch lists.
 pub const ROWS: u32 = 20;
@@ -54,7 +54,7 @@ pub fn summary_json(
             format!(
                 r#"{{"id":{},"name":{},"color":{},"unread":{}}}"#,
                 a.id,
-                quote(&a.name),
+                untrusted(&a.name),
                 quote(&a.color),
                 a.unread
             )
@@ -67,9 +67,9 @@ pub fn summary_json(
                 r#"{{"payload":{},"account":{},"sender":{},"subject":{},"preview":{},"at":{},"seen":{},"messages":{},"others":{}}}"#,
                 quote(&r.payload),
                 r.account_id,
-                quote(&r.sender),
-                quote(&r.subject),
-                quote(&r.preview),
+                untrusted(&r.sender),
+                untrusted(&r.subject),
+                untrusted(&r.preview),
                 r.received_at,
                 r.seen,
                 r.messages,
@@ -282,6 +282,35 @@ mod tests {
             summary_json(0, &[], &[], &[]),
             r#"{"at":0,"accounts":[],"rows":[],"templates":[]}"#
         );
+    }
+
+    #[test]
+    fn the_watch_gets_no_direction_controls_from_an_email() {
+        let json = summary_json(
+            0,
+            &[WatchAccount {
+                id: 1,
+                name: "Work\u{2066}".into(),
+                color: String::new(),
+                unread: 0,
+            }],
+            &[WatchRow {
+                payload: "1\nINBOX\n1".into(),
+                account_id: 1,
+                sender: "Bank\u{202E}".into(),
+                subject: "\u{2069}Hi\u{200E}".into(),
+                preview: "a\u{2068}b".into(),
+                received_at: 0,
+                seen: true,
+                messages: 1,
+                others: 0,
+            }],
+            &[],
+        );
+        assert!(json.contains("\"name\":\"Work\u{FFFD}\""));
+        assert!(json.contains("\"sender\":\"Bank\u{FFFD}\""));
+        assert!(json.contains("\"subject\":\"\u{FFFD}Hi\u{2060}\""));
+        assert!(json.contains("\"preview\":\"a\u{FFFD}b\""));
     }
 
     #[test]

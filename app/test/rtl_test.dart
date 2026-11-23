@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show LogicalKeyboardKey, MethodCall, SystemChannels;
@@ -91,6 +92,90 @@ Finder _richTextContaining(String part) => find.descendant(
     (w) => w is RichText && w.text.toPlainText().contains(part),
   ),
 );
+
+/// Clipboard writes, in order, for the test.
+List<String> _clipboard(WidgetTester tester) {
+  final copied = <String>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied.add((call.arguments as Map)['text'] as String);
+      }
+      if (call.method == 'Clipboard.hasStrings') {
+        return <String, Object>{'value': copied.isNotEmpty};
+      }
+      return null;
+    },
+  );
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  addTearDown(() => readerSelection.value = null);
+  return copied;
+}
+
+/// [readable] in the reader, alone.
+Future<void> _body(WidgetTester tester, Readable readable) async {
+  tester.view.physicalSize = _desktop;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    PiumaApp(
+      home: (_, _) => Material(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: MessageBody(
+            readable: readable,
+            images: RemoteImages(DemoMailSource(now: _now)),
+            showRemote: false,
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Where the caret before UTF-16 unit [offset] of [paragraph] sits on
+/// screen, halfway down the line.
+Offset _at(WidgetTester tester, Finder paragraph, int offset) {
+  final p = tester.renderObject<RenderParagraph>(paragraph);
+  final position = TextPosition(offset: offset);
+  final caret = p.getOffsetForCaret(position, Rect.zero);
+  final height = p.getFullHeightForCaret(position);
+  return p.localToGlobal(caret + Offset(0.5, height / 2));
+}
+
+/// Just past the end of [paragraph]'s text.
+Offset _end(WidgetTester tester, Finder paragraph) {
+  final p = tester.renderObject<RenderParagraph>(paragraph);
+  final length = p.text.toPlainText().length;
+  return _at(tester, paragraph, length) + const Offset(2, 0);
+}
+
+/// A mouse drag from [from] to [to], as on a desktop.
+Future<void> _drag(WidgetTester tester, Offset from, Offset to) async {
+  final mouse = await tester.startGesture(from, kind: PointerDeviceKind.mouse);
+  await tester.pump();
+  await mouse.moveTo(Offset.lerp(from, to, 0.5)!);
+  await tester.pump();
+  await mouse.moveTo(to);
+  await tester.pump();
+  await mouse.up();
+  await tester.pumpAndSettle();
+}
+
+/// Ctrl+C on the keyboard.
+Future<void> _ctrlC(WidgetTester tester) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   group('which way text reads', () {
@@ -296,101 +381,140 @@ void main() {
       await tester.pumpAndSettle();
       final body = _richTextContaining('today');
       final plain = tester.widget<RichText>(body).text.toPlainText();
-      expect(
-        plain,
-        '\u202EPay at \u2068\u2060bank\uFFFDmoc.\uFFFDx\u2060\u2069 today',
-      );
+      expect(plain, '\u202EPay at \u2068bank\uFFFDmoc.\uFFFDx\u2069 today');
     });
 
-    test('only the reader\'s own isolates are taken out of a selection', () {
-      expect(
-        stripLinkIsolates(
-          'a \u2068own\u2069 $linkIsolateStart\u2060x$linkIsolateEnd b',
-        ),
-        'a \u2068own\u2069 \u2060x b',
-      );
-      expect(stripLinkIsolates('y\u2060$linkIsolateEnd'), 'y\u2060');
-    });
+    // The sender's own isolate, written with the same characters around
+    // it (WORD JOINERs) the reader once used to mark its own: they stay.
+    const own = 'Pay \u2068\u2060here\u2060\u2069 at ';
+    const linked = Readable(
+      blocks: [
+        BodyBlock.text([BodySpan('Hi \u2068\u2060you\u2060\u2069!')]),
+        BodyBlock.text([
+          BodySpan(own),
+          BodySpan('bank.example', link: 'https://bank.example/'),
+          BodySpan(' today'),
+        ]),
+      ],
+    );
+    const unlinked = Readable(
+      blocks: [
+        BodyBlock.text([BodySpan('$own\u2068x\u2069 today')]),
+      ],
+    );
 
-    testWidgets('a selection is quoted and copied without them', (
+    testWidgets('a drag quotes and copies the email\'s text as written', (
       tester,
     ) async {
-      final copied = <String>[];
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        (MethodCall call) async {
-          if (call.method == 'Clipboard.setData') {
-            copied.add((call.arguments as Map)['text'] as String);
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          SystemChannels.platform,
-          null,
-        ),
-      );
-      addTearDown(() => readerSelection.value = null);
-      await tester.pumpWidget(
-        PiumaApp(
-          home: (_, _) => Material(
-            child: MessageBody(
-              readable: const Readable(
-                blocks: [
-                  BodyBlock.text([
-                    BodySpan('Pay \u2068here\u2069 at '),
-                    BodySpan('bank.example', link: 'https://bank.example/'),
-                    BodySpan(' today'),
-                  ]),
-                ],
-              ),
-              images: RemoteImages(DemoMailSource(now: _now)),
-              showRemote: false,
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+      final copied = _clipboard(tester);
+      await _body(tester, linked);
       // On screen the link is isolated…
+      final second = _richTextContaining('today');
       expect(
-        tester
-            .widget<RichText>(_richTextContaining('today'))
-            .text
-            .toPlainText(),
-        contains(
-          '$linkIsolateStart'
-          'bank.example$linkIsolateEnd',
-        ),
+        tester.widget<RichText>(second).text.toPlainText(),
+        '$own\u2068bank.example\u2069 today',
       );
-      final region = tester.state<SelectableRegionState>(
-        find.byType(SelectableRegion),
+      // …a drag over both paragraphs picks the sender's words…
+      final first = _richTextContaining('Hi');
+      await _drag(tester, _at(tester, first, 0), _end(tester, second));
+      expect(
+        readerSelection.value,
+        'Hi \u2068\u2060you\u2060\u2069!${own}bank.example today',
       );
-      region.selectAll();
+      // …and Ctrl+C copies them, once.
+      await _ctrlC(tester);
+      expect(copied, [readerSelection.value]);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets('part of a link is copied without the isolate around it', (
+      tester,
+    ) async {
+      final copied = _clipboard(tester);
+      await _body(tester, linked);
+      final second = _richTextContaining('today');
+      // From "bank" (after the reader's FSI) to the end.
+      await _drag(
+        tester,
+        _at(tester, second, own.length + 1),
+        _end(tester, second),
+      );
+      expect(readerSelection.value, 'bank.example today');
+      // From before the sender's isolate (its characters have no width,
+      // so the space before it) into the link.
+      await _drag(tester, _at(tester, second, 3), _at(tester, second, 21));
+      const part = ' \u2068\u2060here\u2060\u2069 at bank';
+      expect(readerSelection.value, part);
+      await _ctrlC(tester);
+      expect(copied, [part]);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets('without links, nothing is taken out', (tester) async {
+      final copied = _clipboard(tester);
+      await _body(tester, unlinked);
+      final p = _richTextContaining('today');
+      await _drag(tester, _at(tester, p, 0), _end(tester, p));
+      const whole = '$own\u2068x\u2069 today';
+      expect(readerSelection.value, whole);
+      // Copy in the right-click menu.
+      await tester.tapAt(
+        _at(tester, p, 2),
+        buttons: kSecondaryButton,
+        kind: PointerDeviceKind.mouse,
+      );
       await tester.pumpAndSettle();
-      // …the quote holds the email's text, its own isolate included.
-      const clean = 'Pay \u2068here\u2069 at bank.example today';
-      expect(readerSelection.value, clean);
-      // Ctrl+C.
-      Actions.invoke(
-        tester.element(_richTextContaining('today')),
-        CopySelectionTextIntent.copy,
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+      expect(copied, [whole]);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets('the right-click menu copies without the link isolates', (
+      tester,
+    ) async {
+      final copied = _clipboard(tester);
+      await _body(tester, linked);
+      final second = _richTextContaining('today');
+      await _drag(tester, _at(tester, second, 0), _end(tester, second));
+      await tester.tapAt(
+        _at(tester, second, 2),
+        buttons: kSecondaryButton,
+        kind: PointerDeviceKind.mouse,
       );
-      await tester.pump();
-      expect(copied.last, clean);
-      // Copy in the menu.
-      copied.clear();
-      final area = tester.widget<SelectionArea>(find.byType(SelectionArea));
-      final menu = area.contextMenuBuilder!(
-        tester.element(find.byType(SelectableRegion)),
-        region,
-      ) as AdaptiveTextSelectionToolbar;
-      menu.buttonItems!
-          .firstWhere((i) => i.type == ContextMenuButtonType.copy)
-          .onPressed!();
-      await tester.pump();
-      expect(copied.last, clean);
-    });
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+      expect(copied, ['${own}bank.example today']);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets('on a phone, long press, Select all, Copy', (tester) async {
+      final copied = _clipboard(tester);
+      await _body(tester, linked);
+      final second = _richTextContaining('today');
+      await tester.longPressAt(_at(tester, second, 1));
+      await tester.pumpAndSettle();
+      expect(readerSelection.value, 'Pay');
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      const all = 'Hi \u2068\u2060you\u2060\u2069!${own}bank.example today';
+      expect(readerSelection.value, all);
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+      expect(copied, [all]);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+    testWidgets('a long press on the sender\'s own isolate copies it', (
+      tester,
+    ) async {
+      final copied = _clipboard(tester);
+      await _body(tester, unlinked);
+      final p = _richTextContaining('today');
+      await tester.longPressAt(_at(tester, p, 1));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+      expect(copied, ['$own\u2068x\u2069 today']);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
     testWidgets('a spoofed subject opens with its override made visible', (
       tester,

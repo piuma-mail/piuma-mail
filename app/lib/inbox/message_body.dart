@@ -1,9 +1,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart'
-    show AdaptiveTextSelectionToolbar, SelectionArea;
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/material.dart' show SelectionArea;
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/widgets.dart';
 
 import '../design/icons.dart';
@@ -115,7 +114,7 @@ class MessageBody extends StatelessWidget {
       }
       previous = b;
     }
-    return _CleanCopy(
+    return _ReaderSelection(
       child: Directionality(
         textDirection: whole,
         child: Column(
@@ -251,12 +250,25 @@ class _Spans extends StatefulWidget {
 
 class _SpansState extends State<_Spans> {
   final _taps = <LinkPressRecognizer>[];
+  final _selection = _WithoutInserted();
+
+  /// A link is under the pointer.
+  bool _hovering = false;
+
+  @override
+  void deactivate() {
+    // Closed under the pointer: where the link went doesn't stay shown.
+    if (_hovering) LinkTarget.show(context, null);
+    _hovering = false;
+    super.deactivate();
+  }
 
   @override
   void dispose() {
     for (final t in _taps) {
       t.dispose();
     }
+    _selection.dispose();
     super.dispose();
   }
 
@@ -268,6 +280,15 @@ class _SpansState extends State<_Spans> {
     }
     _taps.clear();
     final children = <InlineSpan>[];
+    // What the paragraph holds, and where in it the isolates this widget
+    // added around links sit: a copy or a quote leaves out exactly those.
+    final shown = StringBuffer();
+    final inserted = <int>{};
+    void add(String text, {bool ours = false}) {
+      if (ours) inserted.add(shown.length);
+      shown.write(text);
+    }
+
     var at = 0;
     for (final s in widget.spans) {
       LinkPressRecognizer? tap;
@@ -310,93 +331,98 @@ class _SpansState extends State<_Spans> {
       // can't reorder what it says either.
       final text = tap != null ? safeBidi(s.text) : s.text;
       final isolated = tap != null && widget.spans.length > 1;
-      if (isolated) children.add(const TextSpan(text: linkIsolateStart));
+      if (isolated) {
+        add('\u2068', ours: true);
+        children.add(const TextSpan(text: '\u2068'));
+      }
       for (var i = 0; i + 1 < points.length; i++) {
         final from = at + points[i];
         final inMark = widget.marks.any((m) => from >= m.$1 && from < m.$2);
+        final piece = text.substring(points[i], points[i + 1]);
+        add(piece);
         children.add(
           TextSpan(
-            text: text.substring(points[i], points[i + 1]),
+            text: piece,
             style: inMark ? style.merge(marked) : style,
             mouseCursor: tap != null ? SystemMouseCursors.click : null,
             recognizer: tap,
             // Where it goes, whatever its text says.
             onEnter: s.link == null
                 ? null
-                : (_) => LinkTarget.show(context, s.link),
+                : (_) {
+                    _hovering = true;
+                    LinkTarget.show(context, s.link);
+                  },
+            // Also called after the message closed under the pointer:
+            // [deactivate] has cleared the line then.
             onExit: s.link == null
                 ? null
-                : (_) => LinkTarget.show(context, null),
+                : (_) {
+                    _hovering = false;
+                    if (mounted) LinkTarget.show(context, null);
+                  },
           ),
         );
       }
-      if (isolated) children.add(const TextSpan(text: linkIsolateEnd));
+      if (isolated) {
+        add('\u2069', ours: true);
+        children.add(const TextSpan(text: '\u2069'));
+      }
       at += s.text.length;
     }
-    return Text.rich(TextSpan(style: widget.style, children: children));
+    _selection
+      ..text = shown.toString()
+      ..inserted = inserted;
+    return SelectionContainer(
+      delegate: _selection,
+      child: Text.rich(TextSpan(style: widget.style, children: children)),
+    );
   }
 }
 
-/// The reader's [SelectionArea]. What is selected, copied or quoted in a
-/// reply, comes out without the isolates the reader put around links
-/// ([stripLinkIsolates]), which are layout, not the email's text.
-class _CleanCopy extends StatefulWidget {
-  const _CleanCopy({required this.child});
+/// The selection of one paragraph of the reader, which copies (and
+/// quotes) its text without the isolates [_SpansState] put around links:
+/// they are layout, not the email's text. They are left out by where
+/// they are, not by what they are, so the same characters written by the
+/// sender come out as they were written.
+class _WithoutInserted extends StaticSelectionContainerDelegate {
+  /// The paragraph's text, as drawn.
+  String text = '';
+
+  /// Offsets in [text], in UTF-16 units, of the characters the reader
+  /// added.
+  Set<int> inserted = const {};
+
+  @override
+  SelectedContent? getSelectedContent() {
+    final range = getSelection();
+    if (range == null) return null;
+    final start = math.min(range.startOffset, range.endOffset);
+    final end = math.min(
+      math.max(range.startOffset, range.endOffset),
+      text.length,
+    );
+    final out = StringBuffer();
+    for (var i = start; i < end; i++) {
+      if (!inserted.contains(i)) out.writeCharCode(text.codeUnitAt(i));
+    }
+    return SelectedContent(plainText: out.toString());
+  }
+}
+
+/// The reader's [SelectionArea]. What is selected can be quoted in a
+/// reply; copied or quoted, it comes out without the isolates the reader
+/// put around links ([_WithoutInserted]).
+class _ReaderSelection extends StatelessWidget {
+  const _ReaderSelection({required this.child});
 
   final Widget child;
 
   @override
-  State<_CleanCopy> createState() => _CleanCopyState();
-}
-
-class _CleanCopyState extends State<_CleanCopy> {
-  String? _picked;
-
-  void _copy(String? text) {
-    if (text != null) Clipboard.setData(ClipboardData(text: text));
-  }
-
-  @override
-  Widget build(BuildContext context) => Actions(
-    // Ctrl+C and Cmd+C.
-    actions: {
-      CopySelectionTextIntent: CallbackAction<CopySelectionTextIntent>(
-        onInvoke: (_) {
-          _copy(_picked);
-          return null;
-        },
-      ),
-    },
-    child: SelectionArea(
-      onSelectionChanged: (picked) {
-        final text = picked == null
-            ? null
-            : stripLinkIsolates(picked.plainText);
-        _picked = text;
-        // A reply can quote only the words selected (Settings › Writing).
-        readerSelection.value = text;
-      },
-      contextMenuBuilder: (context, region) =>
-          AdaptiveTextSelectionToolbar.buttonItems(
-            anchors: region.contextMenuAnchors,
-            buttonItems: [
-              for (final item in region.contextMenuButtonItems)
-                if (item.type == ContextMenuButtonType.copy)
-                  item.copyWith(
-                    onPressed: () {
-                      final text = _picked;
-                      // The region's own copy, then the clean text over it
-                      // (it may clear the selection, so read it first).
-                      item.onPressed?.call();
-                      _copy(text);
-                    },
-                  )
-                else
-                  item,
-            ],
-          ),
-      child: widget.child,
-    ),
+  Widget build(BuildContext context) => SelectionArea(
+    // A reply can quote only the words selected (Settings › Writing).
+    onSelectionChanged: (picked) => readerSelection.value = picked?.plainText,
+    child: child,
   );
 }
 
