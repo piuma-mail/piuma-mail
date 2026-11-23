@@ -58,9 +58,14 @@ object WatchLink {
      * the locked one. Each also carries this install's [epoch]: the count
      * starts again on another phone or after a reinstall, and the watch
      * takes a summary from another epoch whatever its generation.
+     *
+     * While the lock is on the locked summary goes into the Data Layer
+     * even with no watch near ([sends]): it reaches the watch when it
+     * connects again, so the watch never shows the mail it kept from
+     * before while it waits for the phone to answer.
      */
     fun publishNow(context: Context) {
-        if (!watchNear(context)) return
+        if (!sends(AppLockFile.on(context)) { watchNear(context) }) return
         synchronized(publishing) {
             val mail = if (AppLockFile.on(context)) {
                 ""
@@ -136,6 +141,12 @@ object WatchLink {
         val head = "\"epoch\":\"$epoch\",\"gen\":$gen"
         return if (rest == "}") "{$head}" else "{$head,$rest"
     }
+
+    /**
+     * A summary is made: always while [locked], otherwise only when a
+     * watch is [near] (asked only then, as it waits on Google Play services).
+     */
+    internal inline fun sends(locked: Boolean, near: () -> Boolean): Boolean = locked || near()
 
     /** A watch with Piuma on it can be reached now. */
     private fun watchNear(context: Context): Boolean = try {

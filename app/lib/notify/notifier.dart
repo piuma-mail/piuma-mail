@@ -154,7 +154,7 @@ SystemNotice privateNotice(SystemNotice n) {
 }
 
 /// Decides what [notice] may show ([privateNotice]), seals that one's
-/// payload and hands it to [post]. Decided again after the wait for the
+/// payload and hands it to [post]. Decided again after every wait for a
 /// seal: the lock turned on meanwhile, the notice goes out as the stand-in
 /// rather than with its sender and subject.
 Future<void> postNotice(
@@ -162,13 +162,16 @@ Future<void> postNotice(
   required NoticeSeal seal,
   required Future<void> Function(SystemNotice n, String sealed) post,
 }) async {
-  final first = privateNotice(notice);
-  final sealed = await seal.seal(first.payload);
-  // Nothing may wait between this and [post], unless it is the stand-in,
-  // which carries no mail whenever it goes.
-  final shown = privateNotice(notice);
-  if (shown.payload == first.payload) return post(shown, sealed);
-  return post(shown, await seal.seal(shown.payload));
+  var sealedFor = privateNotice(notice).payload;
+  var sealed = await seal.seal(sealedFor);
+  while (true) {
+    // Nothing may wait between this and [post]: the lock can turn on or
+    // off during any seal.
+    final shown = privateNotice(notice);
+    if (shown.payload == sealedFor) return post(shown, sealed);
+    sealedFor = shown.payload;
+    sealed = await seal.seal(sealedFor);
+  }
 }
 
 /// Shows notices through the operating system. Tests replace [notifier].

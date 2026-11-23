@@ -550,6 +550,37 @@ void main() {
       expect(seal.payloads.last, 'inbox');
     });
 
+    test(
+      'goes out blank when the lock turned on again during the second seal',
+      () async {
+        // On at first, off during the first seal, on again during the second.
+        lockedNoticeTitle = 'New message';
+        var seals = 0;
+        final posted = <SystemNotice>[];
+        final sealedAs = <String>[];
+        final seal = _FlippingSeal(() {
+          seals++;
+          lockedNoticeTitle = seals == 1 ? null : 'New message';
+        });
+        await postNotice(
+          n,
+          seal: seal,
+          post: (shown, sealed) async {
+            posted.add(shown);
+            sealedAs.add(sealed);
+          },
+        );
+        expect(posted, hasLength(1));
+        expect(posted.single.standIn, isTrue);
+        expect(posted.single.title, 'New message');
+        expect(posted.single.subject, isEmpty);
+        expect(posted.single.preview, isEmpty);
+        expect(posted.single.buttons, isFalse);
+        expect(sealedAs.single, 'sealed:inbox');
+        expect(seal.payloads, ['inbox', n.payload, 'inbox']);
+      },
+    );
+
     test('keeps its words while the lock stays off', () async {
       final posted = <SystemNotice>[];
       final sealedAs = <String>[];
