@@ -680,6 +680,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
+name = "constant_time_eq"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "144e7f1de087984240b7816d47f698b414979faa6f40839c5b86d6bd47db57b7"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3102,7 +3111,7 @@ dependencies = [
  "whatlang",
  "x25519-dalek",
  "zeroize",
- "zip 9.3.0",
+ "zip 9.5.1",
 ]
 
 [[package]]
@@ -4857,9 +4866,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.11"
+version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+checksum = "7265c9301c16a8711c992c2d8da90ee77ef54b1ed51482d6dfeb00dc756b1297"
 dependencies = [
  "rustls-pki-types",
 ]
@@ -5428,10 +5437,11 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.3.0"
+version = "9.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaeb7f16d2605b49aef586996ded29e65642fab7259a3077e537351df6d80426"
+checksum = "e3476fd497ac8af5b1ec7b51acab7bef380f7e8dd8e0487595bafd839417a302"
 dependencies = [
+ "constant_time_eq",
  "crc32fast",
  "flate2",
  "getrandom 0.4.3",
@@ -5441,6 +5451,7 @@ dependencies = [
  "nix 0.31.3",
  "typed-path 0.13.0",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
